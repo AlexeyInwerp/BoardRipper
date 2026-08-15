@@ -711,7 +711,23 @@ export function buildBoardScene(
    *  When supplied and `s.showDiodeValues` is on, readings are drawn on pins.
    *  Optional so SettingsMockup and tests can build scenes without it. */
   diodeResolver?: (pin: Pin) => DiodeReading | undefined,
+  /** Current view rotation in degrees (`boardStore.rotation`). Only the 90°
+   *  parity matters: at 90°/270° the scene root is rotated, so board X/Y map
+   *  to the opposite screen axes and the pin-label stagger has to be computed
+   *  on the transposed axis to stay useful (see `axesSwapped` below). Defaults
+   *  to 0 so SettingsMockup and tests keep the unrotated layout. */
+  viewRotationDeg = 0,
 ): BoardSceneGraph {
+  // Which board axis is screen-horizontal. At 90°/270° the scene root is
+  // rotated by `BoardRenderer.applyFlips`, so a pin run that varies in board Y
+  // is what the user sees as a horizontal row — and that's the run that needs
+  // the label stagger.
+  const rot90 = ((Math.round(viewRotationDeg / 90) % 4) + 4) % 4;
+  const axesSwapped = rot90 === 1 || rot90 === 3;
+  // Sign that turns "even → visually above the pin" into a board-space offset.
+  // Rotation is clockwise in Pixi's y-down space: at 90° board +X maps to screen
+  // +Y (down), at 270° it maps to screen −Y (up).
+  const swapUpSign = rot90 === 1 ? -1 : 1;
   // Sub-phase timing reporter — surfaces buildBoardScene's internal cost
   // breakdown on the load-progress overlay so the user can see whether
   // surfaces, pins, labels, etc. dominate. Dynamic-imported to avoid a
@@ -1320,22 +1336,32 @@ export function buildBoardScene(
     }
 
     // Pre-compute per-pin column index for BGA alternating label layout.
-    // Groups pins into horizontal rows by Y proximity (within 50% of min pin spacing),
-    // then assigns a 0-based column index by sorting each row by X.
-    // This gives the correct "left-to-right position within the row" regardless of
-    // sequential pin numbering order.
+    // Groups pins into SCREEN-horizontal rows by cross-axis proximity (within 50%
+    // of min pin spacing), then assigns a 0-based column index by sorting each row
+    // along the run. This gives the correct "left-to-right position within the row"
+    // regardless of sequential pin numbering order.
+    //
+    // The stagger only pays off on a row the user sees as horizontal (labels are
+    // counter-rotated, so they always read left-to-right and collide along screen
+    // X). Under 90°/270° view rotation, that row is the one varying in board Y —
+    // e.g. a QFP's left/right edge pin columns — so the grouping axis transposes
+    // with the view. Without this, those runs land one pin per bucket, every pin
+    // gets column 0, and the whole edge renders un-staggered.
     const pinColIndex: number[] = new Array(part.pins.length).fill(0);
     if (isMultiPin && s.showPinNumbers && minPinSpacing < Infinity) {
       // Map rowKey → list of pin indices in that row
       const rowMap = new Map<number, number[]>();
       for (let i = 0; i < part.pins.length; i++) {
-        const rowKey = Math.round(part.pins[i].position.y / minPinSpacing);
+        const pos = part.pins[i].position;
+        const rowKey = Math.round((axesSwapped ? pos.x : pos.y) / minPinSpacing);
         const row = rowMap.get(rowKey);
         if (row) row.push(i); else rowMap.set(rowKey, [i]);
       }
-      // Within each row, sort by X and assign column index
+      // Within each row, sort along the run and assign column index
       for (const indices of rowMap.values()) {
-        indices.sort((a, b) => part.pins[a].position.x - part.pins[b].position.x);
+        indices.sort((a, b) => axesSwapped
+          ? part.pins[a].position.y - part.pins[b].position.y
+          : part.pins[a].position.x - part.pins[b].position.x);
         for (let col = 0; col < indices.length; col++) {
           pinColIndex[indices[col]] = col;
         }
@@ -1525,7 +1551,13 @@ export function buildBoardScene(
           const even = pinColIndex[pni] % 2 === 0;
           numAnchorY = bgaAlternate ? (even ? 1.0 : 0.0) : 0.8;
           const bgaHalfGap = (r * s.bgaLabelGapFactor) / 2;
-          pinY += bgaAlternate ? (even ? -bgaHalfGap : bgaHalfGap) : 0;
+          // The offset must land VERTICALLY on screen (the anchors above are in
+          // label space, which stays upright via the counter-rotation in
+          // applyFlips). Under 90°/270° that means offsetting board X instead.
+          if (bgaAlternate) {
+            const up = even ? -bgaHalfGap : bgaHalfGap;
+            if (axesSwapped) pinX += up * swapUpSign; else pinY += up;
+          }
         }
 
         pinFontSize *= s.pinNumberScale || 1;      // Resize Mode: pin-number size
@@ -1595,7 +1627,8 @@ export function buildBoardScene(
             const even = pinColIndex[pni] % 2 === 0;
             anchorY = even ? 0.0 : 1.0;
             const bgaHalfGap = (r * s.bgaLabelGapFactor) / 2;
-            ny += even ? bgaHalfGap : -bgaHalfGap;
+            const down = even ? bgaHalfGap : -bgaHalfGap;
+            if (axesSwapped) nx += down * -swapUpSign; else ny += down;
           } else if (isSinglePin) {
             // Testpoint/fiducial: the part name is the only other label on this
             // pin, so the two straddle the pin centre exactly like a BGA's

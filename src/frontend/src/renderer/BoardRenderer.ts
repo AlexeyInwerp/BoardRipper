@@ -296,6 +296,12 @@ function emitPartOutlineShape(
   drawPartOutline(gfx, part, s, pad);
 }
 
+/** 0 when board and screen axes line up (0°/180°), 1 when they're transposed
+ *  (90°/270°). Pin-label layout in `buildBoardScene` depends on this. */
+function rot90Parity(rotationDeg: number): number {
+  return ((Math.round(rotationDeg / 90) % 4) + 4) % 4 % 2;
+}
+
 
 export class BoardRenderer {
   /** Whether top layer should be visible (accounts for butterfly mode) */
@@ -627,6 +633,10 @@ export class BoardRenderer {
   private _lastBoardColorKey = '';
   /** Debounce timer for scheduleRebuild — coalesces rapid colour-edit rebuilds. */
   private _rebuildTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Screen-axis parity (0 = board axes, 1 = transposed) the active scene's
+   *  pin labels were built for. Compared against the live rotation so a
+   *  90°/270° change rebuilds the label stagger on the right axis. */
+  private sceneRot90Parity = 0;
   /** Reference snapshot of `boardStore.partOverrides`. The store replaces the
    *  Map on every change, so an identity-equality compare in `onBoardUpdate`
    *  detects right-click hide/send-to-back actions without a deep diff. */
@@ -2535,7 +2545,12 @@ export class BoardRenderer {
       const graph = buildBoardScene(
         board, renderSettingsStore.settings, this.activeBoardColorHex(), boardStore.partOverrides,
         (pin) => primaryDiodeReading(pin, diodeBn),
+        boardStore.rotation,
       );
+      // Remember which rotation parity the labels were laid out for — a change
+      // (0/180 ↔ 90/270) transposes the screen axes and needs a rebuild so the
+      // pin-label stagger follows (see onBoardUpdate's rotated branch).
+      this.sceneRot90Parity = rot90Parity(boardStore.rotation);
       const elapsed = (performance.now() - t0).toFixed(0);
       log.render.log(`Scene built in ${elapsed}ms: ${board.parts.length} parts, ${graph.topLabels.length + graph.bottomLabels.length} labels`);
       // Surface the scene-build cost on the load-progress overlay when one
@@ -2990,6 +3005,14 @@ export class BoardRenderer {
           this.netLinesDirty = true;
           this.renderNetLines();
           if (this.crossSideGhostParts.size > 0) this.renderCrossSideGhosts();
+        }
+
+        // A 0/180 ↔ 90/270 rotation transposes board vs screen axes, so the
+        // pin-number/net-name stagger was computed for the wrong axis (it is
+        // baked into label positions at build time). Rebuild — debounced, so
+        // spinning through rotations coalesces into one rebuild.
+        if (rotated && rot90Parity(newRotation) !== this.sceneRot90Parity) {
+          this.scheduleRebuild();
         }
 
         // After flip: re-center on selected component so the user keeps focus.
