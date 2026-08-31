@@ -16,6 +16,12 @@ const fetchTimeout = 30 * time.Second
 // signature verifies under pubKeyStr. Errors from individual sources are
 // collected and returned only if all sources fail.
 func FetchFromSources(sources []string, pubKeyStr string) (*Manifest, error) {
+	return FetchFromSourcesMulti(sources, []string{pubKeyStr})
+}
+
+// FetchFromSourcesMulti is FetchFromSources against a set of trusted keys:
+// a source wins if its signature verifies under any one of them.
+func FetchFromSourcesMulti(sources []string, pubKeys []string) (*Manifest, error) {
 	if len(sources) == 0 {
 		return nil, errors.New("no sources configured")
 	}
@@ -28,7 +34,7 @@ func FetchFromSources(sources []string, pubKeyStr string) (*Manifest, error) {
 			errs = append(errs, fmt.Sprintf("%s: %v", base, err))
 			continue
 		}
-		if err := VerifyManifest(body, sig, pubKeyStr); err != nil {
+		if err := VerifyManifestAny(body, sig, pubKeys); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: signature: %v", base, err))
 			continue
 		}

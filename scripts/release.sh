@@ -241,6 +241,17 @@ fi
 # ════════════════════════════════════════════════════════════════════════
 if [ "$IS_DESKTOP_ONLY" = "false" ]; then
   PUBKEY_B64="$(grep -v '^untrusted' "$MINISIGN_PUB" | tr -d '\n')"
+  # Additional keys this build should ALSO trust, one base64 key per line in
+  # $CONFIG_DIR/release.pub.extra (comment lines and blanks ignored). Used only
+  # during a rotation overlap: put the OUTGOING key here while releases are
+  # already signed with the new one, so installs on either side keep updating.
+  # Delete the file once every install has rolled past the overlap.
+  EXTRA_PUB_FILE="${EXTRA_PUB_FILE:-$CONFIG_DIR/release.pub.extra}"
+  PUBKEYS_B64=""
+  if [ -f "$EXTRA_PUB_FILE" ]; then
+    PUBKEYS_B64="$(grep -v '^untrusted' "$EXTRA_PUB_FILE" | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$' | paste -sd, -)"
+    [ -n "$PUBKEYS_B64" ] && echo ">>> Rotation overlap: also trusting $(echo "$PUBKEYS_B64" | tr ',' '\n' | wc -l | tr -d ' ') extra key(s) from $EXTRA_PUB_FILE"
+  fi
   # ripperdoc.de is the only manifest source. The image at GHCR
   # (ghcr.io/alexeyinwerp/boardripper@<digest>) is still used during Apply for
   # pull-by-digest — that's an OCI Distribution v2 endpoint, totally different
@@ -265,6 +276,7 @@ if [ "$IS_DESKTOP_ONLY" = "false" ]; then
     --platform "$PLATFORMS" \
     --build-arg "APP_VERSION=$VERSION" \
     --build-arg "PUBKEY=$PUBKEY_B64" \
+    --build-arg "PUBKEYS=$PUBKEYS_B64" \
     --build-arg "SOURCES=$SOURCES_CSV" \
     -t "ghcr.io/alexeyinwerp/boardripper:$VERSION" \
     -t "ghcr.io/alexeyinwerp/boardripper:latest" \

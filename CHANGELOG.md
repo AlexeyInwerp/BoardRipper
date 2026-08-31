@@ -1,5 +1,38 @@
 # BoardRipper changelog
 
+## v0.36.0 — 2026-08-31
+
+The release signing key was unfortunately lost and had to be reset. This release
+is signed with a new one, and adds the mechanism that stops the next key loss
+from being a one-way door.
+
+### Signing
+
+- **Builds can trust more than one signing key.** `updater.PubKeys` (new
+  `PUBKEYS` build-arg, comma-separated) sits alongside the existing
+  `updater.PubKey`; `TrustedKeys()` merges them and `VerifyManifestAny` accepts
+  a manifest that verifies under any one. A key must still be compiled in via
+  `-ldflags` to be tried, so this widens the set of accepted *signers* and
+  nothing else — a trusted signer still cannot vouch for a tampered body, and an
+  empty key set fails closed rather than open.
+- **Key rotation now rides the normal update path.** Sign a release with the
+  outgoing key while the incoming key is already listed in `PUBKEYS`, and every
+  install rolls onto an image trusting the new key with no manual step. The
+  procedure is written up under "Rotating the signing key" in the release
+  runbook. Without it a rotation strands every install, because the fields that
+  would explain the problem — `important_reason`, `notes_url` — live inside the
+  signed manifest that the install is correctly refusing to read.
+
+### Notes for existing installs
+
+Installs shipped before this release trust only the lost key and cannot be
+reached automatically. They need one manual `docker compose pull`, after which
+updates resume normally and this can never recur for them. The notice is on
+<https://www.ripperdoc.de/boardripper/>.
+
+No user data was exposed at any point. The key signed release manifests; it
+granted no access to any installation, and BoardRipper stores nothing remotely.
+
 ## v0.35.3 — 2026-08-14
 
 Two boardviews that would not open now do. One is an `.fz` written with old-Mac

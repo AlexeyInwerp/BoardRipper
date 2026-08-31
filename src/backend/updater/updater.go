@@ -30,10 +30,33 @@ const (
 
 // Build-time variables injected via -ldflags.
 var (
-	Version    = "dev"
-	PubKey     = "" // base64-encoded minisign public key
+	Version = "dev"
+	PubKey  = "" // base64-encoded minisign public key (primary signer)
+	// PubKeys holds ADDITIONAL trusted public keys, comma-separated. During a
+	// key rotation the new image is built trusting only the new key, but the
+	// manifest that delivers it is signed with the old one — so the build
+	// BEFORE it must trust both. Populating this during the overlap window is
+	// what keeps a rotation automatic instead of stranding every install.
+	PubKeys    = ""
 	SourceList = "" // comma-separated mirror base URLs
 )
+
+// TrustedKeys returns every compiled-in public key, primary first, de-duplicated
+// and with blanks dropped. An empty result means the binary was built without
+// -ldflags and must refuse to update at all.
+func TrustedKeys() []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, k := range append([]string{PubKey}, splitCSV(PubKeys)...) {
+		k = strings.TrimSpace(k)
+		if k == "" || seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, k)
+	}
+	return out
+}
 
 // Sources returns the parsed source list.
 func Sources() []string {
@@ -43,7 +66,9 @@ func Sources() []string {
 	parts := []string{}
 	for _, s := range splitCSV(SourceList) {
 		s = strings.TrimSpace(s)
-		if s != "" { parts = append(parts, s) }
+		if s != "" {
+			parts = append(parts, s)
+		}
 	}
 	return parts
 }
@@ -59,7 +84,9 @@ func splitCSV(s string) []string {
 			cur += string(r)
 		}
 	}
-	if cur != "" { out = append(out, cur) }
+	if cur != "" {
+		out = append(out, cur)
+	}
 	return out
 }
 
@@ -151,9 +178,10 @@ func (u *Updater) PushError(msg string) {
 
 // Check queries the configured sources for the latest release and updates cached state.
 func (u *Updater) Check() (*UpdateState, error) {
-	if PubKey == "" {
+	keys := TrustedKeys()
+	if len(keys) == 0 {
 		u.mu.Lock()
-		u.state.Error = "updater not configured: PubKey is empty (built without -ldflags)"
+		u.state.Error = "updater not configured: no trusted public keys (built without -ldflags)"
 		u.mu.Unlock()
 		return &u.state, errors.New(u.state.Error)
 	}
@@ -164,7 +192,7 @@ func (u *Updater) Check() (*UpdateState, error) {
 		u.mu.Unlock()
 		return &u.state, errors.New(u.state.Error)
 	}
-	m, err := FetchFromSources(srcs, PubKey)
+	m, err := FetchFromSourcesMulti(srcs, keys)
 	now := time.Now()
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -393,8 +421,10 @@ func downloadAssetVerified(url, dest string, sizeBytes int64, expectedSHA256 str
 
 // parseVersion extracts numeric parts from a version string.
 // Pre-release sorts below release via -1 marker:
-//   "v0.3.0"        → [0, 3, 0]
-//   "v0.3.0-beta.1" → [0, 3, 0, -1, 1]
+//
+//	"v0.3.0"        → [0, 3, 0]
+//	"v0.3.0-beta.1" → [0, 3, 0, -1, 1]
+//
 // Git describe suffixes are stripped: "v0.2.6-beta-4-g9572f7b" → [0, 2, 6, -1]
 func parseVersion(v string) []int {
 	v = strings.TrimPrefix(v, "v")
@@ -454,7 +484,9 @@ func (u *Updater) installedCounterPath() string {
 
 func (u *Updater) readInstalledCounter() int64 {
 	b, err := os.ReadFile(u.installedCounterPath())
-	if err != nil { return 0 }
+	if err != nil {
+		return 0
+	}
 	n, _ := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
 	return n
 }

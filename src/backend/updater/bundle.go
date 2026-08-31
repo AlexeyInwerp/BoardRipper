@@ -88,8 +88,9 @@ func extractBundle(r io.Reader) (*extractedBundle, error) {
 // network-fetched Apply() path. Runs in the background; the caller streams
 // progress via the existing /api/update/progress SSE endpoint.
 func (u *Updater) ApplyBundle(bundleBytes []byte) error {
-	if PubKey == "" {
-		return errors.New("updater not configured: PubKey is empty (built without -ldflags)")
+	trusted := TrustedKeys()
+	if len(trusted) == 0 {
+		return errors.New("updater not configured: no trusted public keys (built without -ldflags)")
 	}
 
 	u.mu.Lock()
@@ -113,7 +114,7 @@ func (u *Updater) ApplyBundle(bundleBytes []byte) error {
 		len(bundle.manifestBytes), len(bundle.signatureBytes), bundle.tarballName, len(bundle.tarballBytes)), "info")
 
 	// 1. Verify signature.
-	if err := VerifyManifest(bundle.manifestBytes, bundle.signatureBytes, PubKey); err != nil {
+	if err := VerifyManifestAny(bundle.manifestBytes, bundle.signatureBytes, trusted); err != nil {
 		u.logProgress("Signature verification failed: "+err.Error(), "error")
 		return fmt.Errorf("signature: %w", err)
 	}

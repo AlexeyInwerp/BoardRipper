@@ -41,6 +41,13 @@ if [[ -f "${PUBKEY_FILE}" ]]; then
 else
     PUBKEY_B64=""
 fi
+# Extra trusted keys for a rotation overlap window — same file release.sh reads.
+EXTRA_PUB_FILE="${EXTRA_PUB_FILE:-${HOME}/.config/boardripper/release.pub.extra}"
+if [[ -f "${EXTRA_PUB_FILE}" ]]; then
+    PUBKEYS_B64=$(grep -v '^untrusted' "${EXTRA_PUB_FILE}" | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$' | paste -sd, -)
+else
+    PUBKEYS_B64=""
+fi
 
 # ── Colors ─────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -74,7 +81,7 @@ info "=== Pre-deploy checks ==="
 
 # 1. Verify Docker image builds locally
 info "Building image..."
-docker build --build-arg APP_VERSION="${APP_VERSION}" --build-arg PUBKEY="${PUBKEY_B64}" -t boardripper:deploy-check . || { error "FAIL: Docker build failed"; exit 1; }
+docker build --build-arg APP_VERSION="${APP_VERSION}" --build-arg PUBKEY="${PUBKEY_B64}" --build-arg PUBKEYS="${PUBKEYS_B64}" -t boardripper:deploy-check . || { error "FAIL: Docker build failed"; exit 1; }
 if [[ -z "${PUBKEY_B64}" ]]; then
     warn "WARN: PUBKEY empty (${PUBKEY_FILE} missing). Self-update on the NAS will be disabled until you re-deploy with the key."
 fi
@@ -117,7 +124,7 @@ info "Push complete."
 # ── Step 2: Build Docker image for linux/amd64 ────────────────
 TAR_FILE="/tmp/${IMAGE_NAME}.tar.gz"
 info "Building Docker image ${IMAGE_NAME}:${IMAGE_TAG} for linux/amd64..."
-docker buildx build --platform linux/amd64 --build-arg APP_VERSION="${APP_VERSION}" --build-arg PUBKEY="${PUBKEY_B64}" -t "${IMAGE_NAME}:${IMAGE_TAG}" --load . || {
+docker buildx build --platform linux/amd64 --build-arg APP_VERSION="${APP_VERSION}" --build-arg PUBKEY="${PUBKEY_B64}" --build-arg PUBKEYS="${PUBKEYS_B64}" -t "${IMAGE_NAME}:${IMAGE_TAG}" --load . || {
     error "Docker build failed."
     exit 1
 }

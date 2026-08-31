@@ -141,6 +141,30 @@ func VerifyManifest(manifestBytes, sig []byte, pubKeyStr string) error {
 	return nil
 }
 
+// VerifyManifestAny accepts the signature if ANY compiled-in trusted key
+// verifies it. This is what makes a signing-key rotation deliverable through
+// the normal update path: the release that carries the NEW key is itself
+// signed with the OLD one, so installs that trust both accept it, install an
+// image that trusts only the new key, and roll forward with no manual step.
+//
+// This widens the set of accepted *signers*, never what a given signer may
+// say — every key here was explicitly compiled into this binary via -ldflags,
+// exactly like the single PubKey it replaces. An empty set fails closed.
+func VerifyManifestAny(manifestBytes, sig []byte, pubKeys []string) error {
+	if len(pubKeys) == 0 {
+		return errors.New("no trusted public keys configured")
+	}
+	var lastErr error
+	for _, k := range pubKeys {
+		err := VerifyManifest(manifestBytes, sig, k)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+	}
+	return fmt.Errorf("no trusted key verified the signature (%d tried): %w", len(pubKeys), lastErr)
+}
+
 // VerifyTarballSHA256 checks that the SHA256 hash of data matches expectedHex.
 func VerifyTarballSHA256(data []byte, expectedHex string) error {
 	h := sha256.Sum256(data)

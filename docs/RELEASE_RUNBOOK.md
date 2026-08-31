@@ -20,9 +20,39 @@ mkdir -p ~/.config/boardripper
 minisign -G -p ~/.config/boardripper/release.pub -s ~/.config/boardripper/release.minisign
 ```
 
-Strong passphrase. Save it to 1Password. **Back up `release.minisign` to a second
-encrypted location** (1Password attachment + USB drive). Loss = no future updates
-for any existing install.
+Strong passphrase. Save it to 1Password. **Back up `release.minisign` itself to a
+second encrypted location** (1Password attachment + external drive) — not just the
+passphrase. The passphrase is a lock, not a seed: minisign generates the key from
+the OS RNG (`ed25519.GenerateKey`) and encrypts it with scrypt over a random salt
+stored *inside the key file*, so the passphrase alone reconstructs nothing.
+
+This exact loss happened on 2026-08-31: the passphrase survived in a backup, the
+key file did not, and every install shipped before the rotation was permanently
+cut off from automatic updates.
+
+### Rotating the signing key
+
+`release.pub.extra` lets a rotation ride the normal update path instead of
+stranding installs. One base64 key per line (`#` comments and blanks ignored);
+`release.sh` and `NASdeploy.sh` both read it and pass the contents as the
+`PUBKEYS` build-arg, which lands in `updater.PubKeys` alongside the primary
+`updater.PubKey`. `TrustedKeys()` merges both; `VerifyManifestAny` accepts a
+manifest that verifies under **any** of them.
+
+The overlap sequence:
+
+1. Generate the new keypair alongside the old one.
+2. Put the **new** key in `release.pub.extra`, keep signing with the **old** key.
+   Cut a release. Installs still trust only the old key, so they accept it — and
+   the image they install now trusts both.
+3. Once installs have taken that release, swap: sign with the **new** key and put
+   the **old** one in `release.pub.extra`. Installs from step 2 accept it.
+4. After the overlap window, delete `release.pub.extra` and cut a release signed
+   by the new key alone.
+
+Skipping step 2 is what makes a rotation manual: an install that trusts only the
+old key cannot verify anything signed by the new one, and the notice fields that
+would explain that live *inside* the signed manifest it just rejected.
 
 ### release.env
 
@@ -36,6 +66,9 @@ MINISIGN_PASSWORD=<minisign-key passphrase>
 EOF
 chmod 600 ~/.config/boardripper/release.env
 ```
+
+Optional, same directory: `release.pub.extra` — additional public keys this
+build should also trust. Present only during a rotation overlap window.
 
 **`MINISIGN_PASSWORD` makes `release.sh` non-interactive.** Without it, the
 script prompts for the passphrase via `/dev/tty` as before — fine for
@@ -242,7 +275,7 @@ in the release step.
   docker run -d --name boardripper [original flags] boardripper:previous
   ```
   The original flags (volumes, port bindings, env, restart policy) come from the user's `docker-compose.yml` — `docker compose up -d` against an unchanged compose file plus `image: boardripper:previous` will recreate the container correctly.
-- **Lost signing key:** no recovery for existing installs. Cut a new key, ship a new bridge release as a **manual** download (no auto-update path will work). Tell users to `docker pull` it.
+- **Lost signing key:** no recovery for installs that trust *only* the lost key — cut a new key, ship a bridge release as a **manual** download, tell users to `docker pull` it, and publish the notice on ripperdoc.de (the in-app update channel cannot carry it: `important_reason`/`notes_url` live inside the signed manifest, and `sources.go` verifies before unmarshalling). Installs built with the lost key listed in `PUBKEYS` alongside a surviving key are fine — sign with the survivor and they update normally. See **Rotating the signing key**.
 - **GHCR down:** clients fall through to ripperdoc.de tarball automatically. No action needed.
 - **ripperdoc.de down:** clients use GHCR. Restore the FTP host at leisure.
 - **Manifest counter regression:** if a release.sh failure leaves `.release-counter` ahead of the published manifest, the next run will skip a counter value (no harm; counter just needs to be monotonic, not gap-free). Note: clients track an independent counter at `/data/.update-counter`; if that file is wiped (e.g. user reset their data volume) the install is treated as a fresh first-install — counter check is skipped on the first manifest accepted. Freshness check still bites.
