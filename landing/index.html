@@ -126,12 +126,11 @@ docker compose up -d</pre>
 
   <p><b>Your data was never exposed.</b> The key signed release manifests only. It granted no access to any installation, and BoardRipper stores nothing remotely &mdash; your boards, schematics and library folders never leave your machine.</p>
 
-  <!-- After generating the new keypair, paste release.pub below and uncomment,
-       so anyone can verify future manifests independently:
-  <p><b>New release signing key:</b></p>
-<pre>RW...paste the base64 line from release.pub...</pre>
-  <p class="small">Verify a release with <code>minisign -V -p release.pub -m manifest.json</code>.</p>
-  -->
+  <p><b>New release signing key</b> <span class="small">(ID DC633F5E36B877E8)</span>:</p>
+<pre>untrusted comment: minisign public key DC633F5E36B877E8
+RWTod7g2Xj9j3OAs2gvd4lM3ySDPOlKw2sTpl384PdytAPx/N/qnee+B</pre>
+  <p class="small">Save that as <code>release.pub</code> and verify any release yourself with
+  <code>minisign -V -p release.pub -m manifest.json</code>.</p>
 </div>
 
 <p>BoardRipper opens twelve boardview formats and the matching PDF schematic, side by side, in a browser. Designed to be self-hosted on a NAS via Docker. Works on desktop and on touch screens.</p>
