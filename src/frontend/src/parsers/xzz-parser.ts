@@ -1352,6 +1352,23 @@ export function parseDiodeSection(raw: Uint8Array): Map<string, DiodeReading> {
   return out;
 }
 
+/**
+ * Normalise an XZZ arc sweep into `[0, 360)`.
+ *
+ * XZZ arcs are counter-clockwise: the format mirrors arc pairs about an axis by
+ * reflecting each angle **and** swapping start/end, so the stored order encodes
+ * a direction rather than an undirected chord. Lift negative sweeps by a full
+ * turn; never reduce a sweep that exceeds 180°, which would silently select the
+ * complementary arc.
+ */
+export function xzzArcSweepDeg(startDeg: number, endDeg: number): number {
+  // Modulo rather than a single lift: identical for every in-domain input
+  // (stored angles sit within one turn, so the difference is in (-360, 360)),
+  // but a malformed file cannot produce an over-wound arc. It never reduces a
+  // legitimate 180-360 sweep, which is the failure this fix exists to prevent.
+  return ((endDeg - startDeg) % 360 + 360) % 360;
+}
+
 export function parseXZZ(buffer: ArrayBuffer): BoardData {
   let raw = new Uint8Array(buffer);
 
@@ -1447,12 +1464,18 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         // XZZ_GLOBAL_SCALE (10000). The wrong divisor wrapped arcs through
         // Math.cos/sin to produce random geometry — the "star bursts" seen in
         // the rendered outline on iPhone files.
-        let startDeg = ri32(blockData, 16) / XZZ_SCALE;
-        let endDeg   = ri32(blockData, 20) / XZZ_SCALE;
-        if (startDeg > endDeg) [startDeg, endDeg] = [endDeg, startDeg];
-        if (endDeg - startDeg > 180) startDeg += 360;
+        const startDeg = ri32(blockData, 16) / XZZ_SCALE;
+        const endDeg   = ri32(blockData, 20) / XZZ_SCALE;
+        // The stored (start, end) pair names TWO arcs — the CCW one and the CW
+        // one — so normalising the sweep IS the choice between them, not angle
+        // hygiene. The previous swap+clamp implemented a shortest-arc rule and
+        // therefore replaced every arc sweeping past 180° with its complement:
+        // notches, slot mouths and re-entrant fillets rendered as outward lobes
+        // anchored at the same two points. Endpoints match under either
+        // reading, so only the midpoint discriminates. See issue #33.
+        const sweepDeg = xzzArcSweepDeg(startDeg, endDeg);
         const sRad = startDeg * Math.PI / 180;
-        const eRad = endDeg   * Math.PI / 180;
+        const eRad = (startDeg + sweepDeg) * Math.PI / 180;
         // Trace width + net index live past the core arc fields (blocks are
         // 32 bytes = 8×u32 on multi-layer files). Read when present.
         const width    = blockData.length >= 28 ? ru32(blockData, 24) / XZZ_SCALE : 0;

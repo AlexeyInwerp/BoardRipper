@@ -925,6 +925,19 @@ function drillFromPadstack(name: string): number {
   return m ? parseFloat(m[1]) : 10;
 }
 
+/**
+ * Normalise a GenCAD arc sweep into `[0, 2π)`.
+ *
+ * Lift negative sweeps by a full turn; never reduce one that exceeds π. See the
+ * comment in `tessellateArc` for why reducing selects the wrong arc.
+ */
+export function gencadArcSweepRad(startAngle: number, endAngle: number): number {
+  // See xzzArcSweepDeg: modulo is identical on the real domain (atan2 returns
+  // (-pi, pi], so the difference is in (-2pi, 2pi]) and cannot over-wind.
+  const TAU = 2 * Math.PI;
+  return ((endAngle - startAngle) % TAU + TAU) % TAU;
+}
+
 function tessellateArc(
   x1: number, y1: number, x2: number, y2: number,
   cx: number, cy: number,
@@ -940,10 +953,18 @@ function tessellateArc(
   const startAngle = Math.atan2(y1 - cy, x1 - cx);
   const endAngle = Math.atan2(y2 - cy, x2 - cx);
 
-  // GenCAD convention: shorter arc (CCW by default)
-  let sweep = endAngle - startAngle;
-  if (sweep > Math.PI) sweep -= 2 * Math.PI;
-  if (sweep < -Math.PI) sweep += 2 * Math.PI;
+  // GenCAD $ROUTES arcs are `ARC x1 y1 x2 y2 xc yc` — no radius, no direction
+  // column — so the endpoint pair alone names two candidate arcs and this
+  // normalisation picks one. Arcs are CCW: exporters emit a full circle as two
+  // endpoint-swapped 180° records, which tile the circle only when both are
+  // walked counter-clockwise.
+  //
+  // The previous ±π clamp was a shortest-arc rule and broke both cases: arcs
+  // sweeping past 180° drew as their complement (the widest, 350.9°, became a
+  // 9.1° sliver on the far side), and each circle's twin halves landed at +π
+  // and −π, so walking −π backwards retraced the same semicircle and the other
+  // half was never drawn. Lift negatives into [0, 2π); never reduce. See #33.
+  const sweep = gencadArcSweepRad(startAngle, endAngle);
 
   const steps = Math.max(2, Math.ceil(Math.abs(sweep) / (Math.PI / 18)));
   const dAngle = sweep / steps;

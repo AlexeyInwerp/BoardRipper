@@ -1,5 +1,35 @@
 # BoardRipper changelog
 
+## v0.36.1 — 2026-09-01
+
+Concave board features stop rendering inside-out. Reported in detail as #33 by
+Sean Johnson, whose write-up pinned both sites, the convention, and the blast
+radius — the fix below is his analysis applied.
+
+### Formats
+
+- **XZZ and GenCAD: arcs sweeping past 180° drew as their complement.** An arc
+  stored as centre + start/end angle names *two* arcs, the counter-clockwise one
+  and the clockwise one, and both share their endpoints exactly — so normalising
+  the sweep is not angle hygiene, it *is* the choice of which arc to draw. Both
+  parsers had independently reached the same wrong idiom, reducing the sweep
+  into ±180° (a shortest-arc rule) and thereby swapping every arc over 180° for
+  the other side of its circle. Every notch, slot mouth and re-entrant corner
+  fillet became an outward lobe of the same radius, anchored at the same two
+  points. The sweep is now lifted into `[0, 360)` instead.
+
+  GenCAD had a second symptom from the same line: exporters write a full circle
+  as two endpoint-swapped 180° records, which the old clamp left at `+π` and
+  `−π`, so walking the second one backwards retraced the first half and the
+  other side was never drawn. 3,038 such circles in one reference file alone.
+
+  Nothing that renders correctly today can move: the two rules differ *only* on
+  arcs whose true sweep reaches 180°, verified across 19,964 XZZ arcs and 37,586
+  GenCAD arcs with zero geometry changes below that threshold.
+
+  `PARSER_VERSION` is bumped, so cached boards re-parse rather than serving the
+  old geometry.
+
 ## v0.36.0 — 2026-08-31
 
 The release signing key was unfortunately lost and had to be reset. This release
