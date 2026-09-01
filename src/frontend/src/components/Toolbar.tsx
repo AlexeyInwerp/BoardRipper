@@ -135,6 +135,10 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
 
   const manifest = state.manifest;
   const isImportant = manifest?.important === true;
+  // A mirror is publishing a release this build cannot verify — almost always a
+  // rotated signing key, but indistinguishable from a hostile mirror, which is
+  // why nothing below is rendered from the manifest itself.
+  const unverified = state.signature_mismatch === true && !state.has_update;
   // Release notes for an available update, embedded in the signed manifest.
   // Empty (→ spoiler not shown) when the manifest carries no notes.
   const pendingNotes = (state.has_update && manifest?.notes) ? manifest.notes : '';
@@ -148,7 +152,7 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
     <div className="update-badge-wrap" ref={ref}>
       <button
         data-testid="update-badge"
-        className={`toolbar-btn toolbar-update-badge${state.has_update ? ' has-update' : ''}${isImportant ? ' is-important' : ''}${updating ? ' is-updating' : ''}`}
+        className={`toolbar-btn toolbar-update-badge${state.has_update ? ' has-update' : ''}${isImportant ? ' is-important' : ''}${unverified ? ' is-unverified' : ''}${updating ? ' is-updating' : ''}`}
         onClick={() => {
           // Mid-update the badge becomes a shortcut to the live progress
           // view: jump straight to the Debug tab instead of opening the
@@ -157,7 +161,7 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
           if (!open) updateStore.check();
           setOpen(v => !v);
         }}
-        title={updating ? 'Updating — see Debug tab' : state.has_update ? (isImportant ? `Important update: ${fmtVersion(state.latest_version)}` : `Update available: ${fmtVersion(state.latest_version)}`) : `${fmtVersion(state.current_version)} — click to check`}
+        title={updating ? 'Updating — see Debug tab' : unverified ? 'Update available — manual install required (signature not verifiable by this build)' : state.has_update ? (isImportant ? `Important update: ${fmtVersion(state.latest_version)}` : `Update available: ${fmtVersion(state.latest_version)}`) : `${fmtVersion(state.current_version)} — click to check`}
       >
         {updating ? 'Updating…' : state.has_update ? fmtVersion(state.latest_version) : fmtVersion(state.current_version)}
       </button>
@@ -197,6 +201,33 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
                   {e.message}
                 </div>
               ))}
+            </div>
+          )}
+
+          {unverified && (
+            <div className="update-dropdown-unverified" data-testid="update-unverified">
+              <p><b>Update available &mdash; manual install required</b></p>
+              <p>
+                A newer release is published, but this build cannot verify its
+                signature, so it will not install it automatically.
+              </p>
+              <p>
+                This normally means the release signing key has been rotated.
+                Rotating the key is a security measure, and your install only
+                trusts the key it was built with &mdash; that refusal is exactly
+                what stops anyone else pushing an update to it.
+              </p>
+              <p>To update, pull the new image yourself:</p>
+              <code>docker compose pull{'\n'}docker compose up -d</code>
+              <p>
+                The current signing key is published at{' '}
+                <a
+                  href="https://www.ripperdoc.de/boardripper/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >ripperdoc.de/boardripper</a>, so you can confirm the release is
+                the maintainer&rsquo;s before installing it.
+              </p>
             </div>
           )}
 

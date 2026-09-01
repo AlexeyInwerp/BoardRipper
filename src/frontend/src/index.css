@@ -536,6 +536,30 @@ body {
 .toolbar-update-badge.is-important:hover {
   background: #dc2626 !important;
 }
+.toolbar-update-badge.is-unverified {
+  background: #b45309 !important; /* amber — needs attention, not an error */
+}
+.toolbar-update-badge.is-unverified:hover {
+  background: #d97706 !important;
+}
+.update-dropdown-unverified {
+  border-left: 3px solid #b45309;
+  padding: 10px 12px;
+  margin: 8px 0 4px;
+  background: rgba(180, 83, 9, 0.08);
+}
+.update-dropdown-unverified p { margin: 0 0 8px; }
+.update-dropdown-unverified p:last-child { margin-bottom: 0; }
+.update-dropdown-unverified code {
+  display: block;
+  padding: 6px 8px;
+  margin: 6px 0;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 3px;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
 @keyframes update-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.75; }

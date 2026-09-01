@@ -1,6 +1,10 @@
 package updater
 
 import (
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"aead.dev/minisign"
@@ -86,5 +90,47 @@ func TestTrustedKeys_PrimaryComesFirst(t *testing.T) {
 	PubKey, PubKeys = "primary", "extra1,extra2"
 	if got := TrustedKeys(); got[0] != "primary" {
 		t.Errorf("primary key must be tried first, got %v", got)
+	}
+}
+
+// A mirror serving an unverifiable manifest must be distinguishable from a
+// mirror that is simply down — the UI says different things about each.
+func TestFetchFromSources_SignatureFailureIsDistinguishable(t *testing.T) {
+	pub, _, _ := minisign.GenerateKey(nil)
+	_, wrongPriv, _ := minisign.GenerateKey(nil)
+	body := []byte(`{"version":"v9.9.9","counter":999}`)
+	sig := minisign.Sign(wrongPriv, body)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".minisig") {
+			w.Write(sig)
+			return
+		}
+		w.Write(body)
+	}))
+	defer srv.Close()
+
+	_, err := FetchFromSourcesMulti([]string{srv.URL}, []string{pub.String()})
+	if err == nil {
+		t.Fatal("accepted a manifest signed by an untrusted key")
+	}
+	if !errors.Is(err, ErrSignatureMismatch) {
+		t.Errorf("signature failure not reported as ErrSignatureMismatch: %v", err)
+	}
+}
+
+func TestFetchFromSources_NetworkFailureIsNotSignatureMismatch(t *testing.T) {
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "nope", http.StatusServiceUnavailable)
+	}))
+	defer dead.Close()
+
+	pub, _, _ := minisign.GenerateKey(nil)
+	_, err := FetchFromSourcesMulti([]string{dead.URL}, []string{pub.String()})
+	if err == nil {
+		t.Fatal("expected an error from an unreachable source")
+	}
+	if errors.Is(err, ErrSignatureMismatch) {
+		t.Error("an unreachable mirror must not be reported as a signature mismatch")
 	}
 }

@@ -23,6 +23,21 @@ from being a one-way door.
   would explain the problem — `important_reason`, `notes_url` — live inside the
   signed manifest that the install is correctly refusing to read.
 
+- **An unverifiable update is now visible instead of silent.** Previously a
+  manifest that failed signature verification produced nothing in the UI at all:
+  the badge kept showing the installed version and the error went only to the
+  debug log, so a stranded install looked identical to an up-to-date one. The
+  badge now turns amber and the dropdown says an update exists, that this build
+  cannot verify it, and how to install it by hand — plus why the refusal is the
+  protection working rather than a fault.
+
+  Nothing from the unverified manifest is rendered. Its version, notes and
+  `important_reason` are exactly what a hostile mirror would choose, so only a
+  boolean crosses the trust boundary (`signature_mismatch`) and every word shown
+  is compiled into the build. A signature failure is also kept distinct from an
+  unreachable mirror (`ErrSignatureMismatch`), because those warrant different
+  advice.
+
 ### Notes for existing installs
 
 Installs shipped before this release trust only the lost key and cannot be

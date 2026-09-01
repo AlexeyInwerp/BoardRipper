@@ -99,6 +99,10 @@ type UpdateState struct {
 	Manifest       *Manifest  `json:"manifest,omitempty"`
 	Error          string     `json:"error,omitempty"`
 	DockerAvail    bool       `json:"docker_available"`
+	// SignatureMismatch is true when a mirror served a manifest this build
+	// cannot verify. Deliberately a bare bool: nothing from the unverified
+	// body may reach the UI, so the frontend renders only compiled-in text.
+	SignatureMismatch bool `json:"signature_mismatch,omitempty"`
 }
 
 // ProgressEntry is one line of update progress.
@@ -197,9 +201,13 @@ func (u *Updater) Check() (*UpdateState, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.state.CheckedAt = &now
+	u.state.SignatureMismatch = false
 	if err != nil {
 		u.state.Error = err.Error()
 		u.state.HasUpdate = false
+		// "A release exists that we cannot verify" is worth telling the user;
+		// "the mirror is down" is not, and must not look the same.
+		u.state.SignatureMismatch = errors.Is(err, ErrSignatureMismatch)
 		return &u.state, err
 	}
 	installedCtr := u.readInstalledCounter()

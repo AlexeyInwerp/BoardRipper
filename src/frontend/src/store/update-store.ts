@@ -91,6 +91,10 @@ type UpdateState = {
   manifest?: Manifest | null;
   docker_available: boolean;
   error?: string;
+  /** A mirror served a manifest this build cannot verify. Deliberately the only
+   *  thing that crosses over from an unverified manifest — never its version,
+   *  notes or reason, which a hostile mirror would control. */
+  signature_mismatch?: boolean;
 };
 
 type ProgressEntry = {

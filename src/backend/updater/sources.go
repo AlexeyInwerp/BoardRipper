@@ -12,6 +12,15 @@ import (
 
 const fetchTimeout = 30 * time.Second
 
+// ErrSignatureMismatch reports that a source served a manifest whose signature
+// verified under none of this build's trusted keys — as distinct from the
+// source being unreachable. The UI uses this to say "an update exists but this
+// build cannot verify it, install manually" WITHOUT echoing anything from the
+// unverified body, which is attacker-controlled by definition: its version
+// string, notes and important_reason are exactly what a hostile mirror would
+// choose. Only the fact of the mismatch crosses the trust boundary.
+var ErrSignatureMismatch = errors.New("manifest signature did not verify under any trusted key")
+
 // FetchFromSources walks sources in order; returns the first manifest whose
 // signature verifies under pubKeyStr. Errors from individual sources are
 // collected and returned only if all sources fail.
@@ -27,6 +36,7 @@ func FetchFromSourcesMulti(sources []string, pubKeys []string) (*Manifest, error
 	}
 	client := &http.Client{Timeout: fetchTimeout}
 	var errs []string
+	sigFailure := false
 	for _, base := range sources {
 		base = strings.TrimRight(base, "/")
 		body, sig, err := fetchManifestPair(client, base)
@@ -35,6 +45,9 @@ func FetchFromSourcesMulti(sources []string, pubKeys []string) (*Manifest, error
 			continue
 		}
 		if err := VerifyManifestAny(body, sig, pubKeys); err != nil {
+			// A manifest WAS served and it did not verify. That is a different
+			// situation from an unreachable mirror and is surfaced separately.
+			sigFailure = true
 			errs = append(errs, fmt.Sprintf("%s: signature: %v", base, err))
 			continue
 		}
@@ -44,6 +57,9 @@ func FetchFromSourcesMulti(sources []string, pubKeys []string) (*Manifest, error
 			continue
 		}
 		return &m, nil
+	}
+	if sigFailure {
+		return nil, fmt.Errorf("%w; sources: %s", ErrSignatureMismatch, strings.Join(errs, "; "))
 	}
 	return nil, fmt.Errorf("all sources failed: %s", strings.Join(errs, "; "))
 }
