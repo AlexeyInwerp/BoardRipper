@@ -69,6 +69,7 @@ in BoardRipper.
 - **Effect:** This puts both the choice and the legal posture of obtaining the key entirely on the end user. Users in jurisdictions where retrieving the key is restricted can decline and continue using BoardRipper's other ten formats normally.
 - **DES (FIPS PUB 46-3)** (used in `src/frontend/src/parsers/xzz-parser.ts`): standard FIPS lookup tables (IP, FP, S-boxes, P-box, expansion, PC-1, PC-2) are reproductions of the public specification; key schedule and round function written from the standard.
 - **GenCAD 1.4 specification** (used in `src/frontend/src/parsers/cad-parser.ts`): public interchange format specification.
+- **KiCad S-expression board file format** (used in `src/frontend/src/parsers/kicad-parser.ts`): the parser is an original TypeScript implementation written from KiCad's [public file-format documentation](https://dev-docs.kicad.org/en/file-formats/sexpr-pcb/) and validated against MIT-licensed public sample boards from [theacodes/kicanvas](https://github.com/theacodes/kicanvas). Unlike the Allegro and Altium parsers above, **no KiCad source code was transliterated** — a documented text format needs no reverse engineering. (BoardRipper is AGPL-3.0 regardless, on account of those two parsers.)
 
 ### Material Design Icons — `mdi:soldering-iron`
 - **License:** Apache 2.0
