@@ -10,9 +10,9 @@ A polished overview with screenshots lives at <https://www.ripperdoc.de/boardrip
 
 > **Discord:** <https://discord.gg/BYEkKTMNNY> — the RipperDoc server.
 >
-> Feature requests, format requests, and questions are welcome there just as much as in the
-> [issue tracker](https://github.com/AlexeyInwerp/BoardRipper/issues/new/choose) — use whichever you prefer.
-> It's also home to a small board-repair community, so a board that's fighting back is on topic too.
+> You can request features and tools there, or on
+> [GitHub](https://github.com/AlexeyInwerp/BoardRipper/issues/new/choose) — whichever you prefer.
+> There is also a small repair community on the server.
 
 ## Run it in your browser — no install
 
@@ -365,8 +365,8 @@ Treat that as you would any AI-assisted software: it works on the boards I've te
 
 ## Feedback
 
-- **Discord: [RipperDoc server](https://discord.gg/BYEkKTMNNY)** (**@inwerp**) — feature requests, format requests, quick questions about deployment or file formats, plus a small repair community.
-- Bugs and feature requests: [file an issue](https://github.com/AlexeyInwerp/BoardRipper/issues/new/choose) on GitHub, or bring it up on Discord — whichever you prefer.
+- Discord: **@inwerp** on the [RipperDoc server](https://discord.gg/BYEkKTMNNY) — feature requests, questions about deployment or file formats, and a small repair community.
+- Bugs and feature requests: [file an issue](https://github.com/AlexeyInwerp/BoardRipper/issues/new/choose) on GitHub, or ask on Discord.
 - Email: <mail@ripperdoc.de>.
 
 If BoardRipper saves you time, [buy me a coffee](https://buymeacoffee.com/inwerp).
