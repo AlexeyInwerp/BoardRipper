@@ -285,6 +285,94 @@ which is the model the renderer uses.
 normalised to `layers: []` ("through-hole, all layers"); blind/buried vias
 keep their explicit compact layer indices.
 
+### Zones → `Surface` (copper pours)
+
+```
+(zone (net 1) (net_name "GND") (layer "F.Cu") (priority 2)
+  (connect_pads yes (clearance 0))
+  (fill yes (thermal_gap 0.508) (thermal_bridge_width 0.508))
+  (polygon (pts (xy …) …))                       ← user-drawn boundary
+  (filled_polygon (layer "F.Cu") (pts (xy …) …))  ← computed fill, one per island
+  (filled_polygon (layer "F.Cu") (pts (xy …) …)))
+```
+
+KiCad stores the **computed** fill, already clipped for clearances, thermal
+reliefs and cutouts, so there is no fill algorithm to implement. Each
+`(filled_polygon)` island becomes one `Surface`.
+
+Three rules, each of which is a trap if got wrong:
+
+1. **Keepouts are not copper.** A zone carrying a `(keepout …)` child is a
+   DRC rule area — it says where copper may *not* go. It is skipped outright,
+   and the check runs *before* the unfilled-zone fallback below, because a
+   keepout is precisely the kind of zone that has no `(filled_polygon)`.
+   `tomu-fpga` contains exactly one, on `B.Cu`, and it is also the only zone
+   in either fixture with no computed fill — so a naive "fall back to
+   `(polygon)`" would paint one solid plane over the single region defined as
+   having no pour.
+2. **Never emit both.** When a zone has computed fills, its own `(polygon)`
+   boundary is not emitted; doing so would double-draw the pour at its
+   un-clipped extent.
+3. **The layer comes from the island, not the zone.** A zone may declare
+   `(layers F&B.Cu)` or `(layers In1.Cu In2.Cu)` and fill several layers from
+   one boundary — and `F&B.Cu` is a layer-*set* shorthand that names no
+   single layer. Every `(filled_polygon)` in both fixtures carries its own
+   `(layer …)`, which is what the parser reads, falling back to the zone's
+   only if absent.
+
+An unfilled non-keepout zone (drawn but never poured) falls back to its
+`(polygon)` boundary, expanded across the layers its `(layers …)` names — with
+`F&B.Cu` and `*.Cu` resolved as shorthands. That geometry *over-states* the
+copper, since no clearance has been subtracted, so it raises a `parserNotes`
+entry telling the user to re-run "Fill all zones" and re-export. **No fixture
+exercises this path** — after excluding the keepout, both fixtures are fully
+filled.
+
+#### Voids — the outline is already faithful, so `voids` stays unset
+
+`Surface.voids` exists, but KiCad hands us no hole list to put in it, so the
+parser never populates it. Fills are stored **fractured**
+(`SHAPE_POLY_SET::Fracture()`): every cutout — via clearance, thermal relief,
+pad keepout — is stitched into the outer boundary by a zero-width slit, so
+what the file contains is a set of *self-touching single rings*, not
+outer-ring-plus-holes.
+
+This was measured, not assumed. Three independent signatures agree:
+
+| Signature | starfish | tomu-fpga |
+|---|---|---|
+| Fill rings with a duplicated vertex (slit endpoints) | 11 of 125 | 3 of 30 |
+| Duplicated vertices / of those, backtracking edge pairs | 762 / 381 | 16 / 8 |
+| Rings winding **clockwise** (i.e. reversed inner rings) | 0 of 125 | 0 of 30 |
+
+Every duplicated vertex belongs to a backtracking pair — the walk goes out
+along the slit and straight back — and not one ring is reversed. If holes
+were stored as separate rings, the third row would be non-zero.
+
+The decisive check is behavioural rather than structural: **a via on a
+different net that reaches the fill's layer must sit in a clearance hole.**
+Under the even-odd rule — the rule the renderer's fill relies on, and the
+reason fracturing works at all — every such via must therefore test as
+*outside* the copper. Of **721 such vias on starfish and 275 on tomu-fpga,
+zero test as inside**. (Counting vias that do *not* reach the fill's layer
+gives 81 false hits on tomu-fpga, which is correct: a blind via stopping
+short of a layer legitimately passes over that layer's copper with no hole.)
+
+So the fractured ring is not a lossy approximation — it is the faithful
+representation, and it is also the one the renderer wants. `drawSurface` in
+`board-scene.ts` emits a single `moveTo`/`lineTo`/`closePath` sub-path and
+fills it; the slit's two coincident edges cancel, and the holes appear for
+free. Notably `board-scene` explicitly *refuses* to punch `Surface.voids` at
+all (earcut over ground planes with thousands of void rings regressed
+first-load badly on NM-G611 without a visible difference), so splitting these
+rings back into outer + voids would be work that produces a strictly worse
+input for the only consumer.
+
+Cost is modest: starfish's 125 surfaces carry 72,624 vertices and triangulate
+in ~70 ms (72,374 triangles — exactly `n − 2` per ring, confirming earcut
+digests each self-touching ring as one simple polygon); tomu-fpga's 30
+surfaces are 2,462 vertices and ~2 ms.
+
 ### Copper stack-up → `layerNames`
 
 Copper entries in the `(layers …)` block (`F.Cu`, `In*.Cu`, `B.Cu`) get a
@@ -300,7 +388,8 @@ so the descriptor leaves `hasLayers` unset.
 
 | Skipped                                   | Why                                                            |
 |-------------------------------------------|-----------------------------------------------------------------|
-| `(zone …)` copper pours                   | `BoardData.surfaces` support is a phase-2 item; zones also carry `(filled_polygon …)` blobs that dominate file size |
+| Keepout / rule-area zones                 | Not copper — see *Zones* above                                 |
+| Zone `(fill)` / `(connect_pads)` settings | Fill *parameters*; the computed result is already in `(filled_polygon)` |
 | Silkscreen / fab / courtyard graphics     | `BoardData.silkscreen` is a phase-2 item; the geometry walk already exists, only the layer filter and tagging are missing |
 | `(gr_text)`, `(fp_text)` other than reference/value | No text rendering in the board scene            |
 | `(dimension …)`                           | Drafting annotation, not board geometry                        |
@@ -335,12 +424,12 @@ Public MIT-licensed samples from
 gitignored `samples/kicad/` tree. `src/frontend/tests/kicad-parser.spec.ts`
 skips (rather than fails) when they are absent.
 
-| Fixture              | Parts | Pins | Nets | Outline pts | Traces | Vias | Pads |
-|----------------------|-------|------|------|-------------|--------|------|------|
-| `starfish.kicad_pcb` | 229   | 705  | 165  | 33          | 2197   | 413  | 711  |
-| `tomu-fpga.kicad_pcb`| 52    | 148  | 31   | 153         | 579    | 249  | 148  |
-| `dimensions.kicad_pcb` | —   | —    | —    | —           | —      | —    | —    |
-| `text.kicad_pcb`     | —     | —    | —    | —           | —      | —    | —    |
+| Fixture              | Parts | Pins | Nets | Outline pts | Traces | Vias | Pads | Surfaces |
+|----------------------|-------|------|------|-------------|--------|------|------|----------|
+| `starfish.kicad_pcb` | 229   | 705  | 165  | 33          | 2197   | 413  | 711  | 125      |
+| `tomu-fpga.kicad_pcb`| 52    | 148  | 31   | 153         | 579    | 249  | 148  | 30       |
+| `dimensions.kicad_pcb` | —   | —    | —    | —           | —      | —    | —    | —        |
+| `text.kicad_pcb`     | —     | —    | —    | —           | —      | —    | —    | —        |
 
 Reconciliation against raw record counts (the parser drops nothing silently):
 
@@ -349,6 +438,9 @@ Reconciliation against raw record counts (the parser drops nothing silently):
 - `tomu-fpga`: 55 `(footprint)` = 52 parts + 3 pad-less; 222 `(pad)` = 148
   emitted + 74 non-copper; 579 `(segment)` = 579 traces; 249 `(via)` = 249
   vias.
+- Zones: `starfish` 62 `(zone)` → 125 `(filled_polygon)` islands → 125
+  surfaces, no keepouts. `tomu-fpga` 24 `(zone)` = 23 filled (30 islands) + 1
+  keepout skipped → 30 surfaces.
 
 `starfish` also exercises the `(arc)` curved-track path (143 of them, sampled
 into the 2197 traces) and the four-arc rounded-rectangle `Edge.Cuts` outline.
@@ -357,9 +449,10 @@ into the 2197 traces) and the four-arc rounded-rectangle `Edge.Cuts` outline.
 
 ## Phase 2 candidates
 
-- `(zone …)` → `BoardData.surfaces` (copper pours), which would also want the
-  `(filled_polygon …)` fast path rather than re-deriving fills.
 - Silkscreen / fab outlines → `BoardData.silkscreen` + `hasSilkscreen`.
+- A fixture with an unfilled (but non-keepout) copper zone, to exercise the
+  `(polygon)`-boundary fallback and its layer-shorthand expansion against
+  real data.
 - `custom` pad `(primitives …)` → `PadShape: 'poly'` via `padPolygon`.
 - A fixture that actually exercises the legacy `(module …)` + centre/angle arc
   path, so the one unmeasured convention in this parser can be pinned down.
