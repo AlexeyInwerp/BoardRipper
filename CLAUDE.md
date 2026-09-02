@@ -39,6 +39,7 @@ are MIT/Apache-2.0/BSD.
   - v15.x (magic `0x0012xxxx`) — added in v0.17.0 via blind RE; ~99% net coverage on 15.5.7 corpus, partial on 15.5.2. Spec: `docs/formats/ALLEGRO_V15_FORMAT.md`
 - **ALTIUM_PCB** — Altium Designer / Circuit Maker / Circuit Studio binary `.PcbDoc` + PCB ASCII Version 5.0 text variant. CFB container (Designer 6.0+, 2005+). Phase 1: parts/pins/nets/outline. Spec: `docs/formats/ALTIUM_PCB_FORMAT.md`
 - **KICAD** — KiCad `.kicad_pcb` (S-expression, KiCad 4–9). The only *openly specified* format we support, so the parser is an original implementation from KiCad's public docs, not a transliteration. Self-contained ~70-line tokenizer (`parseSExpr`, no deps, Node + browser); footprints→parts, pads→pins+pads, Edge.Cuts→outline, `(segment)`/`(arc)`→traces, `(via)`→vias. **Y is already down** so `flipY` stays false — unlike GenCAD/Allegro/XZZ/TVW. Angles are CCW-*as-displayed* over a Y-down frame, i.e. negative in raw coords; both the rotation sign and the "back-side footprints are already mirrored in the file" rule were settled empirically (place each pad, then require a track endpoint at that spot to carry that pad's net id — a position-only check can't tell the conventions apart on symmetric 2-pin chips). `Part.angleDeg`/`Pad.angleDeg` carry the raw-frame angle the renderer consumes; `meta.angleDeg` keeps the as-authored value for the Info panel. `gr_arc` stores `(start)(mid)(end)` — a real point ON the arc — so it is unambiguous and there is deliberately **no** shortest-arc normalisation (that idiom is issue #33, which bit `xzzArcSweepDeg` and `gencadArcSweepRad`). Skipped in phase 1: zones/copper pours, silkscreen, text, dimensions, custom-pad primitives. Spec: `docs/formats/KICAD_PCB_FORMAT.md`
+- **EAGLE_BRD** — Autodesk/CadSoft EAGLE 6.0+ XML `.brd` (third `.brd` claimant; XML sniff is disjoint from Apple BRD's and Allegro's binary magics, and it registers **after** Allegro so the extension-only fallback is unchanged). Pre-6.0 binary `.brd` is out of scope and rejected with a "re-save from EAGLE 6+" message. The format's whole difficulty is **indirection**: pin positions are not stored — `<element>` places a `<package>` by name and each pin is `package pad coords → R(a)·M → +(x,y)`, where `rot="[S][M]R<deg>"` mirrors across the local Y axis (→ bottom side) *before* rotating CCW; nets join by `(element, pad)` **name** via `<contactref>`, never by coordinate. Coordinates are always millimetres regardless of grid unit. Board outline is layer 20, searched in `<plain>` **and** inside placed packages (carrier/shield footprints often own the whole edge). `<wire curve="…">` is a signed CCW sweep and is used verbatim — never normalised to a shortest arc (issue #33). Verified by a routing oracle: on the fully-routed fixtures 100% of pins land exactly on a trace endpoint of their own net. Spec: `docs/formats/EAGLE_BRD_FORMAT.md`
 
 ## Project Structure
 ```
@@ -65,6 +66,7 @@ Boardviewer/
 │   │   ├── ALLEGRO_V15_FORMAT.md # Cadence Allegro v15.x BRD (RE'd in v0.17.0)
 │   │   ├── ALTIUM_PCB_FORMAT.md  # Altium Designer .PcbDoc (binary CFB + ASCII v5.0)
 │   │   └── KICAD_PCB_FORMAT.md   # KiCad .kicad_pcb (S-expression, KiCad 4–9)
+│   │   └── EAGLE_BRD_FORMAT.md   # Autodesk/CadSoft EAGLE 6.0+ XML .brd
 │   ├── PDF_VIEWER.md             # PDF render-pipeline architecture
 │   └── RELEASE_RUNBOOK.md        # Maintainer release-cutting procedure
 ├── samples/                     # Local-only board fixtures (not redistributed)
@@ -74,7 +76,7 @@ Boardviewer/
     ├── frontend/                # React + PixiJS SPA
     │   ├── tests/               # Playwright E2E specs
     │   └── src/
-    │       ├── parsers/         # Format parsers (pure TS functions, 12 formats)
+    │       ├── parsers/         # Format parsers (pure TS functions, 15 registered formats)
     │       │   └── allegro/     # Allegro v15.x + v16/v17 (split families share types)
     │       ├── renderer/        # BoardRenderer, board-scene (shared), mockup-data
     │       ├── pdf/             # PDF glyph extraction & overlay utilities

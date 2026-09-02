@@ -9,6 +9,7 @@ import { MentorNeutralFormat } from './mentor-neutral-format';
 import { XZZFormat } from './xzz-format';
 import { TVWFormat } from './tvw-format';
 import { AllegroBRDFormat } from './allegro-brd-format';
+import { EagleBRDFormat } from './eagle-format';
 import { BDVFormat } from './bdv-format';
 import { BDVAscFormat } from './bdv-asc-format';
 import { AltiumPcbFormat } from './altium/altium-pcb-format';
@@ -21,6 +22,9 @@ registerFormat(BVR3Format);
 registerFormat(BDVAscFormat);       // Before BDV — obfuscated signature is exact, safe to test first
 registerFormat(BDVFormat);          // Before Allegro/BRD — plain-text "BRDOUT:" detection is unambiguous
 registerFormat(AllegroBRDFormat);  // Before BRD — both use .brd, content detection differentiates
+registerFormat(EagleBRDFormat);     // Third .brd claimant — XML sniff, disjoint from Allegro's and BRD's
+                                    // binary magics. Kept AFTER Allegro so the extension-only fallback
+                                    // for an unrecognised .brd still lands on Allegro, as it always has.
 registerFormat(BRDFormat);
 registerFormat(FZFormat);
 registerFormat(CAEFormat);

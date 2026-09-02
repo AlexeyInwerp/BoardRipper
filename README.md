@@ -8,6 +8,12 @@ A polished overview with screenshots lives at <https://www.ripperdoc.de/boardrip
 
 > **Bring your own files.** BoardRipper is the viewer only — it does not ship with any boardview files, schematics, or PDFs. The bundled board database is reference metadata (board numbers and device models), no copyrighted content.
 
+> **Discord:** <https://discord.gg/BYEkKTMNNY> — the RipperDoc server.
+>
+> Feature requests, format requests, and questions are welcome there just as much as in the
+> [issue tracker](https://github.com/AlexeyInwerp/BoardRipper/issues/new/choose) — use whichever you prefer.
+> It's also home to a small board-repair community, so a board that's fighting back is on topic too.
+
 ## Run it in your browser — no install
 
 Besides the Docker build there's a **lite build**: the full viewer/inspector running entirely client-side, no backend. Open your own boardview files and PDFs locally — nothing is uploaded, nothing is stored server-side. There's no shared library, board database, or self-update (those need the backend), but all rendering, inspection, net-highlight, multi-layer, themes, and PDF viewing work.
@@ -359,8 +365,8 @@ Treat that as you would any AI-assisted software: it works on the boards I've te
 
 ## Feedback
 
-- Discord: **@inwerp** on the [All Things Repair](https://discord.gg/BYEkKTMNNY) server.
+- **Discord: [RipperDoc server](https://discord.gg/BYEkKTMNNY)** (**@inwerp**) — feature requests, format requests, quick questions about deployment or file formats, plus a small repair community.
+- Bugs and feature requests: [file an issue](https://github.com/AlexeyInwerp/BoardRipper/issues/new/choose) on GitHub, or bring it up on Discord — whichever you prefer.
 - Email: <mail@ripperdoc.de>.
-- Bugs and feature requests: file an issue on GitHub, or reach out via Discord / email.
 
 If BoardRipper saves you time, [buy me a coffee](https://buymeacoffee.com/inwerp).

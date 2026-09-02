@@ -113,5 +113,7 @@ is a tools project for a niche audience — that's hopefully never needed.
 
 ## Questions
 
-Discord: **@inwerp** on the [All Things Repair](https://discord.gg/BYEkKTMNNY)
-server, or [mail@ripperdoc.de](mailto:mail@ripperdoc.de).
+Discord: **@inwerp** on the [RipperDoc server](https://discord.gg/BYEkKTMNNY) —
+the quickest way to get an answer, and where feature and format requests are
+just as welcome as in the issue tracker. There's a small repair community on
+there too. Otherwise: [mail@ripperdoc.de](mailto:mail@ripperdoc.de).
