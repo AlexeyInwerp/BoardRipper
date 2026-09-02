@@ -14,6 +14,30 @@
 
 ---
 
+## Outline contours
+
+A board outline is normally **several closed contours** — the perimeter plus every
+slot, milled window and castellation — all drawn on `Edge.Cuts` and stored in
+arbitrary order and direction. The parser chains them by nearest endpoint with a
+**5 mil break threshold**: when the nearest unused segment is farther than that,
+the contour has ended, a `NaN` pen-up sentinel is emitted and the next contour
+starts. `drawOutline` already splits sub-paths on `NaN`.
+
+Without the threshold every contour is welded to the next by a false edge leaping
+across the board (reported as "vertex 114 is next to 152").
+
+The threshold is chosen on the join error, not on the distance between output
+points — output gaps are segment *lengths*, and a long real edge is
+indistinguishable from a false one. starfish's four 3543 mil steps are the sides
+of a 90 mm panel joined by corner arcs, a single unbroken contour. On tomu-fpga,
+84 of 88 joins measure under 0.5 mil while the genuine contour boundaries are
+27.8-131 mil, so 5 mil sits in a wide empty band and also absorbs any endpoint
+drift from arc tessellation.
+
+Result: tomu-fpga yields 2 contours (114 + 40 points) and starfish 1, each
+closing on itself to 0.00 mil.
+
+
 ## Overview
 
 A `.kicad_pcb` file is a single S-expression document, plain UTF-8 text, no

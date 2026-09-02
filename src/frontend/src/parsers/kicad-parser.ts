@@ -911,7 +911,21 @@ export function parseKiCadPCB(buffer: ArrayBuffer): BoardData {
   }
 
   // --- assembly -----------------------------------------------------------
-  const outline = outlineSegments.length > 0 ? chainSegments(outlineSegments) : [];
+  // A KiCad board outline is normally SEVERAL closed contours: the perimeter
+  // plus every slot, milled window and castellation, all on Edge.Cuts and
+  // stored in arbitrary order. Chained without a break threshold they weld into
+  // one run with a false edge leaping from each contour to the next — the
+  // reported "vertex 114 next to 152" artefact.
+  //
+  // 5 mil (0.127 mm) sits in a wide empty band. Real joins are exact: KiCad
+  // writes the shared endpoint twice, so the error is float noise, and 84 of
+  // tomu-fpga's 88 joins measure under 0.5 mil. The genuine contour boundaries
+  // there are 27.8-131 mil. The margin also absorbs any endpoint drift from
+  // arc tessellation, while staying far below the distance separating any real
+  // cutout from the perimeter.
+  const outline = outlineSegments.length > 0
+    ? chainSegments(outlineSegments, { breakDist: 5 })
+    : [];
 
   const pinPoints: Point[] = [];
   for (const p of parts) for (const pin of p.pins) pinPoints.push(pin.position);

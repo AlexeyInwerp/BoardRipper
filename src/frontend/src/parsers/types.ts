@@ -1179,8 +1179,35 @@ export function generateSyntheticOutline(points: Point[], margin = 20): Point[] 
  * Each segment is a pair of points [start, end]. The algorithm picks the closest
  * unvisited segment endpoint to the current chain tail and appends the far endpoint.
  */
-export function chainSegments(segments: Array<[Point, Point]>): Point[] {
+export function chainSegments(
+  segments: Array<[Point, Point]>,
+  opts?: { breakDist?: number },
+): Point[] {
   if (segments.length === 0) return [];
+
+  // `breakDist` is the largest join error still treated as "these two segments
+  // are the same contour". Default Infinity keeps the historical behaviour:
+  // chain everything into one run, whatever the gap.
+  //
+  // That default is wrong for any board with cutouts, and knowingly so. A board
+  // outline is usually SEVERAL closed contours — perimeter plus slots, milled
+  // windows, castellations — and greedy nearest-endpoint chaining welds them
+  // into one run, inserting a false edge from the end of each contour to the
+  // start of the next. On tomu-fpga.kicad_pcb the join errors are sharply
+  // bimodal: 84 of 88 are under 0.5 mil (real joins, endpoints written exactly)
+  // and 4 are 27.8-131 mil (the contour boundaries). Passing a breakDist
+  // anywhere in that gap separates them exactly.
+  //
+  // A break emits a NaN point, which is the pen-up sentinel `drawOutline`
+  // already understands — it splits sub-paths on NaN, measures the largest one,
+  // and skips the path fill when the outline is fragmented. So callers opting
+  // in get correct geometry with no renderer change.
+  //
+  // Left opt-in rather than made the default because bvr3 and xzz also call
+  // this, and xzz feeds the result into fold-axis detection and multi-board
+  // splitting; silently introducing NaNs there could change boards that render
+  // correctly today. Those two should be evaluated on their own fixtures.
+  const breakDist = opts?.breakDist ?? Infinity;
 
   const used = new Uint8Array(segments.length);
   const chain: Point[] = [];
@@ -1205,6 +1232,15 @@ export function chainSegments(segments: Array<[Point, Point]>): Point[] {
 
     if (bestIdx < 0) break;
     used[bestIdx] = 1;
+
+    if (bestDist > breakDist) {
+      // Contour ended. Lift the pen and start the next one with BOTH of its
+      // endpoints — the new sub-path has no tail to join onto.
+      chain.push({ x: NaN, y: NaN });
+      chain.push(segments[bestIdx][0], segments[bestIdx][1]);
+      continue;
+    }
+
     // Append the far endpoint (near endpoint ≈ current chain tail)
     chain.push(bestFlip ? segments[bestIdx][0] : segments[bestIdx][1]);
   }

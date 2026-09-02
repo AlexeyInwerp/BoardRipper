@@ -585,3 +585,56 @@ test.describe('KiCad parser — pad-less documents', () => {
       .toThrow(/does not contain a \(kicad_pcb/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Outline contours (regression)
+//
+// A board outline is normally several closed contours — perimeter plus slots
+// and milled windows — stored on Edge.Cuts in arbitrary order. Greedy
+// nearest-endpoint chaining welds them into one run, adding a false edge from
+// the end of each contour to the start of the next: reported in the field as
+// "vertex 114 is next to 152", a segment leaping across the board.
+//
+// The discriminator is the JOIN ERROR, not the gap between output points —
+// output gaps are segment lengths, and a long real edge is indistinguishable
+// from a false one (starfish's four 3543 mil edges are the sides of a 90 mm
+// panel, not breaks). On tomu-fpga 84 of 88 joins measure under 0.5 mil and the
+// genuine boundaries are 27.8-131 mil, so `breakDist: 5` separates them.
+// ---------------------------------------------------------------------------
+
+/** Split an outline on its NaN pen-up sentinels — the convention drawOutline reads. */
+function outlineContours(outline: Array<{ x: number; y: number }>) {
+  const loops: Array<Array<{ x: number; y: number }>> = [];
+  let cur: Array<{ x: number; y: number }> = [];
+  for (const p of outline) {
+    if (Number.isNaN(p.x) || Number.isNaN(p.y)) { if (cur.length) loops.push(cur); cur = []; }
+    else cur.push(p);
+  }
+  if (cur.length) loops.push(cur);
+  return loops;
+}
+
+for (const [label, fixture] of [['tomu-fpga', TOMU], ['starfish', STARFISH]] as const) {
+  test.describe(`KiCad outline contours — ${label}`, () => {
+    test('every contour closes on itself', async () => {
+      const loops = outlineContours((await parseFixture(fixture)).outline);
+      expect(loops.length).toBeGreaterThan(0);
+      const open = loops
+        .map((L, i) => ({ i, n: L.length, err: +Math.hypot(L[0].x - L[L.length - 1].x, L[0].y - L[L.length - 1].y).toFixed(3) }))
+        .filter(c => c.err > 1);
+      expect(open, `contours that do not close: ${JSON.stringify(open)}`).toEqual([]);
+    });
+
+    test('no contour is a degenerate stub', async () => {
+      const loops = outlineContours((await parseFixture(fixture)).outline);
+      for (const L of loops) expect(L.length).toBeGreaterThanOrEqual(3);
+    });
+  });
+}
+
+test('tomu-fpga separates its perimeter from its internal cutout', async () => {
+  // Two closed contours, not one welded run. If chainSegments ever loses its
+  // break threshold this collapses to 1 and the false edge returns.
+  const loops = outlineContours((await parseFixture(TOMU)).outline);
+  expect(loops.length).toBeGreaterThanOrEqual(2);
+});
