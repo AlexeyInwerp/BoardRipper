@@ -12,6 +12,7 @@ import { AllegroBRDFormat } from './allegro-brd-format';
 import { BDVFormat } from './bdv-format';
 import { BDVAscFormat } from './bdv-asc-format';
 import { AltiumPcbFormat } from './altium/altium-pcb-format';
+import { KiCadPcbFormat } from './kicad-format';
 
 // Register all known formats in detection-priority order.
 // Content-based detection runs in this order; the first match wins.
@@ -28,6 +29,7 @@ registerFormat(CADFormat);
 registerFormat(XZZFormat);
 registerFormat(TVWFormat);
 registerFormat(AltiumPcbFormat);    // .PcbDoc/.CMPcbDoc/.CSPcbDoc — CFB magic, no extension clash
+registerFormat(KiCadPcbFormat);     // .kicad_pcb — "(kicad_pcb" root keyword, no extension clash
 
 export type { BoardData, BoardRevision, BomAlternateCluster, GhostComponent, Part, Pin, Net, Point, BBox, Pad, SilkscreenPath, Trace, Via, DiodeReading, DiodeReferenceChannel, DiodeSource } from './types';
 export { computeBBox, buildNets, bomReasonLabel } from './types';
