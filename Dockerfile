@@ -36,7 +36,7 @@ ARG APP_VERSION=dev
 ARG PUBKEY=""
 # Extra trusted signing keys (comma-separated) for a rotation overlap window.
 ARG PUBKEYS=""
-ARG SOURCES="https://ghcr.io/alexeyinwerp/boardripper,https://www.ripperdoc.de/boardripper"
+ARG SOURCES="https://www.ripperdoc.de/boardripper,https://github.com/AlexeyInwerp/BoardRipper/releases/latest/download"
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build \
     -ldflags="-s -w \
         -X boardripper/updater.Version=${APP_VERSION} \

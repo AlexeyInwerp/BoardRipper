@@ -1,5 +1,29 @@
 # BoardRipper changelog
 
+## v0.36.2 — 2026-09-02
+
+### Updates
+
+- **Update checks fall back to GitHub when ripperdoc.de is unreachable.** The
+  manifest had exactly one source, so any outage of that host stopped update
+  checks outright — and, until v0.36.0, stopped them *silently*. Observed on
+  2026-09-01: an install could not open a TCP connection to ripperdoc.de on any
+  port while github.com and ghcr.io answered normally from the same host.
+
+  Releases now publish `manifest.json`, its signature and the tarball as GitHub
+  Release assets, and builds carry a second source pointing at the stable
+  `releases/latest/download` alias. Whichever source answers first with a
+  signature that verifies wins.
+
+  This grants GitHub no additional trust. The manifest is signed either way, so
+  a tampered copy from either host fails `VerifyManifestAny` identically — the
+  fallback adds availability, not authority. GHCR is deliberately not a manifest
+  source: it is an OCI registry and cannot serve `/manifest.json`, though it
+  remains where the image is pulled from by digest.
+
+  The tarball now also lists the GitHub asset in `url_mirrors`, a field `Apply`
+  has always walked but which releases left empty.
+
 ## v0.36.1 — 2026-09-01
 
 Concave board features stop rendering inside-out. Reported in detail as #33 by

@@ -259,7 +259,14 @@ if [ "$IS_DESKTOP_ONLY" = "false" ]; then
   # also listed `https://ghcr.io/alexeyinwerp/boardripper` as a Check() source;
   # every install ever shipped wasted one HTTP request on a guaranteed
   # 405 there before falling through to ripperdoc.de.
-  SOURCES_CSV="https://www.ripperdoc.de/boardripper"
+  # Two manifest sources, tried in order by FetchFromSourcesMulti (first whose
+  # signature verifies wins). ripperdoc.de is canonical; the GitHub Release
+  # "latest/download" path is a stable alias that always resolves to the newest
+  # non-prerelease assets, so it needs no per-version wiring. The fallback earns
+  # its keep: on 2026-09-01 the NAS install could not open a TCP connection to
+  # ripperdoc.de at all (github.com and ghcr.io were fine from the same host),
+  # which with a single source meant no update checks could succeed.
+  SOURCES_CSV="https://www.ripperdoc.de/boardripper,https://github.com/AlexeyInwerp/BoardRipper/releases/latest/download"
 
   if [ "$DRY_RUN" != "true" ]; then
     echo ">>> Logging into GHCR"
@@ -384,7 +391,9 @@ if [ "$IS_DESKTOP_ONLY" = "false" ]; then
   "notes": $(jq -Rs . < "$NOTES_FILE"),
   "tarball": {
     "url_primary": "https://www.ripperdoc.de/boardripper/releases/boardripper-$VERSION.tar.gz",
-    "url_mirrors": [],
+    "url_mirrors": [
+      "https://github.com/AlexeyInwerp/BoardRipper/releases/download/$VERSION/boardripper-$VERSION.tar.gz"
+    ],
     "sha256": "$TARBALL_SHA",
     "size_bytes": $TARBALL_SIZE
   },
@@ -396,7 +405,8 @@ if [ "$IS_DESKTOP_ONLY" = "false" ]; then
   "min_supported_version": "v0.8.0",
   "orchestrator_image_digest": "$ORCHESTRATOR_REF",
   "source_list_next": [
-    "https://www.ripperdoc.de/boardripper"
+    "https://www.ripperdoc.de/boardripper",
+    "https://github.com/AlexeyInwerp/BoardRipper/releases/latest/download"
   ]
 }
 EOF
@@ -671,6 +681,13 @@ else
   fi
   if [ ${#DESKTOP_ZIPS[@]} -gt 0 ]; then
     GH_ARGS+=("${DESKTOP_ZIPS[@]}")
+  fi
+  # The update fallback source is this release's assets. Without these three
+  # files the GitHub entry in SOURCES_CSV 404s and the fallback is decorative.
+  # The manifest is signed, so serving it from GitHub grants GitHub no trust:
+  # a tampered copy fails VerifyManifestAny exactly as a tampered mirror would.
+  if [ "$IS_DESKTOP_ONLY" = "false" ]; then
+    GH_ARGS+=(out/manifest.json out/manifest.json.minisig "$TARBALL")
   fi
   gh release create "$VERSION" "${GH_ARGS[@]}"
   GH_RELEASE_URL="https://github.com/AlexeyInwerp/BoardRipper/releases/tag/$VERSION"
