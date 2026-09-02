@@ -31,6 +31,18 @@ function pinCount(board: BoardData): number {
   return board.parts.reduce((n, p) => n + p.pins.length, 0);
 }
 
+/** Even-odd point-in-polygon. A KiCad fill ring is self-touching (holes are
+ *  stitched in by zero-width slits), and this is the rule under which those
+ *  slits read as holes — the same rule the renderer's fill relies on. */
+function insidePolygon(poly: { x: number; y: number }[], x: number, y: number): boolean {
+  let c = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j];
+    if ((a.y > y) !== (b.y > y) && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) c = !c;
+  }
+  return c;
+}
+
 /** Every number in a bbox must be finite and the box must have real extent. */
 function expectNonDegenerateBounds(b: BoardData['bounds']) {
   for (const v of [b.minX, b.minY, b.maxX, b.maxY]) expect(Number.isFinite(v)).toBe(true);
@@ -395,6 +407,159 @@ test.describe('KiCad parser — tomu-fpga.kicad_pcb', () => {
     expect(b.outline).toEqual(a.outline);
     expect(b.bounds).toEqual(a.bounds);
     expect([...b.nets.keys()].sort()).toEqual([...a.nets.keys()].sort());
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Zones → copper-fill surfaces
+// ═══════════════════════════════════════════════════════════════════════════
+
+test.describe('KiCad zones → surfaces', () => {
+  test('starfish: one surface per filled_polygon island', async () => {
+    const board = await parseFixture(STARFISH);
+    // 62 (zone) records expanding to 125 (filled_polygon) islands. The zone's
+    // own (polygon) boundary must never be emitted alongside a computed fill,
+    // or the pour would be double-drawn at its un-clipped extent.
+    expect(board.surfaces?.length).toBe(125);
+  });
+
+  test('tomu: keepout zones are not copper and must not become surfaces', async () => {
+    const board = await parseFixture(TOMU);
+    // 24 (zone) records: 23 filled (30 islands) + 1 keepout. The keepout is
+    // also the only zone with no (filled_polygon), so a naive "fall back to
+    // (polygon)" would have emitted exactly one bogus B.Cu plane over the
+    // area that is defined as having NO copper pour.
+    expect(board.surfaces?.length).toBe(30);
+    const bogus = board.surfaces!.filter(s => !s.net && (s.layer ?? 0) === 3);
+    expect(bogus.length).toBe(0);
+    // Nothing here is unfilled, so no approximation note is raised.
+    expect(board.parserNotes?.some(n => /no computed fill/i.test(n))).toBe(false);
+  });
+
+  for (const [label, file, count] of [['starfish', STARFISH, 125], ['tomu-fpga', TOMU, 30]] as const) {
+    test(`${label}: every surface polygon is finite, non-degenerate and on a real layer`, async () => {
+      const board = await parseFixture(file);
+      const surfaces = board.surfaces!;
+      expect(surfaces.length).toBe(count);
+      // starfish carries 72k fill vertices, so the per-vertex checks are
+      // aggregated into counters and asserted once — 145k individual
+      // expect() calls take minutes on their matcher overhead alone.
+      const nLayers = board.layerNames!.length;
+      let vertices = 0, nonFinite = 0, tooFewPoints = 0, collapsed = 0, badLayer = 0;
+      for (const s of surfaces) {
+        if (s.polygon.length < 3) tooFewPoints++;
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const p of s.polygon) {
+          vertices++;
+          if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) { nonFinite++; continue; }
+          if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+          if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+        }
+        if (!(maxX > minX) || !(maxY > minY)) collapsed++;
+        if (s.layer === undefined || s.layer < 0 || s.layer >= nLayers) badLayer++;
+      }
+      expect({ tooFewPoints, nonFinite, collapsed, badLayer })
+        .toEqual({ tooFewPoints: 0, nonFinite: 0, collapsed: 0, badLayer: 0 });
+      expect(vertices).toBeGreaterThan(surfaces.length * 3);
+    });
+
+    test(`${label}: surface nets resolve to real nets on the board`, async () => {
+      const board = await parseFixture(file);
+      for (const s of board.surfaces!) {
+        if (!s.net) continue;
+        expect(s.net.startsWith('/')).toBe(false);
+        expect(board.nets.has(s.net)).toBe(true);
+      }
+      // Ground pours are the whole point — at least one must be present.
+      expect(board.surfaces!.some(s => s.net === 'GND')).toBe(true);
+    });
+  }
+
+  test('a fill island takes its layer from the island, not the zone', async () => {
+    const board = await parseFixture(STARFISH);
+    const byLayer = new Map<number, number>();
+    for (const s of board.surfaces!) byLayer.set(s.layer!, (byLayer.get(s.layer!) ?? 0) + 1);
+    // F.Cu 105, In1.Cu 1, In2.Cu 1, B.Cu 18 — inner-layer fills exist, and
+    // they can only be reached by reading each (filled_polygon)'s own layer:
+    // their parent zones declare `(layers F&B.Cu)` / `(layers In1.Cu In2.Cu)`,
+    // and `F&B.Cu` is a layer-SET shorthand that names no single layer.
+    expect([...byLayer.keys()].sort((a, b) => a - b)).toEqual([0, 1, 2, 3]);
+    expect(byLayer.get(1)).toBe(1);
+    expect(byLayer.get(2)).toBe(1);
+    expect(byLayer.get(0)! + byLayer.get(3)!).toBe(123);
+  });
+
+  test('voids: KiCad stitches holes into the outline, so `voids` stays unset', async () => {
+    const board = await parseFixture(STARFISH);
+    // KiCad stores fills fractured (SHAPE_POLY_SET::Fracture()) — there is no
+    // hole list in the file to populate Surface.voids with.
+    for (const s of board.surfaces!) expect(s.voids).toBeUndefined();
+
+    // The fracture signature: some rings are self-touching (a vertex visited
+    // twice, where the walk goes out along the slit and straight back)…
+    let ringsWithDuplicateVertex = 0;
+    let allCounterClockwise = true;
+    for (const s of board.surfaces!) {
+      const seen = new Set<string>();
+      let dup = false;
+      for (const p of s.polygon) {
+        const k = `${p.x.toFixed(4)},${p.y.toFixed(4)}`;
+        if (seen.has(k)) dup = true;
+        seen.add(k);
+      }
+      if (dup) ringsWithDuplicateVertex++;
+      let a2 = 0;
+      for (let i = 0; i < s.polygon.length; i++) {
+        const p = s.polygon[i], q = s.polygon[(i + 1) % s.polygon.length];
+        a2 += p.x * q.y - q.x * p.y;
+      }
+      if (a2 <= 0) allCounterClockwise = false;
+    }
+    expect(ringsWithDuplicateVertex).toBeGreaterThan(0);
+    // …and crucially NO ring is a reversed inner ring. If holes were stored
+    // as separate rings we would see clockwise ones here.
+    expect(allCounterClockwise).toBe(true);
+  });
+
+  for (const [label, file] of [['starfish', STARFISH], ['tomu-fpga', TOMU]] as const) {
+    test(`${label}: the stitched slits genuinely read as holes`, async () => {
+      const board = await parseFixture(file);
+      // A via on a *different* net that reaches the fill's layer must sit in
+      // a clearance hole. Under the even-odd rule — the rule the renderer's
+      // fill uses, and the reason fracturing works at all — every such via
+      // must therefore test as OUTSIDE the copper. This is the assertion that
+      // makes "no voids needed" a measured claim rather than a hope.
+      const reaches = (v: { layers: number[] }, layer: number) =>
+        v.layers.length === 0 || (layer >= Math.min(...v.layers) && layer <= Math.max(...v.layers));
+
+      let tested = 0, swallowedByCopper = 0;
+      for (const s of board.surfaces!) {
+        if (!s.net || s.layer === undefined) continue;
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const p of s.polygon) {
+          if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+          if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+        }
+        for (const v of board.vias!) {
+          if (v.net === s.net) continue;
+          if (v.position.x < minX || v.position.x > maxX) continue;
+          if (v.position.y < minY || v.position.y > maxY) continue;
+          if (!reaches(v, s.layer)) continue;
+          tested++;
+          if (insidePolygon(s.polygon, v.position.x, v.position.y)) swallowedByCopper++;
+        }
+      }
+      // Guard the guard: if the filter ever stops selecting anything, this
+      // would otherwise pass vacuously.
+      expect(tested).toBeGreaterThan(250);
+      expect({ tested, swallowedByCopper }).toEqual({ tested, swallowedByCopper: 0 });
+    });
+  }
+
+  test('surfaces survive a re-parse unchanged', async () => {
+    const a = await parseFixture(TOMU);
+    const b = await parseFixture(TOMU);
+    expect(b.surfaces).toEqual(a.surfaces);
   });
 });
 

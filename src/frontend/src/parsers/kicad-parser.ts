@@ -14,10 +14,11 @@
  *     (via (at …) (size …) (drill …) (layers "F.Cu" "B.Cu") (net 1)))
  *
  * Nothing is obfuscated or compressed — the whole job is a tokenizer plus a
- * faithful reading of the placement maths. Phase 1 extracts footprints →
- * parts, pads → pins + copper pads, Edge.Cuts graphics → outline, and
- * (segment)/(arc)/(via) → traces + vias. See docs/formats/KICAD_PCB_FORMAT.md
- * for the full field-by-field account of what is read and what is skipped.
+ * faithful reading of the placement maths. Extracted: footprints → parts,
+ * pads → pins + copper pads, Edge.Cuts graphics → outline,
+ * (segment)/(arc)/(via) → traces + vias, and (zone) → copper-fill surfaces.
+ * See docs/formats/KICAD_PCB_FORMAT.md for the full field-by-field account of
+ * what is read and what is skipped.
  *
  * Coordinates: KiCad is millimetres with **Y pointing down** (screen
  * orientation). BoardRipper is mils, also Y-down for un-flipped formats, so
@@ -32,7 +33,7 @@
  * https://dev-docs.kicad.org/en/file-formats/sexpr-pcb/
  */
 
-import type { BoardData, BBox, Nail, Pad, PadShape, Part, Pin, Point, Trace, Via } from './types';
+import type { BoardData, BBox, Nail, Pad, PadShape, Part, Pin, Point, Surface, Trace, Via } from './types';
 import {
   computeBBox,
   buildNets,
@@ -489,6 +490,47 @@ function graphicPolyline(n: SNode[], xf: Xf): Point[] | null {
   }
 }
 
+/** `(pts (xy X Y) …)` → board mils. Returns [] when the node is missing. */
+function ptsOfMils(pts: SNode[] | undefined): Point[] {
+  if (!pts) return [];
+  const out: Point[] = [];
+  for (let i = 1; i < pts.length; i++) {
+    const xy = pts[i];
+    if (!isList(xy) || xy[0] !== 'xy') continue;
+    out.push(toMils(num(xy, 1), num(xy, 2)));
+  }
+  return out;
+}
+
+/**
+ * Resolve a zone's own layer field to copper-layer indices.
+ *
+ * Needed only for unfilled zones — a filled one carries a real layer name on
+ * every `(filled_polygon)`. KiCad may write a layer *set* shorthand here
+ * instead of a name: `F&B.Cu` (outer layers) or `*.Cu` (the whole stack-up).
+ * Unknown names resolve to nothing, and the caller skips the zone rather than
+ * defaulting it onto F.Cu.
+ */
+function expandZoneLayers(names: string[], copperIndex: Map<string, number>, copperCount: number): number[] {
+  const out = new Set<number>();
+  for (const name of names) {
+    if (name === '*.Cu') {
+      for (let i = 0; i < copperCount; i++) out.add(i);
+      continue;
+    }
+    if (name === 'F&B.Cu') {
+      const f = copperIndex.get('F.Cu');
+      const b = copperIndex.get('B.Cu');
+      if (f !== undefined) out.add(f);
+      if (b !== undefined) out.add(b);
+      continue;
+    }
+    const li = copperIndex.get(name);
+    if (li !== undefined) out.add(li);
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
 /** Append a polyline to a segment list as consecutive point pairs. */
 function pushPolyline(segments: Array<[Point, Point]>, pts: Point[]): void {
   for (let i = 1; i < pts.length; i++) segments.push([pts[i - 1], pts[i]]);
@@ -573,6 +615,10 @@ export function parseKiCadPCB(buffer: ArrayBuffer): BoardData {
   const rawNetNames = new Set<string>(netById.values());
   for (const fp of childrenOf(root, 'footprint')) collectPadNetNames(fp, rawNetNames);
   for (const fp of childrenOf(root, 'module')) collectPadNetNames(fp, rawNetNames);
+  for (const zone of childrenOf(root, 'zone')) {
+    const zn = atom(child(zone, 'net_name'), 1);
+    if (zn) rawNetNames.add(zn);
+  }
   const { rename, collided } = buildNetRenamer(rawNetNames);
 
   const netName = (n: SNode[] | undefined): string => {
@@ -780,6 +826,90 @@ export function parseKiCadPCB(buffer: ArrayBuffer): BoardData {
     });
   }
 
+  // --- zones → copper-fill surfaces ---------------------------------------
+  //
+  // `Surface.voids` is deliberately never populated, because KiCad hands us
+  // no hole list to put in it. Its fills are stored *fractured*
+  // (`SHAPE_POLY_SET::Fracture()`): every cutout — via clearance, thermal
+  // relief, pad keepout — is stitched into the outer boundary by a
+  // zero-width slit, so what the file contains is a set of self-touching
+  // single rings, not outer-ring-plus-holes.
+  //
+  // Measured on the fixtures rather than assumed: of starfish's 125 fill
+  // rings, 11 carry duplicated vertices (762 of them) and **every** ring
+  // winds counter-clockwise — not one is a reversed inner ring. Comparing
+  // the edges incident on each duplicate pair shows the walk goes out and
+  // straight back along itself (381 backtracking pairs for 762 duplicate
+  // vertices, i.e. all of them). tomu-fpga agrees: 3/30 rings, 16 duplicate
+  // vertices, 8 backtracks, 30/30 counter-clockwise.
+  //
+  // That representation is what the renderer wants anyway. `drawSurface` in
+  // board-scene emits one `moveTo`/`lineTo`/`closePath` sub-path and fills,
+  // and the slit's two coincident edges cancel under the fill rule, so the
+  // holes appear for free — with no void punching, which board-scene
+  // explicitly refuses to do on performance grounds. Splitting the rings
+  // back into outer + voids would therefore be work that produces a worse
+  // input for the only consumer.
+  const surfaces: Surface[] = [];
+  let keepoutZones = 0;
+  let unfilledZones = 0;
+  let unresolvedZoneLayers = 0;
+
+  for (const zone of childrenOf(root, 'zone')) {
+    // Keepouts / rule areas are DRC constructs wearing the `zone` keyword —
+    // they describe where copper may NOT go. Emitting one as a surface would
+    // paint a solid plane over the exact area that has no copper. They are
+    // also the zones most likely to be unfilled, so this check has to come
+    // before the `(polygon)` fallback below, not after.
+    if (child(zone, 'keepout')) { keepoutZones++; continue; }
+
+    const zoneNetRaw = atom(child(zone, 'net_name'), 1);
+    const zoneNet = zoneNetRaw ? rename(zoneNetRaw) : netName(child(zone, 'net'));
+    const zoneLayerName = graphicLayer(zone);
+
+    const fills = childrenOf(zone, 'filled_polygon');
+    if (fills.length > 0) {
+      // KiCad stores the *computed* fill, one `(filled_polygon)` per island,
+      // each already clipped for clearances, thermal reliefs and cutouts.
+      // Never emit the zone's `(polygon)` boundary alongside these — that
+      // would double-draw the pour at its un-clipped extent.
+      for (const fp of fills) {
+        const polygon = ptsOfMils(child(fp, 'pts'));
+        if (polygon.length < 3) continue;
+        // The island's own `(layer …)` wins: a zone may declare
+        // `(layers F&B.Cu)` — a layer-SET shorthand that names no single
+        // layer — and fill several layers from one boundary.
+        const layerName = graphicLayer(fp) || zoneLayerName;
+        const surface: Surface = { polygon };
+        if (zoneNet) surface.net = zoneNet;
+        const li = copperIndex.get(layerName);
+        if (li !== undefined) surface.layer = li;
+        else unresolvedZoneLayers++;
+        surfaces.push(surface);
+      }
+      continue;
+    }
+
+    // No computed fill: the zone was drawn but never poured (the user hasn't
+    // run "Fill all zones"). The user-drawn boundary is the only geometry
+    // there is — it over-states the copper, since none of the clearances or
+    // thermal reliefs have been subtracted, so it is emitted but counted and
+    // surfaced in parserNotes rather than passed off as a real fill.
+    const boundary = ptsOfMils(child(child(zone, 'polygon') ?? [], 'pts'));
+    if (boundary.length < 3) continue;
+    // `(layers F&B.Cu)` and `(layers *.Cu)` are set shorthands rather than
+    // layer names, so they are expanded here — this is the one path where a
+    // zone's own layer field has to be resolved.
+    const targets = expandZoneLayers(layerNamesOf(zone), copperIndex, layerNames.length);
+    if (targets.length === 0) { unresolvedZoneLayers++; continue; }
+    unfilledZones++;
+    for (const li of targets) {
+      const surface: Surface = { polygon: boundary, layer: li };
+      if (zoneNet) surface.net = zoneNet;
+      surfaces.push(surface);
+    }
+  }
+
   // --- assembly -----------------------------------------------------------
   const outline = outlineSegments.length > 0 ? chainSegments(outlineSegments) : [];
 
@@ -805,12 +935,23 @@ export function parseKiCadPCB(buffer: ArrayBuffer): BoardData {
       'Net names kept verbatim (with their leading "/") because stripping the sheet prefix would have merged two distinct nets.',
     );
   }
+  if (unfilledZones > 0) {
+    parserNotes.push(
+      `${unfilledZones} copper zone${unfilledZones === 1 ? '' : 's'} carried no computed fill, so the user-drawn ` +
+      'boundary is shown instead — it over-states the copper (no clearances or thermal reliefs subtracted). ' +
+      'Re-run "Fill all zones" in KiCad and re-export for the true pour.',
+    );
+  }
 
   log.parser.log(
     `KiCad: ${parts.length} parts, ${pinPoints.length} pins, ${nets.size} nets, ` +
-    `${outline.length} outline pts, ${traces.length} traces, ${vias.length} vias, ${pads.length} pads` +
+    `${outline.length} outline pts, ${traces.length} traces, ${vias.length} vias, ${pads.length} pads, ` +
+    `${surfaces.length} surfaces` +
     (droppedNoPad > 0 ? `, ${droppedNoPad} pad-less footprints skipped` : '') +
-    (droppedNoCopper > 0 ? `, ${droppedNoCopper} non-copper pads skipped` : ''),
+    (droppedNoCopper > 0 ? `, ${droppedNoCopper} non-copper pads skipped` : '') +
+    (keepoutZones > 0 ? `, ${keepoutZones} keepout zone(s) skipped` : '') +
+    (unfilledZones > 0 ? `, ${unfilledZones} unfilled zone(s) approximated` : '') +
+    (unresolvedZoneLayers > 0 ? `, ${unresolvedZoneLayers} zone fill(s) on an unrecognised layer` : ''),
   );
 
   const board: BoardData = {
@@ -826,6 +967,7 @@ export function parseKiCadPCB(buffer: ArrayBuffer): BoardData {
   if (traces.length > 0) board.traces = traces;
   if (vias.length > 0) board.vias = vias;
   if (pads.length > 0) board.pads = pads;
+  if (surfaces.length > 0) board.surfaces = surfaces;
   if (layerNames.length > 0) board.layerNames = layerNames;
   if (ghosts.length > 0) board.ghosts = ghosts;
   return board;
