@@ -38,6 +38,7 @@ are MIT/Apache-2.0/BSD.
   - v16.x / v17.x / v18.x (magic `0x0013xxxx` / `0x0014xxxx` / `0x0015xxxx`) — original target. Spec: `docs/formats/ALLEGRO_BRD_FORMAT.md`
   - v15.x (magic `0x0012xxxx`) — added in v0.17.0 via blind RE; ~99% net coverage on 15.5.7 corpus, partial on 15.5.2. Spec: `docs/formats/ALLEGRO_V15_FORMAT.md`
 - **ALTIUM_PCB** — Altium Designer / Circuit Maker / Circuit Studio binary `.PcbDoc` + PCB ASCII Version 5.0 text variant. CFB container (Designer 6.0+, 2005+). Phase 1: parts/pins/nets/outline. Spec: `docs/formats/ALTIUM_PCB_FORMAT.md`
+- **EAGLE_BRD** — Autodesk/CadSoft EAGLE 6.0+ XML `.brd` (third `.brd` claimant; XML sniff is disjoint from Apple BRD's and Allegro's binary magics, and it registers **after** Allegro so the extension-only fallback is unchanged). Pre-6.0 binary `.brd` is out of scope and rejected with a "re-save from EAGLE 6+" message. The format's whole difficulty is **indirection**: pin positions are not stored — `<element>` places a `<package>` by name and each pin is `package pad coords → R(a)·M → +(x,y)`, where `rot="[S][M]R<deg>"` mirrors across the local Y axis (→ bottom side) *before* rotating CCW; nets join by `(element, pad)` **name** via `<contactref>`, never by coordinate. Coordinates are always millimetres regardless of grid unit. Board outline is layer 20, searched in `<plain>` **and** inside placed packages (carrier/shield footprints often own the whole edge). `<wire curve="…">` is a signed CCW sweep and is used verbatim — never normalised to a shortest arc (issue #33). Verified by a routing oracle: on the fully-routed fixtures 100% of pins land exactly on a trace endpoint of their own net. Spec: `docs/formats/EAGLE_BRD_FORMAT.md`
 
 ## Project Structure
 ```
@@ -62,7 +63,8 @@ Boardviewer/
 │   │   ├── MENTOR_NEUTRAL_FORMAT.md # Mentor Boardstation Neutral (.cad text)
 │   │   ├── ALLEGRO_BRD_FORMAT.md # Cadence Allegro v16/v17 BRD
 │   │   ├── ALLEGRO_V15_FORMAT.md # Cadence Allegro v15.x BRD (RE'd in v0.17.0)
-│   │   └── ALTIUM_PCB_FORMAT.md  # Altium Designer .PcbDoc (binary CFB + ASCII v5.0)
+│   │   ├── ALTIUM_PCB_FORMAT.md  # Altium Designer .PcbDoc (binary CFB + ASCII v5.0)
+│   │   └── EAGLE_BRD_FORMAT.md   # Autodesk/CadSoft EAGLE 6.0+ XML .brd
 │   ├── PDF_VIEWER.md             # PDF render-pipeline architecture
 │   └── RELEASE_RUNBOOK.md        # Maintainer release-cutting procedure
 ├── samples/                     # Local-only board fixtures (not redistributed)
@@ -72,7 +74,7 @@ Boardviewer/
     ├── frontend/                # React + PixiJS SPA
     │   ├── tests/               # Playwright E2E specs
     │   └── src/
-    │       ├── parsers/         # Format parsers (pure TS functions, 11 formats)
+    │       ├── parsers/         # Format parsers (pure TS functions, 12 formats)
     │       │   └── allegro/     # Allegro v15.x + v16/v17 (split families share types)
     │       ├── renderer/        # BoardRenderer, board-scene (shared), mockup-data
     │       ├── pdf/             # PDF glyph extraction & overlay utilities

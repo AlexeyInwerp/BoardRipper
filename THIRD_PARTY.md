@@ -46,6 +46,12 @@ in BoardRipper.
 - **Nature of use:** Mentor Graphics publishes no public spec for the Boardstation neutral file. The parser and accompanying format document ([docs/formats/MENTOR_NEUTRAL_FORMAT.md](docs/formats/MENTOR_NEUTRAL_FORMAT.md)) are original reverse-engineering work derived solely from inspecting real-world sample exports (Samsung RV415 / Quanta Brazos / Quanta Jinmao14-L). Generic format mentions consulted for context only — none contained record-level layout: PTC's [BoardStation EIF docs](https://support.ptc.com/help/creo/ced_modeling/r20.6.0.0/en/ced_modeling/OSDM_Modules/PCB_BoardStationCreate.html), Altair Pollex's [Mentor Graphics Interface](https://help.altair.com/Pollex/topics/pollex/modeler/pcb_mentor_graphics_interface_r.htm), and the [Internet Archive's Boardstation manuals](https://archive.org/details/1999-mentor-boardstation-da-qsim-accusim-win) (none consulted at code-level — kept as a future verification source).
 - **Spec:** [docs/formats/MENTOR_NEUTRAL_FORMAT.md](docs/formats/MENTOR_NEUTRAL_FORMAT.md)
 
+### EAGLE `.brd` (XML) — original work
+- **License:** N/A (no third-party code or text incorporated)
+- **Used in:** `src/frontend/src/parsers/eagle-parser.ts`, `src/frontend/src/parsers/eagle-format.ts`
+- **Nature of use:** Written against the publicly documented EAGLE XML schema — the `eagle.dtd` that ships with every EAGLE/Fusion install and the "EAGLE File Format" appendix of the manual — plus four EAGLE 6.3/6.4 reference boards. No code was copied from EAGLE itself or from any GPL importer. The one external cross-check was KiCad's *documented behaviour* for the mirrored-element transform (mirror across local Y, then rotate CCW); the algebra was re-derived here rather than transliterated, and no KiCad source is present. Note this is unrelated to the `eagleview` entry below, which is the Teboview format and shares only a name.
+- **Spec:** [docs/formats/EAGLE_BRD_FORMAT.md](docs/formats/EAGLE_BRD_FORMAT.md)
+
 ### eagleview — Pavel Kovalenko
 - **License:** MIT
 - **Upstream:** https://github.com/nitrocaster/eagleview
