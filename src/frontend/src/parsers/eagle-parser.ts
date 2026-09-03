@@ -41,7 +41,7 @@
 import type {
   BBox, BoardData, Nail, Pad, PadShape, Part, Pin, Point, SilkscreenPath, Trace, Via,
 } from './types';
-import { buildNets, computeBBox, computePartGeometry, generateSyntheticOutline } from './types';
+import { buildNets, chainPolylines, computeBBox, computePartGeometry, generateSyntheticOutline } from './types';
 import { log } from '../store/log-store';
 
 const decoder = new TextDecoder('utf-8');
@@ -287,59 +287,6 @@ export function eagleArcPoints(
   pts[0] = { x: x1, y: y1 };
   pts[steps] = { x: x2, y: y2 };
   return pts;
-}
-
-/**
- * Chain a bag of polylines into as few sub-paths as possible, greedily joining
- * endpoints that coincide within `tol`. Sub-paths are separated by NaN points,
- * the convention `drawOutline` already understands.
- */
-function chainPolylines(polys: Point[][], tol: number): Point[] {
-  const usable = polys.filter(p => p.length >= 2);
-  const used = new Uint8Array(usable.length);
-  const out: Point[] = [];
-  let remaining = usable.length;
-  const near = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
-
-  while (remaining > 0) {
-    let seed = -1;
-    for (let i = 0; i < usable.length; i++) if (!used[i]) { seed = i; break; }
-    if (seed < 0) break;
-    used[seed] = 1;
-    remaining--;
-    const chain = usable[seed].slice();
-
-    // Grow from the tail, then from the head.
-    for (const forward of [true, false]) {
-      for (;;) {
-        const anchor = forward ? chain[chain.length - 1] : chain[0];
-        let best = -1, bestD = Infinity, flip = false;
-        for (let j = 0; j < usable.length; j++) {
-          if (used[j]) continue;
-          const p = usable[j];
-          const d0 = near(anchor, p[0]);
-          if (d0 < bestD) { bestD = d0; best = j; flip = false; }
-          const d1 = near(anchor, p[p.length - 1]);
-          if (d1 < bestD) { bestD = d1; best = j; flip = true; }
-        }
-        if (best < 0 || bestD > tol) break;
-        used[best] = 1;
-        remaining--;
-        const seg = usable[best];
-        const ordered = forward === flip ? seg.slice().reverse() : seg;
-        // `ordered[0]` duplicates the anchor — skip it.
-        if (forward) {
-          for (let k = 1; k < ordered.length; k++) chain.push(ordered[k]);
-        } else {
-          for (let k = ordered.length - 2; k >= 0; k--) chain.unshift(ordered[k]);
-        }
-      }
-    }
-
-    if (out.length > 0) out.push({ x: NaN, y: NaN });
-    for (const p of chain) out.push(p);
-  }
-  return out;
 }
 
 // ---------------------------------------------------------------------------

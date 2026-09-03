@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import type { BoardData } from '../src/parsers/types';
+import { computeBBox, splitOutlineContours } from '../src/parsers/types';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -448,14 +449,12 @@ test.describe('KiCad zones → surfaces', () => {
       let vertices = 0, nonFinite = 0, tooFewPoints = 0, collapsed = 0, badLayer = 0;
       for (const s of surfaces) {
         if (s.polygon.length < 3) tooFewPoints++;
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         for (const p of s.polygon) {
           vertices++;
-          if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) { nonFinite++; continue; }
-          if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
-          if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+          if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) nonFinite++;
         }
-        if (!(maxX > minX) || !(maxY > minY)) collapsed++;
+        const b = computeBBox(s.polygon);
+        if (!(b.maxX > b.minX) || !(b.maxY > b.minY)) collapsed++;
         if (s.layer === undefined || s.layer < 0 || s.layer >= nLayers) badLayer++;
       }
       expect({ tooFewPoints, nonFinite, collapsed, badLayer })
@@ -535,15 +534,11 @@ test.describe('KiCad zones → surfaces', () => {
       let tested = 0, swallowedByCopper = 0;
       for (const s of board.surfaces!) {
         if (!s.net || s.layer === undefined) continue;
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (const p of s.polygon) {
-          if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
-          if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
-        }
+        const b = computeBBox(s.polygon);
         for (const v of board.vias!) {
           if (v.net === s.net) continue;
-          if (v.position.x < minX || v.position.x > maxX) continue;
-          if (v.position.y < minY || v.position.y > maxY) continue;
+          if (v.position.x < b.minX || v.position.x > b.maxX) continue;
+          if (v.position.y < b.minY || v.position.y > b.maxY) continue;
           if (!reaches(v, s.layer)) continue;
           tested++;
           if (insidePolygon(s.polygon, v.position.x, v.position.y)) swallowedByCopper++;
@@ -602,22 +597,10 @@ test.describe('KiCad parser — pad-less documents', () => {
 // genuine boundaries are 27.8-131 mil, so `breakDist: 5` separates them.
 // ---------------------------------------------------------------------------
 
-/** Split an outline on its NaN pen-up sentinels — the convention drawOutline reads. */
-function outlineContours(outline: Array<{ x: number; y: number }>) {
-  const loops: Array<Array<{ x: number; y: number }>> = [];
-  let cur: Array<{ x: number; y: number }> = [];
-  for (const p of outline) {
-    if (Number.isNaN(p.x) || Number.isNaN(p.y)) { if (cur.length) loops.push(cur); cur = []; }
-    else cur.push(p);
-  }
-  if (cur.length) loops.push(cur);
-  return loops;
-}
-
 for (const [label, fixture] of [['tomu-fpga', TOMU], ['starfish', STARFISH]] as const) {
   test.describe(`KiCad outline contours — ${label}`, () => {
     test('every contour closes on itself', async () => {
-      const loops = outlineContours((await parseFixture(fixture)).outline);
+      const loops = splitOutlineContours((await parseFixture(fixture)).outline);
       expect(loops.length).toBeGreaterThan(0);
       const open = loops
         .map((L, i) => ({ i, n: L.length, err: +Math.hypot(L[0].x - L[L.length - 1].x, L[0].y - L[L.length - 1].y).toFixed(3) }))
@@ -626,7 +609,7 @@ for (const [label, fixture] of [['tomu-fpga', TOMU], ['starfish', STARFISH]] as 
     });
 
     test('no contour is a degenerate stub', async () => {
-      const loops = outlineContours((await parseFixture(fixture)).outline);
+      const loops = splitOutlineContours((await parseFixture(fixture)).outline);
       for (const L of loops) expect(L.length).toBeGreaterThanOrEqual(3);
     });
   });
@@ -635,6 +618,82 @@ for (const [label, fixture] of [['tomu-fpga', TOMU], ['starfish', STARFISH]] as 
 test('tomu-fpga separates its perimeter from its internal cutout', async () => {
   // Two closed contours, not one welded run. If chainSegments ever loses its
   // break threshold this collapses to 1 and the false edge returns.
-  const loops = outlineContours((await parseFixture(TOMU)).outline);
+  const loops = splitOutlineContours((await parseFixture(TOMU)).outline);
   expect(loops.length).toBeGreaterThanOrEqual(2);
+});
+
+// ---------------------------------------------------------------------------
+// Zone edge cases — synthetic documents, no fixture needed
+//
+// Each is a minimal but complete board (one pad, so the pad-less rejection
+// does not fire) with exactly one zone shaped to hit one branch.
+// ---------------------------------------------------------------------------
+
+function syntheticBoard(zone: string): ArrayBuffer {
+  return new TextEncoder().encode(`(kicad_pcb (version 20221018) (generator pcbnew)
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (38 "F.Mask" user) (44 "Edge.Cuts" user))
+  (net 0 "")
+  (net 1 "GND")
+  (net 2 "NEW_NAME")
+  (footprint "test:R" (layer "F.Cu") (at 10 10)
+    (fp_text reference "R1" (at 0 0) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "GND")))
+  ${zone}
+)`).buffer;
+}
+
+async function parseSynthetic(zone: string): Promise<BoardData> {
+  const { parseKiCadPCB } = await import('../src/parsers/kicad-parser');
+  return parseKiCadPCB(syntheticBoard(zone));
+}
+
+const SQUARE = '(pts (xy 0 0) (xy 5 0) (xy 5 5) (xy 0 5))';
+
+test.describe('KiCad zone edge cases', () => {
+  test('a filled zone on a non-copper layer is skipped, not painted as F.Cu', async () => {
+    // KiCad 6+ allows zones on mask/silk/user layers. Their fills are not
+    // copper; defaulting them onto layer 0 would draw a mask relief as a pour.
+    const board = await parseSynthetic(
+      `(zone (net 0) (net_name "") (layer "F.Mask") (filled_polygon (layer "F.Mask") ${SQUARE}))`,
+    );
+    expect(board.surfaces ?? []).toEqual([]);
+    expect(board.parserNotes?.some(n => /non-copper or unknown layer/.test(n))).toBe(true);
+  });
+
+  test('an unfilled zone emits no surface and says so', async () => {
+    // The (polygon) boundary is the pre-clearance outline. Drawing it would
+    // put solid copper over every foreign-net via — so nothing is drawn.
+    const board = await parseSynthetic(
+      `(zone (net 1) (net_name "GND") (layer "F.Cu") (polygon ${SQUARE}))`,
+    );
+    expect(board.surfaces ?? []).toEqual([]);
+    expect(board.parserNotes?.some(n => /no computed fill/.test(n))).toBe(true);
+  });
+
+  test('a KiCad 4/5 segment-mode fill is reported as such, not as "never filled"', async () => {
+    const board = await parseSynthetic(
+      `(zone (net 1) (net_name "GND") (layer "F.Cu") (polygon ${SQUARE}) (fill_segments (layer "F.Cu") (pts (xy 0 0) (xy 5 5))))`,
+    );
+    expect(board.surfaces ?? []).toEqual([]);
+    expect(board.parserNotes?.some(n => /segment fill mode/.test(n))).toBe(true);
+    expect(board.parserNotes?.some(n => /no computed fill/.test(n))).toBe(false);
+  });
+
+  test('the (net N) id wins over a stale (net_name) label', async () => {
+    // KiCad refreshes net_name only on re-fill; after a schematic rename the
+    // label can name a net no pad has. Highlighting must follow the id.
+    const board = await parseSynthetic(
+      `(zone (net 2) (net_name "/OLD_NAME") (layer "F.Cu") (filled_polygon (layer "F.Cu") ${SQUARE}))`,
+    );
+    expect(board.surfaces?.length).toBe(1);
+    expect(board.surfaces![0].net).toBe('NEW_NAME');
+    expect(board.surfaces![0].layer).toBe(0);
+  });
+
+  test('a keepout is never a surface, even when it is the only zone', async () => {
+    const board = await parseSynthetic(
+      `(zone (net 0) (net_name "") (layer "B.Cu") (keepout (tracks not_allowed) (vias not_allowed)) (polygon ${SQUARE}))`,
+    );
+    expect(board.surfaces ?? []).toEqual([]);
+  });
 });

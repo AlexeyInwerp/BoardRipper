@@ -38,7 +38,7 @@ import {
   computeBBox,
   buildNets,
   computePartGeometry,
-  chainSegments,
+  chainPolylines,
   generateSyntheticOutline,
   detectGhostComponents,
 } from './types';
@@ -493,47 +493,7 @@ function graphicPolyline(n: SNode[], xf: Xf): Point[] | null {
 /** `(pts (xy X Y) …)` → board mils. Returns [] when the node is missing. */
 function ptsOfMils(pts: SNode[] | undefined): Point[] {
   if (!pts) return [];
-  const out: Point[] = [];
-  for (let i = 1; i < pts.length; i++) {
-    const xy = pts[i];
-    if (!isList(xy) || xy[0] !== 'xy') continue;
-    out.push(toMils(num(xy, 1), num(xy, 2)));
-  }
-  return out;
-}
-
-/**
- * Resolve a zone's own layer field to copper-layer indices.
- *
- * Needed only for unfilled zones — a filled one carries a real layer name on
- * every `(filled_polygon)`. KiCad may write a layer *set* shorthand here
- * instead of a name: `F&B.Cu` (outer layers) or `*.Cu` (the whole stack-up).
- * Unknown names resolve to nothing, and the caller skips the zone rather than
- * defaulting it onto F.Cu.
- */
-function expandZoneLayers(names: string[], copperIndex: Map<string, number>, copperCount: number): number[] {
-  const out = new Set<number>();
-  for (const name of names) {
-    if (name === '*.Cu') {
-      for (let i = 0; i < copperCount; i++) out.add(i);
-      continue;
-    }
-    if (name === 'F&B.Cu') {
-      const f = copperIndex.get('F.Cu');
-      const b = copperIndex.get('B.Cu');
-      if (f !== undefined) out.add(f);
-      if (b !== undefined) out.add(b);
-      continue;
-    }
-    const li = copperIndex.get(name);
-    if (li !== undefined) out.add(li);
-  }
-  return [...out].sort((a, b) => a - b);
-}
-
-/** Append a polyline to a segment list as consecutive point pairs. */
-function pushPolyline(segments: Array<[Point, Point]>, pts: Point[]): void {
-  for (let i = 1; i < pts.length; i++) segments.push([pts[i - 1], pts[i]]);
+  return childrenOf(pts, 'xy').map(xy => toMils(num(xy, 1), num(xy, 2)));
 }
 
 // ---------------------------------------------------------------------------
@@ -615,10 +575,6 @@ export function parseKiCadPCB(buffer: ArrayBuffer): BoardData {
   const rawNetNames = new Set<string>(netById.values());
   for (const fp of childrenOf(root, 'footprint')) collectPadNetNames(fp, rawNetNames);
   for (const fp of childrenOf(root, 'module')) collectPadNetNames(fp, rawNetNames);
-  for (const zone of childrenOf(root, 'zone')) {
-    const zn = atom(child(zone, 'net_name'), 1);
-    if (zn) rawNetNames.add(zn);
-  }
   const { rename, collided } = buildNetRenamer(rawNetNames);
 
   const netName = (n: SNode[] | undefined): string => {
@@ -633,7 +589,7 @@ export function parseKiCadPCB(buffer: ArrayBuffer): BoardData {
   // --- footprints → parts -------------------------------------------------
   const parts: Part[] = [];
   const pads: Pad[] = [];
-  const outlineSegments: Array<[Point, Point]> = [];
+  const outlinePolys: Point[][] = [];
   let droppedNoPad = 0;
   let droppedNoCopper = 0;
 
@@ -739,7 +695,7 @@ export function parseKiCadPCB(buffer: ArrayBuffer): BoardData {
     // Board edges are sometimes drawn inside a footprint (edge-connector
     // cut-outs, board-outline helper footprints), so footprint graphics are
     // swept for Edge.Cuts alongside the top-level ones.
-    collectEdgeCuts(fp, xf, outlineSegments);
+    collectEdgeCuts(fp, xf, outlinePolys);
 
     if (pins.length === 0) {
       // Fiducials, mounting-hole-only and pure-annotation footprints. Nothing
@@ -773,7 +729,7 @@ export function parseKiCadPCB(buffer: ArrayBuffer): BoardData {
   }
 
   // --- board outline (Edge.Cuts) -----------------------------------------
-  collectEdgeCuts(root, IDENTITY_XF, outlineSegments);
+  collectEdgeCuts(root, IDENTITY_XF, outlinePolys);
 
   // --- traces + vias ------------------------------------------------------
   const traces: Trace[] = [];
@@ -853,58 +809,48 @@ export function parseKiCadPCB(buffer: ArrayBuffer): BoardData {
   const surfaces: Surface[] = [];
   let keepoutZones = 0;
   let unfilledZones = 0;
-  let unresolvedZoneLayers = 0;
+  let segmentFillZones = 0;
+  let unresolvedIslands = 0;
+  let degenerateIslands = 0;
 
   for (const zone of childrenOf(root, 'zone')) {
-    // Keepouts / rule areas are DRC constructs wearing the `zone` keyword —
-    // they describe where copper may NOT go. Emitting one as a surface would
-    // paint a solid plane over the exact area that has no copper. They are
-    // also the zones most likely to be unfilled, so this check has to come
-    // before the `(polygon)` fallback below, not after.
+    // Keepouts / rule areas are DRC constructs wearing the `zone` keyword.
+    // They describe where copper may NOT go; emitting one as a surface would
+    // paint a solid plane over exactly the area that has no copper.
     if (child(zone, 'keepout')) { keepoutZones++; continue; }
 
-    const zoneNetRaw = atom(child(zone, 'net_name'), 1);
-    const zoneNet = zoneNetRaw ? rename(zoneNetRaw) : netName(child(zone, 'net'));
-    const zoneLayerName = graphicLayer(zone);
+    // `(net N)` is authoritative; `(net_name "…")` is an informational copy
+    // that KiCad refreshes only on re-fill, so after a schematic rename it can
+    // name a net no pad has. Resolve by id and fall back to the label only
+    // when the id is missing from the table.
+    const zoneNet = netName(child(zone, 'net')) || rename(atom(child(zone, 'net_name'), 1));
 
     const fills = childrenOf(zone, 'filled_polygon');
-    if (fills.length > 0) {
-      // KiCad stores the *computed* fill, one `(filled_polygon)` per island,
-      // each already clipped for clearances, thermal reliefs and cutouts.
-      // Never emit the zone's `(polygon)` boundary alongside these — that
-      // would double-draw the pour at its un-clipped extent.
-      for (const fp of fills) {
-        const polygon = ptsOfMils(child(fp, 'pts'));
-        if (polygon.length < 3) continue;
-        // The island's own `(layer …)` wins: a zone may declare
-        // `(layers F&B.Cu)` — a layer-SET shorthand that names no single
-        // layer — and fill several layers from one boundary.
-        const layerName = graphicLayer(fp) || zoneLayerName;
-        const surface: Surface = { polygon };
-        if (zoneNet) surface.net = zoneNet;
-        const li = copperIndex.get(layerName);
-        if (li !== undefined) surface.layer = li;
-        else unresolvedZoneLayers++;
-        surfaces.push(surface);
-      }
+    if (fills.length === 0) {
+      // No computed fill in the file. Either the zone was never poured, or it
+      // is a KiCad 4/5 segment-mode fill (`fill_segments`), which is a bag of
+      // hairlines rather than polygons. Neither is drawn: the zone's own
+      // `(polygon)` boundary is the pre-clearance outline and painting it
+      // would put solid copper over every foreign-net via and pad gap.
+      if (child(zone, 'fill_segments')) segmentFillZones++;
+      else unfilledZones++;
       continue;
     }
 
-    // No computed fill: the zone was drawn but never poured (the user hasn't
-    // run "Fill all zones"). The user-drawn boundary is the only geometry
-    // there is — it over-states the copper, since none of the clearances or
-    // thermal reliefs have been subtracted, so it is emitted but counted and
-    // surfaced in parserNotes rather than passed off as a real fill.
-    const boundary = ptsOfMils(child(child(zone, 'polygon') ?? [], 'pts'));
-    if (boundary.length < 3) continue;
-    // `(layers F&B.Cu)` and `(layers *.Cu)` are set shorthands rather than
-    // layer names, so they are expanded here — this is the one path where a
-    // zone's own layer field has to be resolved.
-    const targets = expandZoneLayers(layerNamesOf(zone), copperIndex, layerNames.length);
-    if (targets.length === 0) { unresolvedZoneLayers++; continue; }
-    unfilledZones++;
-    for (const li of targets) {
-      const surface: Surface = { polygon: boundary, layer: li };
+    // KiCad stores the *computed* fill, one `(filled_polygon)` per island,
+    // each already clipped for clearances, thermal reliefs and cutouts. The
+    // zone's `(polygon)` boundary is never emitted alongside them.
+    for (const fp of fills) {
+      // The island's own `(layer …)` is the only reliable source: the zone
+      // may declare a layer-SET shorthand (`F&B.Cu`) that names no single
+      // layer, and KiCad 6+ allows zones on non-copper layers (mask, silk,
+      // user) whose fills are not copper at all. Anything that does not
+      // resolve to a copper index is skipped, never defaulted onto F.Cu.
+      const li = copperIndex.get(graphicLayer(fp));
+      if (li === undefined) { unresolvedIslands++; continue; }
+      const polygon = ptsOfMils(child(fp, 'pts'));
+      if (polygon.length < 3) { degenerateIslands++; continue; }
+      const surface: Surface = { polygon, layer: li };
       if (zoneNet) surface.net = zoneNet;
       surfaces.push(surface);
     }
@@ -912,20 +858,20 @@ export function parseKiCadPCB(buffer: ArrayBuffer): BoardData {
 
   // --- assembly -----------------------------------------------------------
   // A KiCad board outline is normally SEVERAL closed contours: the perimeter
-  // plus every slot, milled window and castellation, all on Edge.Cuts and
-  // stored in arbitrary order. Chained without a break threshold they weld into
-  // one run with a false edge leaping from each contour to the next — the
-  // reported "vertex 114 next to 152" artefact.
+  // plus every slot, milled window and castellation, all on Edge.Cuts in
+  // arbitrary order and direction. They are chained by nearest endpoint at
+  // primitive granularity, with a join tolerance: a nearest endpoint farther
+  // than that means the contour has ended and the next one starts after a
+  // NaN pen-up. Without the tolerance every contour is welded to the next by
+  // a false edge across the board (reported as "vertex 114 next to 152").
   //
-  // 5 mil (0.127 mm) sits in a wide empty band. Real joins are exact: KiCad
-  // writes the shared endpoint twice, so the error is float noise, and 84 of
-  // tomu-fpga's 88 joins measure under 0.5 mil. The genuine contour boundaries
-  // there are 27.8-131 mil. The margin also absorbs any endpoint drift from
-  // arc tessellation, while staying far below the distance separating any real
-  // cutout from the perimeter.
-  const outline = outlineSegments.length > 0
-    ? chainSegments(outlineSegments, { breakDist: 5 })
-    : [];
+  // 10 mil (0.254 mm). Real joins are exact: KiCad writes the shared endpoint
+  // twice and arc sampling lands on `(end)` itself, so their error is float
+  // noise (84 of 88 joins on tomu-fpga are under 0.5 mil). Genuine contour
+  // boundaries there start at 27.8 mil, and manufacturable slot-to-edge
+  // spacing is wider still. 10 mil also bridges the ~0.2 mm corner misses of
+  // hand-drawn or DXF-imported outlines, which KiCad's DRC only warns about.
+  const outline = outlinePolys.length > 0 ? chainPolylines(outlinePolys, 10) : [];
 
   const pinPoints: Point[] = [];
   for (const p of parts) for (const pin of p.pins) pinPoints.push(pin.position);
@@ -951,9 +897,20 @@ export function parseKiCadPCB(buffer: ArrayBuffer): BoardData {
   }
   if (unfilledZones > 0) {
     parserNotes.push(
-      `${unfilledZones} copper zone${unfilledZones === 1 ? '' : 's'} carried no computed fill, so the user-drawn ` +
-      'boundary is shown instead — it over-states the copper (no clearances or thermal reliefs subtracted). ' +
-      'Re-run "Fill all zones" in KiCad and re-export for the true pour.',
+      `${unfilledZones} copper zone${unfilledZones === 1 ? '' : 's'} carried no computed fill and ` +
+      (unfilledZones === 1 ? 'is' : 'are') + ' not drawn. Run "Fill all zones" in KiCad and save to include the pour.',
+    );
+  }
+  if (segmentFillZones > 0) {
+    parserNotes.push(
+      `${segmentFillZones} copper zone${segmentFillZones === 1 ? '' : 's'} use${segmentFillZones === 1 ? 's' : ''} ` +
+      'the KiCad 4/5 segment fill mode, which is not drawn. Re-fill in KiCad 6 or newer and save.',
+    );
+  }
+  if (unresolvedIslands > 0) {
+    parserNotes.push(
+      `${unresolvedIslands} zone fill island${unresolvedIslands === 1 ? '' : 's'} on a non-copper or unknown layer ` +
+      (unresolvedIslands === 1 ? 'was' : 'were') + ' skipped.',
     );
   }
 
@@ -964,8 +921,10 @@ export function parseKiCadPCB(buffer: ArrayBuffer): BoardData {
     (droppedNoPad > 0 ? `, ${droppedNoPad} pad-less footprints skipped` : '') +
     (droppedNoCopper > 0 ? `, ${droppedNoCopper} non-copper pads skipped` : '') +
     (keepoutZones > 0 ? `, ${keepoutZones} keepout zone(s) skipped` : '') +
-    (unfilledZones > 0 ? `, ${unfilledZones} unfilled zone(s) approximated` : '') +
-    (unresolvedZoneLayers > 0 ? `, ${unresolvedZoneLayers} zone fill(s) on an unrecognised layer` : ''),
+    (unfilledZones > 0 ? `, ${unfilledZones} unfilled zone(s) not drawn` : '') +
+    (segmentFillZones > 0 ? `, ${segmentFillZones} segment-fill zone(s) not drawn` : '') +
+    (unresolvedIslands > 0 ? `, ${unresolvedIslands} fill island(s) on a non-copper layer skipped` : '') +
+    (degenerateIslands > 0 ? `, ${degenerateIslands} degenerate fill island(s) skipped` : ''),
   );
 
   const board: BoardData = {
@@ -1046,7 +1005,7 @@ function collectPadNetNames(fp: SNode[], out: Set<string>): void {
  * Sweep a container (the board root or one footprint) for Edge.Cuts graphics
  * and append their sampled polylines to `segments`.
  */
-function collectEdgeCuts(container: SNode[], xf: Xf, segments: Array<[Point, Point]>): void {
+function collectEdgeCuts(container: SNode[], xf: Xf, polys: Point[][]): void {
   for (let i = 1; i < container.length; i++) {
     const n = container[i];
     if (!isList(n)) continue;
@@ -1055,6 +1014,6 @@ function collectEdgeCuts(container: SNode[], xf: Xf, segments: Array<[Point, Poi
     if (!(kw.startsWith('gr_') || kw.startsWith('fp_'))) continue;
     if (graphicLayer(n) !== 'Edge.Cuts') continue;
     const pts = graphicPolyline(n, xf);
-    if (pts && pts.length >= 2) pushPolyline(segments, pts);
+    if (pts && pts.length >= 2) polys.push(pts);
   }
 }

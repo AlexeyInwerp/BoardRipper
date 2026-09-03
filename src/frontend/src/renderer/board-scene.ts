@@ -19,7 +19,8 @@ import { Graphics, Container, BitmapText, BitmapFont, Rectangle } from 'pixi.js'
 import type { BoardData } from '../parsers';
 import { log } from '../store/log-store';
 import { pinDisplayId } from '../parsers/types';
-import type { Point, Pin, DiodeReading } from '../parsers/types';
+import type { Point, Pin, DiodeReading, BBox } from '../parsers/types';
+import { computeBBox } from '../parsers/types';
 import {
   computePinRadius,
   computeMultiPinPadding,
@@ -574,79 +575,76 @@ export function drawOutline(gfx: Graphics, board: BoardData, s: RenderSettings, 
   const pts = board.outline;
   if (pts.length <= 1) return;
 
-  // Pre-pass: find the largest sub-path so we can decide whether the outline
-  // is a coherent perimeter we can fill, or just a pile of fragmented slot
-  // segments (some Teboview Roul layers ship without the corner arcs that
-  // would join their straight edges — chainLines then returns dozens of
-  // 2-point sub-paths and any direct .fill() call cross-hatches the board).
-  // When the outline is fragmented we fill the data's bbox instead so the
-  // board still reads as a filled area, and stroke the actual segments
-  // on top for whatever real-outline information they convey.
-  let largestSubpath = 0;
-  let inSubpath = 0;
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const p of pts) {
-    if (isNaN(p.x) || isNaN(p.y)) {
-      if (inSubpath > largestSubpath) largestSubpath = inSubpath;
-      inSubpath = 0;
-    } else {
-      inSubpath++;
-      if (p.x < minX) minX = p.x;
-      if (p.x > maxX) maxX = p.x;
-      if (p.y < minY) minY = p.y;
-      if (p.y > maxY) maxY = p.y;
+  // Split on the NaN pen-up sentinel into contours, dropping consecutive
+  // duplicate points. A contour is "closed" when it returns to its start
+  // within CLOSE_EPS; open chains are stroked but never closed, since closing
+  // one would draw a long diagonal back across the board.
+  const contours: Array<{ pts: { x: number; y: number }[]; closed: boolean; bbox: BBox }> = [];
+  let cur: { x: number; y: number }[] = [];
+  const flush = () => {
+    if (cur.length >= 2) {
+      const a = cur[0], z = cur[cur.length - 1];
+      const closed = cur.length >= 3 && Math.hypot(z.x - a.x, z.y - a.y) < CLOSE_EPS;
+      contours.push({ pts: cur, closed, bbox: computeBBox(cur) });
     }
-  }
-  if (inSubpath > largestSubpath) largestSubpath = inSubpath;
-  // A real perimeter has at least ~20 points (corner segments + straight
-  // edges). Anything smaller means no sub-path encloses the whole board.
-  const fragmented = largestSubpath < 20;
-
-  if (fragmented && s.boardFillAlpha > 0 && isFinite(minX)) {
-    // Lay down a clean rectangle fill before the stroke pass so the board
-    // area reads as filled even though the outline data is in fragments.
-    gfx.rect(minX, minY, maxX - minX, maxY - minY);
-    gfx.fill({ color: resolveBoardFillColor(metadataHex, s.useMetadataBoardColor), alpha: s.boardFillAlpha });
-  }
-
-  let penDown = false;
-  let prevX = NaN, prevY = NaN;
-  let firstX = NaN, firstY = NaN;
-  const closeIfMatchingStart = () => {
-    if (!penDown) return;
-    // Only close the sub-path if it is geometrically a closed loop. For open
-    // chains, closing here would draw an unwanted stroke from the chain's end
-    // back to its start — visible as a long diagonal across the board.
-    if (Math.hypot(prevX - firstX, prevY - firstY) < CLOSE_EPS) {
-      gfx.closePath();
-    }
+    cur = [];
   };
   for (const pt of pts) {
-    if (isNaN(pt.x) || isNaN(pt.y)) {
-      closeIfMatchingStart();
-      penDown = false;
-      prevX = prevY = firstX = firstY = NaN;
-      continue;
-    }
-    // Skip duplicate consecutive points
-    if (pt.x === prevX && pt.y === prevY) continue;
-    if (!penDown) {
-      gfx.moveTo(pt.x, pt.y);
-      penDown = true;
-      firstX = pt.x; firstY = pt.y;
-    } else {
-      gfx.lineTo(pt.x, pt.y);
-    }
-    prevX = pt.x; prevY = pt.y;
+    if (isNaN(pt.x) || isNaN(pt.y)) { flush(); continue; }
+    const prev = cur[cur.length - 1];
+    if (prev && prev.x === pt.x && prev.y === pt.y) continue;
+    cur.push(pt);
   }
-  closeIfMatchingStart();
+  flush();
+  if (contours.length === 0) return;
 
-  // Skip the path-fill on fragmented outlines — the bbox fill above already
-  // covered the board area, and applying fill() here would re-flood the
-  // disconnected sub-paths with PixiJS's even-odd rule and produce the
-  // exact "weird polygon fillings" we're trying to avoid.
-  if (!fragmented && s.boardFillAlpha > 0) {
-    gfx.fill({ color: resolveBoardFillColor(metadataHex, s.useMetadataBoardColor), alpha: s.boardFillAlpha });
+  // Coherent = every contour with area is a closed loop, which is what the
+  // parsers that split contours (KiCad, EAGLE) guarantee. Otherwise fall back
+  // to the length heuristic: a real perimeter has at least ~20 points (corner
+  // arcs + straight edges), and a pile of shorter open chains means no
+  // sub-path encloses the board (some Teboview Roul layers ship slot edges
+  // without their joining arcs). A fragmented outline gets a bbox fill so the
+  // board still reads as an area, with the real fragments stroked on top.
+  const largest = contours.reduce((m, c) => (c.pts.length > m.pts.length ? c : m), contours[0]);
+  const coherent = contours.every(c => c.closed || c.pts.length < 3);
+  const fragmented = !coherent && largest.pts.length < 20;
+
+  const fill = () => gfx.fill({ color: resolveBoardFillColor(metadataHex, s.useMetadataBoardColor), alpha: s.boardFillAlpha });
+
+  if (s.boardFillAlpha > 0) {
+    if (fragmented) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const c of contours) {
+        minX = Math.min(minX, c.bbox.minX); minY = Math.min(minY, c.bbox.minY);
+        maxX = Math.max(maxX, c.bbox.maxX); maxY = Math.max(maxY, c.bbox.maxY);
+      }
+      if (isFinite(minX)) { gfx.rect(minX, minY, maxX - minX, maxY - minY); fill(); }
+    } else {
+      // Fill pass. PixiJS v8 triangulates every closed sub-path independently
+      // — there is no even-odd rule — so a cutout drawn as a plain second
+      // sub-path is PAINTED, not punched. Holes have to be declared with
+      // cut(), which subtracts the last shape from the previous fill. A
+      // closed contour whose bbox sits inside the perimeter's is a hole;
+      // one outside it is a separate board piece and gets its own fill.
+      const inside = (c: BBox, o: BBox) =>
+        c.minX >= o.minX && c.maxX <= o.maxX && c.minY >= o.minY && c.maxY <= o.maxY;
+      const holes = contours.filter(c => c !== largest && c.closed && inside(c.bbox, largest.bbox));
+      gfx.poly(largest.pts, true);
+      fill();
+      for (const h of holes) { gfx.poly(h.pts, true); gfx.cut(); }
+      for (const c of contours) {
+        if (c === largest || holes.includes(c) || !c.closed) continue;
+        gfx.poly(c.pts, true);
+        fill();
+      }
+    }
+  }
+
+  // Stroke pass: every contour, closed ones closed.
+  for (const c of contours) {
+    gfx.moveTo(c.pts[0].x, c.pts[0].y);
+    for (let i = 1; i < c.pts.length; i++) gfx.lineTo(c.pts[i].x, c.pts[i].y);
+    if (c.closed) gfx.closePath();
   }
   gfx.stroke({ width: s.outlineWidth, color: BOARD_COLORS.outline, alpha: s.outlineAlpha });
 }

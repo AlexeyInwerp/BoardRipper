@@ -16,27 +16,35 @@
 
 ## Outline contours
 
-A board outline is normally **several closed contours** — the perimeter plus every
-slot, milled window and castellation — all drawn on `Edge.Cuts` and stored in
-arbitrary order and direction. The parser chains them by nearest endpoint with a
-**5 mil break threshold**: when the nearest unused segment is farther than that,
-the contour has ended, a `NaN` pen-up sentinel is emitted and the next contour
-starts. `drawOutline` already splits sub-paths on `NaN`.
+A board outline is normally **several closed contours**: the perimeter plus every
+slot, milled window and castellation, all drawn on `Edge.Cuts` in arbitrary order
+and direction. Every `gr_*` / `fp_*` primitive on that layer becomes one polyline
+(arcs and circles sampled), and `chainPolylines` joins polylines whose endpoints
+coincide within **10 mil**. A nearest endpoint farther than that means the
+contour has ended; a `NaN` pen-up sentinel is written and the next contour
+starts. Chaining runs over primitives, not sampled points, so the endpoint search
+is quadratic in the number of edge items rather than in tessellation density.
 
-Without the threshold every contour is welded to the next by a false edge leaping
+Without the tolerance every contour is welded to the next by a false edge leaping
 across the board (reported as "vertex 114 is next to 152").
 
-The threshold is chosen on the join error, not on the distance between output
-points — output gaps are segment *lengths*, and a long real edge is
+The tolerance is judged on the join error, not on the distance between output
+points: output gaps are segment *lengths*, and a long real edge is
 indistinguishable from a false one. starfish's four 3543 mil steps are the sides
-of a 90 mm panel joined by corner arcs, a single unbroken contour. On tomu-fpga,
-84 of 88 joins measure under 0.5 mil while the genuine contour boundaries are
-27.8-131 mil, so 5 mil sits in a wide empty band and also absorbs any endpoint
-drift from arc tessellation.
+of a 90 mm panel joined by corner arcs, one unbroken contour. On tomu-fpga, 84 of
+88 joins measure under 0.5 mil while the genuine contour boundaries start at
+27.8 mil. 10 mil sits in that band and also bridges the ~0.2 mm corner misses of
+hand-drawn or DXF-imported outlines, which KiCad's DRC only warns about.
 
 Result: tomu-fpga yields 2 contours (114 + 40 points) and starfish 1, each
-closing on itself to 0.00 mil.
+closing on itself to 0.00 mil. The outline point count includes the sentinel,
+so tomu-fpga reports 155.
 
+Rendering: PixiJS triangulates each closed sub-path on its own, so a cutout
+drawn as a second sub-path would be painted, not punched. `drawOutline`
+therefore fills the largest contour, subtracts every closed contour whose bbox
+lies inside it with `cut()`, and fills any remaining closed contour as a
+separate board piece. Open contours are only stroked.
 
 ## Overview
 
@@ -344,13 +352,19 @@ Three rules, each of which is a trap if got wrong:
    `(layer …)`, which is what the parser reads, falling back to the zone's
    only if absent.
 
-An unfilled non-keepout zone (drawn but never poured) falls back to its
-`(polygon)` boundary, expanded across the layers its `(layers …)` names — with
-`F&B.Cu` and `*.Cu` resolved as shorthands. That geometry *over-states* the
-copper, since no clearance has been subtracted, so it raises a `parserNotes`
-entry telling the user to re-run "Fill all zones" and re-export. **No fixture
-exercises this path** — after excluding the keepout, both fixtures are fully
-filled.
+An unfilled non-keepout zone (drawn but never poured) is **not drawn**. Its
+`(polygon)` boundary is the pre-clearance outline: painting it would put solid
+copper over every foreign-net via and pad gap, which is worse for reading a
+board than an absent pour. It is counted and reported in `parserNotes` with the
+advice to run "Fill all zones" and save. A KiCad 4/5 zone poured in segment mode
+(`fill_segments`, a bag of hairlines rather than polygons) is reported
+separately and also not drawn. A fill island whose `(layer …)` does not resolve
+to a copper layer — a zone on a mask, silk or user layer, or a layer-set
+shorthand — is skipped and counted, never defaulted onto F.Cu.
+
+The zone's `(net N)` id is authoritative for the surface's net; `(net_name)` is
+an informational label KiCad refreshes only on re-fill, so it is used only when
+the id is missing from the net table.
 
 #### Voids — the outline is already faithful, so `voids` stays unset
 
@@ -451,7 +465,7 @@ skips (rather than fails) when they are absent.
 | Fixture              | Parts | Pins | Nets | Outline pts | Traces | Vias | Pads | Surfaces |
 |----------------------|-------|------|------|-------------|--------|------|------|----------|
 | `starfish.kicad_pcb` | 229   | 705  | 165  | 33          | 2197   | 413  | 711  | 125      |
-| `tomu-fpga.kicad_pcb`| 52    | 148  | 31   | 153         | 579    | 249  | 148  | 30       |
+| `tomu-fpga.kicad_pcb`| 52    | 148  | 31   | 155         | 579    | 249  | 148  | 30       |
 | `dimensions.kicad_pcb` | —   | —    | —    | —           | —      | —    | —    | —        |
 | `text.kicad_pcb`     | —     | —    | —    | —           | —      | —    | —    | —        |
 
@@ -474,8 +488,12 @@ into the 2197 traces) and the four-arc rounded-rectangle `Edge.Cuts` outline.
 ## Phase 2 candidates
 
 - Silkscreen / fab outlines → `BoardData.silkscreen` + `hasSilkscreen`.
+- Zones nested inside footprints (`(footprint … (zone …))`, KiCad 6+ thermal
+  floods and shield fills) are not collected — neither fixture has one. They
+  would need the footprint transform applied, as `collectEdgeCuts` does for
+  edges.
 - A fixture with an unfilled (but non-keepout) copper zone, to exercise the
-  `(polygon)`-boundary fallback and its layer-shorthand expansion against
+  not-drawn path and its note against
   real data.
 - `custom` pad `(primitives …)` → `PadShape: 'poly'` via `padPolygon`.
 - A fixture that actually exercises the legacy `(module …)` + centre/angle arc

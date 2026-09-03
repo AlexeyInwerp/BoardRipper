@@ -1179,35 +1179,8 @@ export function generateSyntheticOutline(points: Point[], margin = 20): Point[] 
  * Each segment is a pair of points [start, end]. The algorithm picks the closest
  * unvisited segment endpoint to the current chain tail and appends the far endpoint.
  */
-export function chainSegments(
-  segments: Array<[Point, Point]>,
-  opts?: { breakDist?: number },
-): Point[] {
+export function chainSegments(segments: Array<[Point, Point]>): Point[] {
   if (segments.length === 0) return [];
-
-  // `breakDist` is the largest join error still treated as "these two segments
-  // are the same contour". Default Infinity keeps the historical behaviour:
-  // chain everything into one run, whatever the gap.
-  //
-  // That default is wrong for any board with cutouts, and knowingly so. A board
-  // outline is usually SEVERAL closed contours — perimeter plus slots, milled
-  // windows, castellations — and greedy nearest-endpoint chaining welds them
-  // into one run, inserting a false edge from the end of each contour to the
-  // start of the next. On tomu-fpga.kicad_pcb the join errors are sharply
-  // bimodal: 84 of 88 are under 0.5 mil (real joins, endpoints written exactly)
-  // and 4 are 27.8-131 mil (the contour boundaries). Passing a breakDist
-  // anywhere in that gap separates them exactly.
-  //
-  // A break emits a NaN point, which is the pen-up sentinel `drawOutline`
-  // already understands — it splits sub-paths on NaN, measures the largest one,
-  // and skips the path fill when the outline is fragmented. So callers opting
-  // in get correct geometry with no renderer change.
-  //
-  // Left opt-in rather than made the default because bvr3 and xzz also call
-  // this, and xzz feeds the result into fold-axis detection and multi-board
-  // splitting; silently introducing NaNs there could change boards that render
-  // correctly today. Those two should be evaluated on their own fixtures.
-  const breakDist = opts?.breakDist ?? Infinity;
 
   const used = new Uint8Array(segments.length);
   const chain: Point[] = [];
@@ -1232,20 +1205,94 @@ export function chainSegments(
 
     if (bestIdx < 0) break;
     used[bestIdx] = 1;
-
-    if (bestDist > breakDist) {
-      // Contour ended. Lift the pen and start the next one with BOTH of its
-      // endpoints — the new sub-path has no tail to join onto.
-      chain.push({ x: NaN, y: NaN });
-      chain.push(segments[bestIdx][0], segments[bestIdx][1]);
-      continue;
-    }
-
     // Append the far endpoint (near endpoint ≈ current chain tail)
     chain.push(bestFlip ? segments[bestIdx][0] : segments[bestIdx][1]);
   }
 
   return chain;
+}
+
+/**
+ * Chain a bag of polylines into as few contours as possible, greedily joining
+ * endpoints that coincide within `tol` mils. Contours are separated by NaN
+ * points, the pen-up sentinel `drawOutline` and `splitOutlineContours` read.
+ *
+ * Operates on whole primitives: a tessellated arc or circle is ONE polyline
+ * with two free endpoints, so the O(n^2) endpoint search is over primitive
+ * count, not sampled-point count. Chaining exploded segments instead is
+ * quadratic in tessellation density (2,000 circular holes x 32 samples took
+ * 66 s). Growth is bidirectional, tail then head, so a contour with one
+ * authoring gap entered mid-way is not split into two halves.
+ *
+ * `chainSegments` above is the older threshold-less segment chainer; it welds
+ * separate contours with a false edge and is kept only for bvr3, whose
+ * fixtures are unavailable to re-verify a switch.
+ */
+export function chainPolylines(polys: Point[][], tol: number): Point[] {
+  const usable = polys.filter(p => p.length >= 2);
+  const used = new Uint8Array(usable.length);
+  const out: Point[] = [];
+  let remaining = usable.length;
+  const near = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
+
+  while (remaining > 0) {
+    let seed = -1;
+    for (let i = 0; i < usable.length; i++) if (!used[i]) { seed = i; break; }
+    if (seed < 0) break;
+    used[seed] = 1;
+    remaining--;
+    const chain = usable[seed].slice();
+
+    // Grow from the tail, then from the head.
+    for (const forward of [true, false]) {
+      for (;;) {
+        const anchor = forward ? chain[chain.length - 1] : chain[0];
+        let best = -1, bestD = Infinity, flip = false;
+        for (let j = 0; j < usable.length; j++) {
+          if (used[j]) continue;
+          const p = usable[j];
+          const d0 = near(anchor, p[0]);
+          if (d0 < bestD) { bestD = d0; best = j; flip = false; }
+          const d1 = near(anchor, p[p.length - 1]);
+          if (d1 < bestD) { bestD = d1; best = j; flip = true; }
+        }
+        if (best < 0 || bestD > tol) break;
+        used[best] = 1;
+        remaining--;
+        const seg = usable[best];
+        const ordered = forward === flip ? seg.slice().reverse() : seg;
+        // `ordered[0]` duplicates the anchor — skip it.
+        if (forward) {
+          for (let k = 1; k < ordered.length; k++) chain.push(ordered[k]);
+        } else {
+          for (let k = ordered.length - 2; k >= 0; k--) chain.unshift(ordered[k]);
+        }
+      }
+    }
+
+    if (out.length > 0) out.push({ x: NaN, y: NaN });
+    for (const p of chain) out.push(p);
+  }
+  return out;
+}
+
+/**
+ * Split an outline on its NaN pen-up sentinels into separate contours.
+ * Empty runs are dropped.
+ */
+export function splitOutlineContours(outline: Point[]): Point[][] {
+  const loops: Point[][] = [];
+  let cur: Point[] = [];
+  for (const p of outline) {
+    if (Number.isNaN(p.x) || Number.isNaN(p.y)) {
+      if (cur.length) loops.push(cur);
+      cur = [];
+    } else {
+      cur.push(p);
+    }
+  }
+  if (cur.length) loops.push(cur);
+  return loops;
 }
 
 export function buildNets(parts: Part[]): Map<string, Net> {
