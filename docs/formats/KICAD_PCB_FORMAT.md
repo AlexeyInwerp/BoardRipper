@@ -14,38 +14,6 @@
 
 ---
 
-## Outline contours
-
-A board outline is normally **several closed contours**: the perimeter plus every
-slot, milled window and castellation, all drawn on `Edge.Cuts` in arbitrary order
-and direction. Every `gr_*` / `fp_*` primitive on that layer becomes one polyline
-(arcs and circles sampled), and `chainPolylines` joins polylines whose endpoints
-coincide within **10 mil**. A nearest endpoint farther than that means the
-contour has ended; a `NaN` pen-up sentinel is written and the next contour
-starts. Chaining runs over primitives, not sampled points, so the endpoint search
-is quadratic in the number of edge items rather than in tessellation density.
-
-Without the tolerance every contour is welded to the next by a false edge leaping
-across the board (reported as "vertex 114 is next to 152").
-
-The tolerance is judged on the join error, not on the distance between output
-points: output gaps are segment *lengths*, and a long real edge is
-indistinguishable from a false one. starfish's four 3543 mil steps are the sides
-of a 90 mm panel joined by corner arcs, one unbroken contour. On tomu-fpga, 84 of
-88 joins measure under 0.5 mil while the genuine contour boundaries start at
-27.8 mil. 10 mil sits in that band and also bridges the ~0.2 mm corner misses of
-hand-drawn or DXF-imported outlines, which KiCad's DRC only warns about.
-
-Result: tomu-fpga yields 2 contours (114 + 40 points) and starfish 1, each
-closing on itself to 0.00 mil. The outline point count includes the sentinel,
-so tomu-fpga reports 155.
-
-Rendering: PixiJS triangulates each closed sub-path on its own, so a cutout
-drawn as a second sub-path would be painted, not punched. `drawOutline`
-therefore fills the largest contour, subtracts every closed contour whose bbox
-lies inside it with `cut()`, and fills any remaining closed contour as a
-separate board piece. Open contours are only stroked.
-
 ## Overview
 
 A `.kicad_pcb` file is a single S-expression document, plain UTF-8 text, no
@@ -55,7 +23,7 @@ copper, connectivity, board outline — is in the clear.
 | Property        | Value                                                            |
 |-----------------|------------------------------------------------------------------|
 | Extension       | `.kicad_pcb` (unshared)                                          |
-| Detection       | Document opens with `(kicad_pcb`                                 |
+| Detection       | First non-whitespace bytes are `(kicad_pcb` — no BOM, no leading comment |
 | Encoding        | UTF-8                                                            |
 | Coordinate unit | Millimetres → mils via `×1000/25.4`                              |
 | Y axis          | **Down** (screen orientation) ⇒ `flipY: false` on the descriptor |
@@ -64,7 +32,17 @@ copper, connectivity, board outline — is in the clear.
 | Format ID       | `KICAD`                                                          |
 
 Written by KiCad 4 through 9. The `(version YYYYMMDD)` token records the
-schema date and is surfaced as `BoardData.formatVersion`.
+schema date and is surfaced as `BoardData.formatVersion`. The spellings the
+parser accepts, by era:
+
+| KiCad | `(version)`    | Footprint keyword | Reference field                 | Arc form                            | Atoms      |
+|-------|----------------|-------------------|---------------------------------|-------------------------------------|------------|
+| 4–5   | `3`, `4`, `20171130` | `(module …)` | `(fp_text reference "R1" …)`   | `(start CX CY) (end X Y) (angle A)` | often bare |
+| 6–7   | `2021…`, `2022…` | `(footprint …)` | `(fp_text reference "R1" …)`   | `(start) (mid) (end)`               | quoted     |
+| 8–9   | `2024…`, `2025…` | `(footprint …)` | `(property "Reference" "R1" …)` | `(start) (mid) (end)`               | quoted     |
+
+All three rows are read by the same code; only the KiCad 4/5 arc form is
+unexercised by a fixture (see *Phase 2 candidates*).
 
 ---
 
@@ -118,7 +96,7 @@ no dependencies, usable in both Node (tests) and the browser (worker):
 - Iterative with an explicit stack — a pathological nesting depth cannot blow
   the JS stack.
 - Works on char codes and `slice()` rather than regexes; a 4.7 MB board is
-  roughly 2 M tokens and parses in ~300 ms.
+  roughly 2 M tokens and parses, zones included, in under 100 ms.
 - Quoted strings are unescaped (`\"`, `\\`, `\n`, `\t`, `\r`) and are **not**
   distinguished from bare atoms in the output. That single decision is what
   lets the same downstream code read both the modern quoted spelling
@@ -249,7 +227,10 @@ Pad-shape mapping onto BoardRipper's `PadShape` vocabulary:
 
 The top-level `(net N "NAME")` table is read into an id → name map. A pad's
 own `(net N "NAME")` is preferred when present (hand-edited files can name a
-net the table doesn't), with the table as fallback.
+net the table doesn't), with the table as fallback. Zones are the opposite:
+their `(net N)` id wins and `(net_name)` is only a fallback — KiCad rewrites a
+pad's inline name on every save but a zone's `net_name` only on re-fill, so
+after a schematic rename the zone label can be stale while the pad's is not.
 
 KiCad qualifies sheet-local nets with a leading slash (`/SPI_MISO`,
 `/Connections/AUX OUT`) while global labels and power symbols stay bare
@@ -265,13 +246,47 @@ with no pads never appear.
 ### Board outline (`Edge.Cuts`)
 
 `gr_line` / `gr_arc` / `gr_circle` / `gr_rect` / `gr_poly` on layer
-`Edge.Cuts` are sampled into segments and chained by the shared
-`chainSegments()`. The equivalent `fp_*` graphics **inside footprints** are
-swept too, transformed by the footprint's placement — board edges are
-sometimes drawn inside an edge-connector or board-outline helper footprint.
+`Edge.Cuts` each become one polyline (arcs and circles sampled). The
+equivalent `fp_*` graphics **inside footprints** are swept too, transformed by
+the footprint's placement — board edges are sometimes drawn inside an
+edge-connector or board-outline helper footprint.
 
 When a file has no `Edge.Cuts` geometry at all, the outline falls back to
 `generateSyntheticOutline(pinPositions)` and a `parserNotes` entry says so.
+
+#### Contours
+
+A board outline is normally **several closed contours**: the perimeter plus
+every slot, milled window and castellation, stored in arbitrary order and
+direction. The shared `chainPolylines()` joins polylines whose endpoints
+coincide within **10 mil** (0.254 mm); a nearest endpoint farther than that
+means the contour has ended, a `NaN` pen-up point is written, and the next
+contour starts. Chaining runs over primitives, not sampled points, so the
+endpoint search is quadratic in the number of edge items rather than in
+tessellation density, and it grows both ends of a contour so one authoring
+gap entered mid-way does not split it in two.
+
+Without the tolerance every contour is welded to the next by a false edge
+across the board (the "vertex 114 next to 152" report). The tolerance is
+judged on the join error, not on the distance between output points — output
+gaps are segment *lengths*, and a long real edge is indistinguishable from a
+false one. On `tomu-fpga`, 84 of 88 joins measure under 0.5 mil (KiCad writes
+a shared endpoint twice, and arc sampling lands on `(end)` exactly) while the
+genuine contour boundaries start at 27.8 mil. 10 mil sits in that band and
+also bridges the ~0.2 mm corner misses of hand-drawn or DXF-imported outlines,
+which KiCad's DRC only warns about.
+
+Result: `tomu-fpga` yields 2 contours (114 + 40 points), `starfish` 1 (its
+four 3543 mil sides are a 90 mm panel joined by corner arcs), each closing on
+itself to 0.00 mil. The outline point count includes the sentinel, so
+`tomu-fpga` reports 155.
+
+Rendering: PixiJS v8 triangulates each closed sub-path on its own — there is
+no even-odd rule — so a cutout drawn as a second sub-path would be painted,
+not punched. `drawOutline` fills the largest closed contour, subtracts every
+closed contour whose bounding box lies inside it with `cut()`, and fills any
+remaining closed contour as a separate board piece. Open contours are only
+stroked.
 
 #### Arcs — no shortest-arc normalisation
 
@@ -335,13 +350,11 @@ reliefs and cutouts, so there is no fill algorithm to implement. Each
 Three rules, each of which is a trap if got wrong:
 
 1. **Keepouts are not copper.** A zone carrying a `(keepout …)` child is a
-   DRC rule area — it says where copper may *not* go. It is skipped outright,
-   and the check runs *before* the unfilled-zone fallback below, because a
-   keepout is precisely the kind of zone that has no `(filled_polygon)`.
+   DRC rule area — it says where copper may *not* go. It is skipped outright.
    `tomu-fpga` contains exactly one, on `B.Cu`, and it is also the only zone
-   in either fixture with no computed fill — so a naive "fall back to
-   `(polygon)`" would paint one solid plane over the single region defined as
-   having no pour.
+   in either fixture with no computed fill — which is why a reader that drew
+   unfilled zones from their `(polygon)` boundary would paint one solid plane
+   over the single region defined as having no pour.
 2. **Never emit both.** When a zone has computed fills, its own `(polygon)`
    boundary is not emitted; doing so would double-draw the pour at its
    un-clipped extent.
@@ -349,8 +362,8 @@ Three rules, each of which is a trap if got wrong:
    `(layers F&B.Cu)` or `(layers In1.Cu In2.Cu)` and fill several layers from
    one boundary — and `F&B.Cu` is a layer-*set* shorthand that names no
    single layer. Every `(filled_polygon)` in both fixtures carries its own
-   `(layer …)`, which is what the parser reads, falling back to the zone's
-   only if absent.
+   `(layer …)`, which is the only thing the parser reads; an island whose
+   layer is not a copper layer is skipped and counted.
 
 An unfilled non-keepout zone (drawn but never poured) is **not drawn**. Its
 `(polygon)` boundary is the pre-clearance outline: painting it would put solid
@@ -419,6 +432,60 @@ index is what tags each trace and via. `BoardData.layerNames` carries the
 names so the renderer can colour tracks per layer and flag layer hops, the
 same arrangement the GenCAD parser uses. This is **not** a butterfly layout,
 so the descriptor leaves `hasLayers` unset.
+
+---
+
+## Writing files BoardRipper reads
+
+For a tool that *emits* `.kicad_pcb` — an editor or converter targeting this
+parser — the minimum document is:
+
+```
+(kicad_pcb (version 20221018) (generator mytool)
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+  (net 0 "")
+  (net 1 "GND")
+  (footprint "lib:PKG" (layer "F.Cu") (at X Y [ROT])
+    (fp_text reference "R1" (at 0 0) (layer "F.SilkS"))
+    (pad "1" smd rect (at LX LY [ABS_ROT]) (size W H) (layers "F.Cu") (net 1 "GND")))
+  (gr_line (start X1 Y1) (end X2 Y2) (layer "Edge.Cuts") (width 0.1)))
+```
+
+Rules an exporter has to get right, in the order they usually go wrong:
+
+- **First bytes.** The file must begin with `(kicad_pcb` after optional
+  whitespace. No BOM, no leading comment — detection is a prefix sniff.
+- **Units and axes.** Millimetres, Y down. Nothing is flipped on the way in.
+- **Footprint rotation** is degrees CCW *as displayed* (so negative in the raw
+  Y-down frame). **Pad `(at)`** is footprint-local and *unrotated*; the parser
+  applies the footprint transform. **Pad rotation** is *absolute*, with the
+  footprint rotation already added in — write `ROT + pad_local_rot`, not the
+  local value. A footprint at `(at 83.7 141.998 90)` carries `(pad … (at -0.8625 0 90))`.
+- **Back-side footprints** are `(layer "B.Cu")` with pad geometry **already
+  mirrored** in footprint-local space. Do not mirror again; the parser does
+  not.
+- **Every net needs a table row**, and `(net 0 "")` must exist. A pad's inline
+  `(net N "NAME")` is read first, so keep it consistent with the table.
+- **Reference designator** goes in `(fp_text reference …)` (KiCad ≤7) or
+  `(property "Reference" …)` (KiCad 8+); either is read. The library id is
+  the *package*, not the component name.
+- **Pads with no copper layer are dropped**; `np_thru_hole` pads become holes
+  but never pins. A footprint with no copper pad is dropped entirely, so a
+  board with none at all is rejected.
+- **Copper pours must be computed.** Only `(filled_polygon (layer …) (pts …))`
+  islands are drawn; a zone with just its `(polygon)` boundary, or a KiCad 4/5
+  `fill_segments` pour, is reported and not drawn. Write fills fractured (holes
+  stitched into the ring by zero-width slits, as KiCad does) — `Surface.voids`
+  is never read.
+- **Arcs** on `Edge.Cuts` and in tracks use `(start) (mid) (end)` with `mid` a
+  real point on the arc. Do not write two bare angles.
+- **Outline contours** join when endpoints coincide within 10 mil; write each
+  shared vertex identically in both primitives and anything within that band
+  chains. Separate contours (cutouts) need no ordering.
+- **Vias** need `(layers "F.Cu" "B.Cu")` to be through-hole; the parser
+  normalises a full-stack span to `layers: []`.
+- Everything in *What is skipped* below can be omitted without affecting what
+  BoardRipper shows.
 
 ---
 
@@ -493,8 +560,7 @@ into the 2197 traces) and the four-arc rounded-rectangle `Edge.Cuts` outline.
   would need the footprint transform applied, as `collectEdgeCuts` does for
   edges.
 - A fixture with an unfilled (but non-keepout) copper zone, to exercise the
-  not-drawn path and its note against
-  real data.
+  not-drawn path and its note against real data.
 - `custom` pad `(primitives …)` → `PadShape: 'poly'` via `padPolygon`.
 - A fixture that actually exercises the legacy `(module …)` + centre/angle arc
   path, so the one unmeasured convention in this parser can be pinned down.

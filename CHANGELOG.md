@@ -1,6 +1,38 @@
 # BoardRipper changelog
 
-## v0.36.2 — 2026-09-02
+## v0.37.0 — 2026-09-03
+
+Two new board formats, both open and both with public test boards — the first
+formats in this project whose parsers can be tested by anyone. Plus a fallback
+for update checks when ripperdoc.de is unreachable.
+
+### Formats
+
+- **KiCad `.kicad_pcb`** (KiCad 4–9). Parts, pins, nets, board outline,
+  tracks, vias and copper pours. An original implementation from KiCad's
+  public file-format documentation — the only openly specified format
+  BoardRipper reads. Two conventions were measured rather than assumed: the
+  rotation sign (KiCad angles are CCW as displayed over a Y-down frame) and
+  the fact that back-side footprints are stored already mirrored. Both were
+  settled by placing every pad under each candidate and requiring a track
+  endpoint at that spot to carry the pad's net — a position-only check cannot
+  tell the conventions apart on a symmetric two-pin part. Copper pours use
+  KiCad's own computed fills, so there is no fill algorithm; keepout areas are
+  recognised as not-copper and skipped. Spec: `docs/formats/KICAD_PCB_FORMAT.md`,
+  including a checklist for tools that write files BoardRipper reads.
+- **EAGLE `.brd`** (Autodesk / CadSoft EAGLE 6.0+ XML). The third format to
+  claim `.brd`; content sniffing keeps it apart from Apple BRD and Allegro. Pin
+  positions are not stored in the file — each part references a library
+  package, and every pin is the package pad run through the element's
+  mirror-then-rotate placement. Verified by a routing oracle: on the fully
+  routed test boards, 100% of pins land exactly on a trace endpoint of their
+  own net. Pre-6.0 binary files are rejected with a message to re-save from
+  EAGLE 6 or newer. Spec: `docs/formats/EAGLE_BRD_FORMAT.md`.
+- **Board outlines with cutouts render correctly.** An outline is usually
+  several closed contours — perimeter plus slots and milled windows — and they
+  were being welded into one run with a false edge leaping across the board.
+  Contours are now chained with a join tolerance and separated, and the
+  renderer punches inner contours as holes instead of painting them.
 
 ### Updates
 

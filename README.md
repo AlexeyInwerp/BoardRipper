@@ -1,6 +1,6 @@
 # BoardRipper
 
-Web-based PCB boardview viewer for board-level repair. Eleven boardview formats and the matching PDF schematic, side by side, in a browser. GPU-accelerated rendering, dockable panels, self-hosted via Docker. Free, AGPL-3.0.
+Web-based PCB boardview viewer for board-level repair. Fourteen boardview formats and the matching PDF schematic, side by side, in a browser. GPU-accelerated rendering, dockable panels, self-hosted via Docker. Free, AGPL-3.0.
 
 ![Boardview and PDF schematic side by side — instant cross-reference](docs/screenshots/01-board-pdf-lookup.png)
 
@@ -26,7 +26,7 @@ Same codebase as the Docker build — `npm run build:lite` / `npm run build:offl
 ## Features
 
 - **GPU-accelerated rendering** — PixiJS v8 / WebGL, 10,000+ components at 60 fps on a modern GPU. Bench-tested down to Intel HD 4000-era integrated graphics (10–30 fps).
-- **Eleven board formats** — see table below. Both `.cad` and `.brd` are shared extensions; BoardRipper sniffs file content to pick the right parser.
+- **Fourteen board formats** — see table below. Both `.cad` and `.brd` are shared extensions; BoardRipper sniffs file content to pick the right parser.
 - **PDF schematic, in sync** — pan, zoom, text search, bookmarks, night mode. Right-click a net on the board to search it in the schematic.
 - **Multi-board tabs** — open several boards at once, switch between them.
 - **Multi-layer support** — show/hide top, bottom, and inner layers independently. Butterfly mode shows top and bottom side by side.
@@ -70,6 +70,9 @@ Same codebase as the Docker build — `npm run build:lite` / `npm run build:offl
 | **TVW** | `.tvw` | Teboview binary, multi-layer + traces + drill data | [TVW_FORMAT.md](docs/formats/TVW_FORMAT.md) |
 | **Cadence Allegro BRD** | `.brd` | Cadence Allegro PCB binary, v16.x / v17.x / v18.x | [ALLEGRO_BRD_FORMAT.md](docs/formats/ALLEGRO_BRD_FORMAT.md) |
 | ↳ Allegro v15.x | `.brd` | Same parser family, partial coverage, still in beta | [ALLEGRO_V15_FORMAT.md](docs/formats/ALLEGRO_V15_FORMAT.md) |
+| **Altium PCB** | `.PcbDoc` / `.CMPcbDoc` / `.CSPcbDoc` | Altium Designer 6.0+, Circuit Maker / Circuit Studio; binary CFB + ASCII v5.0 | [ALTIUM_PCB_FORMAT.md](docs/formats/ALTIUM_PCB_FORMAT.md) |
+| **KiCad** | `.kicad_pcb` | KiCad 4–9 board file: parts, pins, nets, outline with cutouts, tracks, vias, copper pours | [KICAD_PCB_FORMAT.md](docs/formats/KICAD_PCB_FORMAT.md) |
+| **EAGLE** | `.brd` | Autodesk / CadSoft EAGLE 6.0+ XML board; parts resolved through library packages | [EAGLE_BRD_FORMAT.md](docs/formats/EAGLE_BRD_FORMAT.md) |
 
 ![Obscure CAD file with multiple boards stacked into one document — all outlines and components rendered correctly alongside the matching PDF](docs/screenshots/04-stacked-boards.png)
 
