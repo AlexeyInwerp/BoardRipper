@@ -26,6 +26,9 @@
 #   --no-push              Don't push commit/tag to origin
 #   --no-gh-release        Don't create a GitHub Release
 #   --dry-run              Skip GHCR push, FTP, update-test, git push, GH release
+#   --via-tailscale [NODE] Route this release through a Tailscale exit node (default
+#                          rd-nas) so uploads leave from ITS public IP — for when this
+#                          machine's IP is blocked by the FTP host. Cleared on exit.
 set -euo pipefail
 
 # --- Argument parsing ---
@@ -38,6 +41,7 @@ SKIP_UPDATE_TEST="false"
 SKIP_AMD64_BOOT_TEST="false"
 NO_PUSH="false"
 NO_GH_RELEASE="false"
+VIA_TAILSCALE=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -50,6 +54,7 @@ while [ $# -gt 0 ]; do
     --no-push)          NO_PUSH="true"; shift;;
     --no-gh-release)    NO_GH_RELEASE="true"; shift;;
     --dry-run)          DRY_RUN=true; shift;;
+    --via-tailscale)    shift; if [ $# -gt 0 ] && [ "${1#-}" = "$1" ] && [ "${1#v}" = "$1" ]; then VIA_TAILSCALE="$1"; shift; else VIA_TAILSCALE="rd-nas"; fi;;
     -*) echo "unknown flag: $1" >&2; exit 1;;
     *)  if [ -z "$VERSION" ]; then VERSION="$1"; shift
         else echo "extra arg: $1" >&2; exit 1; fi;;
@@ -110,6 +115,39 @@ if [ "$IS_DESKTOP_ONLY" = "false" ]; then
   if [ ! -f "$MINISIGN_KEY" ]; then echo "missing $MINISIGN_KEY" >&2; exit 1; fi
   if [ ! -f "$MINISIGN_PUB" ]; then echo "missing $MINISIGN_PUB" >&2; exit 1; fi
 fi
+
+# --- Tailscale relay (--via-tailscale) ---
+# When this machine's public IP is blocked by the FTP host (2026-09-03: a
+# stale password + lftp's unlimited retries = a ~2 h fail2ban block), route
+# the whole run through a Tailscale exit node so every upload leaves from that
+# node's IP instead. Requires the node to be advertised AND approved as an exit
+# node (one-time: `sudo tailscale set --advertise-exit-node` on the node, then
+# approve it in the admin console). Cleared on any exit.
+TS_BIN="${TS_BIN:-/Applications/Tailscale.app/Contents/MacOS/Tailscale}"
+command -v "$TS_BIN" >/dev/null 2>&1 || TS_BIN="tailscale"
+tailscale_relay_off() {
+  [ -n "$VIA_TAILSCALE" ] || return 0
+  "$TS_BIN" set --exit-node= >/dev/null 2>&1 && echo ">>> Tailscale exit node cleared"
+}
+tailscale_relay_on() {
+  local before after
+  if ! "$TS_BIN" exit-node list 2>/dev/null | grep -q "$VIA_TAILSCALE"; then
+    echo "!!! $VIA_TAILSCALE is not an approved exit node in this tailnet." >&2
+    echo "    On the node:  sudo tailscale set --advertise-exit-node" >&2
+    echo "    Then approve it under Machines -> $VIA_TAILSCALE -> Edit route settings -> Use as exit node." >&2
+    exit 1
+  fi
+  before="$(curl -s --max-time 8 https://api.ipify.org || echo '?')"
+  "$TS_BIN" set --exit-node="$VIA_TAILSCALE" --exit-node-allow-lan-access=true
+  trap tailscale_relay_off EXIT
+  sleep 3
+  after="$(curl -s --max-time 8 https://api.ipify.org || echo '?')"
+  echo ">>> Tailscale relay via $VIA_TAILSCALE: public IP $before -> $after"
+  if [ "$after" = "$before" ] || [ "$after" = "?" ]; then
+    echo "!!! exit node did not change the public IP — refusing to continue" >&2
+    exit 1
+  fi
+}
 
 # --- FTP reachability gate ---
 # Never send a credential into a black hole: a blocked or dead host makes lftp
@@ -194,6 +232,7 @@ echo "    CHANGELOG.md has $VERSION entry ✓"
 
 # --- Pre-flight: FTP host reachable (before any build or push) ---
 if [ "$IS_DESKTOP_ONLY" = "false" ] && [ "$DRY_RUN" != "true" ]; then
+  [ -n "$VIA_TAILSCALE" ] && tailscale_relay_on
   echo ">>> Pre-flight: ftp.ripperdoc.de reachable"
   ftp_reachable || exit 1
 fi
@@ -244,7 +283,7 @@ echo "    package.json -> $PKG_VERSION"
 # Intentionally unconditional: feeds BOTH the manifest's `notes` field
 # (Docker/standard path) and the GitHub Release body (all paths, incl. --desktop-only).
 NOTES_FILE="$(mktemp -t boardripper-release-notes)"
-trap 'rm -f "${NOTES_FILE:-}"' EXIT  # cleanup on every exit path (--dry-run, error gates, normal)
+trap 'tailscale_relay_off; rm -f "${NOTES_FILE:-}"' EXIT  # cleanup on every exit path (--dry-run, error gates, normal); relay-off is a no-op unless --via-tailscale
 awk -v v="$VERSION" '
   BEGIN { in_section = 0 }
   /^## v/ {

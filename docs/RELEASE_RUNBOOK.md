@@ -85,6 +85,69 @@ compromised, you have bigger problems than the env var.
 2. Generate new token, scope: `write:packages` + `read:packages`. Save to `release.env`.
 3. After your first `release.sh` run, github.com → Profile → Packages → `boardripper` → Package settings → Change visibility → Public.
 
+## FTP: credentials, bans, and the Tailscale route
+
+The FTP credential for ripperdoc.de lives in **two files**, read by different
+scripts:
+
+| File | Read by |
+|---|---|
+| `~/.config/boardripper/release.env` | `scripts/release.sh` |
+| `RipperDocWeb/ftp.env` | `RipperDocWeb/deploy.sh`, `report.sh` |
+
+Rotate the password in **both**, or the next release fails at the upload step.
+`scripts/ftp-check.sh` refuses to run while they disagree.
+
+### How a stale password becomes an IP ban
+
+`lftp` retries a failed login indefinitely by default. On 2026-09-03 a
+password rotated in `ftp.env` but not `release.env` produced several minutes
+of `530` responses, and the host's fail2ban blocked the releasing machine's
+public IP for about two hours. Symptoms: `ping` 100 % loss to
+`ftp.ripperdoc.de`, **both** port 21 and port 443 refuse to connect, every
+other host is fine, and a machine on a different public IP still gets in.
+
+Telling a ban from a bad password: a wrong password produces a `530` *after*
+connecting; it cannot stop a TCP handshake to port 443 on the same host. If
+443 is dead too, the IP is blocked. Both scripts now guard against the cause:
+they ping and TCP-probe port 21 before sending a credential, and cap the
+login at one retry, so a stale password costs one `530`, never a ban.
+
+**Never probe FTP anonymously while diagnosing** — every anonymous connect is
+a failed login from the host's side and extends the block. Test reachability
+with `ping` or a bare TCP connect only.
+
+### Before a release: check the credential from another IP
+
+```bash
+scripts/ftp-check.sh --via rd-nas    # one login attempt from the NAS, over Tailscale
+scripts/ftp-check.sh                 # same, from this machine
+```
+
+The `--via` form runs `lftp` on `rd-nas` (it has lftp; the credential travels
+on stdin, never a command line), so a wrong password fails on the NAS's IP,
+not the one the release will use. It uses `deploy.conf` for the SSH hop.
+
+### Releasing while this machine's IP is blocked
+
+Route the run through a Tailscale exit node — every upload then leaves from
+the node's public IP and `release.sh` is otherwise unchanged:
+
+```bash
+scripts/release.sh v0.X.Y --no-desktop --via-tailscale         # rd-nas
+scripts/release.sh v0.X.Y --no-desktop --via-tailscale macbook-pro-2
+```
+
+One-time setup on the node (`rd-nas`): `sudo tailscale set --advertise-exit-node`,
+then approve it in the admin console (Machines → node → *Edit route settings*
+→ *Use as exit node*). The script refuses to start unless the node appears in
+`tailscale exit-node list`, verifies the public IP actually changed, and
+clears the exit node on any exit. `--exit-node-allow-lan-access` keeps the dev
+server and NAS reachable meanwhile.
+
+Fail2ban blocks usually expire on their own in one to a few hours; the relay is
+for when you cannot wait.
+
 ## Per-release flow
 
 ```bash
@@ -124,6 +187,8 @@ curl -s https://www.ripperdoc.de/boardripper/manifest.json | jq .
 The script's final summary prints the GHCR image, manifest URL, GitHub release URL, and desktop zip filenames.
 
 ### Flag cheatsheet
+
+- `--via-tailscale [NODE]` — route the run through a Tailscale exit node (default `rd-nas`). See *FTP: credentials, bans, and the Tailscale route*.
 
 ```
 ./scripts/release.sh v0.X.Y                       # docker-only, prompt for desktop
