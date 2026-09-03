@@ -111,6 +111,23 @@ if [ "$IS_DESKTOP_ONLY" = "false" ]; then
   if [ ! -f "$MINISIGN_PUB" ]; then echo "missing $MINISIGN_PUB" >&2; exit 1; fi
 fi
 
+# --- FTP reachability gate ---
+# Never send a credential into a black hole: a blocked or dead host makes lftp
+# time out and retry, and on 2026-09-03 that turned a stale password into an
+# IP ban. Ping first, then a bare TCP connect to port 21 (no login, so it is
+# not an auth event). Abort before any credential leaves the machine.
+ftp_reachable() {
+  local host="ftp.ripperdoc.de"
+  if ! ping -c 2 -W 2000 "$host" >/dev/null 2>&1 && ! nc -z -G 6 "$host" 21 >/dev/null 2>&1; then
+    echo "!!! $host does not answer ping or TCP/21 from this machine." >&2
+    echo "    Not attempting FTP login. Check for an IP block in the hosting panel" >&2
+    echo "    (this machine's public IP: $(curl -s --max-time 8 https://api.ipify.org || echo unknown))." >&2
+    return 1
+  fi
+  nc -z -G 6 "$host" 21 >/dev/null 2>&1 || { echo "!!! $host answers ping but TCP/21 is closed — FTP service down or port-blocked. Not attempting login." >&2; return 1; }
+  return 0
+}
+
 # --- Preflight: tool presence ---
 REQUIRED_CMDS=(git jq gh)
 if [ "$IS_DESKTOP_ONLY" = "false" ]; then
@@ -174,6 +191,12 @@ EOF
   exit 1
 fi
 echo "    CHANGELOG.md has $VERSION entry ✓"
+
+# --- Pre-flight: FTP host reachable (before any build or push) ---
+if [ "$IS_DESKTOP_ONLY" = "false" ] && [ "$DRY_RUN" != "true" ]; then
+  echo ">>> Pre-flight: ftp.ripperdoc.de reachable"
+  ftp_reachable || exit 1
+fi
 
 # --- Pre-flight: type-check + go build ---
 echo ">>> Pre-flight: tsc --noEmit (frontend)"
@@ -478,6 +501,7 @@ EOF
     cp "$BUNDLE"                  "$STAGE/boardripper/releases/boardripper-update-$VERSION.tar"
     cp "$BUNDLE"                  "$STAGE/boardripper/releases/latest-update.tar.new"
 
+    ftp_reachable || exit 1
     lftp -u "$FTP_USER,$FTP_PASSWORD" "ftp.ripperdoc.de" <<LFTP_EOF
 set net:max-retries 1
 set net:reconnect-interval-base 5
@@ -611,6 +635,7 @@ if [ "$DESKTOP_MODE" = "on" ] || [ "$IS_DESKTOP_ONLY" = "true" ]; then
     cp "$LEG_ZIP" "$STAGE_D/boardripper/desktop/BoardRipper-Legacy-macOS-x64-latest.zip.new"
     cp "$WIN_ZIP" "$STAGE_D/boardripper/desktop/BoardRipper-Windows-x64-latest.zip.new"
 
+    ftp_reachable || exit 1
     lftp -u "$FTP_USER,$FTP_PASSWORD" "ftp.ripperdoc.de" <<LFTP_EOF
 set net:max-retries 1
 set net:reconnect-interval-base 5
