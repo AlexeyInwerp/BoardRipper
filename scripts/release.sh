@@ -456,6 +456,10 @@ EOF
   OUT_DIR="$REPO_ROOT/out" "$REPO_ROOT/scripts/release/site-artifacts.sh"
 
   # --- Upload to FTP atomically ---
+  # lftp retries a failed login indefinitely by default. On 2026-09-03 a stale
+  # FTP_PASSWORD in release.env turned into several minutes of 530s and the
+  # host banned the IP. The net:* settings in each block cap that at one retry
+  # so a bad credential aborts the release (set -e) instead of feeding a ban.
   if [ "$DRY_RUN" != "true" ]; then
     echo ">>> Uploading to ftp.ripperdoc.de"
 
@@ -475,6 +479,10 @@ EOF
     cp "$BUNDLE"                  "$STAGE/boardripper/releases/latest-update.tar.new"
 
     lftp -u "$FTP_USER,$FTP_PASSWORD" "ftp.ripperdoc.de" <<LFTP_EOF
+set net:max-retries 1
+set net:reconnect-interval-base 5
+set net:reconnect-interval-multiplier 1
+set net:timeout 30
 set ftp:ssl-allow no
 mirror --reverse --only-newer --verbose \
   "$STAGE/boardripper" "/public_html/boardripper"
@@ -604,6 +612,10 @@ if [ "$DESKTOP_MODE" = "on" ] || [ "$IS_DESKTOP_ONLY" = "true" ]; then
     cp "$WIN_ZIP" "$STAGE_D/boardripper/desktop/BoardRipper-Windows-x64-latest.zip.new"
 
     lftp -u "$FTP_USER,$FTP_PASSWORD" "ftp.ripperdoc.de" <<LFTP_EOF
+set net:max-retries 1
+set net:reconnect-interval-base 5
+set net:reconnect-interval-multiplier 1
+set net:timeout 30
 set ftp:ssl-allow no
 mirror --reverse --only-newer --verbose \
   "$STAGE_D/boardripper/desktop" "/public_html/boardripper/desktop"
