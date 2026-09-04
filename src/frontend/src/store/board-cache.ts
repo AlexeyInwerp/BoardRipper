@@ -6,11 +6,21 @@ const DB_NAME = 'boardripper-cache';
 // per-entry PARSER_VERSION constant below — a mismatch on read returns
 // a cache miss, triggering a fresh parse. This lets us fix parser bugs
 // without wiping every cached board on every release.
-const DB_VERSION = 35;
+// 36: pdf-bytes store added (session restore of locally-opened PDFs).
+const DB_VERSION = 36;
 const BOARD_STORE = 'boards';
 const PDF_TEXT_STORE = 'pdf-text';
+// Raw bytes of PDFs opened from the local picker / drop. Exists for one
+// reason: `restoreSession` could bring a board back from the board cache but
+// had nothing to bring a PDF back from ("local-drop PDF with no databank
+// entry → no binary cache"), so on a tablet — where the OS discards background
+// tabs routinely — the schematic vanished on every reload. Bounded by count
+// AND bytes: schematics run 5–50 MB and Safari's storage budget is finite.
+const PDF_BYTES_STORE = 'pdf-bytes';
 const MAX_BOARD_ENTRIES = 20;
 const MAX_PDF_TEXT_ENTRIES = 30;
+const MAX_PDF_BYTES_ENTRIES = 6;
+const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 
 /**
  * Parser output version. Bump this (not DB_VERSION) whenever a format
@@ -267,8 +277,12 @@ class BoardCache {
         if (event.oldVersion > 0 && db.objectStoreNames.contains(PDF_TEXT_STORE)) {
           db.deleteObjectStore(PDF_TEXT_STORE);
         }
+        if (event.oldVersion > 0 && db.objectStoreNames.contains(PDF_BYTES_STORE)) {
+          db.deleteObjectStore(PDF_BYTES_STORE);
+        }
         db.createObjectStore(BOARD_STORE, { keyPath: 'key' });
         db.createObjectStore(PDF_TEXT_STORE, { keyPath: 'key' });
+        db.createObjectStore(PDF_BYTES_STORE, { keyPath: 'key' });
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => { this.dbPromise = null; reject(req.error); };
@@ -463,6 +477,68 @@ class BoardCache {
         req.onerror = () => reject(req.error);
       });
     } catch { /* non-critical */ }
+  }
+
+  /** Raw bytes of a locally-opened PDF, or null. Same key scheme as the text
+   *  cache so one (name, size, mtime) triple addresses both. */
+  async getPdfBytes(fileName: string, fileSize: number, lastModified: number): Promise<ArrayBuffer | null> {
+    try {
+      const db = await this.openDB();
+      const key = `${fileName}:${fileSize}:${lastModified}`;
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction(PDF_BYTES_STORE, 'readonly');
+        const req = tx.objectStore(PDF_BYTES_STORE).get(key);
+        req.onsuccess = () => resolve(req.result?.bytes ?? null);
+        req.onerror = () => reject(req.error);
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  /** Store a locally-opened PDF's bytes for session restore. Refuses a single
+   *  file over the total budget (it could never be kept anyway), then evicts
+   *  oldest-first until both the count and the byte caps hold. */
+  async putPdfBytes(fileName: string, fileSize: number, lastModified: number, bytes: ArrayBuffer): Promise<void> {
+    if (bytes.byteLength > MAX_PDF_BYTES_TOTAL) return;
+    try {
+      const db = await this.openDB();
+      const key = `${fileName}:${fileSize}:${lastModified}`;
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(PDF_BYTES_STORE, 'readwrite');
+        const req = tx.objectStore(PDF_BYTES_STORE).put({ key, bytes, size: bytes.byteLength, timestamp: Date.now() });
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+      });
+      await this.evictPdfBytes();
+    } catch {
+      // Storage full / blocked — the PDF still opens, it just won't survive a reload.
+    }
+  }
+
+  private async evictPdfBytes(): Promise<void> {
+    const db = await this.openDB();
+    const all: { key: string; size: number; timestamp: number }[] = await new Promise((resolve, reject) => {
+      const tx = db.transaction(PDF_BYTES_STORE, 'readonly');
+      const req = tx.objectStore(PDF_BYTES_STORE).getAll();
+      // getAll() would also pull the bytes; a keyed cursor is cheaper but this
+      // store never holds more than a handful of entries.
+      req.onsuccess = () => resolve(req.result.map((r: { key: string; size?: number; bytes?: ArrayBuffer; timestamp?: number }) =>
+        ({ key: r.key, size: r.size ?? r.bytes?.byteLength ?? 0, timestamp: r.timestamp ?? 0 })));
+      req.onerror = () => reject(req.error);
+    });
+    all.sort((a, b) => a.timestamp - b.timestamp);
+    let total = all.reduce((n, e) => n + e.size, 0);
+    const doomed: string[] = [];
+    while (all.length > 0 && (all.length > MAX_PDF_BYTES_ENTRIES || total > MAX_PDF_BYTES_TOTAL)) {
+      const e = all.shift()!;
+      doomed.push(e.key);
+      total -= e.size;
+    }
+    if (doomed.length === 0) return;
+    const tx = db.transaction(PDF_BYTES_STORE, 'readwrite');
+    const store = tx.objectStore(PDF_BYTES_STORE);
+    for (const k of doomed) store.delete(k);
   }
 }
 

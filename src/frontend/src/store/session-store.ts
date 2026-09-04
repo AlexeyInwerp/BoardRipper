@@ -1,4 +1,5 @@
 import { boardStore } from './board-store';
+import { boardCache } from './board-cache';
 import { pdfStore } from './pdf-store';
 import { log } from './log-store';
 import { databankStore } from './databank-store';
@@ -139,7 +140,15 @@ export async function restoreSession(session: SavedSession): Promise<void> {
           ensurePdfPanel(file.name);
           opened++;
         } else {
-          unavailable.push(e.fileName); // local-drop PDF with no databank entry → no binary cache
+          // Local-drop / picker PDF: no databank row, but pdfStore.loadFile put
+          // its bytes in the cache. Rebuild a File so the normal open path runs.
+          const bytes = await boardCache.getPdfBytes(e.fileName, e.fileSize, e.fileLastModified);
+          if (!bytes) { unavailable.push(e.fileName); continue; }
+          const file = new File([bytes], e.fileName, { type: 'application/pdf', lastModified: e.fileLastModified });
+          boardStore.addPdf(file);
+          await pdfStore.loadFile(file);
+          ensurePdfPanel(file.name);
+          opened++;
         }
       }
     } catch (err) {

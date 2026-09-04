@@ -1,6 +1,20 @@
 // src/frontend/src/pdf/glyph-extractor.ts
 
-import opentype from 'opentype.js';
+// opentype.js is ~169 KB minified and only the glyph overlay needs it, so it
+// is loaded on the first extraction instead of with the app shell. The sync
+// helpers below read `otf` after `loadOpentype()` has resolved — every entry
+// point into this module goes through `extractPageGlyphs`, which awaits it.
+type OpentypeModule = typeof import('opentype.js');
+let otf: OpentypeModule | null = null;
+async function loadOpentype() {
+  if (!otf) {
+    // opentype.js ships UMD: under Vite's ESM interop the API sits on
+    // `default`; the typings describe the namespace. Accept either shape.
+    const m = await import('opentype.js');
+    otf = ((m as unknown as { default?: OpentypeModule }).default ?? m) as OpentypeModule;
+  }
+  return otf;
+}
 import { log } from '../store/log-store';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist/types/src/pdf';
 import type { FontCacheEntry, GlyphPathData, PageGlyphData } from './glyph-types';
@@ -88,7 +102,7 @@ async function parseFontsFromPage(
 
       // Parse font buffer with opentype.js
       const buffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
-      const font = opentype.parse(buffer);
+      const font = otf!.parse(buffer);
 
       fontCache.set(ck, {
         font,
@@ -123,7 +137,7 @@ function extractGlyphsForItem(
 
     if (!glyph) {
       glyphs.push({
-        path: new opentype.Path(),
+        path: new otf!.Path(),
         commandCount: 0,
         vertexCount: 0,
         advanceWidth: 0,
@@ -164,6 +178,7 @@ export async function extractPageGlyphs(
   textItems: PdfTextItem[],
   pageIndex: number,
 ): Promise<PageGlyphData> {
+  await loadOpentype();
   const result: PageGlyphData = {
     pageIndex,
     items: [],

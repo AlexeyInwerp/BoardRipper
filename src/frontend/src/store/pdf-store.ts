@@ -1,8 +1,8 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist/types/src/pdf';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
-import { PDFDocument, PDFName, PDFDict, PDFStream, PDFNumber, PDFRef, PDFArray, PDFRawStream, decodePDFRawStream } from 'pdf-lib';
 import { boardCache } from './board-cache';
+import type { PDFDict as PDFDictT, PDFRef as PDFRefT } from 'pdf-lib';
 import { Emitter } from './emitter';
 import { PdfLinks } from './pdf-links';
 import { log } from './log-store';
@@ -69,7 +69,13 @@ const _standardFontDataUrl = _pdfjsBase + 'standard_fonts/';
 const _getDocOpts = { cMapUrl: _cMapUrl, cMapPacked: true, standardFontDataUrl: _standardFontDataUrl };
 
 let _workerReady: Promise<void> = Promise.resolve();
-if (window.location.protocol === 'file:') {
+// The dynamic import below makes Vite emit a SECOND, minified copy of the
+// worker as a lazy chunk (1.19 MB) next to the `new URL()` asset above — dead
+// weight on http(s), where only the asset is ever fetched, and precached by
+// the lite service worker on top. The lite build can never run from file://
+// (that is what the `offline` mode is for), so the branch is compiled out
+// there; Electron and the offline single file still need it.
+if (import.meta.env.MODE !== 'lite' && window.location.protocol === 'file:') {
   _workerReady = import('pdfjs-dist/build/pdf.worker.mjs').then(() => {
     log.pdf.log('pdf.js worker loaded via dynamic import (main-thread mode)');
   }).catch((err) => {
@@ -334,6 +340,10 @@ function emitClean(block: QBlock, names: Set<string>, out: string[]): void {
  *    the stream for heavily watermarked files
  */
 async function stripWatermarkImages(buffer: ArrayBuffer, maxDim = 50): Promise<Uint8Array> {
+  // pdf-lib (+ its bundled standard fonts and upng) is ~511 KB minified and
+  // this function is its only consumer. Loaded on the first Clean toggle
+  // rather than on every page load — measured at 16% of the main chunk.
+  const { PDFDocument, PDFName, PDFDict, PDFStream, PDFNumber, PDFRef, PDFArray, PDFRawStream, decodePDFRawStream } = await import('pdf-lib');
   const doc = await PDFDocument.load(buffer, { ignoreEncryption: true });
   const pages = doc.getPages();
   let totalRemoved = 0;
@@ -345,7 +355,7 @@ async function stripWatermarkImages(buffer: ArrayBuffer, maxDim = 50): Promise<U
     const xObjectRef = resources.get(PDFName.of('XObject'));
     const xObject = (xObjectRef instanceof PDFRef
       ? doc.context.lookup(xObjectRef)
-      : xObjectRef) as PDFDict | undefined;
+      : xObjectRef) as PDFDictT | undefined;
     if (!(xObject instanceof PDFDict)) continue;
 
     // 1. Find small watermark image names
@@ -373,7 +383,7 @@ async function stripWatermarkImages(buffer: ArrayBuffer, maxDim = 50): Promise<U
       ? doc.context.lookup(contentsRef)
       : contentsRef;
 
-    const streamRefs: PDFRef[] = [];
+    const streamRefs: PDFRefT[] = [];
     if (contentsObj instanceof PDFArray) {
       for (let i = 0; i < contentsObj.size(); i++) {
         const r = contentsObj.get(i);
@@ -687,6 +697,12 @@ class PdfStore extends Emitter {
       const buffer = await file.arrayBuffer();
       // Copy buffer before passing to pdf.js — getDocument() transfers/detaches the original
       const bufferCopy = buffer.slice(0);
+      // A PDF with no databank row came from the picker or a drop. Keep its
+      // bytes so restoreSession can reopen it after a reload — the board
+      // cache already does this for boards; PDFs used to just vanish.
+      if (fileId == null) {
+        boardCache.putPdfBytes(file.name, file.size, file.lastModified, buffer.slice(0)).catch(() => {});
+      }
       const doc = await pdfjsLib.getDocument({ data: bufferCopy, ..._getDocOpts }).promise;
 
       // Make the document available immediately — text is extracted in the background.
