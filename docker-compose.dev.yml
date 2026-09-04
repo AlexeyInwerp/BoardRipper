@@ -1,0 +1,64 @@
+# BoardRipper — local dev container
+#
+# Builds the CURRENT working tree into the same scratch image production runs,
+# and serves it on http://localhost:1234 with `samples/` as the whole library.
+# This is the "does it actually work in the container" check before cutting a
+# release — vite dev and Playwright both run the frontend outside the image, so
+# neither exercises the Go server, the embedded static files, the bundled
+# boards.db, or the pdfium/wazero indexer.
+#
+#   scripts/devcontainer.sh up        build + start + wait for health
+#   scripts/devcontainer.sh logs      follow
+#   scripts/devcontainer.sh down      stop and remove
+#
+# Or directly:  docker compose -f docker-compose.dev.yml up -d --build
+#
+# Port 1234 mirrors the NAS dev container (scripts/devdeploy-remote.sh), so
+# "1234 is the dev one, 1336/8081 is the real one" holds everywhere. Nothing is
+# shared with the production compose stack: different project name, different
+# port, its own data volume.
+
+name: boardripper-dev
+
+services:
+  boardripper-dev:
+    build:
+      context: .
+      args:
+        # No signing key is compiled in, so `TrustedKeys()` is empty and the
+        # updater fails closed — the update UI is inert here by construction.
+        # That is deliberate: a dev image must never be able to pull and swap
+        # itself for a release image. Test the update path with
+        # tools/update-test/, not with this container.
+        APP_VERSION: dev
+    # Same reasoning as the production compose file: the image ships
+    # USER 65532, but ./.devdata is created by the daemon as root on first
+    # `up`, and UID 65532 then can't open the databank DB. Overriding to root
+    # keeps the one-command flow working on a clean checkout.
+    user: "0:0"
+    ports:
+      - "1234:8080"
+    volumes:
+      # The library IS the samples folder — its subdirectories (eagle/, kicad/,
+      # XZZ PCB SAMPLES/, …) become the top-level folders in the Library panel.
+      # Read-only: a fixture that a scan or a stray write can mutate is not a
+      # fixture. Everything the backend needs to write (databank.db,
+      # pdfindex.db, .previews/, the OBD cache) lives under DATA_DIR.
+      - ./samples:/library:ro
+      # Scratch state for this container only. Delete the directory to get a
+      # cold-start install back — that is the fastest way to re-test the
+      # first-boot path (schema creation, boards.db fallback, cache migration).
+      - ./.devdata:/data
+      # No /var/run/docker.sock. Self-update is out of scope for a dev
+      # container and mounting the socket would hand it the daemon.
+    restart: unless-stopped
+    # scratch has no shell/curl/wget, so the image cannot self-healthcheck.
+    # scripts/devcontainer.sh polls /api/health from the host instead.
+    healthcheck:
+      test: ["NONE"]
+    mem_limit: 2g
+    environment:
+      - PORT=8080
+      # Matches the NAS dev container. Two pdfium/wazero workers is enough for
+      # a sample-sized corpus and keeps the linear-memory floor under the 2g cap.
+      - PDFINDEX_POOL_MAX=2

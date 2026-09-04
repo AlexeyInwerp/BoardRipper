@@ -148,6 +148,36 @@ server and NAS reachable meanwhile.
 Fail2ban blocks usually expire on their own in one to a few hours; the relay is
 for when you cannot wait.
 
+## Before a release: the local dev container
+
+`npm run dev` and Playwright both run the frontend outside the container, so
+neither one exercises the thing we actually ship: the Go server, the embedded
+static bundle, the bundled `boards.db`, or the pdfium/wazero PDF indexer. Build
+the working tree into the production image and click around before tagging:
+
+```bash
+scripts/devcontainer.sh up      # build + start + wait for /api/health
+scripts/devcontainer.sh logs    # follow
+scripts/devcontainer.sh reset   # wipe .devdata → next 'up' is a cold-start install
+scripts/devcontainer.sh down
+```
+
+It serves <http://localhost:1234> with `samples/` bind-mounted read-only as the
+entire library, so whatever fixtures are in the working tree are what the
+Library panel shows. Port 1234 matches the NAS dev container
+(`scripts/devdeploy-remote.sh`) — 1234 is dev, 1336/8081 is real — and nothing
+is shared with the production compose stack (own project name, own port, own
+`.devdata` volume).
+
+Two things it deliberately cannot do: no signing key is compiled in, so the
+updater fails closed and the update UI is inert; and the Docker socket is not
+mounted, so it could not swap itself even if it wanted to. Test the update path
+with `tools/update-test/` (which `release.sh` runs anyway at step 6).
+
+Worth doing at least once per release, on a fresh `reset`, because the
+first-boot path (schema creation, `boards.db` fallback, cache migration) is the
+one no other test covers.
+
 ## Per-release flow
 
 ```bash

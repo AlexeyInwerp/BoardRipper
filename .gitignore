@@ -22,6 +22,10 @@ data/
 # Local Docker Compose files and overrides
 compose.*.y*ml
 docker-compose.*.y*ml
+# …except the checked-in dev container. RELEASE_RUNBOOK tells you to run it and
+# scripts/devcontainer.sh reads it, so a fresh clone must have it; it holds no
+# local paths or credentials (library = ./samples, data = ./.devdata).
+!docker-compose.dev.yml
 
 # Local scratch/dev runtime overrides
 scratch/
@@ -46,6 +50,10 @@ desktop/bin/
 # may have whatever you bring. To re-introduce a redistributable test fixture,
 # whitelist it explicitly here.
 samples/*
+
+# Local dev-container state (docker-compose.dev.yml mounts this as /data).
+# Delete it for a cold-start install; never commit it.
+.devdata/
 
 # Claude — local settings stay out of the public repo
 .claude/settings.json
