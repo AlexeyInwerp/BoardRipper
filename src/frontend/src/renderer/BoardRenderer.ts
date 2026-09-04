@@ -453,6 +453,16 @@ export class BoardRenderer {
   private initialized = false;
   private boundContextMenu: ((e: MouseEvent) => void) | null = null;
   private boundDblClick: ((e: MouseEvent) => void) | null = null;
+  /** Touch long-press → context menu. iOS Safari never fires `contextmenu`
+   *  for a canvas long-press, and Chromium suppresses it once the viewport's
+   *  drag plugin has claimed the pointer, so on a tablet the whole quick-action
+   *  menu was unreachable (measured 2026-09-04: 0 menu elements after a 700 ms
+   *  press). Synthesised here from pointer events instead. */
+  private boundLongPressDown: ((e: PointerEvent) => void) | null = null;
+  private boundLongPressMove: ((e: PointerEvent) => void) | null = null;
+  private boundLongPressEnd: ((e: PointerEvent) => void) | null = null;
+  private longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  private longPressStart: { id: number; x: number; y: number } | null = null;
   private tooltipEl: HTMLDivElement | null = null;
   private tooltipNetSpan: HTMLSpanElement | null = null;
   private tooltipDetailSpan: HTMLSpanElement | null = null;
@@ -1595,6 +1605,49 @@ export class BoardRenderer {
 
     this.boundDblClick = (e: MouseEvent) => { this.handleDblClick(e); };
     this.containerEl.addEventListener('dblclick', this.boundDblClick);
+
+    // Touch long-press → the same menu right-click opens. 500 ms held within
+    // 10 px, primary touch only; a second finger (pinch) or any movement
+    // cancels it. When it fires, the pointerup that follows would still
+    // produce (a) pixi-viewport's 'clicked' → handleClick, changing the
+    // selection under the menu, and (b) the browser's compatibility `click`,
+    // which ContextMenu's document listener treats as "click outside → hide"
+    // — so the menu would close in the same gesture that opened it. Both are
+    // swallowed: the first through the existing dragZoomConsumedClick latch,
+    // the second by a one-shot capture-phase click listener.
+    const LONG_PRESS_MS = 500;
+    const LONG_PRESS_SLOP_PX = 10;
+    const cancelLongPress = () => {
+      if (this.longPressTimer) { clearTimeout(this.longPressTimer); this.longPressTimer = null; }
+      this.longPressStart = null;
+    };
+    this.boundLongPressDown = (e: PointerEvent) => {
+      if (e.pointerType !== 'touch' || !e.isPrimary) { cancelLongPress(); return; }
+      cancelLongPress();
+      this.longPressStart = { id: e.pointerId, x: e.clientX, y: e.clientY };
+      this.longPressTimer = setTimeout(() => {
+        const start = this.longPressStart;
+        this.longPressTimer = null;
+        this.longPressStart = null;
+        if (!start) return;
+        this.dragZoomConsumedClick = true;
+        const swallow = (ev: Event) => { ev.stopPropagation(); ev.preventDefault(); };
+        document.addEventListener('click', swallow, { capture: true, once: true });
+        // If no click ever arrives (some browsers), don't leave the trap armed.
+        setTimeout(() => document.removeEventListener('click', swallow, { capture: true }), 700);
+        this.handleRightClick({ clientX: start.x, clientY: start.y });
+      }, LONG_PRESS_MS);
+    };
+    this.boundLongPressMove = (e: PointerEvent) => {
+      const st = this.longPressStart;
+      if (!st || e.pointerId !== st.id) return;
+      if (Math.hypot(e.clientX - st.x, e.clientY - st.y) > LONG_PRESS_SLOP_PX) cancelLongPress();
+    };
+    this.boundLongPressEnd = () => cancelLongPress();
+    this.containerEl.addEventListener('pointerdown', this.boundLongPressDown, { capture: true });
+    this.containerEl.addEventListener('pointermove', this.boundLongPressMove, { capture: true });
+    this.containerEl.addEventListener('pointerup', this.boundLongPressEnd, { capture: true });
+    this.containerEl.addEventListener('pointercancel', this.boundLongPressEnd, { capture: true });
 
     // Hover tooltip — listens directly on the PixiJS canvas (the actual event target)
     this.tooltipEl = document.createElement('div');
@@ -6213,7 +6266,7 @@ export class BoardRenderer {
     if (part) this.triggerFollowPdf(part, true);
   }
 
-  private handleRightClick(e: MouseEvent) {
+  private handleRightClick(e: { clientX: number; clientY: number }) {
     if (!this.board) return;
     const rect = this.containerEl.getBoundingClientRect();
     const worldPoint = this.viewport.toWorld(
@@ -6462,6 +6515,21 @@ export class BoardRenderer {
     if (this.boundDblClick) {
       this.containerEl.removeEventListener('dblclick', this.boundDblClick);
       this.boundDblClick = null;
+    }
+    if (this.longPressTimer) { clearTimeout(this.longPressTimer); this.longPressTimer = null; }
+    this.longPressStart = null;
+    if (this.boundLongPressDown) {
+      this.containerEl.removeEventListener('pointerdown', this.boundLongPressDown, true);
+      this.boundLongPressDown = null;
+    }
+    if (this.boundLongPressMove) {
+      this.containerEl.removeEventListener('pointermove', this.boundLongPressMove, true);
+      this.boundLongPressMove = null;
+    }
+    if (this.boundLongPressEnd) {
+      this.containerEl.removeEventListener('pointerup', this.boundLongPressEnd, true);
+      this.containerEl.removeEventListener('pointercancel', this.boundLongPressEnd, true);
+      this.boundLongPressEnd = null;
     }
     if (this.tooltipCanvas && this.boundHover) {
       this.tooltipCanvas.removeEventListener('pointermove', this.boundHover);
