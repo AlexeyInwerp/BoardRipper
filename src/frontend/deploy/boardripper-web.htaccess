@@ -6,8 +6,11 @@
 # breaks in three ways — all confirmed against the live server:
 #   1. the pdf.js worker (.mjs) is rejected under `nosniff` unless its MIME is a JS
 #      type (LiteSpeed does not map .mjs by default);
-#   2. PixiJS needs `unsafe-eval` to initialise its renderer (throws
-#      "Current environment does not allow unsafe-eval" otherwise);
+#   2. PixiJS needed `unsafe-eval` to initialise its renderer — no longer:
+#      main.tsx imports `pixi.js/unsafe-eval` (eval-free uniform parsers), so
+#      'unsafe-eval' was dropped from script-src on 2026-09-04. Verified by
+#      opening a board under this exact header. 'wasm-unsafe-eval' stays for
+#      pdf.js's wasm decoders;
 #   3. Web Workers, wasm, blob: URLs and the FZ-key cross-origin fetch are blocked
 #      by the site CSP (default-src 'self', connect-src 'self').
 # This directory serves the user's own local-only viewer, so it gets an app-
@@ -23,7 +26,7 @@ AddType application/wasm .wasm
 <IfModule mod_headers.c>
   # Replace the inherited restrictive CSP with one this app needs.
   Header always unset Content-Security-Policy
-  Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; child-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' data: blob: https://raw.githubusercontent.com https://*.githubusercontent.com; manifest-src 'self'; object-src 'none'; base-uri 'self'"
+  Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; child-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' data: blob: https://raw.githubusercontent.com https://*.githubusercontent.com; manifest-src 'self'; object-src 'none'; base-uri 'self'"
 </IfModule>
 
 # --- Service-worker freshness ---

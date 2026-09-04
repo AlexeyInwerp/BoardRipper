@@ -26,21 +26,26 @@ function relayLog(m: ParseWorkerLogMsg['log']): void {
   (scoped ?? log.parser)[m.level](m.message);
 }
 
-function ensureWorker(): Worker | null {
-  if (workerBroken) return null;
-  // Offline single-file build (file://) ships no worker file — parse on the
-  // main thread. Board files are small; the worker is a big-board perf win the
-  // downloadable single-file trades away to stay one self-contained HTML.
-  if (isOfflineBuild()) return null;
-  if (worker) return worker;
+/** Offline single-file build: the worker cannot be a separate file (there is
+ *  only one file), so Vite's `?worker&inline` packs it as a base64 blob the
+ *  page starts itself. Until 2026-09 the offline build parsed on the main
+ *  thread instead, freezing the tab for seconds on a 5 MB Allegro/Altium
+ *  board — on a tablet, the exact device the single file is for. The import
+ *  is behind a build-time constant so lite/NAS never carry the inlined copy
+ *  (they load the worker as a normal chunk). */
+async function loadInlineWorker(): Promise<(new () => Worker) | null> {
+  if (import.meta.env.MODE !== 'offline') return null;
   try {
-    worker = new Worker(new URL('./parse-worker.ts', import.meta.url), { type: 'module' });
+    const m = await import('./parse-worker.ts?worker&inline');
+    return m.default;
   } catch (e) {
-    log.parser.warn('Parse worker unavailable — parsing inline:', String(e));
-    workerBroken = true;
+    log.parser.warn('Inline parse worker unavailable — parsing on the main thread:', String(e));
     return null;
   }
-  worker.onmessage = (ev: MessageEvent<ParseWorkerResponse | ParseWorkerLogMsg>) => {
+}
+
+function wireWorker(w: Worker): Worker {
+  w.onmessage = (ev: MessageEvent<ParseWorkerResponse | ParseWorkerLogMsg>) => {
     if ('log' in ev.data) { relayLog(ev.data.log); return; }
     const resp = ev.data;
     const p = pending.get(resp.id);
@@ -50,7 +55,7 @@ function ensureWorker(): Worker | null {
     else if (resp.fzReason) p.reject(new FZKeyError(resp.fzReason));
     else p.reject(Object.assign(new Error(resp.message), { name: resp.errName }));
   };
-  worker.onerror = (e) => {
+  w.onerror = (e) => {
     log.parser.error('Parse worker crashed — falling back to inline parsing:', e.message ?? String(e));
     for (const p of pending.values()) p.reject(Object.assign(new Error('parse worker crashed'), { name: 'WorkerCrash' }));
     pending.clear();
@@ -58,6 +63,22 @@ function ensureWorker(): Worker | null {
     worker = null;
     workerBroken = true;
   };
+  return w;
+}
+
+function ensureWorker(): Worker | null {
+  if (workerBroken) return null;
+  if (worker) return worker;
+  // The offline build's worker is created asynchronously (loadInlineWorker)
+  // by parseBoardFileInWorker; nothing to construct synchronously here.
+  if (isOfflineBuild()) return null;
+  try {
+    worker = wireWorker(new Worker(new URL('./parse-worker.ts', import.meta.url), { type: 'module' }));
+  } catch (e) {
+    log.parser.warn('Parse worker unavailable — parsing inline:', String(e));
+    workerBroken = true;
+    return null;
+  }
   return worker;
 }
 
@@ -68,6 +89,14 @@ export function isWorkerTransportError(e: unknown): boolean {
 }
 
 export async function parseBoardFileInWorker(buffer: ArrayBuffer, fileName: string): Promise<BoardData> {
+  if (isOfflineBuild() && !worker && !workerBroken) {
+    const Ctor = await loadInlineWorker();
+    if (Ctor) {
+      try { worker = wireWorker(new Ctor()); } catch (e) { log.parser.warn('Inline parse worker failed to start:', String(e)); workerBroken = true; }
+    } else {
+      workerBroken = true;
+    }
+  }
   const w = ensureWorker();
   if (!w) return parseBoardFile(buffer, fileName);
   const id = nextId++;
