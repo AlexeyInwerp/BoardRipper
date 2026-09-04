@@ -1854,7 +1854,17 @@ export function buildBoardScene(
     }
 
     // ── Label (last = always on top within the part) ────────────────────────
-    if (s.showPartLabels) {
+    // A single-pin part (testpoint, pad, fiducial — 2346 of 4686 on
+    // iPhone16_16Plus) has no body to write on, so its designator is drawn
+    // centred ON the pin, in the exact spot the diode reading takes. It is a
+    // pin label in all but name, so diode-only mode suppresses it along with
+    // the pin numbers and net names. Multi-pin designators are on the part
+    // body, not the pin, and stay — they are what tells you which chip you are
+    // looking at. Suppression is unconditional rather than "only where a
+    // reading exists": 574 of those 2346 pins carry one, and leaving the other
+    // 1772 named would make visible text ambiguous (is `N1530_1` a designator
+    // or a measurement?) and read as a bug rather than a rule.
+    if (s.showPartLabels && !(diodeOnly && isSinglePin)) {
       let fontSize: number;
       if (isSinglePin) {
         // Size against the pad, not the zero-width `eb`. Same fit formula the
