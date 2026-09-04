@@ -14,6 +14,11 @@ import { ReleaseNotes } from './ReleaseNotes';
 import { pdfStore } from '../store/pdf-store';
 import { databankStore, isElectron } from '../store/databank-store';
 import { isLiteBuild, isOfflineBuild } from '../store/build-mode';
+
+/** Touch-first device (tablet). Evaluated once — the primary pointer of a
+ *  device does not change while the page is open. */
+const COARSE_POINTER = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+  && window.matchMedia('(pointer: coarse)').matches;
 import { setLibrarySearch } from '../panels/LibraryPanel';
 import { countInBoardTab, countInPdf, findInBoardTab, findInPdf } from '../store/cross-target-search';
 import { SearchScopeBadge, type SearchScope } from './SearchScopeBadge';
@@ -575,6 +580,11 @@ export function Toolbar() {
         >
           &#x2261;
         </button>
+        {/* Pop-out needs a real second window. The offline single file has
+         *  no popout.html to open, and a tablet's window.open is a new tab
+         *  (iPadOS) or nothing — so the control is hidden where it can only
+         *  fail. Read once at render: the pointer type does not change. */}
+        {!isOfflineBuild() && !COARSE_POINTER && (
         <button
           onClick={() => toggleTwoWindowMode()}
           className={`toolbar-btn ${twoWindow ? 'active' : ''}`}
@@ -589,6 +599,7 @@ export function Toolbar() {
             : <IconLayoutBoardSplit size={14} stroke={1.75} />}
           2 window mode
         </button>
+        )}
         {/* In Electron the picker reaches into the local filesystem (truly "Open").
          *  In a browser the file is read into memory client-side — closer to an
          *  upload from the user's mental model — so the web build uses an

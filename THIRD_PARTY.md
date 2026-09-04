@@ -154,6 +154,12 @@ promptly.
 
 ---
 
+### Tomu FPGA — `tomu-fpga.kicad_pcb` (bundled sample, lite build)
+- **License:** CC-BY-SA 4.0 (or TAPR OHL), as stated in the file's own title block
+- **Author:** Sean 'xobs' Cross — https://tomu.im
+- **Used in:** `src/frontend/public/samples/tomu-fpga.kicad_pcb` — the "Try a sample board" button on the lite build's start page
+- **Nature of use:** Redistributed unmodified as a data file so a first-time visitor can see a real, routed board without bringing their own. It is not incorporated into BoardRipper's code; the share-alike term attaches to derivatives of the board design, not to the viewer.
+
 ## Format Specifications
 
 The documents under [`docs/formats/`](docs/formats/) are original technical

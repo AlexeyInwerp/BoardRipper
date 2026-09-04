@@ -52,8 +52,15 @@ function saveSide(side: SidebarSide): void {
 }
 
 // --- Global sidebar state (for external access by Toolbar, keyboard shortcuts) ---
+// On the lite build there is no Library, so the left sidebar's only content
+// is Tools / Settings / Debug — and on a tablet it opened by default over
+// 320 of 834 px while the board sidebar (Info / Layers) started collapsed
+// (measured 2026-09-04). Start it closed on a touch device; the toolbar's ≡
+// button is one tap away.
+const COARSE_POINTER = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+  && window.matchMedia('(pointer: coarse)').matches;
 const state = {
-  collapsed: false,
+  collapsed: isLiteBuild() && COARSE_POINTER,
   activeTab: (isLiteBuild() ? 'settings' : 'library') as SidebarTab,
   side: loadSide(),
 };

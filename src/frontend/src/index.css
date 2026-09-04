@@ -6829,6 +6829,31 @@ body {
   border-radius: 10px;
   padding: 18px 22px;
 }
+/* Lite build front door — see LiteOpenCard in HomeBackdrop.tsx. */
+.home-open-card { border-color: var(--accent); }
+.home-open-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.home-open-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;              /* touch target — this is the tablet's way in */
+  padding: 0 18px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+.home-open-btn:hover:not(:disabled) { border-color: var(--accent); }
+.home-open-btn:disabled { opacity: 0.6; cursor: default; }
+.home-open-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+  font-weight: 600;
+}
+.home-open-note { margin: 12px 0 0; color: var(--text-secondary); font-size: 0.85rem; }
 .home-card-header {
   display: flex;
   align-items: center;

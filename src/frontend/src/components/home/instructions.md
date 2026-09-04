@@ -5,6 +5,7 @@ boardview and the schematic PDF — instead of a separate tool for each. Each
 section below expands when you click it. Press **?** any time for the keyboard
 shortcut list.
 
+<!-- docker-only -->
 ## Run it in Docker (recommended)
 
 BoardRipper is built to live in a **Docker container** on your NAS or
@@ -24,6 +25,8 @@ no manual importing.
 Running from source works too, but the auto-scanned library is the reason to
 use the container if you have more than a handful of files.
 
+<!-- /docker-only -->
+
 ## Open a file
 
 - Drop a board anywhere on this window: `.bvr` / `.bv`, `.brd` (OpenBoardView
@@ -31,9 +34,14 @@ use the container if you have more than a handful of files.
   obfuscated), `.fz`, `.cad` (GenCAD *or* Mentor Boardstation Neutral),
   `.pcb` (XZZ), or `.tvw` — 11 formats in all.
 - Drop a PDF schematic too — it opens in a side panel and links to the board.
+- No drag-and-drop (tablet, phone)? The **Upload** button in the toolbar opens
+  the same picker; select a board and its PDF together and both open.
 - **⌘O** / **⌘P** open the same picker (boards + PDFs routed by extension).
+<!-- docker-only -->
 - In Docker mode, open the **Library** tab and pick any indexed board.
+<!-- /docker-only -->
 
+<!-- docker-only -->
 ## The Library
 
 The sidebar **Library** tab is the heart of the Docker setup:
@@ -46,6 +54,8 @@ The sidebar **Library** tab is the heart of the Docker setup:
 - **Folders** browses the indexed DB or the live filesystem.
 - Byte-identical duplicates are detected and collapsed; the original is the one
   that gets indexed.
+
+<!-- /docker-only -->
 
 ## Link board ↔ PDF (and PDF ↔ PDF)
 

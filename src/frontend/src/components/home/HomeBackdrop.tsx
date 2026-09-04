@@ -3,6 +3,9 @@ import { useBoardStore } from '../../hooks/useBoardStore';
 import { useDatabank } from '../../hooks/useDatabank';
 import { databankStore } from '../../store/databank-store';
 import { isLiteBuild } from '../../store/build-mode';
+import { fileInputRefs } from '../../store/file-inputs';
+import { boardStore } from '../../store/board-store';
+import { IconUpload } from '@tabler/icons-react';
 import { pdfStore } from '../../store/pdf-store';
 import { updateStore } from '../../store/update-store';
 import { renderSettingsStore, type RenderSettings } from '../../store/render-settings';
@@ -220,11 +223,67 @@ function Banner() {
 // The MD's first H1 is stripped (title lives on the card header).
 // ─────────────────────────────────────────────────────────────
 
-const INSTRUCTIONS_BODY = instructionsMd.replace(/^#\s+.*(?:\r?\n)?/, '');
+// `<!-- docker-only -->` … `<!-- /docker-only -->` fences mark sections that
+// only make sense with a backend (Docker setup, the Library). The lite build
+// drops them — it was opening on "Run it in Docker (recommended)" with no
+// Docker to run — and every other build just drops the fence lines.
+const INSTRUCTIONS_BODY = instructionsMd
+  .replace(/^#\s+.*(?:\r?\n)?/, '')
+  .replace(/<!-- docker-only -->[\s\S]*?<!-- \/docker-only -->\r?\n?/g, m => (isLiteBuild() ? '' : m))
+  .replace(/^<!-- \/?docker-only -->\r?\n?/gm, '');
 const INSTRUCTIONS_TITLE = (() => {
   const m = instructionsMd.match(/^#\s+(.+)/);
   return m ? m[1].trim() : 'Getting started';
 })();
+
+// ─────────────────────────────────────────────────────────────
+// Lite build: the open-a-file card. There is no Library and, on a tablet, no
+// drag-and-drop, so the toolbar's small Upload button was the only way in —
+// and the page below it opened on Docker instructions. This is the front door.
+// ─────────────────────────────────────────────────────────────
+
+const SAMPLE_BOARD = {
+  // CC-BY-SA 4.0 — "Tomu, I'm" by Sean 'xobs' Cross, https://tomu.im (see THIRD_PARTY.md).
+  url: './samples/tomu-fpga.kicad_pcb',
+  name: 'tomu-fpga.kicad_pcb',
+  label: 'Tomu FPGA (KiCad, CC-BY-SA 4.0)',
+};
+
+function LiteOpenCard() {
+  const [busy, setBusy] = useState(false);
+  const openPicker = () => fileInputRefs.board?.click();
+  const openSample = async () => {
+    setBusy(true);
+    try {
+      const res = await fetch(SAMPLE_BOARD.url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const buf = await res.arrayBuffer();
+      const dt = new DataTransfer();
+      dt.items.add(new File([buf], SAMPLE_BOARD.name, { type: 'application/octet-stream' }));
+      await boardStore.loadFiles(dt.files);
+    } catch (err) {
+      boardStore.addToast(`Could not load the sample board: ${err instanceof Error ? err.message : String(err)}`, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="home-card home-open-card" data-testid="home-open-card">
+      <div className="home-open-actions">
+        <button type="button" className="home-open-btn home-open-btn-primary" onClick={openPicker} data-testid="home-open-btn">
+          <IconUpload size={18} stroke={1.75} /> Open a board or PDF
+        </button>
+        <button type="button" className="home-open-btn" onClick={openSample} disabled={busy} data-testid="home-sample-btn" title={SAMPLE_BOARD.label}>
+          {busy ? 'Loading…' : 'Try a sample board'}
+        </button>
+      </div>
+      <p className="home-open-note">
+        Everything runs in this browser tab. Nothing is uploaded. Pick a board and its schematic
+        PDF together and both open side by side.
+      </p>
+    </section>
+  );
+}
 
 function Instructions() {
   return (
@@ -1182,6 +1241,7 @@ export function HomeBackdrop() {
           <div className="home-ui-scale-row">
             <InterfaceScaleSlider />
           </div>
+          {isLiteBuild() && <LiteOpenCard />}
           <HdrGlowCard />
           <Instructions />
           <QuickSettings />

@@ -22,7 +22,16 @@ class WelcomeStore {
       done = true; // storage blocked — don't nag
     }
     const automated = typeof navigator !== 'undefined' && navigator.webdriver === true;
-    this.open = !done && !automated;
+    // The wizard classifies wheel/trackpad gestures. A touch device has
+    // neither, so on a coarse pointer there is nothing to set up — skip it and
+    // mark it done so a later mouse (e.g. iPad + trackpad) can still be
+    // calibrated from Settings rather than nagged on first launch.
+    const coarse = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      && window.matchMedia('(pointer: coarse)').matches;
+    this.open = !done && !automated && !coarse;
+    if (coarse && !done) {
+      try { localStorage.setItem(DONE_KEY, '1'); } catch { /* ignore */ }
+    }
   }
 
   subscribe = (cb: Listener): (() => void) => {
