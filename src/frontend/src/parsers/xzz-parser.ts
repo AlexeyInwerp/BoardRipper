@@ -1327,29 +1327,149 @@ function classifyXzzDiode(tok: string): DiodeReading | null {
   return { raw: tok, kind: 'value', mv: Math.round(n), source: 'xzz-pcb' };
 }
 
-/** Parse the post-`v6v6555v6v6===` diode-value table baked into XZZ
- *  "Middle layer diode value" .pcb companions. Records are newline-delimited
- *  `=<value>=<partName>(<pinNumber>)`. Returns a map keyed `PART(PIN)`; empty
- *  for normal boardviews (no marker). The section is plaintext — it lives past
- *  the XOR boundary marker, so it is never XOR'd or DES'd. */
-export function parseDiodeSection(raw: Uint8Array): Map<string, DiodeReading> {
-  const out = new Map<string, DiodeReading>();
-  let pos = -1;
+/** Locate the `v6v6555v6v6` XOR-boundary marker, or -1. The annotation
+ *  section (diode table / rename table) begins right after it. */
+function findDiodeMarker(raw: Uint8Array): number {
   outer: for (let i = 0; i + DIODE_MARKER.length <= raw.length; i++) {
     for (let j = 0; j < DIODE_MARKER.length; j++) if (raw[i + j] !== DIODE_MARKER[j]) continue outer;
-    pos = i; break;
+    return i;
   }
-  if (pos < 0) return out;
-  // Decode the tail as latin1 (records are ASCII) and scan for records.
+  return -1;
+}
+
+/** Everything the post-marker annotation section can carry. All maps are empty
+ *  on a normal boardview (no marker, or a marker with nothing after it). */
+export interface XzzTailAnnotations {
+  /** Diode readings keyed `PART(PIN)`, where PART is the JSON `reference`. */
+  diodes: Map<string, DiodeReading>;
+  /** Same readings keyed by the JSON `alias` — `PART(PIN)` again, but under the
+   *  human designator. Populated only from the JSON tail (the legacy record
+   *  format has no alias concept). Lets the join try both keys without
+   *  re-walking the table. */
+  diodesByAlias: Map<string, DiodeReading>;
+  /** `reference` → `alias`: the internal part id the binary blocks use mapped
+   *  to the designator XZZ's viewer displays (`C356_1` → `C11814`). */
+  partAliases: Map<string, string>;
+  /** `Net21` → `PP_VDD_MAIN`. Sparse — only the nets the author bothered to
+   *  name; most boards carry none. */
+  netAliases: Map<string, string>;
+  /** Which encoding the section used, for logging. */
+  encoding: 'none' | 'legacy' | 'json';
+}
+
+function emptyAnnotations(): XzzTailAnnotations {
+  return {
+    diodes: new Map(), diodesByAlias: new Map(),
+    partAliases: new Map(), netAliases: new Map(), encoding: 'none',
+  };
+}
+
+/** Shape of the JSON annotation tail. Every field is optional — the two
+ *  deliveries of one board ("Boardview" carries `pad`/`net`, "YiDianTong"
+ *  carries only `reference`/`alias`) differ in exactly which are present. */
+interface XzzTailJson {
+  part?: Array<{
+    reference?: string;
+    alias?: string;
+    value?: string;
+    pad?: Array<{ name?: string; diode?: string }>;
+  }>;
+  net?: Array<{ name?: string; alias?: string }>;
+}
+
+/** Parse the post-marker section in whichever of its two encodings this file
+ *  uses. Both live past the XOR boundary, so neither is ever XOR'd or DES'd.
+ *
+ *  **Legacy** (older "Middle layer diode value" companions): newline-delimited
+ *  `=<value>=<partName>(<pinNumber>)` records, nothing but diode values.
+ *
+ *  **JSON** (current iPhone-era deliveries, e.g. iPhone16_16Plus): a single
+ *  `{"part":[…],"net":[…],"bitmap":{…}}` document after a `===PCB<gb2312>`
+ *  banner line. Diode readings hang off `part[].pad[].diode`; `part[].alias`
+ *  and `net[].alias` are the rename tables XZZ's own viewer applies. A board
+ *  can ship the JSON with the rename tables and NO `pad[]` at all — that file
+ *  genuinely has no diode data, and this returns empty `diodes` for it.
+ *
+ *  Detection is by content, not by file name: try JSON when a `{` follows the
+ *  marker, else fall back to the legacy regex. */
+export function parseXzzTailAnnotations(raw: Uint8Array): XzzTailAnnotations {
+  const pos = findDiodeMarker(raw);
+  if (pos < 0) return emptyAnnotations();
+
+  const tail = raw.subarray(pos + DIODE_MARKER.length);
+  // The JSON body is UTF-8, but the banner between the marker and the `{` is
+  // GB2312 ("===PCB<4 high bytes>"), which would corrupt a whole-tail UTF-8
+  // decode of the prefix. Find the brace on the raw bytes, then decode only
+  // from there. 0x7b = '{'.
+  // 0x7b = '{'. Capped scan: the banner is one short line, so a brace further
+  // in than this is not a JSON document header. A legacy tail that happens to
+  // contain a brace just fails JSON.parse below and falls through.
+  let brace = -1;
+  for (let i = 0; i < tail.length && i < 4096; i++) {
+    if (tail[i] === 0x7b) { brace = i; break; }
+  }
+  if (brace >= 0) {
+    const json = parseXzzTailJson(tail.subarray(brace));
+    if (json) return json;
+  }
+  return parseLegacyDiodeRecords(tail);
+}
+
+function parseXzzTailJson(bytes: Uint8Array): XzzTailAnnotations | null {
+  let doc: XzzTailJson;
+  try {
+    doc = JSON.parse(new TextDecoder('utf-8').decode(bytes)) as XzzTailJson;
+  } catch {
+    return null;                                  // not JSON after all
+  }
+  if (!doc || typeof doc !== 'object' || !Array.isArray(doc.part)) return null;
+
+  const out = emptyAnnotations();
+  out.encoding = 'json';
+  for (const p of doc.part) {
+    const ref = typeof p?.reference === 'string' ? p.reference : '';
+    if (!ref) continue;
+    const alias = typeof p.alias === 'string' && p.alias !== '' && p.alias !== ref ? p.alias : '';
+    if (alias) out.partAliases.set(ref, alias);
+    if (!Array.isArray(p.pad)) continue;
+    for (const pad of p.pad) {
+      if (typeof pad?.name !== 'string' || typeof pad.diode !== 'string') continue;
+      const reading = classifyXzzDiode(pad.diode.trim());
+      if (!reading) continue;
+      out.diodes.set(`${ref}(${pad.name})`, reading);
+      if (alias) out.diodesByAlias.set(`${alias}(${pad.name})`, reading);
+    }
+  }
+  if (Array.isArray(doc.net)) {
+    for (const n of doc.net) {
+      if (typeof n?.name !== 'string' || typeof n.alias !== 'string') continue;
+      if (n.name === '' || n.alias === '' || n.name === n.alias) continue;
+      out.netAliases.set(n.name, n.alias);
+    }
+  }
+  return out;
+}
+
+function parseLegacyDiodeRecords(tail: Uint8Array): XzzTailAnnotations {
+  const out = emptyAnnotations();
+  // Decode as latin1 (records are ASCII) and scan for records.
   let s = '';
-  for (let i = pos; i < raw.length; i++) s += String.fromCharCode(raw[i]);
+  for (let i = 0; i < tail.length; i++) s += String.fromCharCode(tail[i]);
   const rx = /=([^=\n]*)=([A-Za-z0-9_]+)\((\d+)\)/g;
   let m: RegExpExecArray | null;
   while ((m = rx.exec(s))) {
     const reading = classifyXzzDiode(m[1].trim());
-    if (reading) out.set(`${m[2]}(${m[3]})`, reading);
+    if (reading) out.diodes.set(`${m[2]}(${m[3]})`, reading);
   }
+  if (out.diodes.size > 0) out.encoding = 'legacy';
   return out;
+}
+
+/** Diode readings only, keyed `PART(PIN)` by the JSON `reference` (or, in the
+ *  legacy encoding, by the part name in the record). Thin wrapper over
+ *  `parseXzzTailAnnotations` kept for callers that want just the table. */
+export function parseDiodeSection(raw: Uint8Array): Map<string, DiodeReading> {
+  return parseXzzTailAnnotations(raw).diodes;
 }
 
 /**
@@ -2219,25 +2339,88 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       ` (${fold.lowerIsBottom ? 'lower' : 'upper'} half mirrored onto top)`,
   } : undefined;
 
-  // Diode-value channel — join the post-v6 reading table onto pins by
-  // PART(pinNumber). Absent on normal boardviews (no marker → empty map).
-  const diodeMap = parseDiodeSection(raw);
+  // ── Post-marker annotation section ───────────────────────────────────────
+  // Everything past `v6v6555v6v6` is plaintext (never XOR'd or DES'd) and
+  // carries, depending on the delivery: a diode-value table, a part rename
+  // table, and a net rename table. See parseXzzTailAnnotations for the two
+  // encodings. Absent on normal boardviews → every map empty, nothing runs.
+  const tail = parseXzzTailAnnotations(raw);
+
+  // Part rename (`reference` → `alias`). The binary blocks name parts by the
+  // internal id on some deliveries (`C356_1`) and by the designator on others
+  // (`C11814`); the alias table is how XZZ's viewer shows the designator in
+  // both cases. Only rename parts the binary named by `reference`, and never
+  // onto a name a *different* part already holds — a rename whose target is
+  // itself being vacated by another rename is fine, so collisions are tested
+  // against (existing names − names being vacated).
+  if (tail.partAliases.size > 0) {
+    const byName = new Map<string, typeof parts[number]>();
+    for (const p of parts) byName.set(p.name, p);
+    const vacating = new Set<string>();
+    for (const ref of tail.partAliases.keys()) if (byName.has(ref)) vacating.add(ref);
+    const claimed = new Set<string>();
+    let renamed = 0, skipped = 0;
+    for (const [ref, alias] of tail.partAliases) {
+      const part = byName.get(ref);
+      if (!part) continue;                       // binary already uses the alias, or part absent
+      if ((byName.has(alias) && !vacating.has(alias)) || claimed.has(alias)) { skipped++; continue; }
+      claimed.add(alias);
+      part.name = alias;
+      renamed++;
+    }
+    if (renamed > 0 || skipped > 0) {
+      log.parser.log(`[xzz tail] part rename: ${renamed} renamed, ${skipped} skipped (name collision) of ${tail.partAliases.size} aliases`);
+    }
+  }
+
+  // Net rename (`Net21` → `PP_VDD_MAIN`). Sparse — usually only the rails the
+  // author named. Same collision rule as parts: never merge two distinct nets
+  // into one name, since net identity here IS the string (buildNets groups on
+  // it, and highlight/search key on it).
+  if (tail.netAliases.size > 0) {
+    const existing = new Set<string>();
+    for (const p of parts) for (const pin of p.pins) if (pin.net) existing.add(pin.net);
+    const apply = new Map<string, string>();
+    const claimed = new Set<string>();
+    for (const [name, alias] of tail.netAliases) {
+      if (!existing.has(name)) continue;
+      if ((existing.has(alias) && !tail.netAliases.has(alias)) || claimed.has(alias)) continue;
+      claimed.add(alias);
+      apply.set(name, alias);
+    }
+    if (apply.size > 0) {
+      for (const p of parts) for (const pin of p.pins) {
+        const a = pin.net ? apply.get(pin.net) : undefined;
+        if (a) pin.net = a;
+      }
+      log.parser.log(`[xzz tail] net rename: ${apply.size} of ${tail.netAliases.size} net aliases applied`);
+    }
+  }
+
+  // Diode-value channel — join the reading table onto pins by PART(pinNumber).
+  // Try the `reference` key first, then the `alias` key: the two deliveries of
+  // one board disagree about which of the two the binary blocks use, and after
+  // the rename above `part.name` may be either.
   let diodeReference: DiodeReferenceChannel | undefined;
-  if (diodeMap.size > 0) {
+  if (tail.diodes.size > 0) {
     const counts = { value: 0, open: 0, none: 0 };
-    for (const r of diodeMap.values()) counts[r.kind]++;
-    const matchedKeys = new Set<string>();
+    for (const r of tail.diodes.values()) counts[r.kind]++;
+    // Identity set, not key set: `diodes` and `diodesByAlias` hold the SAME
+    // reading objects under two keys, so counting objects is what makes
+    // `unmatched` line up with `tail.diodes.size`.
+    const matchedReadings = new Set<DiodeReading>();
     for (const part of parts) {
       for (const pin of part.pins) {
-        const r = diodeMap.get(`${part.name}(${pin.number})`);
-        if (r) { pin.diode = r; matchedKeys.add(`${part.name}(${pin.number})`); }
+        const key = `${part.name}(${pin.number})`;
+        const r = tail.diodes.get(key) ?? tail.diodesByAlias.get(key);
+        if (r) { pin.diode = r; matchedReadings.add(r); }
       }
     }
-    const matched = matchedKeys.size;
-    diodeReference = { source: 'xzz-pcb', units: 'mV', counts, matched, unmatched: diodeMap.size - matched };
+    const matched = matchedReadings.size;
+    diodeReference = { source: 'xzz-pcb', units: 'mV', counts, matched, unmatched: tail.diodes.size - matched };
     log.parser.log(
-      `[xzz diode] ${diodeMap.size} records → matched ${matched} pins, ` +
-      `${diodeMap.size - matched} unmatched (value=${counts.value} open=${counts.open} none=${counts.none})`,
+      `[xzz diode] ${tail.encoding} section: ${tail.diodes.size} records → matched ${matched} pins, ` +
+      `${tail.diodes.size - matched} unmatched (value=${counts.value} open=${counts.open} none=${counts.none})`,
     );
   }
 
