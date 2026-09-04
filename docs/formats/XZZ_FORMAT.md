@@ -531,7 +531,7 @@ Local-only (`samples/` is gitignored), in `samples/XZZ PCB SAMPLES/`.
 Two deliveries of **one** board (Apple 820-03296 AP + 820-03297 BB, rendered as
 two board groups). The pair is the fixture: same PCB, both carrying a JSON
 tail, and only one of them carrying diode data. A parser that reports "no
-readings" for both — what shipped before v0.38.0 — and one that reports them
+readings" for both — what shipped before v0.37.1 — and one that reports them
 for both are equally wrong, so neither file proves anything on its own.
 
 | | `AP+BB Boardview.pcb` | `AP+BB YiDianTong.pcb` |

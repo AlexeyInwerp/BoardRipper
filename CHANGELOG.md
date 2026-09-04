@@ -1,6 +1,6 @@
 # BoardRipper changelog
 
-## v0.38.0 — 2026-09-04
+## v0.37.1 — 2026-09-04
 
 Diode-mode reference readings now come through on the current generation of XZZ
 boardviews, and there is a way to actually read them on a dense board.
