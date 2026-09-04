@@ -29,6 +29,11 @@
   a:visited { color: #551a8b; }
   nav { margin: 8px 0 22px; font-size: 13px; line-height: 1.9; }
   nav a { margin: 0 2px; }
+  /* Two editions, above the menu, in the menu's own bracket idiom. */
+  .editions { margin: 16px 0 4px; font-size: 13px; line-height: 1.9; }
+  .editions p { margin: 0; }
+  .editions b.ed { display: inline-block; min-width: 9.5em; }
+  .editions .small { margin-left: 2px; }
   hr.stars { border: none; text-align: center; color: #888; margin: 24px 0; letter-spacing: 6px; height: 1em; }
   hr.stars::before { content: "* * *"; }
   pre {
@@ -81,6 +86,8 @@
     main { padding: 20px 14px 50px; }
     table td { padding: 2px 10px 2px 0; font-size: 12px; }
     nav { font-size: 12px; }
+    .editions b.ed { display: block; min-width: 0; }
+    .editions p { margin: 0 0 8px; }
     .thumbs img { width: 100%; }
   }
 </style>
@@ -94,6 +101,11 @@
   <!-- BR_VERSION:START -->
   <p class="tagline" style="margin-top:4px"><span class="small">Latest release: <b>v0.36.1</b> &mdash; released 2026-09-01</span></p>
   <!-- BR_VERSION:END -->
+  <div class="editions">
+    <p><b class="ed">Full version</b> Docker / Desktop &mdash; [<a href="#docker">Docker setup</a>] | [<a href="#download">Desktop app</a>] <span class="small">self-hosted; shared library, board database, PDF search</span></p>
+    <p><b class="ed">Lite version</b> Web / HTML &mdash; [<a href="https://www.ripperdoc.de/boardripper/web/"><b>Open in browser</b></a>] | [<a href="https://www.ripperdoc.de/boardripper/web/boardripper-lite.html" download>Offline HTML</a>] <span class="small">no install, nothing uploaded; 7&nbsp;MB single file</span></p>
+  </div>
+  <hr class="stars">
   <nav>
     [<a href="#what">What is this?</a>] |
     [<a href="#runson">Runs on</a>] |
