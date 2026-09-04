@@ -1,5 +1,64 @@
 # BoardRipper changelog
 
+## v0.37.2 — 2026-09-04
+
+A release for the browser version and for tablets. The browser build at
+ripperdoc.de/boardripper/web has been picking up users, and on an iPad it had
+one bug that blocked it outright and several that made it feel unfinished. All
+of the touch work applies equally to a Docker install opened on a tablet.
+
+### Browser version, on a tablet
+
+- **The file picker offered PDFs only on iPad.** Safari maps each `accept`
+  extension to a system type; none of the boardview extensions are registered
+  on iOS, so the Files app greyed out every board. Browsers no longer get an
+  `accept` filter at all — the format is detected from the file's contents
+  anyway. Select a board and its schematic together and both open.
+- **Long-press opens the context menu.** The quick actions behind right-click
+  did not exist on touch. Hold half a second on a part or pin.
+- **Larger touch targets.** The toolbar's buttons rendered 22 px tall — the
+  Upload button, the only way in on a tablet, included. On touch devices the
+  toolbar is now 60 px with 44 px buttons; mouse layouts are unchanged.
+- **Reload brings the schematic back.** A reopened session restored the board
+  but not a locally-opened PDF, and iPadOS discards background tabs often. PDFs
+  opened from the picker are now kept (up to 6 / 256 MB) and come back with the
+  board.
+- The wheel-calibration wizard no longer appears on touch devices, and "2
+  window mode" is hidden where a pop-out window cannot exist (touch, and the
+  offline single file).
+
+### Browser version, first run
+
+- A front door: **Open a board or PDF** and **Try a sample board** at the top
+  of the start page. The sample is a real routed board (Tomu FPGA, KiCad,
+  CC-BY-SA 4.0 — see THIRD_PARTY.md). The Docker and Library sections of the
+  getting-started text are no longer shown in the browser build, which has
+  neither.
+- **Installable, with an icon.** "Add to Home Screen" on iOS gets a proper
+  icon instead of a page screenshot, and the install manifest carries the PNG
+  sizes Chrome expects. Installing also exempts the app from Safari's seven-day
+  storage cleanup, so settings and cached boards persist.
+- **Updates are announced.** A new version used to be applied silently on the
+  next load, which could also break a page that was open across the deploy.
+  Now the app shows "A new BoardRipper version is ready" with a Reload button,
+  and the swap happens when you reload.
+
+### Smaller and faster
+
+- The main bundle is 21% smaller: the PDF watermark-cleaning library and the
+  glyph-overlay font parser load on first use instead of on every visit.
+- The PDF worker shipped twice, and the copy actually used was unminified.
+  Now once, minified: 2.2 MB → 1.2 MB, and the offline precache 7.0 → 5.2 MB.
+- The offline single file parses boards in a worker instead of on the main
+  thread, so a large Allegro or Altium board no longer freezes the tab.
+- The hosted build's Content-Security-Policy no longer allows `unsafe-eval`.
+
+### Diode-only mode
+
+- Single-pin designators (testpoints and pads, drawn directly on the pin) are
+  now hidden along with pin numbers and net names. Designators on part bodies
+  stay.
+
 ## v0.37.1 — 2026-09-04
 
 Diode-mode reference readings now come through on the current generation of XZZ
