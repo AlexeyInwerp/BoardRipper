@@ -1,13 +1,16 @@
-import { IconCircuitDiode } from '@tabler/icons-react';
+import { IconCircuitDiode, IconCircuitDiodeZener } from '@tabler/icons-react';
 import { renderSettingsStore } from '../../../store/render-settings';
 import { useRenderSettings } from '../../../hooks/useRenderSettings';
 import { boardStore } from '../../../store/board-store';
 import { extractBoardNumberFromFilename, useObdForBoard } from '../../../store/obd-store';
-import { boardHasDiodeData } from '../../../store/diode-readings';
+import { boardHasDiodeData, diodeMode, cycleDiodeMode, diodeModeTitle } from '../../../store/diode-readings';
 import type { SlotCtx } from '../slot-ctx';
 
-/** Toggle the on-pin diode-value overlay. Only shown when the active board
- *  carries diode readings from either source (XZZ-baked or OBD). */
+/** Cycle the on-pin diode-value overlay: off → on → only → off. "Only" hides
+ *  pin numbers and net names board-wide so a pin carries nothing but its
+ *  reading — the state you want while working through a diode map. Shown only
+ *  when the active board carries readings from either source (XZZ-baked or
+ *  OBD). */
 export function DiodeValuesButton({ ctx }: { ctx: SlotCtx }) {
   const settings = useRenderSettings();
   const bn = ctx.thisTab.fileName ? extractBoardNumberFromFilename(ctx.thisTab.fileName) : null;
@@ -16,17 +19,20 @@ export function DiodeValuesButton({ ctx }: { ctx: SlotCtx }) {
 
   if (!boardHasDiodeData(boardStore.board, bn ?? undefined)) return null;
 
-  const on = settings.showDiodeValues;
+  const mode = diodeMode(settings);
+  // A distinct glyph for "only" — the two lit states are otherwise
+  // indistinguishable at 16px, and this is the one that hides other labels.
+  const Icon = mode === 'only' ? IconCircuitDiodeZener : IconCircuitDiode;
   return (
     <button
-      className={`board-netlines-toggle ${on ? 'active' : ''}`}
+      className={`board-netlines-toggle ${mode !== 'off' ? 'active' : ''}`}
       onClick={() => {
         const cur = renderSettingsStore.globalSnapshot();
-        renderSettingsStore.applyGlobal({ ...cur, showDiodeValues: !cur.showDiodeValues });
+        renderSettingsStore.applyGlobal({ ...cur, ...cycleDiodeMode(cur) });
       }}
-      title={on ? 'Diode values: ON (click to hide)' : 'Diode values: OFF (click to show on pins)'}
+      title={diodeModeTitle(mode)}
     >
-      <IconCircuitDiode size={16} />
+      <Icon size={16} />
     </button>
   );
 }

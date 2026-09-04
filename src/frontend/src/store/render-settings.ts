@@ -126,6 +126,10 @@ export interface RenderSettings {
   partMinBodyRatio: number;
   pinAlpha: number;
   showPinNumbers: boolean;
+  /** Draw the net name on each pin (GND/NC excluded — already colour-coded).
+   *  Off is the counterpart to `showPinNumbers`: on a diode-value map both
+   *  compete for the same few pixels as the reading itself. */
+  showNetNames: boolean;
   /** Show pin-1 marker (red color + triangle indicator) on multi-pin parts */
   showPin1Marker: boolean;
   /** Draw diode-mode reference readings directly on pins (XZZ-baked + OBD).
@@ -133,6 +137,12 @@ export interface RenderSettings {
    *  this is harmless on normal boards. Toggled via the `diodeValues` overlay
    *  slot. */
   showDiodeValues: boolean;
+  /** Diode-only mode: while `showDiodeValues` is on, suppress pin numbers and
+   *  net names board-wide so a pin carries nothing but its reading. The third
+   *  state of the diode button (off → on → only). Deliberately does NOT touch
+   *  `showPinNumbers` / `showNetNames`, so leaving the mode restores whatever
+   *  the user had set. */
+  diodeValuesOnly: boolean;
 
   /** Min rendered font size in screen pixels — labels smaller than this are hidden */
   labelMinScreenPx: number;
@@ -551,8 +561,10 @@ export const DEFAULTS: RenderSettings = {
   partMinBodyRatio: 0.8,
   pinAlpha: 0.85,
   showPinNumbers: true,
+  showNetNames: true,
   showPin1Marker: true,
   showDiodeValues: true,
+  diodeValuesOnly: false,
   labelMinScreenPx: 3,
   labelZoomHide: 0,
   selectedLabelMinPx: 11,

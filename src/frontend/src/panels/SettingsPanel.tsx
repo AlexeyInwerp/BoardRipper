@@ -2203,8 +2203,12 @@ export function SettingsPanel() {
           title="Fill transparency of pin circles and rectangular pads. 0 = invisible, 1 = fully opaque" />
         <Toggle label="Show Pin Numbers" value={draft.showPinNumbers} field="showPinNumbers" onUpdate={updateDraft}
           title="Display pin number/name labels inside pin circles on multi-pin components (ICs, connectors). On BGA parts, numbers and net names alternate vertically to reduce overlap" />
+        <Toggle label="Show Net Names" value={draft.showNetNames} field="showNetNames" onUpdate={updateDraft}
+          title="Display the net name on each pin (GND and NC are excluded — already colour-coded). Turn off to unclutter dense parts, or to leave the pin free for diode readings" />
         <Toggle label="Show Diode Values" value={draft.showDiodeValues} field="showDiodeValues" onUpdate={updateDraft}
           title="Draw diode-mode reference readings on pins (XZZ-baked values + OpenBoardData). Only visible on boards that carry readings; also toggleable from the board sidebar's View tab" />
+        <Toggle label="Diode Values Only" value={draft.diodeValuesOnly} field="diodeValuesOnly" onUpdate={updateDraft}
+          title="While diode values are shown, hide pin numbers and net names board-wide so a pin carries nothing but its reading. Your Show Pin Numbers / Show Net Names settings are left untouched and come back when this is off. Same as the third state of the diode button on the board overlay" />
         <Toggle label="Pin 1 Marker" value={draft.showPin1Marker} field="showPin1Marker" onUpdate={updateDraft}
           title="Highlight pin 1 with red color and a triangle indicator on multi-pin parts" />
         <Toggle label="Pin Label Background" value={draft.pinNetLabelBg} field="pinNetLabelBg" onUpdate={updateDraft}

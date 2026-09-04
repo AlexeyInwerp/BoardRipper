@@ -431,13 +431,22 @@ The outline is constructed from line blocks and linearised arc blocks on layer 2
 
 ---
 
-## Diode-Value Channel (post-`v6` table)
+## Annotation Section (post-`v6` tail)
 
-XZZ ships companion `.pcb` files named `… Middle layer diode value-<board>.pcb`
-that carry reference ("golden board") **diode-mode multimeter readings**. The
-readings are **not** geometry — they live in a plaintext table appended after
-the `v6v6555v6v6` XOR-boundary marker (so they are never XOR'd or DES'd), past
-the net block.
+Everything after the `v6v6555v6v6` XOR-boundary marker is plaintext — it is
+never XOR'd or DES'd — and sits past the net block. It carries reference
+("golden board") **diode-mode multimeter readings**, and, in the newer
+encoding, the rename tables XZZ's own viewer uses for part designators and net
+names. None of it is geometry.
+
+There are **two encodings**, and a file uses one or the other. `parseXzzTailAnnotations()`
+picks by content, not by file name: a `{` after the marker means try JSON, and
+a failed JSON parse falls back to the legacy scan rather than giving up.
+
+### Encoding A — legacy records
+
+Older companion files named `… Middle layer diode value-<board>.pcb`. Diode
+values only.
 
 ```
 v6v6555v6v6===<4 binary bytes>\n
@@ -457,9 +466,54 @@ v6v6555v6v6===<4 binary bytes>\n
   parser now preserves the real pad number (`Pin.number`) instead of a 1-based
   index.
 
-`parseDiodeSection()` returns `Map<"PART(PIN)", DiodeReading>`; the join stamps
-`Pin.diode` and sets `BoardData.diodeReference` (counts + match diagnostics).
-Normal boardviews have no marker → empty map → no channel. The readings are
-surfaced on-pin (toggleable overlay), in the hover tooltip, and in the
-ComponentInfo pin table; OpenBoardData provides a second, per-net source feeding
-the same surfaces (see `store/diode-readings.ts`).
+### Encoding B — JSON document
+
+Current deliveries (iPhone-era boards; first seen on iPhone16_16Plus) put a
+single JSON document there instead, after a **GB2312** banner line — decode the
+banner as UTF-8 at your peril, and locate the `{` on the raw bytes:
+
+```
+v6v6555v6v6\n===PCB<4 GB2312 bytes>\n
+{"part":[
+  {"reference":"N02615","alias":"J10600","pad":[
+     {"name":"22","diode":"538"},{"name":"10","diode":"OL"}]},
+  {"reference":"C343","alias":"C10602"}],
+ "net":[{"name":"Net21","alias":"PP_VDD_MAIN"}],
+ "bitmap":{"x":50000,"y":50000}}
+```
+
+- `part[].pad[].diode` — same value classes as encoding A. Pad names here are
+  **not** `\d+`-only: BGA pads appear as `M7`, `L9`, … which the legacy record
+  grammar cannot express at all.
+- `part[].reference` — the internal id; `part[].alias` — the designator XZZ's
+  viewer displays. Which of the two the *binary* blocks use **varies between
+  deliveries of the same board**, so the diode join tries both keys and the
+  rename is applied only where the binary named the part by `reference`.
+- `net[].name` → `net[].alias` — same idea for net names.
+- `part[].value` — a free-text component value on a minority of parts. Parsed
+  over, not consumed.
+- `bitmap` — a coordinate origin for XZZ's own bitmap overlay. Ignored.
+
+A JSON tail can carry the rename tables and **no `pad[]` at all**: that file
+genuinely has no diode data. The two deliveries of iPhone16_16Plus are exactly
+this pair — `AP+BB Boardview.pcb` has 4750 readings, `AP+BB YiDianTong.pcb`
+has none, and both are otherwise the same board.
+
+### Joining and applying
+
+`parseXzzTailAnnotations()` returns the diode table keyed both ways, plus the
+two rename maps; `parseDiodeSection()` is the thin wrapper that returns just
+the readings. The join stamps `Pin.diode` and sets `BoardData.diodeReference`
+(counts + match diagnostics). Normal boardviews have no marker → everything
+empty → no channel.
+
+Both renames refuse to merge two distinct entities into one name. A target
+collides only when an *existing* name is not itself being vacated by another
+rename, so a chain of renames still goes through while a genuine clash is
+skipped and logged. Net renames run before `buildNets`, because net identity in
+this codebase **is** the string.
+
+The readings are surfaced on-pin (a three-state overlay button: off → on →
+diode-only, the last hiding pin numbers and net names board-wide), in the hover
+tooltip, and in the ComponentInfo pin table; OpenBoardData provides a second,
+per-net source feeding the same surfaces (see `store/diode-readings.ts`).

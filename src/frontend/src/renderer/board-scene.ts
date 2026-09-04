@@ -778,6 +778,16 @@ export function buildBoardScene(
   // Canvas2D overlay paints the records). Null = off = byte-identical legacy
   // BitmapText path. Via labels are excluded (always BitmapText).
   const labelModel: LabelModel | null = s.textFastMode ? { top: [], bottom: [] } : null;
+
+  // Diode-only mode (third state of the diode button): while readings are
+  // being drawn, nothing else competes for the pin. Gated on `diodeResolver`
+  // too — without one no reading is ever drawn, and blanking every pin label
+  // on a board that has no diode data would just look broken.
+  const diodeOnly = s.showDiodeValues && s.diodeValuesOnly && !!diodeResolver;
+  // Every pin-number / net-name decision below reads these, never the raw
+  // settings, so leaving diode-only mode restores the user's own toggles.
+  const showPinNumbers = s.showPinNumbers && !diodeOnly;
+  const showNetNames   = s.showNetNames   && !diodeOnly;
   const pinLabelsByPartIndex: Map<number, Container[]> = new Map();
   // Group A: pin numbers + net names on circle/1-pin parts (smallest text, highest zoom threshold).
   const topCircleLabelLayer    = new Container();
@@ -1346,7 +1356,7 @@ export function buildBoardScene(
     // with the view. Without this, those runs land one pin per bucket, every pin
     // gets column 0, and the whole edge renders un-staggered.
     const pinColIndex: number[] = new Array(part.pins.length).fill(0);
-    if (isMultiPin && s.showPinNumbers && minPinSpacing < Infinity) {
+    if (isMultiPin && showPinNumbers && minPinSpacing < Infinity) {
       // Map rowKey → list of pin indices in that row
       const rowMap = new Map<number, number[]>();
       for (let i = 0; i < part.pins.length; i++) {
@@ -1501,11 +1511,16 @@ export function buildBoardScene(
         }
       }
 
-      // Whether this pin has a displayable net name (GND/NC suppressed — already color-coded)
-      const hasNet = !!(pin.net && pin.net !== '(null)' && pin.net !== '' && !netUpper.includes('GND') && !isNcPin);
+      // Whether this pin has a displayable net name (GND/NC suppressed — already
+      // color-coded). `showNetNames` folds in here rather than guarding the
+      // label block alone, so everything derived from it — the BGA alternating
+      // layout, the two-level 2-pin layout, the single-pin name straddle —
+      // reverts to its no-net-label geometry instead of leaving a gap.
+      const hasNet = showNetNames &&
+        !!(pin.net && pin.net !== '(null)' && pin.net !== '' && !netUpper.includes('GND') && !isNcPin);
       // BGA alternating: when both pin number and net name are shown on a multi-pin part,
       // alternate their vertical positions by pin index so adjacent pins' labels interleave.
-      const bgaAlternate = isMultiPin && s.showPinNumbers && hasNet;
+      const bgaAlternate = isMultiPin && showPinNumbers && hasNet;
 
       // Whether 2-pin parts show pin numbers (two-level layout like BGA)
       const twoPinShowNum = false;
@@ -1516,7 +1531,7 @@ export function buildBoardScene(
       // Multi-pin (BGA/IC): always shown when showPinNumbers is on.
       // 2-pin: shown when showTwoPinNumbers is on — sized to fit the pad rectangle.
       // NC pins skip labels entirely — no useful info, saves draw calls.
-      if (((isMultiPin && s.showPinNumbers) || twoPinShowNum) && !isNcPin) {
+      if (((isMultiPin && showPinNumbers) || twoPinShowNum) && !isNcPin) {
         const numStr = pinDisplayId(pin, pni);
         let pinFontSize: number;
         let pinX: number, pinY: number;
@@ -1585,6 +1600,7 @@ export function buildBoardScene(
       }
 
       // ── Net name label on pin (skip GND — already color-coded) ─────
+      // `hasNet` already carries `showNetNames`.
       if (hasNet) {
         let netFontSize: number;
         let nx: number, ny: number;
@@ -1635,7 +1651,7 @@ export function buildBoardScene(
             // r * bgaLabelGapFactor and the pair stays centred on the pad.
             anchorY = 0.0;
             ny += (r * s.bgaLabelGapFactor) / 2;
-          } else if (isMultiPin && s.showPinNumbers) {
+          } else if (isMultiPin && showPinNumbers) {
             anchorY = 0.05; // standard offset when pin number also shown
           }
         }

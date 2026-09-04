@@ -9,7 +9,7 @@ import { colorToHex, hexToColor } from '../store/layer-store';
 import { renderSettingsStore, isNcNet } from '../store/render-settings';
 import { useRenderSettings } from '../hooks/useRenderSettings';
 import { extractBoardNumberFromFilename } from '../store/obd-store';
-import { boardHasDiodeData } from '../store/diode-readings';
+import { boardHasDiodeData, diodeMode, cycleDiodeMode, diodeModeTitle } from '../store/diode-readings';
 import { ComponentInfoBody } from './ComponentInfoBody';
 import { WorklistPanel } from '../panels/WorklistPanel';
 import { bomReasonLabel, type BoardData, type Part } from '../parsers';
@@ -223,7 +223,12 @@ function LayersTab({ tabId }: { tabId: number }) {
   const showLabels = tab?.showLabels ?? true;
   const rsettings = useRenderSettings();
   const showDiodeValues = rsettings.showDiodeValues;
+  const diodeValuesOnly = rsettings.diodeValuesOnly;
   const showPinNumbers = rsettings.showPinNumbers;
+  const showNetNames = rsettings.showNetNames;
+  // Diode-only mode blanks both, board-wide, without touching either setting —
+  // show them as forced-off rather than pretending the user's choice changed.
+  const labelsForcedOff = showDiodeValues && diodeValuesOnly;
   const diodeBn = tab?.fileName ? extractBoardNumberFromFilename(tab.fileName) : null;
   const hasDiodeData = boardHasDiodeData(board, diodeBn ?? undefined);
   const selection = tab?.selection ?? { partIndex: null, pinIndex: null, highlightedNet: null };
@@ -389,23 +394,35 @@ function LayersTab({ tabId }: { tabId: number }) {
             <span className="toggle-check">{showCopperDrops ? '■' : '□'}</span> Copper drops
           </button>
         )}
-        {/* Pin numbers is a global render setting (same as Settings ▸ Show Pin
-            Numbers); surfaced here because on diode-value maps the pin-number
-            labels compete with the on-pin diode readings. */}
+        {/* Pin numbers and net names are global render settings (same as
+            Settings ▸ Board ▸ Pins); surfaced here because on a diode-value map
+            both compete with the on-pin readings for the same few pixels. */}
         <button
-          className={`visibility-toggle ${showPinNumbers ? '' : 'off'}`}
+          className={`visibility-toggle ${showPinNumbers && !labelsForcedOff ? '' : 'off'}`}
           onClick={() => renderSettingsStore.applyGlobal({ ...renderSettingsStore.globalSnapshot(), showPinNumbers: !showPinNumbers })}
-          title={showPinNumbers ? 'Hide pin-number labels' : 'Show pin-number labels'}
+          title={labelsForcedOff
+            ? 'Hidden by diode-only mode — click the diode row to leave it'
+            : showPinNumbers ? 'Hide pin-number labels' : 'Show pin-number labels'}
         >
           <span className="toggle-check">{showPinNumbers ? '■' : '□'}</span> Pin numbers
+        </button>
+        <button
+          className={`visibility-toggle ${showNetNames && !labelsForcedOff ? '' : 'off'}`}
+          onClick={() => renderSettingsStore.applyGlobal({ ...renderSettingsStore.globalSnapshot(), showNetNames: !showNetNames })}
+          title={labelsForcedOff
+            ? 'Hidden by diode-only mode — click the diode row to leave it'
+            : showNetNames ? 'Hide net-name labels on pins' : 'Show net-name labels on pins'}
+        >
+          <span className="toggle-check">{showNetNames ? '■' : '□'}</span> Net names
         </button>
         {hasDiodeData && (
           <button
             className={`visibility-toggle ${showDiodeValues ? '' : 'off'}`}
-            onClick={() => renderSettingsStore.applyGlobal({ ...renderSettingsStore.globalSnapshot(), showDiodeValues: !showDiodeValues })}
-            title={showDiodeValues ? 'Hide diode values' : 'Show diode-mode reference readings on pins'}
+            onClick={() => renderSettingsStore.applyGlobal({ ...renderSettingsStore.globalSnapshot(), ...cycleDiodeMode(rsettings) })}
+            title={diodeModeTitle(diodeMode(rsettings))}
           >
-            <span className="toggle-check">{showDiodeValues ? '■' : '□'}</span> Diode values
+            <span className="toggle-check">{showDiodeValues ? '■' : '□'}</span>{' '}
+            {labelsForcedOff ? 'Diode values only' : 'Diode values'}
           </button>
         )}
         {board?.surfaces && board.surfaces.length > 0 && (
