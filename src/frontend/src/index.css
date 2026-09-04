@@ -235,6 +235,44 @@ body {
   border: none;
 }
 
+/* ── Touch devices ───────────────────────────────────────────────────
+ * On a tablet the toolbar's Upload button is the ONLY way to open a file:
+ * the lite/offline build has no Library, and iPadOS/Android have no
+ * drag-and-drop onto a web page. At the desktop metrics that button renders
+ * 22px tall — `.toolbar-group` is 28px and its children take `height: 100%`
+ * minus the group border — against Apple's 44pt minimum target. Measured on
+ * the live lite build at an iPad Pro 11" viewport, not assumed.
+ *
+ * Scoped to `pointer: coarse` so no mouse-driven layout moves. Deliberately
+ * NOT `max-width`: a tablet in landscape is wider than plenty of laptop
+ * windows, and it is the input device that makes the target too small, not
+ * the viewport.
+ *
+ * (The toolbar also overflows a narrow tablet viewport. `overflow-x: auto`
+ * is NOT the fix — it would compute `overflow-y: auto` too and clip
+ * `.toolbar-search-dropdown`, which is a toolbar child rather than a portal.) */
+@media (pointer: coarse) {
+  :root {
+    --toolbar-height: 60px;
+  }
+  /* 50px group ⇒ 44px children once the group's border and the segmented
+   * inset are taken off — measured, not derived. */
+  .toolbar-group {
+    height: 50px;
+  }
+  .toolbar-btn,
+  .toolbar-btn-icon {
+    min-height: 44px;
+    padding-inline: 14px;
+  }
+  /* Grouped buttons keep filling their group (the seamless segmented look);
+   * the group is now tall enough that they clear 40px on their own. */
+  .toolbar-group .toolbar-btn,
+  .toolbar-group .toolbar-btn-icon {
+    min-height: 0;
+  }
+}
+
 .toolbar-separator {
   width: 1px;
   height: 20px;

@@ -544,7 +544,23 @@ export function Toolbar() {
       <input
         ref={fileInputRef}
         type="file"
-        accept={[...getAllExtensions(), '.pdf'].join(',')}
+        /* NO `accept` in the browser — deliberate, and load-bearing on iPad.
+         *
+         * Safari resolves each `accept` extension token to a UTI. `.pdf` maps
+         * to com.adobe.pdf; every board extension we support (`.pcb`, `.bvr`,
+         * `.fz`, `.brd`, `.tvw`, `.kicad_pcb`, …) is unregistered on iOS, so it
+         * resolves to a dynamic UTI that matches nothing. The Files picker then
+         * greys out every board file and offers PDFs only — which on a tablet,
+         * where there is no drag-and-drop, means the app cannot open a board at
+         * all. Android pickers degrade the same way for extensions with no MIME
+         * mapping.
+         *
+         * Filtering buys nothing here anyway: `detectFormat` sniffs header
+         * bytes and only falls back to the extension, and drag-and-drop has
+         * never filtered. Electron keeps the list — a native dialog resolves
+         * these extensions correctly and gives the user a real "All Files"
+         * escape, so there the filter is help rather than a wall. */
+        {...(isElectron() ? { accept: [...getAllExtensions(), '.pdf'].join(',') } : {})}
         multiple
         onChange={handleFileChange}
         style={{ display: 'none' }}
