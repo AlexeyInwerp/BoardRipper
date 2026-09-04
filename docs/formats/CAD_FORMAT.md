@@ -153,6 +153,87 @@ Currently not parsed — BoardData has no BOM field.
 
 ---
 
+### $ROUTES (Traces, Arcs, Vias)
+
+```
+ROUTE <net_name>
+  LAYER <layer_name>
+  TRACK <track_name>
+  LINE x1 y1 x2 y2
+  ARC  x1 y1 x2 y2 xc yc
+  VIA  <padstack> x y
+```
+
+- `ROUTE` opens one block per net. `LAYER` and `TRACK` are stateful: they apply to every
+  record that follows until the next one.
+- `TRACK` names an entry in `$TRACKS`, which carries the width. Unknown names fall back to
+  5 mils.
+- `VIA` diameter comes from the padstack's drill size.
+- Multi-revision exports concatenate every revision inside one `ROUTE` block. The parser
+  keeps only the last pass, detected by a `VIA` whose position already appeared earlier in
+  the same block (same rule as the component pass detection).
+
+#### Arc direction — counter-clockwise from `(x1, y1)` to `(x2, y2)`
+
+An `ARC` record has seven fields and nothing more. There is no radius and no direction
+column, in any exporter seen so far (24,450 records in one file, 13,136 in another, all
+seven fields). The two endpoints plus the centre name **two** arcs, the counter-clockwise
+one and the clockwise one. They share their endpoints exactly, so the sweep normalisation
+is the choice of which one is drawn, and the midpoint is the only thing that shows a wrong
+choice.
+
+GenCAD arcs run counter-clockwise from `(x1, y1)` to `(x2, y2)`. The parser takes the
+`atan2` angle of each endpoint about the centre and lifts a negative difference into
+`[0, 2π)`. It never reduces:
+
+```ts
+sweep = endAngle - startAngle
+if (sweep < 0) sweep += 2π         // lift; never clamp into ±π
+```
+
+The rule that must **not** be used is the shortest-arc clamp into `(−π, +π]`. It fails
+twice:
+
+1. **Major arcs render as their complement.** Around 2,000 of the arcs in a typical
+   graphics-card export sweep past 180°. The widest, 350.9°, becomes a 9.1° sliver on the
+   far side of the circle.
+2. **Full circles lose a half.** Exporters draw a circle as **two** `ARC` records sharing a
+   centre with the endpoints swapped. Both are exactly 180°, so the clamp leaves one at
+   `+π` and the other at `−π`, and walking `−π` backwards from the far endpoint retraces
+   the **same** half. Every such circle renders as a doubled semicircle with the other side
+   missing. Roughly 3,000 records per file are these twins.
+
+Both failures were the shipped behaviour until v0.36.1 (issue #33).
+
+The endpoint-swapped twins are also the evidence for the convention. An exporter has no
+reason to emit the identical half-circle twice and every reason to emit two complementary
+halves. Under `[0, 2π)` the pair tiles the circle; under the clamp it is one half stroked
+twice. That comes from the file structure, not from rendering. XZZ, Allegro and Altium use
+the same counter-clockwise convention.
+
+The rule changes only arcs whose true sweep is 180° or more. No arc below 180° moves, so
+no board that rendered correctly before can change.
+
+**Test vector** — `2080.cad`, one full circle of r = 85.04 centred on (8714.567, 4274.409),
+emitted as two records back to back:
+
+```
+ARC 8799.606 4274.409 8629.527 4274.409 8714.567 4274.409
+ARC 8629.527 4274.409 8799.606 4274.409 8714.567 4274.409
+```
+
+| record | sweep | midpoint y | half |
+|--------|-------|-----------|------|
+| first, either rule | 180° | 4359.448 | upper |
+| second, shortest-arc clamp | −180° | 4359.449 | upper again, lower never drawn |
+| second, `[0, 2π)` | 180° | 4189.369 | lower ✓ |
+
+The unit test is `src/frontend/tests/arc-sweep.spec.ts`; the rule lives in
+`gencadArcSweepRad`. Arcs are tessellated into straight `Trace` segments at 10° steps
+before they leave the parser, with fresh endpoint objects per segment.
+
+---
+
 ## Coordinate System
 
 - `UNITS USER 1000` → 1000 units per inch → coordinates are in mils
@@ -183,3 +264,5 @@ y' = x·sin(θ) + y·cos(θ) + place_y
   renders top/bottom swapped relative to its source `.brd`.
 - The `flipY` flag is enabled for this format.
 - Pin radius defaults to 6 mils.
+- `$ROUTES` arcs are counter-clockwise and the sweep is lifted into `[0, 2π)`, never
+  clamped into `±π`. See [$ROUTES](#routes-traces-arcs-vias).

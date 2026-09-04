@@ -61,7 +61,9 @@ and must be decrypted before parsing.
 Block types:
 - **Net block** — net index → net name mapping
 - **Part blocks** — component data with embedded pin sub-blocks
-- **Outline segments** — board outline geometry (line segments on layer 28)
+- **Arc block (`0x01`)** — arc geometry on any layer: outline (28), silkscreen (17), copper (1–16). See [Arc Block](#arc-block-0x01)
+- **Line block (`0x05`)** — straight segment on any layer, same layer routing as arcs
+- **Via block (`0x02`)**, **test pad block (`0x09`)**
 
 ---
 
@@ -323,10 +325,88 @@ radius-8 dot and the renderer synthesizes the classic FlexBV 2-pin pads.
 
 ---
 
+## Arc Block (`0x01`)
+
+Eight `u32` fields. Multi-layer files write all eight (32 bytes); older files stop after the
+six geometry fields (24 bytes), so width and net index are read only when present.
+
+```
+┌───────────────────┐
+│ u32: layer        │  28 = outline, 17 = silkscreen, 1–16 = copper / mask
+│ i32: cx           │  centre X (÷ 10000 → mils)
+│ i32: cy           │  centre Y
+│ i32: r            │  radius
+│ i32: angStart     │  start angle, degrees × 10000
+│ i32: angEnd       │  end angle, degrees × 10000
+│ u32: width        │  trace width (÷ 10000), copper arcs only; optional
+│ u32: netIdx       │  net index into the Net block; optional
+└───────────────────┘
+```
+
+Angles share the coordinate scale (÷ 10000), not ÷ 10. The wrong divisor wraps every arc
+through `cos`/`sin` and paints star-burst geometry over the outline.
+
+### Arc direction — the sweep is always counter-clockwise from `angStart` to `angEnd`
+
+A `(centre, radius, start, end)` record names **two** arcs: the counter-clockwise one and
+the clockwise one. Both share their endpoints exactly, so normalising the sweep is not
+angle hygiene. It is the choice of which arc gets drawn, and no endpoint check can see a
+wrong choice. Only the midpoint tells them apart.
+
+XZZ arcs run counter-clockwise from `angStart` to `angEnd`. The parser lifts a negative
+difference by 360° and never reduces:
+
+```ts
+sweep = end - start
+if (sweep < 0) sweep += 360        // lift; never reduce into ±180
+```
+
+The rule that must **not** be used is the shortest-arc rule (swap the endpoints so
+`start < end`, then clamp the sweep to ≤ 180°). That rule replaces every arc over 180°
+with its complement, so every notch, slot mouth and re-entrant corner fillet in the board
+edge renders as an outward lobe of the same radius, anchored at the same two points.
+This was the shipped behaviour until v0.36.1 (issue #33).
+
+Evidence for the convention comes from the files, not from a spec: exporters mirror arcs
+about the board axis by reflecting each angle **and** swapping start/end. An undirected
+chord would have no reason to reorder its endpoints, so the stored order carries the
+direction. GenCAD, Allegro and Altium use the same convention (see `CAD_FORMAT.md`).
+
+The rule only differs from the shortest-arc rule for arcs sweeping 180° or more. Over a
+96-board corpus, 276 of 19,964 arcs (1.4%) move, all of them ≥ 180°, and no arc below
+180° changes at all.
+
+**Test vector** — `Mini4 Pro-PP003675.04 MB PCB layer.pcb`, layer 28, raw integer units.
+Midpoint = `(cx + r·cos(a0 + sweep/2), cy + r·sin(a0 + sweep/2))`. The endpoints are
+identical under either rule; the midpoint is the check.
+
+| id | centre (x, y) | r | start | end | sweep | correct midpoint | shortest-arc midpoint |
+|----|---------------|---|-------|-----|-------|------------------|-----------------------|
+| A | 532474990, 531872990 | 307610 | 1130129 | 3472309 | 234.218° | 532277764, 531636927 | 532672216, 532109053 |
+| B | 518264289, 531735380 | 331240 | 1615879 | 516079 | 250.020° | 518358909, 531417942 | 518169669, 532052818 |
+| C | 515725710, 531735380 | 331240 | 1283920 | 184120 | 250.020° | 515631090, 531417942 | 515820330, 532052818 |
+| D | 501515009, 531872990 | 307610 | 1927690 | 669870 | 234.218° | 501712235, 531636927 | 501317783, 532109053 |
+| E | 508875000, 533275000 | 235000 | 0 | 900000 | 90° | 509041170, 533441170 | same |
+| F | 500995000, 501069060 | 519060 | 2250000 | 2700000 | 45° | 500796364, 500589511 | same |
+
+A and D fail the clamp half of the shortest-arc rule; B, C fail the swap half. Removing only
+one of the two lines fixes one arc in four, which is enough to look like a fix. The unit test
+is `src/frontend/tests/arc-sweep.spec.ts`; the rule lives in `xzzArcSweepDeg`.
+
+### Linearisation
+
+Every arc is sampled into 9 straight segments (10 points, matching OpenBoardView) before it
+leaves the parser. Each segment gets its own endpoint objects. Later passes (butterfly
+mirror, mirror-detect flip, origin normalisation) mutate endpoints in place, so a point
+object shared between two adjacent segments would be transformed twice per pass and land
+far off the board.
+
+---
+
 ## Board Outline
 
-The outline is constructed from line segments on layer 28 (`OUTLINE_LAYER`).
-Segments are chained into a polygon using a greedy nearest-neighbor algorithm:
+The outline is constructed from line blocks and linearised arc blocks on layer 28
+(`OUTLINE_LAYER`). Segments are chained into a polygon using a greedy nearest-neighbor algorithm:
 1. Start with segment 0
 2. For each subsequent segment, find the nearest unvisited endpoint
 3. Append the far endpoint to the chain
