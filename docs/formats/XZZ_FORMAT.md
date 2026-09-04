@@ -517,3 +517,55 @@ The readings are surfaced on-pin (a three-state overlay button: off → on →
 diode-only, the last hiding pin numbers and net names board-wide), in the hover
 tooltip, and in the ComponentInfo pin table; OpenBoardData provides a second,
 per-net source feeding the same surfaces (see `store/diode-readings.ts`).
+
+---
+
+## Validation fixtures
+
+Local-only (`samples/` is gitignored), in `samples/XZZ PCB SAMPLES/`.
+`src/frontend/tests/xzz-diode-json-tail.spec.ts` and
+`tests/diode-only-labels.spec.ts` skip rather than fail when they are absent.
+
+### `iPhone16_16Plus/` — the annotation-tail pair
+
+Two deliveries of **one** board (Apple 820-03296 AP + 820-03297 BB, rendered as
+two board groups). The pair is the fixture: same PCB, both carrying a JSON
+tail, and only one of them carrying diode data. A parser that reports "no
+readings" for both — what shipped before v0.38.0 — and one that reports them
+for both are equally wrong, so neither file proves anything on its own.
+
+| | `AP+BB Boardview.pcb` | `AP+BB YiDianTong.pcb` |
+|---|---|---|
+| bytes | 2 283 339 | 2 061 270 |
+| parts / of which single-pin | 4686 / 2346 | 4645 / 2341 |
+| pins · nets · pads · silk paths | 14521 · 1302 · 14521 · 9518 | 14444 · 1300 · 14444 · 9335 |
+| outline points · board groups | 2565 · 2 | 2565 · 2 |
+| tail encoding | `json` | `json` |
+| diode records → pins stamped | **4750 → 4195** | **0 → 0** |
+| value / OL split | 3300 / 1450 | — |
+| part aliases · net aliases | 2301 · 38 | 2301 · 0 |
+| part renames applied | 3 (172 skipped) | 2297 (4 skipped) |
+
+Reading the asymmetries, all of which are the point of keeping both files:
+
+- **Renames.** The Boardview binary already names parts by the designator, so
+  its 2301-entry alias table is almost entirely a no-op (3 applied). The
+  YiDianTong binary names them by internal id (`C356_1`), so nearly the whole
+  table applies (2297). Same table, opposite effect — which is why the diode
+  join tries both the `reference` and the `alias` key rather than picking one.
+- **Net aliases.** 38 in the Boardview file, and **0 of them apply**: they name
+  `NetNN` ids this parser does not produce (its nets come from the net block
+  with real names already). The collision guard no-ops correctly; a future file
+  whose ids do match will exercise the other branch.
+- **567 unmatched readings** are pre-existing parse gaps, not join misses:
+  331 belong to parts absent from the board, 236 to connector/BGA pins not
+  emitted (`U4000` parses as **1** pin against 88 JSON pads; `J10400` has 26
+  parsed pins against 22 JSON pads that only partly line up). Treat a drop
+  below ~4180 stamped pins as a regression; treat a rise as progress on the
+  pin-extraction side, not on the tail parser.
+- **2346 single-pin parts** (half the board) is why diode-only mode has to
+  suppress single-pin designators: those are drawn *on* the pin, not on a body.
+
+Served by the dev container at <http://localhost:1234> (see
+`docs/RELEASE_RUNBOOK.md` ▸ "Before a release"), which mounts `samples/` as its
+whole library — this pair is the fastest way to eyeball the diode channel.

@@ -164,7 +164,13 @@ scripts/devcontainer.sh down
 
 It serves <http://localhost:1234> with `samples/` bind-mounted read-only as the
 entire library, so whatever fixtures are in the working tree are what the
-Library panel shows. Port 1234 matches the NAS dev container
+Library panel shows. The one worth loading by hand every time is
+`XZZ PCB SAMPLES/iPhone16_16Plus/…AP+BB Boardview.pcb` — 4195 pins carrying
+diode readings, which exercises the annotation-tail parser, the on-pin overlay
+and diode-only mode in one board. Its sibling `…AP+BB YiDianTong.pcb` is the
+same PCB with no readings at all, and is the control: if *both* show values, or
+neither does, the tail parser is wrong. Counts to compare against:
+`docs/formats/XZZ_FORMAT.md` ▸ "Validation fixtures". Port 1234 matches the NAS dev container
 (`scripts/devdeploy-remote.sh`) — 1234 is dev, 1336/8081 is real — and nothing
 is shared with the production compose stack (own project name, own port, own
 `.devdata` volume).

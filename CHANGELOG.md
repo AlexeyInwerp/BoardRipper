@@ -1,5 +1,51 @@
 # BoardRipper changelog
 
+## v0.38.0 — 2026-09-04
+
+Diode-mode reference readings now come through on the current generation of XZZ
+boardviews, and there is a way to actually read them on a dense board.
+
+### Formats
+
+- **XZZ `.pcb`: diode values on newer boardviews.** XZZ stores its diode table
+  after the `v6v6555v6v6` marker, and BoardRipper only understood the older of
+  the two encodings that live there — newline-delimited `=<mV>=PART(pin)`
+  records. Current deliveries (the iPhone-era files) put a JSON document there
+  instead, so every one of them reported no readings at all. Both encodings are
+  now read, chosen by content rather than by file name.
+
+  On `iPhone16_16Plus AP+BB Boardview.pcb` that is 4750 readings where there
+  were none, landing on 4195 pins. Its sibling `…AP+BB YiDianTong.pcb` is the
+  same board delivered without diode data, and still correctly shows none —
+  worth knowing if you have both, because the difference is in the file, not in
+  the viewer.
+
+  The JSON tail also carries the rename tables XZZ's own viewer applies, so two
+  further things follow. Pin identifiers are no longer restricted to digits,
+  which means BGA readings (`M7`, `L9`) can be represented at all. And parts a
+  file named by internal id (`C356_1`) now show their real designator
+  (`C11814`) — 2297 of them on the YiDianTong file. Net names get the same
+  treatment where a file provides them. Neither rename will ever merge two
+  parts, or two nets, into one name.
+
+  Spec: `docs/formats/XZZ_FORMAT.md`.
+
+### Board view
+
+- **Net names can be turned off.** They join pin numbers as their own toggle,
+  in the sidebar's View tab and in Settings ▸ Board ▸ Pins. On a dense part the
+  net name is usually what is covering everything else.
+- **Diode-only mode.** The diode button on the board overlay now has a third
+  state: off → on → *only*. In "only", a pin shows its reading and nothing
+  else — no pin number, no net name, and no designator for single-pin
+  testpoints, which are drawn directly on the pin and were the worst of the
+  clutter (half the parts on an iPhone board are single-pin). Designators on
+  part bodies stay, so the board is still navigable.
+
+  Your own pin-number and net-name settings are left untouched while the mode
+  is on and come back when you leave it. It is also considerably faster: on a
+  dense area of iPhone16_16Plus the label count falls from 23 182 to 6535.
+
 ## v0.37.0 — 2026-09-03
 
 Two new board formats, both open and both with public test boards — the first
