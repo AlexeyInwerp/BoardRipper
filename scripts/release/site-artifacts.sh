@@ -34,8 +34,15 @@ awk -v ver="$VERSION" -v date="$RELEASE_DATE" '
 # ship a page with no version line at all.
 grep -q 'BR_VERSION:START' "$LANDING_TMP" && grep -q 'BR_VERSION:END' "$LANDING_TMP" \
   || { echo "ERROR: landing/index.html lost its BR_VERSION markers" >&2; rm -f "$LANDING_TMP"; exit 1; }
-mv "$LANDING_TMP" "$LANDING_SRC"
+# Write THROUGH the existing file, never `mv` the temp over it: mktemp makes
+# 0600 files, and a 0600 landing/index.html rides rsync + lftp (both preserve
+# modes) onto the web host, where the server cannot read it — a 403 landing
+# page, seen live 2026-09-04 within an hour of the first mv-based version.
+cat "$LANDING_TMP" > "$LANDING_SRC"
+rm -f "$LANDING_TMP"
+chmod 644 "$LANDING_SRC"
 cp "$LANDING_SRC" "$LANDING_OUT"
+chmod 644 "$LANDING_OUT"
 
 # Render a Markdown file to a self-contained HTML page using a built-in
 # sed+awk converter. Handles the BoardRipper CHANGELOG.md format:
