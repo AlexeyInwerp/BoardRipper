@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, transformWithEsbuild, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import { viteSingleFile } from 'vite-plugin-singlefile'
@@ -9,6 +9,30 @@ import pkg from './package.json' with { type: 'json' }
 // point at its own ephemeral backend so test runs don't collide with a
 // dev server on 1336.
 const BACKEND_PORT = process.env.BOARDRIPPER_BACKEND_PORT ?? '1336';
+
+/**
+ * The pdf.js worker is referenced with `new URL(..., import.meta.url)`, which
+ * makes Vite copy it as an ASSET — verbatim, never minified. That is the copy
+ * every http(s) visitor actually downloads and the service worker precaches:
+ * 2.18 MB / 63 000 lines on the wire (447 KB brotli) where a minified one is
+ * 1.19 MB (367 KB). The unminified SOURCE is deliberate (the watermark-filter
+ * patch targets readable code — see patches/README.md); the unminified OUTPUT
+ * never was. Minify the emitted asset in place.
+ */
+function minifyPdfWorkerAsset(): Plugin {
+  return {
+    name: 'boardripper:minify-pdf-worker-asset',
+    apply: 'build',
+    async generateBundle(_opts, bundle) {
+      for (const [name, item] of Object.entries(bundle)) {
+        if (item.type !== 'asset' || !/pdf\.worker-[\w-]+\.mjs$/.test(name)) continue;
+        const src = typeof item.source === 'string' ? item.source : Buffer.from(item.source).toString('utf8');
+        const out = await transformWithEsbuild(src, name, { minify: true, format: 'esm', target: 'es2020', sourcemap: false });
+        item.source = out.code;
+      }
+    },
+  };
+}
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -32,8 +56,20 @@ export default defineConfig(({ mode }) => {
       // module/asset fetches that file:// would CORS-block). No PWA here — a
       // service worker can't register on file://.
       ...(offline ? [viteSingleFile({ removeViteModuleLoader: true })] : []),
-      ...(lite ? [VitePWA({
-        registerType: 'autoUpdate',      // new deploy picked up on next load
+      minifyPdfWorkerAsset(),
+      // Present in EVERY mode (disabled outside lite) so `virtual:pwa-register/
+      // react` resolves for the NAS/offline/Electron builds too — the
+      // UpdatePrompt component imports it and is itself gated on isLiteBuild().
+      // `disable` makes the plugin emit no SW/manifest and a no-op register.
+      VitePWA({
+        disable: !lite,
+        // 'prompt', not 'autoUpdate': with autoUpdate the new SW calls
+        // skipWaiting()+clientsClaim() and deploy-lite's `mirror --delete`
+        // prunes the old hashed chunks, so a page open across a deploy 404s on
+        // its first lazy chunk — and nothing ever told the user a version
+        // existed. Now the app shows "vX available — reload" (UpdatePrompt)
+        // and the swap happens on the user's reload.
+        registerType: 'prompt',
         injectRegister: 'auto',          // registration script injected at build
         // Serve the manifest + SW on `vite --mode lite` dev too, so the E2E
         // and manual testing exercise the real thing.
@@ -56,10 +92,15 @@ export default defineConfig(({ mode }) => {
           background_color: '#0b0f14',
           theme_color: '#0b0f14',
           icons: [
-            { src: 'logo.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' },
+            // PNGs rasterised from logo.svg (public/). iOS ignores SVG manifest
+            // icons entirely; Chrome's install prompt wants 192 + 512 PNG.
+            { src: 'icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+            { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+            { src: 'icon-512-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+            { src: 'logo.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
           ],
         },
-      })] : []),
+      }),
     ],
     define: {
       __APP_VERSION__: JSON.stringify(pkg.version),

@@ -19,6 +19,11 @@ try {
   html = html.replace(/href="\.\/logo\.svg"/g, `href="${dataUri}"`);
 } catch { /* no favicon shipped — fine */ }
 
+// The single file is a download, not an installable site: an external
+// apple-touch-icon would be the one reference that fails under file://
+// (tests/offline-file.spec.ts asserts zero failed loads).
+html = html.replace(/\s*<link rel="apple-touch-icon"[^>]*>/g, '');
+
 await writeFile(join(OUT, 'boardripper-lite.html'), html);
 
 // Keep ONLY the single file.

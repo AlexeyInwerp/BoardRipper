@@ -36,7 +36,8 @@ import { pdfStore } from './store/pdf-store';
 import { openPdfFiles } from './store/file-actions';
 import { saveDroppedToIncoming } from './store/incoming-upload';
 import { isElectron } from './store/databank-store';
-import { isLiteBuild } from './store/build-mode';
+import { isLiteBuild, isOfflineBuild } from './store/build-mode';
+import { UpdatePrompt } from './components/UpdatePrompt';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { getAllExtensions, getFileExtension } from './parsers';
 import { themeStore } from './store/themes';
@@ -345,6 +346,7 @@ function App() {
           you pressed a handle in the first. */}
       <ResizePopup />
       <ShortcutsOverlay />
+      {isLiteBuild() && !isOfflineBuild() && <UpdatePrompt />}
       {toasts.length > 0 && (
         <div className="toast-container">
           {toasts.map(t => (

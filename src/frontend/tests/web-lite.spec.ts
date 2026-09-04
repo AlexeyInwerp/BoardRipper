@@ -88,3 +88,31 @@ test('PWA manifest is linked', async ({ page }) => {
   await page.goto('.');
   await expect(page.locator('link[rel="manifest"]')).toHaveCount(1);
 });
+
+// ── Front door (2026-09-04 lite review) ──────────────────────────────────────
+// The lite build has no Library and, on a tablet, no drag-and-drop — the home
+// page must itself offer a way in, and must not open on Docker instructions.
+
+test('home page offers Open + sample, and hides the Docker-only sections', async ({ page }) => {
+  await page.goto('.');
+  await page.waitForLoadState('networkidle');
+  await expect(page.getByTestId('home-open-card')).toBeVisible();
+  await expect(page.getByTestId('home-open-btn')).toBeVisible();
+  const body = await page.locator('.home-instructions').innerText();
+  expect(body).not.toContain('Run it in Docker');
+  expect(body).not.toContain('The Library');
+  expect(body).toContain('Upload');            // the no-drag-and-drop line
+  // The fence markers themselves must never leak into the rendered text.
+  expect(body).not.toContain('docker-only');
+});
+
+test('sample board opens from the bundled file (relative base) and stays network-silent', async ({ page }) => {
+  const api = trackApi(page);
+  const bad = trackFailures(page);
+  await page.goto('.');
+  await page.waitForLoadState('networkidle');
+  await page.getByTestId('home-sample-btn').click();
+  await expect(page.getByTestId('statusbar')).toContainText('Components: 52', { timeout: 60000 });
+  expect(api).toEqual([]);
+  expect(bad, `failed requests: ${bad.join(', ')}`).toEqual([]);
+});

@@ -25,3 +25,16 @@ AddType application/wasm .wasm
   Header always unset Content-Security-Policy
   Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; child-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' data: blob: https://raw.githubusercontent.com https://*.githubusercontent.com; manifest-src 'self'; object-src 'none'; base-uri 'self'"
 </IfModule>
+
+# --- Service-worker freshness ---
+# The site-wide rule marks every .js `immutable` for a year. That is right for
+# the hashed bundles and WRONG for the three files whose whole job is to change
+# under a stable name: browsers cap SW-script freshness at 24 h regardless, so
+# an installed PWA could lag a deploy by a day. (Measured live 2026-09-04:
+# sw.js came back `max-age=31536000, immutable`.) index.html is already
+# no-cache; these must match it.
+<IfModule mod_headers.c>
+  <FilesMatch "^(sw\.js|registerSW\.js|manifest\.webmanifest)$">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
+</IfModule>

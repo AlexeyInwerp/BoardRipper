@@ -1,3 +1,4 @@
+/// <reference types="vite-plugin-pwa/react" />
 // Project-wide ambient declarations (no imports/exports → file is a global
 // script, so all interfaces below merge into the global scope automatically).
 //
