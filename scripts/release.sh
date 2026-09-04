@@ -711,13 +711,17 @@ if [ "$DRY_RUN" = "true" ]; then
 fi
 
 # --- Commit ---
+# landing/index.html carries the release-rendered version line (see
+# scripts/release/site-artifacts.sh) — it belongs to the release commit so the
+# repo copy, which RipperDocWeb's deploy also publishes, can never be stale.
+LANDING_FILE="$REPO_ROOT/landing/index.html"
 if [ "$IS_DESKTOP_ONLY" = "true" ]; then
   COMMIT_MSG="release: $VERSION (electron-only)"
   git add "$PKG_FILE"
 else
   echo "$NEW_COUNTER" > "$COUNTER_FILE"
   COMMIT_MSG="release: $VERSION (counter $NEW_COUNTER)"
-  git add "$COUNTER_FILE" "$PKG_FILE"
+  git add "$COUNTER_FILE" "$PKG_FILE" "$LANDING_FILE"
 fi
 # Empty-stage check: package.json may already be at target (e.g. release.sh
 # bumped it but later step failed; user re-runs after fixing). No-op commit.

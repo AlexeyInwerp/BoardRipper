@@ -23,6 +23,13 @@ To bump the version, add a feature, or replace a screenshot:
 2. If replacing a screenshot, drop the new PNG over the old file in `screenshots/`. Same filename, similar dimensions.
 3. Commit and push in this repo.
 
+**The "Latest release" line is rendered, not hand-edited.** `release.sh` writes
+the current version and date into the `BR_VERSION:START/END` block of
+`landing/index.html` in this repo and commits it with the release, so the file
+in git is always the live one. Don't edit that block by hand; don't worry about
+it when deploying the website either — but do `git pull` first, because the
+website deploy publishes whatever version line your clone has.
+
 The next time the **RipperDocWeb** repo runs `./deploy.sh`, it pulls a fresh copy of this directory from your local clone and rsyncs it into `public/boardripper/` before the FTP mirror. There is nothing to do on the RipperDocWeb side for a content change.
 
 The page carries a templated version block — the lines between `<!-- BR_VERSION:START -->` and `<!-- BR_VERSION:END -->` are rewritten by the BoardRipper release script on every release (current version + release date). Don't hand-edit that block; the next release will overwrite it. Other release-time edits (new features, new screenshots, format-table updates) are content-only and stay manual.

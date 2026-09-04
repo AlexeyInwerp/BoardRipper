@@ -8,10 +8,20 @@ OUT="${OUT_DIR:-$REPO_ROOT/out}"
 mkdir -p "$OUT/site"
 
 # --- Landing page version-block templating ---
+# The block between BR_VERSION:START/END is rendered IN PLACE into the repo's
+# landing/index.html, and release.sh commits that file with the release. The
+# copy under out/site/ is then just a copy. This matters because the landing
+# page has a second publisher: RipperDocWeb's deploy.sh rsyncs landing/ from
+# this clone over the site. When only out/site/ carried the rendered block,
+# the repo copy stayed at whatever release last touched it by hand, and a
+# website deploy put that stale version line back on the live page (seen
+# 2026-09-04: live said v0.37.2, repo said v0.36.1). One rendered copy, in
+# git, is the fix — any deploy path publishes the same thing.
 LANDING_SRC="$REPO_ROOT/landing/index.html"
 LANDING_OUT="$OUT/site/index.html"
 RELEASE_DATE="$(echo "$RELEASED_AT" | cut -d'T' -f1)"
 
+LANDING_TMP="$(mktemp)"
 awk -v ver="$VERSION" -v date="$RELEASE_DATE" '
   /<!-- BR_VERSION:START -->/ { print; in_block=1;
     print "  <p class=\"tagline\" style=\"margin-top:4px\"><span class=\"small\">Latest release: <b>" ver "</b> &mdash; released " date "</span></p>";
@@ -19,7 +29,13 @@ awk -v ver="$VERSION" -v date="$RELEASE_DATE" '
   /<!-- BR_VERSION:END -->/ { in_block=0; print; next }
   in_block { next }
   { print }
-' "$LANDING_SRC" > "$LANDING_OUT"
+' "$LANDING_SRC" > "$LANDING_TMP"
+# Refuse to publish a page whose markers are missing — that would silently
+# ship a page with no version line at all.
+grep -q 'BR_VERSION:START' "$LANDING_TMP" && grep -q 'BR_VERSION:END' "$LANDING_TMP" \
+  || { echo "ERROR: landing/index.html lost its BR_VERSION markers" >&2; rm -f "$LANDING_TMP"; exit 1; }
+mv "$LANDING_TMP" "$LANDING_SRC"
+cp "$LANDING_SRC" "$LANDING_OUT"
 
 # Render a Markdown file to a self-contained HTML page using a built-in
 # sed+awk converter. Handles the BoardRipper CHANGELOG.md format:
