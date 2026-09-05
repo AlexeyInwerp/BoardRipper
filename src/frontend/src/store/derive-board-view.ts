@@ -17,11 +17,10 @@
  *   swap        the user says a board's sides are the wrong way round —
  *               mirror that board across its own centre line and relabel
  *               top ↔ bottom, on every geometry kind;
- *   all-sides   show the file's raw layout: parts are moved back to their
- *               pre-fold positions over `rawOutline`, sides neutralised.
- *               Pads, silk, traces, vias and test pads carry no record of
- *               whether they were folded, so this view shows parts and
- *               outline only on packs.
+ *   all-sides   the file's own layout, what XZZ's viewer shows: every item
+ *               moved back to its pre-fold position over `rawOutline`, sides
+ *               kept so Top / Bottom show and hide the halves. The default
+ *               for packs.
  *
  * Files without `board.boards` (other formats, and XZZ files whose single
  * outline was cut by the legacy gap detector) keep the older behaviour:
@@ -121,14 +120,7 @@ function derivePack(
 
   if (foldMode === 'all-sides') return derivePackAllSides(board, boards, sel);
 
-  // Which board a non-part item belongs to: by folded bounds, smallest first
-  // so a sub-board inside a bigger board's envelope wins.
-  const order = boards.map((b, i) => ({ i, a: (b.bounds.maxX - b.bounds.minX) * (b.bounds.maxY - b.bounds.minY) }))
-    .sort((p, q) => p.a - q.a).map(o => o.i);
-  const boardAt = (x: number, y: number): number => {
-    for (const i of order) if (inBox(boards[i].bounds, x, y)) return i;
-    return -1;
-  };
+  const boardAt = makeBoardAt(boards);
   const keepIdx = (i: number) => sel === null || i === sel;
   const swapSet = new Set(swaps);
 
@@ -215,11 +207,27 @@ function derivePack(
   return { ...board, outline, parts, traces, pads, silkscreen, vias, nails, nets, bounds };
 }
 
-/** Raw layout: undo the parser's slide and fold per board. Parts and outline
- *  only — see the header comment. */
+/** Which board a non-part item belongs to: by folded bounds, smallest first
+ *  so a sub-board inside a bigger board's envelope wins. */
+function makeBoardAt(boards: Board[]): (x: number, y: number) => number {
+  const order = boards.map((b, i) => ({ i, a: (b.bounds.maxX - b.bounds.minX) * (b.bounds.maxY - b.bounds.minY) }))
+    .sort((p, q) => p.a - q.a).map(o => o.i);
+  return (x, y) => {
+    for (const i of order) if (inBox(boards[i].bounds, x, y)) return i;
+    return -1;
+  };
+}
+
+/** The file's own layout — what XZZ's viewer shows: undo the parser's slide
+ *  and fold per board so every half sits where the file draws it, bottom
+ *  halves as seen from below. Sides stay labelled, so the Top / Bottom
+ *  toggles show and hide the halves. Every geometry kind comes back: parts
+ *  and pads and silk and test pads by their side, traces and vias by the
+ *  `mirrored` flag the parser left on them. */
 function derivePackAllSides(board: BoardData, boards: Board[], sel: number | null): BoardData {
   const comps = board.foldComponents ?? [];
   const keepIdx = (i: number) => sel === null || i === sel;
+  const boardAt = makeBoardAt(boards);
   const unfoldPt = (p: Point, b: Board, mirror: boolean): Point => {
     let x = p.x - b.shift.dx, y = p.y - b.shift.dy;
     if (mirror && b.fold) {
@@ -236,13 +244,53 @@ function derivePackAllSides(board: BoardData, boards: Board[], sel: number | nul
     const bi = part.boardIndex ?? -1;
     if (!keepIdx(bi)) return { ...part, hidden: true };
     const b = bi >= 0 ? boards[bi] : null;
-    if (!b) return part.side === 'top' ? part : { ...part, side: 'top', pins: part.pins.map(p => ({ ...p, side: 'top' as const })) };
+    if (!b) return part;
     const mirror = part.side === 'bottom';
     const pins: Pin[] = part.pins.map(pin => ({
-      ...pin, side: 'top' as const, position: unfoldPt(pin.position, b, mirror),
+      ...pin, position: unfoldPt(pin.position, b, mirror),
       ...(pin.padBounds ? { padBounds: unfoldBox(pin.padBounds, b, mirror) } : {}),
     }));
-    return { ...part, side: 'top', origin: unfoldPt(part.origin, b, mirror), bounds: unfoldBox(part.bounds, b, mirror), pins };
+    return { ...part, origin: unfoldPt(part.origin, b, mirror), bounds: unfoldBox(part.bounds, b, mirror), pins };
+  });
+  const traces = board.traces?.flatMap(t => {
+    const bi = boardAt((t.start.x + t.end.x) / 2, (t.start.y + t.end.y) / 2);
+    if (!keepIdx(bi)) return [];
+    const b = bi >= 0 ? boards[bi] : null;
+    if (!b) return [t];
+    const m = !!t.mirrored;
+    return [{ ...t, start: unfoldPt(t.start, b, m), end: unfoldPt(t.end, b, m) }];
+  });
+  const pads = board.pads?.flatMap(p => {
+    const bi = boardAt((p.bounds.minX + p.bounds.maxX) / 2, (p.bounds.minY + p.bounds.maxY) / 2);
+    if (!keepIdx(bi)) return [];
+    const b = bi >= 0 ? boards[bi] : null;
+    if (!b) return [p];
+    const m = p.side === 'bottom';
+    return [{ ...p, bounds: unfoldBox(p.bounds, b, m), ...(p.polygon ? { polygon: p.polygon.map(q => unfoldPt(q, b, m)) } : {}) }];
+  });
+  const silkscreen = board.silkscreen?.flatMap(s => {
+    const p0 = s.points[0];
+    if (!p0) return [];
+    const bi = boardAt(p0.x, p0.y);
+    if (!keepIdx(bi)) return [];
+    const b = bi >= 0 ? boards[bi] : null;
+    if (!b) return [s];
+    const m = s.side === 'bottom';
+    return [{ ...s, points: s.points.map(q => unfoldPt(q, b, m)) }];
+  });
+  const vias = board.vias?.flatMap(v => {
+    const bi = boardAt(v.position.x, v.position.y);
+    if (!keepIdx(bi)) return [];
+    const b = bi >= 0 ? boards[bi] : null;
+    if (!b) return [v];
+    return [{ ...v, position: unfoldPt(v.position, b, !!v.mirrored) }];
+  });
+  const nails = board.nails.flatMap(n => {
+    const bi = boardAt(n.position.x, n.position.y);
+    if (!keepIdx(bi)) return [];
+    const b = bi >= 0 ? boards[bi] : null;
+    if (!b) return [n];
+    return [{ ...n, position: unfoldPt(n.position, b, n.side === 'bottom') }];
   });
   // Raw outline: every loop, or the selected board's loops (its components'
   // pre-fold bboxes).
@@ -252,11 +300,7 @@ function derivePackAllSides(board: BoardData, boards: Board[], sel: number | nul
     : filterOutline(source, p => boards[sel].components.some(ci => comps[ci] && inBox(comps[ci], p.x, p.y)));
   const nets = rebuildNets(parts);
   const bounds = viewBounds(outline, parts);
-  return {
-    ...board, outline, parts, nets, bounds,
-    traces: undefined, pads: undefined, silkscreen: undefined, vias: undefined, nails: [],
-    butterflyFoldAxis: undefined,
-  };
+  return { ...board, outline, parts, traces, pads, silkscreen, vias, nails, nets, bounds, butterflyFoldAxis: undefined };
 }
 
 // ─────────────────────────────────────────────────────────────────────────

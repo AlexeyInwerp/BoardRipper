@@ -288,11 +288,12 @@ function LayersTab({ tabId }: { tabId: number }) {
           <div className="fold-section-title">Boards and sides</div>
           <p className="fold-section-desc">
             XZZ <code>.pcb</code> files draw each board twice, top and bottom
-            side by side, and can pack several boards into one file. The parser
-            pairs the halves, folds each board and decides which half is the top
-            from the copper when the file has traces, otherwise from the
-            exporter&rsquo;s layout. If a board comes out upside down, swap its
-            sides here; the choice is remembered for this file.
+            side by side, and can pack several boards into one file. A pack
+            opens the way XZZ shows it, every half where the file draws it.
+            The folded view stacks each board&rsquo;s halves; which half is the
+            top comes from the copper when the file has traces, otherwise from
+            the exporter&rsquo;s layout. If a board comes out upside down, swap
+            its sides; the choice is remembered for this file.
           </p>
           {packBoards.length > 0 && (
             <div className="fold-boards">
@@ -390,7 +391,7 @@ function LayersTab({ tabId }: { tabId: number }) {
               />
               <span className="fold-option-label">Folded</span>
               <span className="fold-option-hint">
-                {board.foldInfo?.summary ?? (packBoards.length > 0 ? 'Each board folded by the parser' : 'No fold applied — rendered as-is')}
+                {board.foldInfo?.summary ?? (packBoards.length > 0 ? 'Each board with its bottom half folded onto the top — Top / Bottom switch sides' : 'No fold applied — rendered as-is')}
               </span>
             </label>
             <label className="fold-option">
@@ -400,10 +401,11 @@ function LayersTab({ tabId }: { tabId: number }) {
                 checked={foldMode === 'all-sides'}
                 onChange={() => boardStore.setFoldMode('all-sides')}
               />
-              <span className="fold-option-label">Show all sides</span>
+              <span className="fold-option-label">{packBoards.length > 0 ? 'XZZ layout' : 'Show all sides'}</span>
               <span className="fold-option-hint">
-                The file&rsquo;s raw layout, both halves of every board, no mirroring
-                {packBoards.length > 0 ? ' — parts and outline only' : ''}.
+                {packBoards.length > 0
+                  ? 'Every half where the file draws it, as XZZ shows it — Top / Bottom show and hide the halves.'
+                  : 'The file\u2019s raw layout, both halves of every board, no mirroring.'}
               </span>
             </label>
           </div>

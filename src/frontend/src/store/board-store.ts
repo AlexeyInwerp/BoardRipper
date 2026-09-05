@@ -195,6 +195,16 @@ const emptySelection: SelectionState = {
   adjacentNets: new Set<string>(),
 };
 
+/** A multi-board XZZ pack opens the way XZZ's own viewer shows it: every
+ *  half where the file draws it, both sides visible. The folded view stays
+ *  one click away in the board panel. */
+function applyPackDefaults(tab: BoardTab, board: BoardData): void {
+  if (board.format !== 'XZZ' || !board.boards || board.boards.length < 2) return;
+  tab.foldMode = 'all-sides';
+  tab.showTop = true;
+  tab.showBottom = true;
+}
+
 /** Compute (or return the cached) derived BoardData for a tab. Re-derives
  *  only when the inputs change so `useSyncExternalStore` gets a stable
  *  reference on unchanged state. */
@@ -904,6 +914,7 @@ class BoardStore extends Emitter {
   private applyCachedBoard(tab: BoardTab, cached: BoardData, fileName: string, fileSize: number, lastModified: number): void {
     flagMechanicalParts(cached.parts);
     tab.board = cached;
+    applyPackDefaults(tab, cached);
     invalidateDerivedBoard(tab);
     applyBoardFilters(tab);
     tab.cacheKey = boardCache.makeCacheKey(fileName, fileSize, lastModified);
@@ -1048,6 +1059,7 @@ class BoardStore extends Emitter {
         const tPost = performance.now();
         flagMechanicalParts(board.parts);
         tab.board = board;
+        applyPackDefaults(tab, board);
         invalidateDerivedBoard(tab);
         applyBoardFilters(tab);
         log.perf.log(`post-parse: ${(performance.now() - tPost).toFixed(0)}ms (flagMechanical + derive + filters)`);

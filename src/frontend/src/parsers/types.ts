@@ -163,6 +163,9 @@ export interface Trace {
   net: string;
   /** Layer index for multi-layer boards (0-based). Undefined = single-layer. */
   layer?: number;
+  /** Set by parsers that fold a board pack (XZZ) on the traces they mirrored
+   *  from a bottom half, so the raw-layout view can put them back. */
+  mirrored?: boolean;
 }
 
 /** Copper-fill polygon (ground plane, power pour, signal flood). Vertices are
@@ -186,6 +189,8 @@ export interface Via {
   net: string;
   /** Connected layer indices (0-based). Empty = through-hole (all layers). */
   layers: number[];
+  /** See `Trace.mirrored`. */
+  mirrored?: boolean;
 }
 
 /** Per-component silkscreen / assembly drawing — open polyline (segments + arc samples)

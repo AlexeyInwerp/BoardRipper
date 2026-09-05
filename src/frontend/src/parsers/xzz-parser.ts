@@ -965,7 +965,7 @@ function parseTestPadBlock(data: Uint8Array): TestPadData | null {
   return { x, y, netIndex };
 }
 
-interface ViaData { x: number; y: number; outer: number; netIndex: number; }
+interface ViaData { x: number; y: number; outer: number; netIndex: number; mirrored?: boolean; }
 
 /**
  * XZZ via block (block-type 0x02). 32-byte fixed layout, 8×i32 LE:
@@ -1497,7 +1497,7 @@ export function xzzArcSweepDeg(startDeg: number, endDeg: number): number {
   return ((endDeg - startDeg) % 360 + 360) % 360;
 }
 
-type RawTrace = { rawLayer: number; x1: number; y1: number; x2: number; y2: number; width: number; netIndex: number };
+type RawTrace = { rawLayer: number; x1: number; y1: number; x2: number; y2: number; width: number; netIndex: number; mirrored?: boolean };
 
 /** One physical board of a pack, as the parser leaves it: folded, and moved
  *  into its final place. `region` and `fold.axis` are tracked through the
@@ -1702,8 +1702,9 @@ function foldBoardPack(args: {
       if (traceBoard[i] !== bi || !isBottom((t.x1 + t.x2) / 2, (t.y1 + t.y2) / 2)) return;
       if (dim === 'x') { t.x1 = 2 * axis - t.x1; t.x2 = 2 * axis - t.x2; }
       else             { t.y1 = 2 * axis - t.y1; t.y2 = 2 * axis - t.y2; }
+      t.mirrored = true;
     });
-    vias.forEach((v, i) => { if (viaBoard[i] === bi && isBottom(v.x, v.y)) mx(v); });
+    vias.forEach((v, i) => { if (viaBoard[i] === bi && isBottom(v.x, v.y)) { mx(v); v.mirrored = true; } });
     silk.forEach((s, i) => {
       if (silkBoard[i] !== bi || !isBottom((s.p1.x + s.p2.x) / 2, (s.p1.y + s.p2.y) / 2)) return;
       mx(s.p1); mx(s.p2);
@@ -1862,7 +1863,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   const viasRaw: ViaData[] = [];
   // Raw trace segments collected by source layer id. We assign 0-based
   // Trace.layer indices after we've seen every layer the file uses.
-  const rawTraces: Array<{ rawLayer: number; x1: number; y1: number; x2: number; y2: number; width: number; netIndex: number }> = [];
+  const rawTraces: RawTrace[] = [];
   // Silkscreen segments — XZZ rawLayer 17. Routed here instead of into
   // rawTraces so the renderer's Silkscreen overlay (same toggle Allegro uses)
   // gets them with neutral styling rather than per-net trace coloring.
@@ -2056,6 +2057,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         t.y1 = 2 * fold.axis - t.y1;
         t.y2 = 2 * fold.axis - t.y2;
       }
+      t.mirrored = true;
     }
     // Vias use a single point — classify by it directly.
     for (const v of viasRaw) {
@@ -2064,6 +2066,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       if (!isBottom) continue;
       if (fold.dim === 'x') v.x = 2 * fold.axis - v.x;
       else                  v.y = 2 * fold.axis - v.y;
+      v.mirrored = true;
     }
     // Silkscreen segments — classify by midpoint, same as traces.
     for (const s of silkSegments) {
@@ -2585,6 +2588,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       diameter: v.outer,
       net: (raw2 === 'NC' || raw2 === 'UNCONNECTED') ? '' : raw2,
       layers: [] as number[],
+      ...(v.mirrored ? { mirrored: true } : {}),
     };
   });
 
@@ -2654,6 +2658,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       width: t.width > 0 ? t.width : 3,
       net,
       layer: layerIndex.get(t.rawLayer)!,
+      ...(t.mirrored ? { mirrored: true } : {}),
     };
   });
 
