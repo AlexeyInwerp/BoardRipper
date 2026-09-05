@@ -24,6 +24,8 @@ func TestAppleDeviceModel(t *testing.T) {
 		{"iPhone7 intel PCB layer 820-00189-A.pcb", "iPhone 7"},
 		{"iPhone15Pro_ProMax AP+BB Boardview.pcb", "iPhone 15 Pro / Pro Max"},
 		{"iPhone15_15 Plus AP+BB Boardview.pcb", "iPhone 15 / 15 Plus"},
+		{"iPhone16Pro_ProMax-820-03424-14 AP+BB YiDianTong.pcb", "iPhone 16 Pro / Pro Max"},
+		{"iPhoneSE3 YiDianTong 820-02524.pcb", "iPhone SE 3"},
 		{"iPad/iPad Pro 12.9 3rd gen 820-01204.pcb", "iPad Pro 12.9"},
 		{"MacBook Pro M1 Pro 14' A2442 820-02098-A PCB layer.pcb", ""},
 		{"ASUS/FA507RM.pcb", ""},

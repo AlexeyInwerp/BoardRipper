@@ -27,7 +27,9 @@ var (
 	appleDeviceRe = regexp.MustCompile(`(?i)\b(iphone|ipad)\s*[-_ ]?\s*((?:\d{1,2}|xs|xr|x|se)(?:\s*(?:pro\s*max|promax|pro|plus|mini|max|air|e))?(?:\s*\d)?|pro|air|mini)`)
 	// Extra model tokens that may follow, separated by "_", "&", "/" or a
 	// space: "16Plus", "ProMAX", "12Pro", "Pro Max".
-	appleVariantRe = regexp.MustCompile(`(?i)^(?:(\d{1,2}(?:\.\d)?|xs|xr|x|se)\s*)?(pro\s*max|promax|pro|plus|mini|max|air|e)?(?:\s*(\d))?$`)
+	// Anchored, and a generation digit is only read after "SE" — otherwise
+	// "820" (the start of a board number) parsed as "82" + generation "0".
+	appleVariantRe = regexp.MustCompile(`(?i)^(?:(se\s*\d?|\d{1,2}(?:\.\d)?|xs|xr|x)\s*)?(pro\s*max|promax|pro|plus|mini|max|air|e)?$`)
 )
 
 // appleDeviceModel returns the normalised model name found in relPath and
@@ -75,7 +77,7 @@ func appleModelFromSegment(seg string) (string, bool) {
 			continue
 		}
 		m := appleVariantRe.FindStringSubmatch(tok)
-		if m == nil || (m[1] == "" && m[2] == "" && m[3] == "") {
+		if m == nil || (m[1] == "" && m[2] == "") {
 			break
 		}
 		if m[1] == "" {
@@ -83,7 +85,7 @@ func appleModelFromSegment(seg string) (string, bool) {
 			// model: "14 Pro" + "Pro Max" → "14 Pro / Pro Max"; "16" + "Plus"
 			// → "16 / 16 Plus".
 			base := strings.SplitN(models[len(models)-1], " ", 2)[0]
-			v := normaliseAppleVariant(m[2], m[3])
+			v := normaliseAppleVariant(m[2])
 			if v == "" {
 				break
 			}
@@ -124,51 +126,41 @@ func normaliseAppleModel(tok string) string {
 	if m == nil {
 		return strings.TrimSpace(tok)
 	}
-	base := strings.ToUpper(m[1])
-	if base == "SE" || base == "X" || base == "XS" || base == "XR" {
-		// Roman-ish names stay upper-case.
+	base := strings.ToUpper(strings.Join(strings.Fields(m[1]), ""))
+	if strings.HasPrefix(base, "SE") && len(base) == 3 {
+		base = "SE " + base[2:] // SE2 → SE 2
 	} else if n, err := strconv.Atoi(base); err == nil {
 		base = strconv.Itoa(n)
 	}
-	v := normaliseAppleVariant(m[2], m[3])
+	v := normaliseAppleVariant(m[2])
 	switch {
 	case base == "" && v != "":
 		return v
 	case v == "":
 		return base
-	case base == "SE" && m[2] == "" && m[3] != "":
-		return base + " " + m[3]
-	case strings.EqualFold(m[2], "e") && m[3] == "":
+	case v == "E":
 		return base + "E"
 	default:
 		return base + " " + v
 	}
 }
 
-func normaliseAppleVariant(variant, gen string) string {
-	v := strings.ToLower(strings.Join(strings.Fields(variant), ""))
-	var out string
-	switch v {
+func normaliseAppleVariant(variant string) string {
+	switch strings.ToLower(strings.Join(strings.Fields(variant), "")) {
 	case "promax":
-		out = "Pro Max"
+		return "Pro Max"
 	case "pro":
-		out = "Pro"
+		return "Pro"
 	case "plus":
-		out = "Plus"
+		return "Plus"
 	case "mini":
-		out = "mini"
+		return "mini"
 	case "max":
-		out = "Max"
+		return "Max"
 	case "air":
-		out = "Air"
+		return "Air"
 	case "e":
-		out = "E"
+		return "E"
 	}
-	if gen != "" {
-		if out == "" {
-			return gen
-		}
-		return out + " " + gen
-	}
-	return out
+	return ""
 }
