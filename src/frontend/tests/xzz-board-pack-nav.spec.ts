@@ -36,7 +36,30 @@ test('focusPart aims the camera at the part as drawn, not as parsed', async ({ p
     const raw = tab.board.parts[idx].bounds;
     const drawn = bs.board.parts[idx].bounds;              // derived view = what the renderer draws
     bs.focusPart('Q4400');
-    await new Promise(res => setTimeout(res, 3500));       // fly-to animation
+    // Wait for the fly-to to SETTLE rather than a fixed delay: under a loaded
+    // machine (several specs, SwiftShader) 3.5 s was not always enough and
+    // the part read 200+ px off-centre mid-flight.
+    const settled = () => new Promise<void>((resolve) => {
+      // "Settled" = the camera has left its starting pose and then held still
+      // for six RENDERED frames. Counting frames, not wall-clock samples: the
+      // fly-to advances per frame, and under a loaded machine (several specs,
+      // SwiftShader) frames can be >600 ms apart, so a 200 ms sampler read
+      // "still" mid-flight and the part measured 140 px off-centre.
+      const start = { x: rend.viewport.center.x, y: rend.viewport.center.y, s: rend.viewport.scale.x };
+      let last = start, still = 0, moved = false, frames = 0;
+      const tick = () => {
+        frames++;
+        const c = rend.viewport.center, s = rend.viewport.scale.x;
+        const cur = { x: c.x, y: c.y, s };
+        if (!moved && (Math.abs(cur.x - start.x) > 1 || Math.abs(cur.s - start.s) > 1e-3)) moved = true;
+        const stable = Math.abs(cur.x - last.x) < 0.5 && Math.abs(cur.y - last.y) < 0.5 && Math.abs(cur.s - last.s) < 1e-4;
+        still = stable ? still + 1 : 0;
+        last = cur;
+        if ((moved && still >= 6) || frames > 600) { rend.app.ticker.remove(tick); resolve(); }
+      };
+      rend.app.ticker.add(tick);
+    });
+    await settled();
     const mid = (b: any) => ({ x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 });
     // Compare in SCREEN space: board space is Y-flipped inside the scene root
     // for XZZ, so a viewport-world centre is not directly comparable to a
