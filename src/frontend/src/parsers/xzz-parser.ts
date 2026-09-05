@@ -1,6 +1,7 @@
 import type { BoardData, Part, Pin, Nail, Point, Trace, SilkscreenPath, Pad, DiodeReading, DiodeReferenceChannel } from './types';
 import { computeBBox, buildNets } from './types';
 import { detectXMirrorByPinDirection } from './mirror-detect';
+import { classifyComponents, pairMajors, decideSide, unionBBox, makeRegionLookup, type OutlineComponent, type ComponentPair, type CopperVotes } from './xzz-boards';
 import { log } from '../store/log-store';
 
 // =====================================================================
@@ -442,7 +443,7 @@ export function dedupeCoincidentSegments(segments: Segment[]): number {
 }
 
 /** Compute per-cluster bounding boxes for UI display of outline components. */
-function componentBBoxes(segments: Segment[]): Array<{ minX: number; minY: number; maxX: number; maxY: number; segCount: number }> {
+function componentBBoxes(segments: Segment[]): OutlineComponent[] {
   const tCluster = performance.now();
   const groups = clusterSegments(segments);
   log.perf.log(`XZZ clusterSegments (bboxes): ${(performance.now() - tCluster).toFixed(0)}ms for ${segments.length} segments → ${groups.length} groups`);
@@ -455,7 +456,7 @@ function componentBBoxes(segments: Segment[]): Array<{ minX: number; minY: numbe
       if (s.p1.x > maxX) maxX = s.p1.x; if (s.p1.y > maxY) maxY = s.p1.y;
       if (s.p2.x > maxX) maxX = s.p2.x; if (s.p2.y > maxY) maxY = s.p2.y;
     }
-    return { minX, minY, maxX, maxY, segCount: idxs.length };
+    return { minX, minY, maxX, maxY, segCount: idxs.length, segIdxs: idxs };
   });
 }
 
@@ -709,6 +710,9 @@ export function normalizeOblongPads(pins: OblongPinLike[], stats?: { subPen: num
 interface PartSilkLine { x1: number; y1: number; x2: number; y2: number; }
 interface PartData {
   name: string; side: 'top' | 'bottom'; pins: PinData[]; groupName: string; silkLines: PartSilkLine[];
+  /** Index into the boards the pack was split into; -1 / undefined when the
+   *  part lies outside every board region. Set by the board-pack pass. */
+  boardIndex?: number;
   /** BOM value ("22uF", "100K") when the exporter wrote one into a body
    *  label sub-block. See readLabelSubBlock / parsePartBlock. */
   value?: string;
@@ -947,7 +951,7 @@ function parsePartBlock(encBuf: Uint8Array): PartData | null {
   return { name: partName, side: 'top', pins, groupName, silkLines, value };
 }
 
-interface TestPadData { x: number; y: number; netIndex: number; }
+interface TestPadData { x: number; y: number; netIndex: number; side?: 'top' | 'bottom'; }
 
 function parseTestPadBlock(data: Uint8Array): TestPadData | null {
   if (data.length < 16) return null;
@@ -1139,7 +1143,11 @@ function detectOutlineComponentFold(segments: Segment[]): { axis: number; dim: '
  *
  *  Side determination: lower coordinate = top side (XZZ uses screen coords, Y down).
  */
-function findFoldAxis(segments: Segment[], parts: PartData[], testPads: TestPadData[]): FoldResult | null {
+function findFoldAxis(segments: Segment[], parts: PartData[], testPads: TestPadData[], majorCount = 0): FoldResult | null {
+  // Three or more board-sized outline loops that did not pair off is still a
+  // pack, not a butterfly: the centroid-gap search below would fold across
+  // two physical boards (XR.pcb, iPhoneSE boardview before the pack pass).
+  if (majorCount >= 3) return null;
   // Multi-board pack (≥4 paired outline components): no global fold — the
   // per-board axes live in `boardGroups`. Without this gate the centroid
   // gap detector below sometimes finds a spurious mid-Y gap (created by the
@@ -1489,6 +1497,306 @@ export function xzzArcSweepDeg(startDeg: number, endDeg: number): number {
   return ((endDeg - startDeg) % 360 + 360) % 360;
 }
 
+type RawTrace = { rawLayer: number; x1: number; y1: number; x2: number; y2: number; width: number; netIndex: number };
+
+/** One physical board of a pack, as the parser leaves it: folded, and moved
+ *  into its final place. `region` and `fold.axis` are tracked through the
+ *  mirror-correction and origin-normalisation passes that follow. */
+interface PackBoard {
+  components: number[];
+  top: number;
+  bottom?: number;
+  fold?: { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean };
+  sideSource: 'copper' | 'layout' | 'single';
+  cpuDisagrees?: boolean;
+  region: { minX: number; minY: number; maxX: number; maxY: number };
+  shift: { dx: number; dy: number };
+  pair?: ComponentPair;
+}
+
+interface PackResult {
+  boards: PackBoard[];
+  /** Two or more boards, or one pair next to unpaired boards. */
+  isPack: boolean;
+  /** Copper's verdict on whether the design's top half sits opposite to
+   *  where the layout rule puts it; null when no pair had decisive copper.
+   *  Has never been true on the corpus — kept as the tripwire. */
+  fileMirrored: boolean | null;
+  /** The old single-butterfly `FoldResult`, synthesised for a lone pair so
+   *  `foldInfo` / the sidebar summary / "Show all sides" keep working. */
+  compatFold: FoldResult | null;
+  majorCount: number;
+  copperLayers: { first: number; last: number } | null;
+}
+
+/** Split the file into boards and fold each one in place.
+ *
+ *  Steps, all on the pre-fold geometry:
+ *   1. classify outline loops (board / cutout / fragment / frame) and pair
+ *      the boards' halves — `xzz-boards.ts`;
+ *   2. decide each pair's top half: copper if the file has traces, else the
+ *      exporter's layout rule (lower coordinate = top), with the CPU rule
+ *      kept as the prior for a lone pair without copper — the MacBook case
+ *      the rule was written for, where copper confirms it;
+ *   3. mirror every bottom-half item (pins, part silk, traces, vias, silk,
+ *      test pads) across the pair's axis and drop the bottom half's loops;
+ *   4. on a pack, slide the folded boards next to each other so the empty
+ *      bottom-half areas don't sit between them.
+ *
+ *  Returns null when there are fewer than two loops; `boards` is empty when
+ *  nothing paired (the caller then runs the legacy single-outline path). */
+function foldBoardPack(args: {
+  segments: Segment[]; comps: OutlineComponent[]; parts: PartData[];
+  rawTraces: RawTrace[]; vias: ViaData[]; silk: Segment[]; testPads: TestPadData[];
+}): PackResult | null {
+  const { segments, comps, parts, rawTraces, vias, silk, testPads } = args;
+  if (comps.length < 2) return null;
+
+  const centroid = (pd: PartData): Point | null => {
+    if (pd.pins.length === 0) return null;
+    let x = 0, y = 0;
+    for (const p of pd.pins) { x += p.x; y += p.y; }
+    return { x: x / pd.pins.length, y: y / pd.pins.length };
+  };
+  const compAt = makeRegionLookup(comps);
+  const partCount = new Array<number>(comps.length).fill(0);
+  const partComp = parts.map(pd => {
+    const c = centroid(pd);
+    if (!c) return -1;
+    const i = compAt(c.x, c.y);
+    if (i >= 0) partCount[i]++;
+    return i;
+  });
+  const cls = classifyComponents(comps, partCount);
+  const { pairs, singles } = pairMajors(comps, cls.majors);
+  const majorOf = (i: number): number => {
+    let guard = 0;
+    while (i >= 0 && cls.cls[i] === 'cutout' && guard++ < comps.length) i = cls.parentOf[i]!;
+    return i;
+  };
+  const empty: PackResult = { boards: [], isPack: false, fileMirrored: null, compatFold: null, majorCount: cls.majors.length, copperLayers: null };
+  if (pairs.length === 0) {
+    log.parser.log(
+      `(pcb boards) ${comps.length} outline loops: ${cls.majors.length} board-sized, ` +
+      `${cls.cls.filter(c => c === 'cutout').length} cutouts, ${cls.cls.filter(c => c === 'fragment').length} fragments, ` +
+      `${cls.cls.filter(c => c === 'frame').length} frames — no mirror-image pair found`,
+    );
+    return empty;
+  }
+  const isPack = pairs.length >= 2 || cls.majors.length >= 3;
+
+  // ── Copper oracle ──
+  let votes: CopperVotes[] | null = null;
+  let copperLayers: { first: number; last: number } | null = null;
+  if (rawTraces.length >= 1000) {
+    let lo = Infinity, hi = -Infinity;
+    for (const t of rawTraces) { if (t.rawLayer < lo) lo = t.rawLayer; if (t.rawLayer > hi) hi = t.rawLayer; }
+    if (hi > lo) {
+      copperLayers = { first: lo, last: hi };
+      const key = (x: number, y: number) => `${Math.round(x)},${Math.round(y)}`;
+      const ep = new Map<string, number>(); // bit 1 = first layer, bit 2 = last layer
+      for (const t of rawTraces) {
+        const bit = t.rawLayer === lo ? 1 : t.rawLayer === hi ? 2 : 0;
+        if (!bit) continue;
+        for (const [x, y] of [[t.x1, t.y1], [t.x2, t.y2]]) {
+          const k = key(x, y);
+          ep.set(k, (ep.get(k) ?? 0) | bit);
+        }
+      }
+      votes = comps.map(() => ({ first: 0, last: 0 }));
+      parts.forEach((pd, pi) => {
+        const m = majorOf(partComp[pi]);
+        if (m < 0) return;
+        for (const p of pd.pins) {
+          let bits = 0;
+          for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+            bits |= ep.get(key(p.x + dx, p.y + dy)) ?? 0;
+          }
+          if (bits & 1) votes![m].first++;
+          else if (bits & 2) votes![m].last++;
+        }
+      });
+    }
+  }
+
+  // The most-pinned part's half — the CPU rule the MacBook path used to
+  // decide sides with. Kept as a diagnostic against the layout rule.
+  let cpuTop: number | null = null;
+  if (parts.length >= 8) {
+    let best = -1, bestPins = 9;
+    parts.forEach((pd, i) => { if (pd.pins.length > bestPins) { bestPins = pd.pins.length; best = i; } });
+    if (best >= 0) cpuTop = majorOf(partComp[best]);
+  }
+  const decisions = pairs.map(p => decideSide(p, votes, cpuTop));
+  // Copper's view of whether the design's top half sits where the layout
+  // rule expects it. Across the corpus it always has (78/78), which is what
+  // lets the layout rule stand in when a file carries no copper.
+  let mir = 0;
+  decisions.forEach((d, i) => {
+    if (d.source !== 'copper') return;
+    const layoutTop = pairs[i].dim === 'x' ? pairs[i].lower : pairs[i].upper;
+    mir += d.top === layoutTop ? -1 : 1;
+  });
+  const fileMirrored: boolean | null = mir > 0 ? true : mir < 0 ? false : null;
+
+  // ── Boards + membership ──
+  const cutoutsOf = (m: number): number[] => {
+    const out: number[] = [];
+    for (let i = 0; i < comps.length; i++) if (cls.cls[i] === 'cutout' && majorOf(i) === m) out.push(i);
+    return out;
+  };
+  const boards: PackBoard[] = [];
+  const regionsPre: Array<{ minX: number; minY: number; maxX: number; maxY: number }> = [];
+  pairs.forEach((p, i) => {
+    const d = decisions[i];
+    const all = [d.top, d.bottom, ...cutoutsOf(d.top), ...cutoutsOf(d.bottom)];
+    boards.push({
+      components: all, top: d.top, bottom: d.bottom,
+      fold: { dim: p.dim, axis: p.axis, lowerIsBottom: d.top === p.upper },
+      sideSource: d.source,
+      cpuDisagrees: d.cpuDisagrees,
+      region: unionBBox(comps, [d.top, ...cutoutsOf(d.top)]),
+      shift: { dx: 0, dy: 0 },
+      pair: p,
+    });
+    regionsPre.push(unionBBox(comps, all));
+  });
+  for (const sIdx of singles) {
+    const all = [sIdx, ...cutoutsOf(sIdx)];
+    boards.push({ components: all, top: sIdx, sideSource: 'single', region: unionBBox(comps, all), shift: { dx: 0, dy: 0 } });
+    regionsPre.push(unionBBox(comps, all));
+  }
+  const boardAt = makeRegionLookup(regionsPre);
+  const compBoard = new Int32Array(comps.length).fill(-1);
+  boards.forEach((b, bi) => { for (const ci of b.components) compBoard[ci] = bi; });
+  // Membership computed once, before anything moves.
+  for (const pd of parts) { const c = centroid(pd); pd.boardIndex = c ? boardAt(c.x, c.y) : -1; }
+  const traceBoard = rawTraces.map(t => boardAt((t.x1 + t.x2) / 2, (t.y1 + t.y2) / 2));
+  const viaBoard = vias.map(v => boardAt(v.x, v.y));
+  const silkBoard = silk.map(s => boardAt((s.p1.x + s.p2.x) / 2, (s.p1.y + s.p2.y) / 2));
+  const tpBoard = testPads.map(tp => boardAt(tp.x, tp.y));
+  const segBoard = new Int32Array(segments.length).fill(-1);
+  comps.forEach((c, ci) => { for (const si of c.segIdxs) segBoard[si] = compBoard[ci]; });
+
+  // ── Fold each pair ──
+  const dropSeg = new Set<number>();
+  let mirroredParts = 0;
+  boards.forEach((b, bi) => {
+    if (!b.fold || b.bottom === undefined) return;
+    const { dim, axis, lowerIsBottom } = b.fold;
+    const isBottom = (x: number, y: number) => { const c = dim === 'x' ? x : y; return lowerIsBottom ? c < axis : c > axis; };
+    const mx = (p: { x: number; y: number }) => { if (dim === 'x') p.x = 2 * axis - p.x; else p.y = 2 * axis - p.y; };
+    for (const pd of parts) {
+      if (pd.boardIndex !== bi) continue;
+      const c = centroid(pd);
+      if (!c || !isBottom(c.x, c.y)) continue;
+      pd.side = 'bottom';
+      mirroredParts++;
+      for (const p of pd.pins) mx(p);
+      for (const s of pd.silkLines) {
+        if (dim === 'x') { s.x1 = 2 * axis - s.x1; s.x2 = 2 * axis - s.x2; }
+        else             { s.y1 = 2 * axis - s.y1; s.y2 = 2 * axis - s.y2; }
+      }
+    }
+    rawTraces.forEach((t, i) => {
+      if (traceBoard[i] !== bi || !isBottom((t.x1 + t.x2) / 2, (t.y1 + t.y2) / 2)) return;
+      if (dim === 'x') { t.x1 = 2 * axis - t.x1; t.x2 = 2 * axis - t.x2; }
+      else             { t.y1 = 2 * axis - t.y1; t.y2 = 2 * axis - t.y2; }
+    });
+    vias.forEach((v, i) => { if (viaBoard[i] === bi && isBottom(v.x, v.y)) mx(v); });
+    silk.forEach((s, i) => {
+      if (silkBoard[i] !== bi || !isBottom((s.p1.x + s.p2.x) / 2, (s.p1.y + s.p2.y) / 2)) return;
+      mx(s.p1); mx(s.p2);
+    });
+    testPads.forEach((tp, i) => {
+      if (tpBoard[i] !== bi) return;
+      if (isBottom(tp.x, tp.y)) { tp.side = 'bottom'; mx(tp); } else tp.side = 'top';
+    });
+    for (const ci of [b.bottom, ...cutoutsOf(b.bottom)]) for (const si of comps[ci].segIdxs) dropSeg.add(si);
+  });
+  // Frames go; fragments on a discarded half go with it.
+  comps.forEach((c, ci) => {
+    if (cls.cls[ci] === 'frame') { for (const si of c.segIdxs) dropSeg.add(si); return; }
+    if (cls.cls[ci] !== 'fragment') return;
+    const cx = (c.minX + c.maxX) / 2, cy = (c.minY + c.maxY) / 2;
+    const bi = boardAt(cx, cy);
+    const b = bi >= 0 ? boards[bi] : null;
+    if (!b || !b.fold) return;
+    const v = b.fold.dim === 'x' ? cx : cy;
+    if (b.fold.lowerIsBottom ? v < b.fold.axis : v > b.fold.axis) for (const si of c.segIdxs) dropSeg.add(si);
+  });
+
+  // ── Compaction: slide the folded boards next to each other ──
+  const dims = new Set(boards.filter(b => b.fold).map(b => b.fold!.dim));
+  if (isPack && dims.size === 1 && boards.length > 1) {
+    const dim = [...dims][0];
+    const lo = (r: PackBoard['region']) => dim === 'x' ? r.minX : r.minY;
+    const ext = (r: PackBoard['region']) => dim === 'x' ? r.maxX - r.minX : r.maxY - r.minY;
+    const order = boards.map((_, i) => i).sort((a, b) => lo(boards[a].region) - lo(boards[b].region));
+    const across = Math.max(...boards.map(b => dim === 'x' ? b.region.maxY - b.region.minY : b.region.maxX - b.region.minX));
+    const gap = Math.max(40, across * 0.04);
+    let cursor = lo(boards[order[0]].region);
+    for (const bi of order) {
+      const b = boards[bi];
+      const d = cursor - lo(b.region);
+      cursor += ext(b.region) + gap;
+      if (Math.abs(d) < 1e-9) continue;
+      const sh = (p: { x: number; y: number }) => { if (dim === 'x') p.x += d; else p.y += d; };
+      for (const pd of parts) {
+        if (pd.boardIndex !== bi) continue;
+        for (const p of pd.pins) sh(p);
+        for (const s of pd.silkLines) { if (dim === 'x') { s.x1 += d; s.x2 += d; } else { s.y1 += d; s.y2 += d; } }
+      }
+      rawTraces.forEach((t, i) => { if (traceBoard[i] === bi) { if (dim === 'x') { t.x1 += d; t.x2 += d; } else { t.y1 += d; t.y2 += d; } } });
+      vias.forEach((v, i) => { if (viaBoard[i] === bi) sh(v); });
+      silk.forEach((s, i) => { if (silkBoard[i] === bi) { sh(s.p1); sh(s.p2); } });
+      testPads.forEach((tp, i) => { if (tpBoard[i] === bi) sh(tp); });
+      segments.forEach((s, i) => { if (segBoard[i] === bi) { sh(s.p1); sh(s.p2); } });
+      if (dim === 'x') { b.region.minX += d; b.region.maxX += d; b.shift.dx = d; }
+      else             { b.region.minY += d; b.region.maxY += d; b.shift.dy = d; }
+    }
+  }
+
+  // Outline: keep what survived, in place.
+  const before = segments.length;
+  const kept = segments.filter((_, i) => !dropSeg.has(i));
+  segments.length = 0;
+  for (const s of kept) segments.push(s);
+  const dup = dedupeCoincidentSegments(segments);
+
+  // ── Log ──
+  boards.forEach((b, bi) => {
+    const n = parts.filter(pd => pd.boardIndex === bi);
+    const bot = n.filter(pd => pd.side === 'bottom').length;
+    const w = (b.region.maxX - b.region.minX).toFixed(0), h = (b.region.maxY - b.region.minY).toFixed(0);
+    log.parser.log(
+      `(pcb board ${bi + 1}) ${w}×${h} mil | side=${b.sideSource}` +
+      (votes && b.bottom !== undefined ? ` (L${copperLayers!.first}:${votes[b.top].first}/${votes[b.bottom].first} L${copperLayers!.last}:${votes[b.top].last}/${votes[b.bottom].last})` : '') +
+      (b.fold ? ` | fold ${b.fold.dim}@${b.fold.axis.toFixed(0)} top=C${b.top} bottom=C${b.bottom}` : ' | single-sided') +
+      (b.cpuDisagrees ? ' | CPU RULE DISAGREES' : '') +
+      ` | parts top=${n.length - bot} bottom=${bot}` +
+      (b.shift.dx || b.shift.dy ? ` | moved ${b.shift.dx ? b.shift.dx.toFixed(0) + ' x' : b.shift.dy.toFixed(0) + ' y'}` : ''),
+    );
+  });
+  log.parser.log(
+    `(pcb ${isPack ? 'pack' : 'butterfly'}) ${boards.length} board${boards.length === 1 ? '' : 's'} from ${comps.length} outline loops ` +
+    `(${cls.majors.length} board-sized, ${cls.cls.filter(c => c === 'cutout').length} cutouts, ${cls.cls.filter(c => c === 'fragment').length} fragments, ${cls.cls.filter(c => c === 'frame').length} frames)` +
+    ` | mirrored parts=${mirroredParts} | outline ${before}→${segments.length} segs (dup=${dup})` +
+    ` | file mirrored: ${fileMirrored === null ? 'unknown' : fileMirrored}`,
+  );
+
+  let compatFold: FoldResult | null = null;
+  if (!isPack && boards.length === 1 && boards[0].fold && boards[0].pair) {
+    const b = boards[0];
+    compatFold = {
+      axis: b.fold!.axis, dim: b.fold!.dim, lowerIsBottom: b.fold!.lowerIsBottom,
+      disconnectedOutline: true,
+      _debug: { source: 'outline-components', sideSignal: b.sideSource, compGap: b.pair!.gap },
+    };
+  }
+  return { boards, isPack, fileMirrored, compatFold, majorCount: cls.majors.length, copperLayers };
+}
+
 export function parseXZZ(buffer: ArrayBuffer): BoardData {
   let raw = new Uint8Array(buffer);
 
@@ -1709,9 +2017,13 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   }));
   const foldComponents = componentBBoxes(rawSegmentsSnapshot);
 
-  // Detect board fold: XZZ stores top and bottom side-by-side (unfolded).
-  const fold = findFoldAxis(segments, partDataList, testPads);
-  if (fold) {
+  // Split the file into boards and fold each one (see foldBoardPack). Falls
+  // back to the legacy single-outline detector when no mirror-image pair
+  // exists (flat boards, one connected loop cut down the middle).
+  const pack = foldBoardPack({ segments, comps: foldComponents, parts: partDataList, rawTraces, vias: viasRaw, silk: silkSegments, testPads });
+  const packFolded = !!(pack && pack.boards.length > 0);
+  const fold: FoldResult | null = packFolded ? pack!.compatFold : findFoldAxis(segments, partDataList, testPads, pack?.majorCount ?? 0);
+  if (fold && !packFolded) {
     for (const pd of partDataList) {
       if (pd.pins.length === 0) continue;
       const c = fold.dim === 'x'
@@ -1846,7 +2158,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       ` | parts: top=${topParts} bottom=${botParts}` +
       ` | outline: ${segsBefore}→${segments.length} segs (removed=${removed} clipped=${clipped})`,
     );
-  } else {
+  } else if (!packFolded) {
     const multiBoard = isMultiBoardOutline(segments);
     log.parser.log(
       `(pcb ${multiBoard ? 'multi-board' : 'flat'}) ${multiBoard ? 'paired outline components — per-board folds via boardGroups' : 'no butterfly signal — preserving native layout'} ` +
@@ -1892,7 +2204,19 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       `(threshold 0.70) | bottomCCW=${v.bottomCCW} bottomCW=${v.bottomCW} | ` +
       `analyzed=${v.totalAnalyzed} (minSamples=4)`,
     );
-    if (v.mirrored) {
+    // The pin-direction detector decides. Copper cannot: on every one of the
+    // 78 trace-carrying corpus files the design's top half sits at the lower
+    // coordinate, whether or not the pins wind clockwise — mirroring changes
+    // the winding, not where the exporter puts the halves. What the pack
+    // pass changed is the detector's input: folded boards with real sides,
+    // so its top-side votes no longer come from both sides at once (the
+    // false flip on iPhone X Qualcomm came from that).
+    const packBoards = packFolded ? pack!.boards : [];
+    const doFlip = v.mirrored;
+    if (packFolded && pack!.fileMirrored !== null) {
+      log.parser.log(`(pcb mirror) copper: design top ${pack!.fileMirrored ? 'OPPOSITE to' : 'where'} the layout rule expects${pack!.fileMirrored ? ' — first time in the corpus, please report this file' : ''}`);
+    }
+    if (doFlip) {
       // Match the renderer's auto-rotate axis-swap so the user sees a
       // horizontal screen flip, not a vertical one.
       let bbMinX = Infinity, bbMaxX = -Infinity, bbMinY = Infinity, bbMaxY = -Infinity;
@@ -1926,6 +2250,11 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
           const oldMin = fc.minX; fc.minX = -fc.maxX; fc.maxX = -oldMin;
         }
         if (fold && fold.dim === 'x') fold.axis = -fold.axis;
+        for (const b of packBoards) {
+          const r = b.region; const oMin = r.minX; r.minX = -r.maxX; r.maxX = -oMin;
+          if (b.fold && b.fold.dim === 'x') b.fold.axis = -b.fold.axis;
+          b.shift.dx = -b.shift.dx;
+        }
       } else {
         for (const pd of partDataList) {
           for (const p of pd.pins) p.y = -p.y;
@@ -1941,6 +2270,11 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
           const oldMin = fc.minY; fc.minY = -fc.maxY; fc.maxY = -oldMin;
         }
         if (fold && fold.dim === 'y') fold.axis = -fold.axis;
+        for (const b of packBoards) {
+          const r = b.region; const oMin = r.minY; r.minY = -r.maxY; r.maxY = -oMin;
+          if (b.fold && b.fold.dim === 'y') b.fold.axis = -b.fold.axis;
+          b.shift.dy = -b.shift.dy;
+        }
       }
       log.parser.log(
         `(pcb mirror) corrected file-wide mirror — axis=${axis.toUpperCase()} ` +
@@ -1980,8 +2314,27 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     fc.minX -= minX; fc.maxX -= minX;
     fc.minY -= minY; fc.maxY -= minY;
   }
+  if (packFolded) {
+    for (const b of pack!.boards) {
+      b.region.minX -= minX; b.region.maxX -= minX;
+      b.region.minY -= minY; b.region.maxY -= minY;
+      if (b.fold) b.fold.axis -= b.fold.dim === 'x' ? minX : minY;
+    }
+  }
   const rawOutline = chainByComponent(rawSegmentsSnapshot);
-  const boardGroups = groupComponentsByGeometry(foldComponents);
+  const boardsOut: NonNullable<BoardData['boards']> | undefined = packFolded
+    ? pack!.boards.map(b => ({
+        components: b.components, top: b.top,
+        ...(b.bottom !== undefined ? { bottom: b.bottom } : {}),
+        ...(b.fold ? { fold: { ...b.fold } } : {}),
+        sideSource: b.sideSource,
+        bounds: { ...b.region },
+        shift: { ...b.shift },
+      }))
+    : undefined;
+  const boardGroups = boardsOut
+    ? boardsOut.map(b => ({ components: b.components, ...(b.fold ? { fold: { ...b.fold } } : {}) }))
+    : groupComponentsByGeometry(foldComponents.map(({ segIdxs: _s, ...rest }) => rest));
   // XZZ `.pcb` files we've surveyed don't carry a board/sheet label in any
   // block we parse — the per-part `groupName` we extract (e.g. "C-01-55",
   // "IC-01-01") is a part-type designator, not a board name. If a future file
@@ -2177,7 +2530,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     // exactly where the distinction matters — connectors, headers, mounting
     // pins — and both the Info pane and MCP part_info read it.
     const partType: Part['type'] = pd.pins.some(p => p.drill > 0) ? 'throughhole' : 'smd';
-    parts.push({ name: pd.name, side: pd.side, type: partType, origin: { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }, pins, bounds, ...(angleDeg !== undefined ? { angleDeg } : {}), ...(pd.value ? { meta: { value: pd.value } } : {}) });
+    parts.push({ name: pd.name, side: pd.side, type: partType, origin: { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }, pins, bounds, ...(angleDeg !== undefined ? { angleDeg } : {}), ...(pd.value ? { meta: { value: pd.value } } : {}), ...(packFolded && pd.boardIndex !== undefined && pd.boardIndex >= 0 ? { boardIndex: pd.boardIndex } : {}) });
 
     // Emit a Pad per pin with valid geometry (none when the file only
     // carries placeholder geometry — 12-mil dots are not copper pads).
@@ -2216,7 +2569,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   // Build nails from test pads
   const nails: Nail[] = testPads.map(tp => {
     const raw2 = netDict.get(tp.netIndex) ?? '';
-    return { position: { x: tp.x, y: tp.y }, side: 'top' as const, net: (raw2 === 'NC' || raw2 === 'UNCONNECTED') ? '' : raw2 };
+    return { position: { x: tp.x, y: tp.y }, side: tp.side ?? ('top' as const), net: (raw2 === 'NC' || raw2 === 'UNCONNECTED') ? '' : raw2 };
   });
 
   // Build vias from 0x02 blocks. `layers: []` = through-hole. The layer-pair
@@ -2426,7 +2779,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
 
   return {
     format: 'XZZ', outline, parts, nails, nets: buildNets(parts), bounds,
-    butterflyFoldAxis: fold?.dim,
+    butterflyFoldAxis: fold?.dim ?? (boardsOut && boardsOut.some(b => b.fold) ? boardsOut.find(b => b.fold)!.fold!.dim : undefined),
     diodeReference,
     traces: traces.length > 0 ? traces : undefined,
     vias: vias.length > 0 ? vias : undefined,
@@ -2437,5 +2790,6 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     foldComponents,
     foldInfo,
     boardGroups,
+    ...(boardsOut ? { boards: boardsOut } : {}),
   };
 }

@@ -136,8 +136,13 @@ export interface BoardTab {
    *  'all-sides' renders the raw pre-fold layout (both halves side-by-side). */
   foldMode: FoldMode;
   /** XZZ multi-board selection. null = show all boards. An index selects the
-   *  group at that position in `board.boardGroups`. */
+   *  board at that position in `board.boards` (or the legacy
+   *  `board.boardGroups`). */
   selectedBoardIndex: number | null;
+  /** Boards (indices into `board.boards`) the user has flipped top ↔ bottom
+   *  because the parser's side decision was wrong for this file. Persisted
+   *  per file in file-view-prefs. */
+  swappedBoards: Set<number>;
   /** True while the current selection was established via focusPart() or
    *  focusNet() (search-style paths). Cleared by canvas clicks (selectPart,
    *  selectPin), by highlightNet, and by any method that resets to
@@ -193,9 +198,9 @@ const emptySelection: SelectionState = {
  *  reference on unchanged state. */
 function ensureDerivedBoard(tab: BoardTab): BoardData | null {
   if (!tab.board) return null;
-  const key = `${tab.foldMode}|${tab.selectedBoardIndex ?? 'all'}`;
+  const key = `${tab.foldMode}|${tab.selectedBoardIndex ?? 'all'}|${[...tab.swappedBoards].sort().join(',')}`;
   if (tab._derivedBoard && tab._derivedBoardKey === key) return tab._derivedBoard;
-  tab._derivedBoard = deriveBoardView(tab.board, tab.foldMode, tab.selectedBoardIndex);
+  tab._derivedBoard = deriveBoardView(tab.board, tab.foldMode, tab.selectedBoardIndex, tab.swappedBoards);
   tab._derivedBoardKey = key;
   return tab._derivedBoard;
 }
@@ -330,6 +335,7 @@ export function ghostPairSig(a: number, b: number): string {
 
 /** Stable empty-set fallback so the snapshot getter doesn't churn identity. */
 const EMPTY_GHOST_SWAPS: ReadonlySet<string> = new Set<string>();
+const EMPTY_SWAPPED_BOARDS: ReadonlySet<number> = new Set<number>();
 const EMPTY_PART_OVERRIDES: ReadonlyMap<string, { hidden?: boolean; sendToBack?: boolean }> = new Map();
 /** Stable empty-map fallback for the bomClusterSelections snapshot getter. */
 const EMPTY_BOM_SELECTIONS: ReadonlyMap<string, string> = new Map<string, string>();
@@ -680,6 +686,7 @@ class BoardStore extends Emitter {
   get partOverrides(): ReadonlyMap<string, { hidden?: boolean; sendToBack?: boolean }> { return this.activeTab?.partOverrides ?? EMPTY_PART_OVERRIDES; }
   get foldMode(): FoldMode { return this.activeTab?.foldMode ?? 'suggested'; }
   get selectedBoardIndex(): number | null { return this.activeTab?.selectedBoardIndex ?? null; }
+  get swappedBoards(): ReadonlySet<number> { return this.activeTab?.swappedBoards ?? EMPTY_SWAPPED_BOARDS; }
   get layerStates(): LayerState[] { return this.activeTab?.layerStates ?? []; }
   get selectedLayerIndex(): number | null { return this.activeTab?.selectedLayerIndex ?? null; }
   get fixatedLayerIndex(): number | null { return this.activeTab?.fixatedLayerIndex ?? null; }
@@ -880,6 +887,7 @@ class BoardStore extends Emitter {
       partOverrides: new Map(),
       foldMode: 'suggested',
       selectedBoardIndex: null,
+      swappedBoards: new Set<number>(),
       searchSelectionActive: false,
     };
     this._tabs.push(tab);
@@ -1236,6 +1244,7 @@ class BoardStore extends Emitter {
       partOverrides: new Map(),
       foldMode: 'suggested',
       selectedBoardIndex: null,
+      swappedBoards: new Set<number>(),
       searchSelectionActive: false,
     };
     applyBoardFilters(tab);
@@ -1457,6 +1466,11 @@ class BoardStore extends Emitter {
       tab.flipAxis = prefs.flipAxis;
       changed = true;
     }
+    if (prefs.swappedBoards && prefs.swappedBoards.length > 0) {
+      tab.swappedBoards = new Set(prefs.swappedBoards);
+      invalidateDerivedBoard(tab);
+      changed = true;
+    }
     if (changed) {
       log.cache.log(`Applied saved view prefs for ${file.name}: rotation=${prefs.rotation} mirrorX=${prefs.mirrorX} mirrorY=${prefs.mirrorY} flipAxis=${prefs.flipAxis}`);
       this.notify();
@@ -1477,6 +1491,7 @@ class BoardStore extends Emitter {
       mirrorX: tab.mirrorX,
       mirrorY: tab.mirrorY,
       flipAxis: tab.flipAxis,
+      swappedBoards: [...tab.swappedBoards].sort((a, b) => a - b),
     });
   }
 
@@ -1702,6 +1717,22 @@ class BoardStore extends Emitter {
     tab.searchSelectionActive = false;
     syncMirrorsToDerivedFold(tab);
     this.requestFitDerivedBoard(tab);
+    this.notify();
+  }
+
+  /** Flip one board of a pack top ↔ bottom. The parser decides sides from
+   *  copper or the exporter's layout rule; this is the escape hatch for the
+   *  file that breaks the rule, remembered per file. */
+  toggleBoardSideSwap(idx: number): void {
+    const tab = this.activeTab;
+    if (!tab) return;
+    const next = new Set(tab.swappedBoards);
+    if (next.has(idx)) next.delete(idx); else next.add(idx);
+    tab.swappedBoards = next;
+    invalidateDerivedBoard(tab);
+    tab.selection = { ...emptySelection };
+    tab.searchSelectionActive = false;
+    this.saveFileViewPrefs(tab);
     this.notify();
   }
 

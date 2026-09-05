@@ -42,6 +42,9 @@ export interface FileViewPrefs {
    *  on next open. Optional; if absent, the load path leaves the
    *  auto-derived value. */
   flipAxis?: 'x' | 'y';
+  /** Boards of a multi-board pack the user flipped top ↔ bottom (indices
+   *  into `BoardData.boards`). Empty / absent = trust the parser. */
+  swappedBoards?: number[];
   /** Wall-clock ms of last update — for debugging / future cleanup. */
   updatedAt: number;
 }

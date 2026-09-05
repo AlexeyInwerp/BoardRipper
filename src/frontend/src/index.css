@@ -6761,6 +6761,50 @@ body {
   line-height: 1.4;
 }
 
+.fold-board-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: center;
+  column-gap: 8px;
+}
+
+.fold-board-row .fold-option-hint {
+  grid-column: 2 / 4;
+}
+
+.fold-option-spacer {
+  display: inline-block;
+  width: 13px;
+}
+
+.fold-swap-btn {
+  grid-column: 4;
+  grid-row: 1 / 3;
+  align-self: center;
+  padding: 3px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.15));
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.fold-swap-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.fold-swap-btn.active {
+  border-color: var(--accent-color, #4a9eff);
+  color: var(--accent-color, #4a9eff);
+}
+
+.fold-swap-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* ─────────────────────────────────────────────────────────────
    Home backdrop — welcome/dashboard surface shown when no files open
    ───────────────────────────────────────────────────────────── */

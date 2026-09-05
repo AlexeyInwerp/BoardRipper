@@ -46,6 +46,28 @@ function loadBoardSidebarWidth(): number {
   return Number.isFinite(v) && v >= BOARD_SIDEBAR_MIN ? v : BOARD_SIDEBAR_DEFAULT;
 }
 
+
+/** Human names for the boards of a pack. The file name usually says what the
+ *  pack holds (`AP+BB`, `MB+SUB`); the board holding the most-pinned part
+ *  (the SoC) takes the first token, the rest follow by size. Falls back to
+ *  "Board N". */
+function nameBoards(
+  boards: NonNullable<BoardData['boards']>,
+  parts: BoardData['parts'],
+  fileName: string,
+): string[] {
+  const names = boards.map((_, i) => `Board ${i + 1}`);
+  if (boards.length === 0) return names;
+  const tokens = (fileName.match(/\b(AP|BB|MB|SUB|LB|UB|MLB)\b/gi) ?? []).map(t => t.toUpperCase());
+  const uniq = [...new Set(tokens)];
+  if (uniq.length === 0 || uniq.length !== boards.length) return names;
+  // SoC board first: the board whose largest part has the most pins.
+  const maxPins = boards.map((_, bi) => parts.reduce((m, p) => p.boardIndex === bi && p.pins.length > m ? p.pins.length : m, 0));
+  const order = boards.map((_, i) => i).sort((a, b) => maxPins[b] - maxPins[a]);
+  order.forEach((bi, k) => { names[bi] = uniq[k]; });
+  return names;
+}
+
 export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied, opacity = 1 }: BoardSidebarProps) {
   const { tabs } = useBoardStore();
   const tab = tabs.find(t => t.id === tabId);
@@ -234,6 +256,9 @@ function LayersTab({ tabId }: { tabId: number }) {
   const selection = tab?.selection ?? { partIndex: null, pinIndex: null, highlightedNet: null };
   const foldMode = tab?.foldMode ?? 'suggested';
   const selectedBoardIndex = tab?.selectedBoardIndex ?? null;
+  const swappedBoards = tab?.swappedBoards ?? new Set<number>();
+  const packBoards = board?.boards ?? [];
+  const boardNames = nameBoards(packBoards, board?.parts ?? [], tab?.fileName ?? '');
   const [componentsExpanded, setComponentsExpanded] = useState(true);
   // Parts removed via the context menu's Hide — they no longer hit-test, so
   // this row is the only discoverable way back besides the undo toast.
@@ -260,18 +285,75 @@ function LayersTab({ tabId }: { tabId: number }) {
     <div className="panel-content layer-list" data-testid="layer-list">
       {board?.format === 'XZZ' && (
         <div className="fold-section">
-          <div className="fold-section-title">Board folding</div>
+          <div className="fold-section-title">Boards and sides</div>
           <p className="fold-section-desc">
-            XZZ <code>.pcb</code> files store top and bottom halves side-by-side
-            instead of stacked — a single board looks like two mirror-image
-            rectangles next to each other. Files can also hold several boards
-            side-by-side. The parser picks a default; if it looks wrong, switch
-            to "Show all sides".
+            XZZ <code>.pcb</code> files draw each board twice, top and bottom
+            side by side, and can pack several boards into one file. The parser
+            pairs the halves, folds each board and decides which half is the top
+            from the copper when the file has traces, otherwise from the
+            exporter&rsquo;s layout. If a board comes out upside down, swap its
+            sides here; the choice is remembered for this file.
           </p>
-          {board.boardGroups && board.boardGroups.length > 1 && (
+          {packBoards.length > 0 && (
             <div className="fold-boards">
               <div className="fold-boards-label">
-                Detected boards: {board.boardGroups.length}{board.foldComponents && ` (${board.foldComponents.length} components)`}
+                {packBoards.length === 1 ? 'One board' : `${packBoards.length} boards`}
+                {board.foldComponents && ` from ${board.foldComponents.length} outline loops`}
+              </div>
+              <div className="fold-boards-list">
+                {packBoards.length > 1 && (
+                  <label className="fold-option">
+                    <input
+                      type="radio"
+                      name="selectedBoard"
+                      checked={selectedBoardIndex === null}
+                      onChange={() => boardStore.setSelectedBoardIndex(null)}
+                    />
+                    <span className="fold-option-label">All boards</span>
+                    <span className="fold-option-hint">Render every board, folded, side by side.</span>
+                  </label>
+                )}
+                {packBoards.map((pb, i) => {
+                  const dims = `${Math.round(pb.bounds.maxX - pb.bounds.minX)} × ${Math.round(pb.bounds.maxY - pb.bounds.minY)} mils`;
+                  const swapped = swappedBoards.has(i);
+                  const source = pb.sideSource === 'copper' ? 'sides from copper'
+                    : pb.sideSource === 'layout' ? 'sides from layout'
+                    : 'single-sided';
+                  return (
+                    <div key={i} className="fold-option fold-board-row">
+                      {packBoards.length > 1 ? (
+                        <input
+                          type="radio"
+                          name="selectedBoard"
+                          checked={selectedBoardIndex === i}
+                          onChange={() => boardStore.setSelectedBoardIndex(i)}
+                        />
+                      ) : <span className="fold-option-spacer" />}
+                      <span className="fold-option-label">{boardNames[i]}</span>
+                      <span className="fold-option-hint">
+                        {dims} · {source}{swapped ? ' · swapped' : ''}
+                      </span>
+                      {pb.fold && (
+                        <button
+                          type="button"
+                          className={`fold-swap-btn${swapped ? ' active' : ''}`}
+                          title="Flip this board top ↔ bottom"
+                          disabled={foldMode !== 'suggested'}
+                          onClick={() => boardStore.toggleBoardSideSwap(i)}
+                        >
+                          Swap sides
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {packBoards.length === 0 && board.boardGroups && board.boardGroups.length > 1 && (
+            <div className="fold-boards">
+              <div className="fold-boards-label">
+                Detected outline groups: {board.boardGroups.length}
               </div>
               <div className="fold-boards-list">
                 <label className="fold-option">
@@ -281,31 +363,20 @@ function LayersTab({ tabId }: { tabId: number }) {
                     checked={selectedBoardIndex === null}
                     onChange={() => boardStore.setSelectedBoardIndex(null)}
                   />
-                  <span className="fold-option-label">All boards</span>
-                  <span className="fold-option-hint">Render every detected board together.</span>
+                  <span className="fold-option-label">All</span>
                 </label>
-                {board.boardGroups.map((group, i) => {
-                  const firstComp = board.foldComponents?.[group.components[0]];
-                  const dims = firstComp
-                    ? `${Math.round(firstComp.maxX - firstComp.minX)} × ${Math.round(firstComp.maxY - firstComp.minY)} mils`
-                    : '';
-                  const sides = group.components.length;
-                  return (
-                    <label key={i} className="fold-option">
-                      <input
-                        type="radio"
-                        name="selectedBoard"
-                        checked={selectedBoardIndex === i}
-                        onChange={() => boardStore.setSelectedBoardIndex(i)}
-                      />
-                      <span className="fold-option-label">Board {i + 1}</span>
-                      <span className="fold-option-hint">
-                        {dims} · {sides} side{sides === 1 ? '' : 's'} (C{group.components.join(', C')})
-                        {group.fold && ` · ${group.fold.dim.toUpperCase()}-fold available`}
-                      </span>
-                    </label>
-                  );
-                })}
+                {board.boardGroups.map((group, i) => (
+                  <label key={i} className="fold-option">
+                    <input
+                      type="radio"
+                      name="selectedBoard"
+                      checked={selectedBoardIndex === i}
+                      onChange={() => boardStore.setSelectedBoardIndex(i)}
+                    />
+                    <span className="fold-option-label">Group {i + 1}</span>
+                    <span className="fold-option-hint">C{group.components.join(', C')}</span>
+                  </label>
+                ))}
               </div>
             </div>
           )}
@@ -317,9 +388,9 @@ function LayersTab({ tabId }: { tabId: number }) {
                 checked={foldMode === 'suggested'}
                 onChange={() => boardStore.setFoldMode('suggested')}
               />
-              <span className="fold-option-label">Suggested</span>
+              <span className="fold-option-label">Folded</span>
               <span className="fold-option-hint">
-                {board.foldInfo?.summary ?? 'No fold applied — rendered as-is'}
+                {board.foldInfo?.summary ?? (packBoards.length > 0 ? 'Each board folded by the parser' : 'No fold applied — rendered as-is')}
               </span>
             </label>
             <label className="fold-option">
@@ -331,7 +402,8 @@ function LayersTab({ tabId }: { tabId: number }) {
               />
               <span className="fold-option-label">Show all sides</span>
               <span className="fold-option-hint">
-                Render every component at its raw file position, no mirroring.
+                The file&rsquo;s raw layout, both halves of every board, no mirroring
+                {packBoards.length > 0 ? ' — parts and outline only' : ''}.
               </span>
             </label>
           </div>

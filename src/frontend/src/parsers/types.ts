@@ -112,6 +112,10 @@ export interface Part {
    *  index is preserved so `selection.partIndex` stays consistent across
    *  filter changes. Never set by parsers. */
   hidden?: boolean;
+  /** Which board of a multi-board pack this part belongs to — an index into
+   *  `BoardData.boards`. Set by parsers that split packs (XZZ); absent on
+   *  single-board files and on parts outside every board outline. */
+  boardIndex?: number;
   /** Auto-detected or user-marked "mechanical" parts (EMI shields, heatsink
    *  frames, opposite-side connector shadows). The scene builder skips the
    *  fill draw for these so the small components they overlap stay visible.
@@ -300,6 +304,23 @@ export interface BoardData {
     /** Optional human-readable name derived from the most common `groupName`
      *  among parts in the group. Examples: "RF Board", "AP", "SUB". Absent
      *  when the file doesn't tag parts or when dominant-name lookup failed. */
+    name?: string;
+  }>;
+
+  /** The physical boards a pack was split into, already folded by the parser
+   *  (bottom halves mirrored onto the top halves, boards slid next to each
+   *  other). `bounds` is the folded board's footprint in final coordinates;
+   *  `fold.axis` is in `rawOutline` coordinates and `shift` is the slide that
+   *  followed the fold, so a consumer can undo both to show the raw layout.
+   *  Present only when the parser found at least one mirror-image pair. */
+  boards?: Array<{
+    components: number[];                 // indices into foldComponents
+    top: number;                          // component that is the top side
+    bottom?: number;                      // its mirror twin, when two-sided
+    fold?: { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean };
+    sideSource: 'copper' | 'layout' | 'single';
+    bounds: BBox;
+    shift: { dx: number; dy: number };
     name?: string;
   }>;
 

@@ -94,7 +94,7 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 //     was ever read and the board died on "contains no parts or pins" (canary:
 //     XPS 15 9530 Compal HD055 LA-L663P). Those files never cached — they threw
 //     — but a mixed-ending file could have cached a partial board, so re-parse.
-const PARSER_VERSION = 90;
+const PARSER_VERSION = 91;
 
 interface CachedBoard {
   key: string;
@@ -135,6 +135,7 @@ interface SerializedBoardData {
     fold?: { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean };
     name?: string;
   }>;
+  boards?: BoardData['boards'];
   revisions?: SerializedRevision[];
   activeRevision?: number;
   ghosts?: GhostComponent[];
@@ -185,6 +186,7 @@ function serialize(board: BoardData): SerializedBoardData {
     foldComponents: board.foldComponents,
     foldInfo: board.foldInfo,
     boardGroups: board.boardGroups,
+    boards: board.boards,
     revisions: board.revisions?.map(r => ({
       index: r.index,
       label: r.label,
@@ -231,6 +233,7 @@ function deserialize(data: SerializedBoardData): BoardData | null {
       foldComponents: data.foldComponents,
       foldInfo: data.foldInfo,
       boardGroups: data.boardGroups,
+      boards: data.boards,
       revisions: data.revisions?.map(r => ({
         index: r.index,
         label: r.label,
