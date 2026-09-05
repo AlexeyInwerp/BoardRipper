@@ -20,6 +20,7 @@ import type { BoardData } from '../parsers';
 import { log } from '../store/log-store';
 import { pinDisplayId } from '../parsers/types';
 import type { Point, Pin, DiodeReading, BBox } from '../parsers/types';
+import { diodeReadingColor } from '../store/diode-readings';
 import { computeBBox } from '../parsers/types';
 import {
   computePinRadius,
@@ -2224,8 +2225,11 @@ export function buildBoardScene(
   // kind 'value' with mv=0 and draw as a literal "0" (short to ground —
   // XZZ's viewer shows these, and on connector diode maps they're the
   // majority of the table). Non-zero values shown in volts, `OL` literally.
-  // Colour: light blue (baked) / amber (OBD) / red (open) — high contrast vs
-  // the many green pins.
+  // Colour encodes the value (diodeReadingColor): red = short / near zero,
+  // yellow = 0.2–0.4 V, green = higher, blue = OL. In diode-only mode the
+  // reading is the only thing on the pin, so it takes the pin: centred,
+  // larger, on a dark plate, and drawn above everything (label-model sort +
+  // the overlay's no-dim rule for this kind).
   const topDiodeLabels: BitmapText[] = [];
   const bottomDiodeLabels: BitmapText[] = [];
   if (s.showDiodeValues && diodeResolver) {
@@ -2243,26 +2247,37 @@ export function buildBoardScene(
           : r.mv === 0 ? '0'
           : (r.mv != null ? (r.mv / 1000).toFixed(3) : r.raw);
         const radius = computePinRadius(s, pin.radius);
+        const color = diodeReadingColor(r);
         // Small but legible. NOT quantizeFontSize'd — its steps jump 4→6, so a
         // small value would snap to a near-invisible 4. Round to an integer
         // (caps atlas count) so we can land on intermediate sizes.
+        // The width fit is what actually bounds a 5-char "0.734" on a pad
+        // (≈0.55 r); the 0.55 height cap only ever mattered when the number
+        // and net name shared the pin. Diode-only: nothing else is on the pin
+        // and the text sits on its own plate, so let it run 1.5× the pad
+        // width (spilling ~25% each side into the pin gap) up to 0.9 r tall —
+        // measured: mean size ×1.4 on iPhone16, no neighbour overlap on a
+        // 0.35 mm BGA at the zoom where readings are legible at all.
+        const fit = (radius * 2 * 0.85) / (text.length * 0.62);
         const fontSize = Math.max(
           3,
-          Math.round(Math.min(radius * 0.55, (radius * 2 * 0.85) / (text.length * 0.62)) * (s.diodeValueScale || 1)),
+          Math.round(Math.min(diodeOnly ? radius * 0.9 : radius * 0.55, diodeOnly ? fit * 1.5 : fit) * (s.diodeValueScale || 1)),
         );
+        const ly = diodeOnly ? pin.position.y : pin.position.y - radius * 0.7;
+        const anchorY = diodeOnly ? 0.5 : 1.1;
         if (!(labelModel && pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
-          x: pin.position.x, y: pin.position.y - radius * 0.7, text,
-          fontSize, color: 0xffffff, kind: 'diode', partIndex: dpi,
-          anchorX: 0.5, anchorY: 1.1,  // mirrors label.anchor.set(0.5, 1.1)
-          bg: false,
+          x: pin.position.x, y: ly, text,
+          fontSize, color, kind: 'diode', partIndex: dpi,
+          anchorX: 0.5, anchorY,       // mirrors label.anchor.set below
+          bg: diodeOnly,               // dark plate: colour must read over any pin fill
         }))) {
           const label = new BitmapText({
             text,
-            style: { fontSize, fill: 0xffffff, fontFamily: ensurePinFont(fontSize, s.labelAtlasResolution) },
+            style: { fontSize, fill: color, fontFamily: ensurePinFont(fontSize, s.labelAtlasResolution) },
           });
-          label.anchor.set(0.5, 1.1);                  // sit just above the pin
+          label.anchor.set(0.5, anchorY);              // above the pin, or centred on it (diode-only)
           label.x = pin.position.x;
-          label.y = pin.position.y - radius * 0.7;
+          label.y = ly;
           layer.addChild(label);
           track.push(label);
         }

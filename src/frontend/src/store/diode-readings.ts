@@ -119,3 +119,27 @@ export function diodeModeTitle(mode: DiodeMode): string {
     case 'only': return 'Diode values: ONLY — pin numbers and net names hidden. Click to turn off';
   }
 }
+
+// ── On-pin colour ───────────────────────────────────────────────────────────
+// A reading's colour says what a technician would say looking at the meter:
+// near zero is a short (red), a fraction of a volt is a junction or a rail
+// with a load on it (yellow), higher is a healthy open-ish path (green), OL is
+// no path at all (blue). Thresholds are in millivolts to match `DiodeReading`.
+export const DIODE_RED_BELOW_MV = 200;     // < 0.200 V — short / near-short
+export const DIODE_YELLOW_UPTO_MV = 400;   // 0.200–0.400 V — junction range
+export const DIODE_COLOR = {
+  short: 0xff5050,   // red
+  junction: 0xffd633,// yellow
+  high: 0x5aff8a,    // green
+  open: 0x66b3ff,    // blue — OL
+  none: 0xffffff,
+} as const;
+
+/** 0xRRGGBB for an on-pin diode label. */
+export function diodeReadingColor(r: DiodeReading): number {
+  if (r.kind === 'open') return DIODE_COLOR.open;
+  if (r.kind !== 'value' || r.mv == null) return DIODE_COLOR.none;
+  if (r.mv < DIODE_RED_BELOW_MV) return DIODE_COLOR.short;
+  if (r.mv <= DIODE_YELLOW_UPTO_MV) return DIODE_COLOR.junction;
+  return DIODE_COLOR.high;
+}

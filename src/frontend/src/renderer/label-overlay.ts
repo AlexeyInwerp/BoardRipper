@@ -183,7 +183,9 @@ export class LabelOverlay {
           const ah = (0.5 - r.anchorY) * fontPx;
           const sx = sx0 + aw;
           const sy = sy0 + ah;
-          let alpha = pass === 'dim' ? DIM_ALPHA : 1;
+          // Diode readings are exempt from ambient dimming: a measurement
+          // you are comparing against the meter must not be translucent.
+          let alpha = pass === 'dim' && r.kind !== 'diode' ? DIM_ALPHA : 1;
           if (r.kind === 'part') alpha *= partNameFade(r.fontSize * view.scale);
           ctx.globalAlpha = alpha;
           if (r.bg) {                                     // backing rect (replaces the Graphics wrappers — two-pin AND circle-net)

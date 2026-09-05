@@ -23,6 +23,12 @@ test.use({
 
 interface Probe {
   kinds: Record<string, number>;
+  /** Distinct colours used by diode records, and their size / plate state. */
+  diodeColors: number[];
+  diodeBg: boolean[];
+  diodeMeanFont: number;
+  /** Mean diode font on Q4400 — large pads, never clamped by the 3-mil floor. */
+  q4400Font: number;
   /** Designators drawn on a part that has exactly one pin — i.e. centred on
    *  the pin itself, in the spot the reading occupies. */
   singlePinLabels: number;
@@ -49,13 +55,16 @@ test('diode-only mode leaves only readings and body designators', async ({ page 
       const parts = w.__boardStore?.activeTab?.board?.parts ?? [];
       const kinds: Record<string, number> = {};
       let singlePinLabels = 0;
+      const colors = new Set<number>(); const bgs = new Set<boolean>(); let fontSum = 0, fontN = 0;
+      const qIdx = (parts as Array<{ name?: string }>).findIndex(p => p.name === 'Q4400'); let qSum = 0, qN = 0;
       for (const side of ['top', 'bottom'] as const) {
-        for (const r of m?.[side] ?? []) {
+        for (const r of (m?.[side] ?? []) as Array<{ kind: string; partIndex: number; color: number; bg: boolean; fontSize: number }>) {
           kinds[r.kind] = (kinds[r.kind] ?? 0) + 1;
           if (r.kind === 'part' && parts[r.partIndex]?.pins.length === 1) singlePinLabels++;
+          if (r.kind === 'diode') { colors.add(r.color); bgs.add(r.bg); fontSum += r.fontSize; fontN++; if (r.partIndex === qIdx) { qSum += r.fontSize; qN++; } }
         }
       }
-      return { kinds, singlePinLabels };
+      return { kinds, singlePinLabels, diodeColors: [...colors], diodeBg: [...bgs], diodeMeanFont: fontN ? fontSum / fontN : 0, q4400Font: qN ? qSum / qN : 0 };
     });
   };
 
@@ -77,6 +86,21 @@ test('diode-only mode leaves only readings and body designators', async ({ page 
   // still navigable. On this board that is 2340 of 4686 parts.
   expect(only.kinds.part).toBe(on.kinds.part - on.singlePinLabels);
   expect(only.kinds.part).toBeGreaterThan(2000);
+
+  // Readings are colour-coded by value: only the four classes may appear, and
+  // this board has all four (3300 values across the range + 1450 OL).
+  const CLASSES = [0xff5050, 0xffd633, 0x5aff8a, 0x66b3ff];
+  for (const c of only.diodeColors) expect(CLASSES).toContain(c);
+  expect(only.diodeColors.length).toBe(4);
+  // Diode-only owns the pin: plate on, and larger than when sharing the pin.
+  expect(only.diodeBg).toEqual([true]);
+  expect(on.diodeBg).toEqual([false]);
+  // Board-wide the 3-mil floor clamps most of this board's tiny pins in both
+  // modes, so measure a large-pad part where the fit is what decides: the
+  // reading on Q4400's pads grows ≥1.4× once it has the pin to itself.
+  expect(only.diodeMeanFont).toBeGreaterThan(on.diodeMeanFont);
+  expect(on.q4400Font).toBeGreaterThan(3);
+  expect(only.q4400Font).toBeGreaterThanOrEqual(on.q4400Font * 1.4);
 
   // Sanity: the mode is actually doing something, and ON is the cluttered state.
   expect(on.singlePinLabels).toBeGreaterThan(2000);

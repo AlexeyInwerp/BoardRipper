@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { diodeMode, cycleDiodeMode, diodeModeTitle } from './diode-readings';
+import { diodeMode, cycleDiodeMode, diodeModeTitle, diodeReadingColor, DIODE_COLOR } from './diode-readings';
 
 const S = (showDiodeValues: boolean, diodeValuesOnly: boolean) => ({ showDiodeValues, diodeValuesOnly });
 
@@ -34,5 +34,24 @@ describe('diode display mode', () => {
     for (const m of ['off', 'on', 'only'] as const) {
       expect(diodeModeTitle(m).toLowerCase()).toContain('click');
     }
+  });
+});
+
+describe('diodeReadingColor', () => {
+  const v = (mv: number) => ({ raw: String(mv), kind: 'value' as const, mv, source: 'xzz-pcb' as const });
+  it('red below 0.2 V, including a measured zero (short)', () => {
+    expect(diodeReadingColor(v(0))).toBe(DIODE_COLOR.short);
+    expect(diodeReadingColor(v(199))).toBe(DIODE_COLOR.short);
+  });
+  it('yellow from 0.2 V through 0.4 V', () => {
+    expect(diodeReadingColor(v(200))).toBe(DIODE_COLOR.junction);
+    expect(diodeReadingColor(v(400))).toBe(DIODE_COLOR.junction);
+  });
+  it('green above 0.4 V', () => {
+    expect(diodeReadingColor(v(401))).toBe(DIODE_COLOR.high);
+    expect(diodeReadingColor(v(734))).toBe(DIODE_COLOR.high);
+  });
+  it('blue for OL', () => {
+    expect(diodeReadingColor({ raw: 'OL', kind: 'open', mv: null, source: 'xzz-pcb' })).toBe(DIODE_COLOR.open);
   });
 });

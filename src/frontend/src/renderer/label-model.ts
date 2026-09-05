@@ -48,12 +48,20 @@ export function pushLabel(model: LabelModel | null, side: 'top' | 'bottom', rec:
   return true;
 }
 
+/** Painter's order by kind. Diode readings last: they are the one label a
+ *  technician is reading off the pin, and nothing — designator, number, net
+ *  name — may paint over them. The rest keeps the old alphabetical order
+ *  (pin numbers under net names under part names) so nothing else moves. */
+const KIND_ORDER: Record<LabelKind, number> = {
+  circleNet: 0, circleNum: 1, part: 2, pinNet: 3, pinNum: 4, twoPinNet: 5, diode: 9,
+};
+
 /** Sort in place so the overlay can batch ctx.font changes: kind, then
  *  fontSize descending (big labels first also gives painter's-order priority
  *  when a draw budget truncates). */
 export function sortLabelModel(m: LabelModel): void {
   const cmp = (a: LabelRecord, b: LabelRecord) =>
-    a.kind === b.kind ? b.fontSize - a.fontSize : a.kind.localeCompare(b.kind);
+    a.kind === b.kind ? b.fontSize - a.fontSize : KIND_ORDER[a.kind] - KIND_ORDER[b.kind];
   m.top.sort(cmp);
   m.bottom.sort(cmp);
 }
