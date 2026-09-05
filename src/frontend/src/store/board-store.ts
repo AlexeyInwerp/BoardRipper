@@ -208,6 +208,17 @@ function applyPackDefaults(tab: BoardTab, board: BoardData): void {
 /** Compute (or return the cached) derived BoardData for a tab. Re-derives
  *  only when the inputs change so `useSyncExternalStore` gets a stable
  *  reference on unchanged state. */
+/** The part as the renderer draws it. Since packs open in the file's own
+ *  layout (foldMode 'all-sides'), a part's drawn position is the DERIVED
+ *  view's, not the parser's: on iPhone16_16Plus Q4400 sits at x=3037 in the
+ *  file and x=5506 on screen. Every camera request must use this, or the
+ *  search box flies to the seam between the halves and shows nothing (v0.37.3).
+ *  Indices line up — deriveBoardView maps parts 1:1 and marks the dropped
+ *  ones `hidden` rather than removing them. */
+function viewPart(tab: BoardTab, idx: number): Part | undefined {
+  return ensureDerivedBoard(tab)?.parts[idx] ?? tab.board?.parts[idx];
+}
+
 function ensureDerivedBoard(tab: BoardTab): BoardData | null {
   if (!tab.board) return null;
   const key = `${tab.foldMode}|${tab.selectedBoardIndex ?? 'all'}|${[...tab.swappedBoards].sort().join(',')}`;
@@ -2199,7 +2210,7 @@ class BoardStore extends Emitter {
     const idx = tab.board.parts.findIndex(p => p.name.toUpperCase() === upper);
     if (idx < 0) return;
 
-    const part = tab.board.parts[idx];
+    const part = viewPart(tab, idx) ?? tab.board.parts[idx];
 
     // If the part is on the other side and we're not in butterfly mode, flip to it
     if (!tab.butterfly) {
@@ -2241,7 +2252,7 @@ class BoardStore extends Emitter {
     const upper = name.toUpperCase();
     const idx = tab.board.parts.findIndex(p => p.name.toUpperCase() === upper);
     if (idx < 0) return;
-    const part = tab.board.parts[idx];
+    const part = viewPart(tab, idx) ?? tab.board.parts[idx];
 
     // Flip to the part's side, exactly as focusPart does. Changing the visible
     // side is a view change, not a selection change, so it does not violate
@@ -2307,7 +2318,7 @@ class BoardStore extends Emitter {
   promotePartOnNet(partIndex: number, pinIndex: number) {
     this._clearPreviewPulse();
     const tab = this.activeTab;
-    const part = tab?.board?.parts[partIndex];
+    const part = tab ? viewPart(tab, partIndex) : undefined;
     if (!tab?.board || !part) return;
     const pin = part.pins[pinIndex];
 
@@ -2341,10 +2352,11 @@ class BoardStore extends Emitter {
     }
     if (!net || net.pinIndices.length === 0) return;
 
-    // Compute bounding box of all pins on this net
+    // Compute bounding box of all pins on this net — at their DRAWN positions
+    // (see viewPart); a pack lays parts out differently from the file.
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const { partIndex, pinIndex } of net.pinIndices) {
-      const pin = tab.board.parts[partIndex]?.pins[pinIndex];
+      const pin = viewPart(tab, partIndex)?.pins[pinIndex];
       if (!pin) continue;
       if (pin.position.x < minX) minX = pin.position.x;
       if (pin.position.y < minY) minY = pin.position.y;
