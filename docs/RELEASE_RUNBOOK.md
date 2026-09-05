@@ -237,6 +237,31 @@ The script's final summary prints the GHCR image, manifest URL, GitHub release U
 ./scripts/release.sh v0.X.Y --important "reason"  # red-banner update for users
 ```
 
+### Desktop builds need Node 22
+
+Under Node 26 `@electron/packager` drops its promise while extracting the
+Electron zip and `build-all.mjs` dies with exit code 13 ("unsettled top-level
+await"), with nothing in the log after "Packaging app for platform darwin
+arm64". `release.sh` uses Homebrew's keg-only `node@22` for the desktop step
+when it is installed (`brew install node@22`; it does not replace the default
+`node`). To build by hand:
+
+```bash
+cd desktop && PATH=/opt/homebrew/opt/node@22/bin:$PATH node build-all.mjs
+```
+
+If a full release fails at the desktop step, the Docker half is already
+published (GHCR image, signed manifest on FTP, counter consumed). Do **not**
+re-run the full script — it would bump the counter again. Finish by hand:
+write the new counter into `.release-counter`, commit it with
+`src/frontend/package.json` and `landing/index.html` as `release: vX.Y.Z
+(counter N)`, run `./scripts/release.sh vX.Y.Z --desktop-only`, then attach
+the update assets the desktop-only mode leaves out:
+
+```bash
+gh release upload vX.Y.Z out/manifest.json out/manifest.json.minisig out/boardripper-vX.Y.Z.tar.gz
+```
+
 ### `--desktop-only` mode
 
 For when the in-app updater is fine but you need to ship a desktop hotfix without re-touching GHCR / FTP / counter. Bumps `package.json`, builds Electron apps, commits with `release: vX.Y.Z (electron-only)`, tags, pushes, creates a GH release. The signed Docker manifest is **not** updated, so existing Docker users continue running their last full version.

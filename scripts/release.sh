@@ -629,8 +629,18 @@ if [ "$DESKTOP_MODE" = "on" ] || [ "$IS_DESKTOP_ONLY" = "true" ]; then
   # Build log MUST live outside desktop/ — otherwise @electron/universal merges
   # arm64+x64 builds and bails on the SHA-mismatch of the live-tailing log file.
   DESKTOP_BUILD_LOG="/tmp/boardripper-desktop-${VERSION}.log"
-  echo ">>> Building Electron desktop apps (log: $DESKTOP_BUILD_LOG)"
-  (cd "$REPO_ROOT/desktop" && node build-all.mjs > "$DESKTOP_BUILD_LOG" 2>&1) || {
+  # @electron/packager 18.4 silently drops its promise while extracting the
+  # Electron zip under Node 26 (build-all.mjs then dies with exit 13,
+  # "unsettled top-level await"). Homebrew's keg-only node@22 builds fine;
+  # prefer it for this step when it is installed. 2026-09-05, v0.37.3.
+  DESKTOP_NODE_BIN="/opt/homebrew/opt/node@22/bin"
+  if [ -x "$DESKTOP_NODE_BIN/node" ]; then
+    echo ">>> Building Electron desktop apps with node@22 (log: $DESKTOP_BUILD_LOG)"
+  else
+    echo ">>> Building Electron desktop apps (log: $DESKTOP_BUILD_LOG) — node $(node -v); if this dies with exit 13, brew install node@22"
+    DESKTOP_NODE_BIN=""
+  fi
+  (cd "$REPO_ROOT/desktop" && PATH="${DESKTOP_NODE_BIN:+$DESKTOP_NODE_BIN:}$PATH" node build-all.mjs > "$DESKTOP_BUILD_LOG" 2>&1) || {
     echo "ERROR: desktop build failed; tail of log:" >&2
     tail -30 "$DESKTOP_BUILD_LOG" >&2
     exit 1
