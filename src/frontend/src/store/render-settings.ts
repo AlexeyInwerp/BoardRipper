@@ -159,8 +159,19 @@ export interface RenderSettings {
    */
   textFastMode: boolean;
 
+  /** Selection outline stroke, in SCREEN pixels — constant at every zoom.
+   *  (Was world mils: a 2-mil stroke is invisible at 10 % and a 20 px band at
+   *  600 %, and it was the "huge padding even at 0" — the band itself.) */
   selectionWidth: number;
+  /** Extra gap between the part border and the selection outline, in mils.
+   *  0 = the outline IS the border. The dynamic minimum below is applied on
+   *  top, so this only ever adds. */
   selectionPadding: number;
+  /** A selected part never draws smaller than this on screen (px): when the
+   *  part's box is smaller, the outline is padded out to this size so a 0402
+   *  at 5 % zoom is still findable. Once the part itself is at least this big
+   *  the padding is zero and the outline sits exactly on the border. */
+  selectionMinScreenPx: number;
   selectionFillAlpha: number;
   /** Target component size after navigating to a search result, as a fraction
    *  of the smaller viewport dimension. Higher = part fills more of the screen. */
@@ -572,7 +583,8 @@ export const DEFAULTS: RenderSettings = {
   textFastMode: true,
 
   selectionWidth: 2,
-  selectionPadding: 4,
+  selectionPadding: 0,
+  selectionMinScreenPx: 24,
   selectionFillAlpha: 0.07,
   navTargetSize: 0.25,
   navZoomMode: 'auto',
@@ -1821,4 +1833,21 @@ if (typeof window !== 'undefined' && import.meta.env.DEV) {
   (window as any).__renderSettings = renderSettingsStore;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (window as any).__overlayTest = { reconcileOverlayLayout, naturalCompare };
+}
+
+/** Selection outline geometry for one part at the current zoom.
+ *  `partMinWorld` = the smaller side of the part's drawn box, in mils;
+ *  `scale` = world→screen px. Returns world-unit values for the Graphics.
+ *  Padding is the user's fixed gap plus whatever it takes to reach
+ *  `selectionMinScreenPx` on screen — and nothing more once the part is that
+ *  big, so zoomed in the outline is exactly the border. */
+export function selectionOutlineWorld(
+  s: Pick<RenderSettings, 'selectionWidth' | 'selectionPadding' | 'selectionMinScreenPx'>,
+  scale: number,
+  partMinWorld: number,
+): { padWorld: number; strokeWorld: number } {
+  const k = scale > 0 ? scale : 1;
+  const partScreen = partMinWorld * k;
+  const grow = Math.max(0, (s.selectionMinScreenPx - partScreen) / 2) / k;
+  return { padWorld: s.selectionPadding + grow, strokeWorld: s.selectionWidth / k };
 }

@@ -105,9 +105,10 @@ export const SETTINGS_INDEX: IndexEntry[] = [
 
   // Selection & Highlight
   S('board', 'selection', 'Selection & Highlight', ['highlight', 'selected', 'dim', 'glow']),
-  F('board', 'selection', 'selectionWidth', 'Selection Border', 'Thickness of the yellow selection highlight outline around the selected component (mils)'),
+  F('board', 'selection', 'selectionWidth', 'Selection Border', 'Thickness of the selection outline in screen pixels — the same at every zoom level'),
+  F('board', 'selection', 'selectionMinScreenPx', 'Selection Min Size', 'A selected part is never drawn smaller than this on screen (px): zoomed out the outline is padded to this size, zoomed in it sits exactly on the component border', ['minimum', 'tiny', 'zoom', 'findable']),
   F('board', 'selection', 'selectionFillAlpha', 'Selection Fill', 'Brightness of the semi-transparent fill inside the selected component outline. 0 = no fill, higher = brighter'),
-  F('board', 'selection', 'selectionPadding', 'Selection Padding', 'Extra space (mils) around pins when drawing the selection highlight outline. Larger = selection box extends further beyond the component'),
+  F('board', 'selection', 'selectionPadding', 'Selection Padding', 'Extra gap (mils) between the component border and the selection outline. 0 = the outline is the border'),
   F('board', 'selection', 'netHighlightGrow', 'Net Highlight Ring', 'How much larger (mils) the yellow net highlight circle is compared to the pin circle. Creates a visible ring around each pin in the selected net'),
   F('board', 'selection', 'netHighlightAlpha', 'Highlight Ring Opacity', 'Opacity of the yellow highlight ring around pins in the selected net. Higher = more visible ring'),
   F('board', 'selection', 'dimOverlayAlpha', 'Dim Overlay Strength', 'Opacity of the black overlay that dims unselected areas when a net is highlighted. 0 = no dimming, higher = darker', ['spotlight', 'darklight']),

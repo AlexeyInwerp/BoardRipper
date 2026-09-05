@@ -19,7 +19,7 @@ import { boardStore } from '../store/board-store';
 import type { SelectionState, NetLineMode } from '../store/board-store';
 import { databankStore } from '../store/databank-store';
 import { pdfStore, type LookupContextTerm } from '../store/pdf-store';
-import { renderSettingsStore, computePinRadius, resolvePinColor, computePartRenderBounds, computePartRenderPoly, isOutlineOnlyNet, resolvePartType } from '../store/render-settings';
+import { renderSettingsStore, computePinRadius, resolvePinColor, computePartRenderBounds, computePartRenderPoly, isOutlineOnlyNet, resolvePartType, selectionOutlineWorld } from '../store/render-settings';
 import { themeStore, hexToInt } from '../store/themes';
 import { looksLikeMouseWheel } from '../store/scroll-mode';
 import { contextMenuStore } from '../store/context-menu-store';
@@ -754,8 +754,9 @@ export class BoardRenderer {
     const dbg = globalThis as unknown as { __brRendererRefs?: WeakRef<BoardRenderer>[] };
     (dbg.__brRendererRefs ??= []).push(new WeakRef(this));
     if (import.meta.env.DEV) {
-      const w = window as unknown as { __boardRenderer?: BoardRenderer };
+      const w = window as unknown as { __boardRenderer?: BoardRenderer; __computePartRenderBounds?: typeof computePartRenderBounds };
       w.__boardRenderer = this;
+      w.__computePartRenderBounds = computePartRenderBounds;
     }
   }
 
@@ -1985,6 +1986,28 @@ export class BoardRenderer {
    *  boardStore.selection directly rather than carrying a parallel "focus
    *  target" field — selection is already set and cleared at exactly the right
    *  moments, and a second copy would be one more thing to keep in sync. */
+  /** World→screen magnification of the board right now. */
+  private viewScale(): number {
+    const k = Math.abs(this.viewport?.scale.x ?? 1);
+    return k > 0 ? k : 1;
+  }
+
+  /** Selection outline geometry for a part at the current zoom — see
+   *  selectionOutlineWorld. The part's drawn box comes from the one body rule
+   *  (computePartRenderBounds); a single-pin part is its pin. */
+  private selOutline(part: Part): { pad: number; stroke: number } {
+    const s = renderSettingsStore.settings;
+    let minWorld: number;
+    if (part.pins.length === 1) {
+      minWorld = computePinRadius(s, part.pins[0].radius) * 2;
+    } else {
+      const rb = computePartRenderBounds(part, s);
+      minWorld = Math.min(rb.pw, rb.ph);
+    }
+    const { padWorld, strokeWorld } = selectionOutlineWorld(s, this.viewScale(), minWorld);
+    return { pad: padWorld, stroke: strokeWorld };
+  }
+
   private syncHdrOverlay(overlay: HdrSelectionOutline, scene: BoardScene): void {
     const sel = boardStore.selection;
     if (sel.partIndex === null || !this.board) { overlay.hide(); return; }
@@ -1993,7 +2016,7 @@ export class BoardRenderer {
     if (!part || !this.isPartVisible(part)) { overlay.hide(); return; }
 
     const s = renderSettingsStore.settings;
-    const sp = s.selectionPadding;
+    const sp = this.selOutline(part).pad;
 
     // Mirror emitPartOutlineShape's shape choice exactly, so the HDR outline
     // sits on the SDR one instead of beside it: OBB polygon when the part has
@@ -2039,10 +2062,9 @@ export class BoardRenderer {
       wt.b * wx + wt.d * wy + wt.ty,
     ] as ScreenPoint);
 
-    // Match the SDR primary-selection stroke width (selectionWidth * 1.7 in
-    // world mils), with a 2px floor so it stays visible when zoomed out.
-    const scale = Math.hypot(wt.a, wt.b);
-    const thickness = Math.max(2, s.selectionWidth * 1.7 * scale);
+    // Match the SDR primary-selection stroke: selectionWidth is screen px
+    // now, so the HDR line is simply that × 1.7, floored at 1 px.
+    const thickness = Math.max(1, s.selectionWidth * 1.7);
 
     overlay.showPolygon(pts, thickness, rungForIntensity(s.hdrGlowIntensity));
   }
@@ -2135,6 +2157,12 @@ export class BoardRenderer {
       if (this.textHiddenForZoom) {
         this.textHiddenForZoom = false;
         this.applyLabelVisibility();
+      }
+      // The selection outline is zoom-dependent (screen-constant stroke,
+      // minimum on-screen size), so repaint it at the settled zoom.
+      if (boardStore.selection.partIndex !== null || boardStore.selection.highlightedNet
+          || boardStore.searchResultIndices.size > 0) {
+        this.renderSelection();
       }
       if (this.netLinesHiddenForZoom) {
         this.netLinesHiddenForZoom = false;
@@ -4153,6 +4181,10 @@ export class BoardRenderer {
     const gfxFor = (part: { side: string }) =>
       butterfly && part.side === 'bottom' ? this.butterflySelectionGfx : this.selectionGfx;
 
+    // Selection strokes are screen-constant (selectionWidth is px): one world
+    // width for this frame's zoom. Padding is per part (selOutline).
+    const selStroke = s.selectionWidth / this.viewScale();
+
     // ── Highlight all search results ──
     const searchIndices = boardStore.searchResultIndices;
     if (searchIndices.size > 0) {
@@ -4164,17 +4196,17 @@ export class BoardRenderer {
         if (!part || !this.isPartVisible(part)) continue;
         const gfx = gfxFor(part);
         const outlines = gfx === this.butterflySelectionGfx ? botSearchOutlines : topSearchOutlines;
-        outlines.push(() => emitPartOutlineShape(gfx, part, s, s.selectionPadding));
+        outlines.push(() => emitPartOutlineShape(gfx, part, s, this.selOutline(part).pad));
       }
       for (const fn of topSearchOutlines) fn();
       if (topSearchOutlines.length > 0) {
         this.selectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha * 0.5 });
-        this.selectionGfx.stroke({ width: s.selectionWidth * 0.7, color: BOARD_COLORS.butterflySelection, alpha: 0.5 });
+        this.selectionGfx.stroke({ width: selStroke * 0.7, color: BOARD_COLORS.butterflySelection, alpha: 0.5 });
       }
       for (const fn of botSearchOutlines) fn();
       if (botSearchOutlines.length > 0) {
         this.butterflySelectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha * 0.5 });
-        this.butterflySelectionGfx.stroke({ width: s.selectionWidth * 0.7, color: BOARD_COLORS.butterflySelection, alpha: 0.5 });
+        this.butterflySelectionGfx.stroke({ width: selStroke * 0.7, color: BOARD_COLORS.butterflySelection, alpha: 0.5 });
       }
     }
 
@@ -4182,7 +4214,7 @@ export class BoardRenderer {
       const part = this.board.parts[sel.partIndex];
       if (part) {
         const gfx = gfxFor(part);
-        emitPartOutlineShape(gfx, part, s, s.selectionPadding);
+        emitPartOutlineShape(gfx, part, s, this.selOutline(part).pad);
         // Primary (clicked) part: bold WHITE accent + stronger fill so it is
         // unmistakably THE selection amid muted net-members (#23). White stays
         // distinct from the yellow members, the worklist mark colours
@@ -4192,7 +4224,7 @@ export class BoardRenderer {
         const blinkRed = this.selectionBlinkPhase > 0 && this.selectionBlinkPhase % 2 === 1;
         const selColor = blinkRed ? 0xcc2222 : PRIMARY_SEL;
         gfx.fill({ color: PRIMARY_SEL, alpha: Math.min(0.22, s.selectionFillAlpha * 3 + 0.08) });
-        gfx.stroke({ width: s.selectionWidth * 1.7, color: selColor, alpha: 1.0 });
+        gfx.stroke({ width: selStroke * 1.7, color: selColor, alpha: 1.0 });
       }
 
       // Raise the selected part's pin labels into netLabelLayer so they render
@@ -4418,7 +4450,7 @@ export class BoardRenderer {
             const gfx = gfxFor(part);
             const isBot = gfx === this.butterflySelectionGfx;
             const outlines = isBot ? botPartOutlines : topPartOutlines;
-            outlines.push(() => emitPartOutlineShape(gfx, part, s, s.selectionPadding));
+            outlines.push(() => emitPartOutlineShape(gfx, part, s, this.selOutline(part).pad));
           }
         }
 
@@ -4501,7 +4533,7 @@ export class BoardRenderer {
       // which parts are connected; the distinction from the primary comes from
       // the primary's bold WHITE outline (drawn in the `sel.partIndex` block
       // above), not from dimming the members. (#23)
-      const memberWidth = s.selectionWidth;
+      const memberWidth = selStroke;
       const memberStrokeAlpha = 0.85;
       for (const fn of topPartOutlines) fn();
       if (topPartOutlines.length > 0) {
@@ -4549,7 +4581,7 @@ export class BoardRenderer {
       // ring sits beyond the pad and outside any pin label that renders on
       // top of selectionGfx, so it carries the "highlighted" cue past the
       // label coverage on dense BGA rails.
-      const ringW = s.selectionWidth * 0.6;
+      const ringW = selStroke * 0.6;
       for (const [glowColor, fns] of topHighlightsByColor) {
         for (const fn of fns) fn();
         this.selectionGfx.fill({ color: glowColor, alpha: s.netHighlightAlpha });
@@ -5202,7 +5234,7 @@ export class BoardRenderer {
 
       drawPartOutline(gfx, part, s, 0);
       gfx.fill({ color: ghostColor, alpha: ghostAlpha * 0.5 });
-      gfx.stroke({ width: s.selectionWidth, color: ghostColor, alpha: outlineAlpha });
+      gfx.stroke({ width: s.selectionWidth / this.viewScale(), color: ghostColor, alpha: outlineAlpha });
 
       // Draw pins — same shape the sprite uses, capsules included.
       for (const pin of part.pins) {
@@ -5279,7 +5311,7 @@ export class BoardRenderer {
     }
 
     const s = renderSettingsStore.settings;
-    const width = Math.max(s.selectionWidth * 1.2, 2);
+    const width = (s.selectionWidth * 1.2) / this.viewScale();
     const pad = Math.max(s.selectionPadding * 0.5, 1);
     const RED = 0xff2a2a;        // disco / burst — solid fill
     const BEACON_RED = 0xcc2222; // matches the focus blink's red

@@ -2366,11 +2366,13 @@ export function SettingsPanel() {
       <CollapsibleSection id="selection" title="Selection & Highlight" isOpen={openSections.has('selection')}
         onToggle={toggleSection} sectionRef={selectionRef} isFocused={focusedSection === 'selection'}>
         <Slider label="Selection Border" value={draft.selectionWidth} min={0.5} max={10} step={0.5} field="selectionWidth" onUpdate={updateDraft}
-          title="Thickness of the yellow selection highlight outline around the selected component (mils)" />
+          title="Thickness of the selection outline in screen pixels — the same at every zoom level" />
+        <Slider label="Selection Min Size" value={draft.selectionMinScreenPx} min={0} max={64} step={2} field="selectionMinScreenPx" onUpdate={updateDraft}
+          title="A selected part is never drawn smaller than this on screen (px): zoomed out, the outline is padded to this size so a tiny part stays findable; zoomed in, the padding drops to zero and the outline sits exactly on the component border" />
         <Slider label="Selection Fill" value={draft.selectionFillAlpha} min={0} max={0.5} step={0.01} field="selectionFillAlpha" onUpdate={updateDraft}
           title="Brightness of the semi-transparent fill inside the selected component outline. 0 = no fill, higher = brighter" />
         <Slider label="Selection Padding" value={draft.selectionPadding} min={0} max={30} step={1} field="selectionPadding" onUpdate={updateDraft}
-          title="Extra space (mils) around pins when drawing the selection highlight outline. Larger = selection box extends further beyond the component" />
+          title="Extra gap (mils) between the component border and the selection outline. 0 = the outline is the border. Added on top of the dynamic minimum size" />
         <Slider label="Net Highlight Ring" value={draft.netHighlightGrow} min={0} max={20} step={0.5} field="netHighlightGrow" onUpdate={updateDraft}
           title="How much larger (mils) the yellow net highlight circle is compared to the pin circle. Creates a visible ring around each pin in the selected net" />
         <Slider label="Highlight Ring Opacity" value={draft.netHighlightAlpha} min={0} max={1} step={0.05} field="netHighlightAlpha" onUpdate={updateDraft}
