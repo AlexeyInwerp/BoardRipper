@@ -834,38 +834,37 @@ function HdrGlowCard() {
       <div className="ui-scale-full-label">
         <span>HDR selection outline</span>
         <span className={`ui-scale-full-readout${capable ? '' : ' home-hdr-readout-off'}`}>
-          {capable ? 'HDR display detected' : 'no HDR display detected'}
+          {capable ? 'HDR detected' : 'no HDR detected'}
         </span>
       </div>
-      <div className="home-hdr-mockups" aria-hidden="true">
-        <HdrMockBoard label="now" hdr={false} rung={rung} />
-        <HdrMockBoard label="with HDR" hdr={true} rung={rung} />
-      </div>
-      <div className="ui-scale-full-controls home-hdr-controls">
-        <label className="home-hdr-toggle">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(e) => setGlobal('hdrFocusGlow', e.target.checked)}
-          />
-          <span>Turn on</span>
-        </label>
-        <label className="home-hdr-slider">
-          <span>Intensity</span>
-          <input
-            type="range" min={1} max={10} step={1} value={intensity}
-            disabled={!enabled}
-            onChange={(e) => setGlobal('hdrGlowIntensity', Number(e.target.value))}
-            aria-label="HDR outline intensity"
-          />
-          <span className="home-hdr-value">{intensity}</span>
-        </label>
+      <div className="home-hdr-row">
+        <div className="home-hdr-mockups" aria-hidden="true">
+          <HdrMockBoard label="now" hdr={false} rung={rung} />
+          <HdrMockBoard label="HDR" hdr={true} rung={rung} />
+        </div>
+        <div className="home-hdr-controls">
+          <label className="home-hdr-toggle">
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(e) => setGlobal('hdrFocusGlow', e.target.checked)}
+            />
+            <span>Turn on</span>
+          </label>
+          <label className="home-hdr-slider">
+            <input
+              type="range" min={1} max={10} step={1} value={intensity}
+              disabled={!enabled}
+              onChange={(e) => setGlobal('hdrGlowIntensity', Number(e.target.value))}
+              aria-label="HDR outline intensity"
+            />
+            <span className="home-hdr-value">{intensity}</span>
+          </label>
+        </div>
       </div>
       <div className="ui-scale-full-hint">
-        The outline of the selected part is drawn brighter than white, so you do not lose
-        it on a dense board. The right board above shows the result. If both boards look
-        the same, this screen has no HDR and the setting changes nothing.
-        {!capable && ' Needs an HDR screen in HDR mode; on Windows HDR has to be enabled in the display settings.'}
+        The selected part's outline is drawn brighter than white. If both boards look the
+        same, this screen has no HDR and the setting does nothing.
       </div>
     </div>
   );
@@ -877,29 +876,26 @@ function HdrGlowCard() {
  *  plain border in the theme's selection yellow. */
 function HdrMockBoard({ label, hdr, rung }: { label: string; hdr: boolean; rung: number }) {
   const tile = { backgroundImage: `url(/hdr-line-${rung}.avif)` };
+  const parts: Array<[number, number, number, number]> = [
+    [6, 6, 20, 9], [6, 19, 20, 9], [30, 6, 9, 22], [80, 6, 16, 8], [80, 18, 16, 8], [6, 32, 33, 8], [80, 30, 16, 12],
+  ];
   return (
     <div className="home-hdr-mock">
-      <div className="home-hdr-mock-board">
-        <div className="home-hdr-mock-part" style={{ left: 8, top: 8, width: 26, height: 12 }} />
-        <div className="home-hdr-mock-part" style={{ left: 8, top: 26, width: 26, height: 12 }} />
-        <div className="home-hdr-mock-part" style={{ left: 40, top: 8, width: 12, height: 30 }} />
-        <div className="home-hdr-mock-part home-hdr-mock-bga" style={{ left: 60, top: 12, width: 34, height: 34 }} />
-        <div className="home-hdr-mock-part" style={{ left: 102, top: 8, width: 20, height: 10 }} />
-        <div className="home-hdr-mock-part" style={{ left: 102, top: 24, width: 20, height: 10 }} />
-        <div className="home-hdr-mock-part" style={{ left: 8, top: 46, width: 44, height: 10 }} />
-        <div className="home-hdr-mock-part" style={{ left: 102, top: 40, width: 20, height: 16 }} />
-        <div className={`home-hdr-mock-sel${hdr ? ' is-hdr' : ''}`} style={{ left: 60, top: 12, width: 34, height: 34 }}>
-          {hdr && (
-            <>
-              <div className="home-hdr-mock-edge home-hdr-mock-edge-h" style={{ ...tile, top: -2 }} />
-              <div className="home-hdr-mock-edge home-hdr-mock-edge-h" style={{ ...tile, bottom: -2 }} />
-              <div className="home-hdr-mock-edge home-hdr-mock-edge-v" style={{ ...tile, left: -2 }} />
-              <div className="home-hdr-mock-edge home-hdr-mock-edge-v" style={{ ...tile, right: -2 }} />
-            </>
-          )}
-        </div>
+      <span className="home-hdr-mock-label">{label}</span>
+      {parts.map(([l, t, w, h], i) => (
+        <div key={i} className="home-hdr-mock-part" style={{ left: l, top: t, width: w, height: h }} />
+      ))}
+      <div className="home-hdr-mock-part home-hdr-mock-bga" style={{ left: 46, top: 10, width: 28, height: 28 }} />
+      <div className={`home-hdr-mock-sel${hdr ? ' is-hdr' : ''}`} style={{ left: 46, top: 10, width: 28, height: 28 }}>
+        {hdr && (
+          <>
+            <div className="home-hdr-mock-edge home-hdr-mock-edge-h" style={{ ...tile, top: -1.5 }} />
+            <div className="home-hdr-mock-edge home-hdr-mock-edge-h" style={{ ...tile, bottom: -1.5 }} />
+            <div className="home-hdr-mock-edge home-hdr-mock-edge-v" style={{ ...tile, left: -1.5 }} />
+            <div className="home-hdr-mock-edge home-hdr-mock-edge-v" style={{ ...tile, right: -1.5 }} />
+          </>
+        )}
       </div>
-      <div className="home-hdr-mock-label">{label}</div>
     </div>
   );
 }

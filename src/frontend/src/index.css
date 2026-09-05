@@ -7206,9 +7206,17 @@ body {
 }
 /* HDR selection outline card — shares the .ui-scale-full shell with the
    Interface scale card directly above it (both live in .home-ui-scale-row).
-   Always rendered; the readout carries the detection result. */
+   Always rendered; the readout carries the detection result. One row: the
+   two mini boards on the left, the switch and slider on the right. */
 .ui-scale-full-readout.home-hdr-readout-off { color: var(--text-secondary); font-weight: 400; }
-.home-hdr-controls { gap: 16px; flex-wrap: wrap; }
+.home-hdr-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.home-hdr-controls {
+  flex: 1;
+  min-width: 170px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 .home-hdr-toggle {
   display: flex;
   align-items: center;
@@ -7218,20 +7226,13 @@ body {
   cursor: pointer;
   white-space: nowrap;
 }
-.home-hdr-slider {
-  flex: 1;
-  min-width: 180px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.82rem;
-  color: var(--text-secondary);
-}
+.home-hdr-slider { display: flex; align-items: center; gap: 8px; }
 .home-hdr-slider input[type='range'] { flex: 1; accent-color: var(--accent); }
 .home-hdr-slider input[type='range']:disabled { opacity: 0.45; }
 .home-hdr-value {
   min-width: 1.5em;
   text-align: right;
+  font-size: 0.82rem;
   font-variant-numeric: tabular-nums;
   color: var(--text-primary);
 }
@@ -7240,32 +7241,43 @@ body {
    it really is brighter than white — and on SDR it looks like the left one,
    which is the point of showing both. dynamic-range-limit is set on the board
    so the compositor does not tone-map the tiles down. */
-.home-hdr-mockups { display: flex; gap: 12px; }
-.home-hdr-mock { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.home-hdr-mock-board {
+.home-hdr-mockups { display: flex; gap: 8px; flex-shrink: 0; }
+.home-hdr-mock {
   position: relative;
-  height: 64px;
-  background: #0e1a12;
-  border: 1px solid var(--border);
-  border-radius: 3px;
+  width: 102px;
+  height: 46px;
+  background: #101a14;
+  border: 1px solid #263229;
+  border-radius: 4px;
   overflow: hidden;
   dynamic-range-limit: no-limit;
 }
+.home-hdr-mock-label {
+  position: absolute;
+  right: 4px;
+  bottom: 2px;
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  color: #6f8277;
+  pointer-events: none;
+}
 .home-hdr-mock-part {
   position: absolute;
-  background: #23302a;
-  border: 1px solid #55665d;
+  background: #1c2822;
+  border: 1px solid #435247;
+  border-radius: 1px;
   box-sizing: border-box;
 }
 .home-hdr-mock-bga {
-  background-image: radial-gradient(#7d8f86 0.8px, transparent 0.9px);
+  background-color: #1c2822;
+  background-image: radial-gradient(#6d7f75 0.7px, transparent 0.8px);
   background-size: 4px 4px;
-  background-position: 2px 2px;
+  background-position: 1.5px 1.5px;
 }
 .home-hdr-mock-sel {
   position: absolute;
   box-sizing: border-box;
-  border: 2px solid #ffff44;    /* the theme's SDR selection colour */
+  border: 1.5px solid #ffff44;    /* the theme's SDR selection colour */
 }
 .home-hdr-mock-sel.is-hdr { border-color: transparent; }
 .home-hdr-mock-edge {
@@ -7273,13 +7285,8 @@ body {
   background-size: 100% 100%;
   background-repeat: no-repeat;
 }
-.home-hdr-mock-edge-h { left: -2px; right: -2px; height: 2px; }
-.home-hdr-mock-edge-v { top: -2px; bottom: -2px; width: 2px; }
-.home-hdr-mock-label {
-  font-size: 0.72rem;
-  color: var(--text-secondary);
-  text-align: center;
-}
+.home-hdr-mock-edge-h { left: -1.5px; right: -1.5px; height: 1.5px; }
+.home-hdr-mock-edge-v { top: -1.5px; bottom: -1.5px; width: 1.5px; }
 
 .home-toggle-row {
   display: flex;
