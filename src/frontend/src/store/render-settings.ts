@@ -759,15 +759,25 @@ export function pinOverlapClamp(pins: { position: { x: number; y: number } }[]):
  *  computePartRenderBounds consumer kept the wide box. */
 export function computeOutlinePadding(
   s: RenderSettings,
-  pins: { position: { x: number; y: number }; radius?: number }[],
+  pins: { position: { x: number; y: number }; radius?: number; padBounds?: unknown }[],
 ): number {
+  // A pin with a real pad outline (pin.padBounds — TVW / Allegro / iPhone-era
+  // XZZ) is already inside the effective bounds as its full pad rectangle;
+  // adding its radius on top pushed the border a whole pad past the copper
+  // on every XZZ multi-pin part (Q4400: a 30-mil centre pad → a 15-mil gap
+  // all round). Only pins drawn as circles at their centre still need the
+  // radius to be contained. All pads real ⇒ partPadding alone.
   const clamp = pinOverlapClamp(pins);
-  let maxR = s.pinMinRadius;
+  let maxR = 0;
+  let anyCircle = false;
   for (const pin of pins) {
+    if (pin.padBounds) continue;
+    anyCircle = true;
     const r = Math.min(computePinRadius(s, pin.radius ?? 0), clamp);
     if (r > maxR) maxR = r;
   }
-  return s.partPadding + maxR;
+  if (!anyCircle) return s.partPadding;
+  return s.partPadding + Math.max(s.pinMinRadius, maxR);
 }
 
 /** Inflate flat bounds for small parts (≤4 pins) and return padded outline rect */

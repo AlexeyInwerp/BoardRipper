@@ -64,3 +64,34 @@ describe('multi-pin outline padding uses the drawn (overlap-clamped) pin radius'
     expect(computeOutlinePadding(s, pins)).toBeCloseTo(s.partPadding + computePinRadius(s, 10));
   });
 });
+
+describe('multi-pin parts with real pad outlines', () => {
+  it('pad with partPadding only — the pads are the edge', () => {
+    // Q4400-like: 8 pads incl. a big centre pad. With pad outlines the pad
+    // union is already the body; the old rule added the largest drawn radius
+    // (15 mil for a 30-mil pad) on top — a full pad of empty border.
+    const pad = (x: number, y: number, w: number, h: number) =>
+      pin(x, y, { radius: Math.min(w, h) / 2, padBounds: { minX: x - w / 2, maxX: x + w / 2, minY: y - h / 2, maxY: y + h / 2 } });
+    const pins = [
+      pad(0, 0, 10, 10), pad(40, 0, 10, 10), pad(80, 0, 10, 10),
+      pad(0, 60, 10, 10), pad(40, 60, 10, 10), pad(80, 60, 10, 10),
+      pad(0, 30, 10, 20), pad(60, 30, 30, 30),          // the big centre pad
+    ];
+    expect(computeOutlinePadding(s, pins)).toBe(s.partPadding);
+    const part = { name: 'Q1', bounds: { minX: 0, maxX: 80, minY: 0, maxY: 60 }, pins };
+    const rb = computePartRenderBounds(part, s);
+    // Pad union: x −5 … 85, y −5 … 65 — plus partPadding, nothing else.
+    expect(rb.px).toBeCloseTo(-5 - s.partPadding);
+    expect(rb.pw).toBeCloseTo(90 + 2 * s.partPadding);
+    expect(rb.py).toBeCloseTo(-5 - s.partPadding);
+    expect(rb.ph).toBeCloseTo(70 + 2 * s.partPadding);
+  });
+
+  it('a mix keeps the radius for the circle-drawn pins only', () => {
+    const pins = [
+      pin(0, 0, { radius: 6, padBounds: { minX: -6, maxX: 6, minY: -6, maxY: 6 } }),
+      pin(100, 0, { radius: 6 }), pin(100, 100, { radius: 6 }), pin(0, 100, { radius: 6 }), pin(50, 50, { radius: 6 }),
+    ];
+    expect(computeOutlinePadding(s, pins)).toBeCloseTo(s.partPadding + Math.max(s.pinMinRadius, computePinRadius(s, 6)));
+  });
+});

@@ -344,6 +344,15 @@ export class BoardRenderer {
   private app: Application;
   private viewport!: Viewport;
   private selectionGfx!: Graphics;
+  /** The primary (clicked) part's outline lives in a CHILD of selectionGfx /
+   *  butterflySelectionGfx, so the zoom-settle repaint can redraw just this
+   *  one shape. Repainting the parent — which on a lit GND holds ~7 000
+   *  member rings — makes PixiJS re-triangulate all of it on the next frame:
+   *  ~1 s per zoom notch under SwiftShader, a visible hitch on real hardware
+   *  (reported 2026-09-05). A child inherits every attach/detach/zIndex move
+   *  the parent gets, and survives parent.clear(). */
+  private primarySelGfx!: Graphics;
+  private butterflyPrimarySelGfx!: Graphics;
   private netDimGfx!: Graphics;
   /** Container for part-name labels drawn above the net-dim overlay */
   private netLabelLayer!: Container;
@@ -1346,6 +1355,9 @@ export class BoardRenderer {
     this.selectionGfx = new Graphics();
     this.selectionGfx.zIndex = 30;
     this.selectionGfx.eventMode = 'none';
+    this.primarySelGfx = new Graphics();
+    this.primarySelGfx.eventMode = 'none';
+    this.selectionGfx.addChild(this.primarySelGfx);
     this.netDimGfx = new Graphics();
     this.netDimGfx.zIndex = 10;
     this.netDimGfx.eventMode = 'none';
@@ -1354,6 +1366,9 @@ export class BoardRenderer {
     this.netLabelLayer.eventMode = 'none';
     this.butterflySelectionGfx = new Graphics();
     this.butterflySelectionGfx.eventMode = 'none';
+    this.butterflyPrimarySelGfx = new Graphics();
+    this.butterflyPrimarySelGfx.eventMode = 'none';
+    this.butterflySelectionGfx.addChild(this.butterflyPrimarySelGfx);
     this.butterflyDimGfx = new Graphics();
     this.butterflyDimGfx.eventMode = 'none';
     this.netLinesGfx = new Graphics();
@@ -1530,6 +1545,9 @@ export class BoardRenderer {
     this.selectionGfx = new Graphics();
     this.selectionGfx.zIndex = 30;
     this.selectionGfx.eventMode = 'none';
+    this.primarySelGfx = new Graphics();
+    this.primarySelGfx.eventMode = 'none';
+    this.selectionGfx.addChild(this.primarySelGfx);
     this.netDimGfx = new Graphics();
     this.netDimGfx.zIndex = 10;
     this.netDimGfx.eventMode = 'none';
@@ -1538,6 +1556,9 @@ export class BoardRenderer {
     this.netLabelLayer.eventMode = 'none';
     this.butterflySelectionGfx = new Graphics();
     this.butterflySelectionGfx.eventMode = 'none';
+    this.butterflyPrimarySelGfx = new Graphics();
+    this.butterflyPrimarySelGfx.eventMode = 'none';
+    this.butterflySelectionGfx.addChild(this.butterflyPrimarySelGfx);
     this.butterflyDimGfx = new Graphics();
     this.butterflyDimGfx.eventMode = 'none';
     this.netLinesGfx = new Graphics();
@@ -1993,20 +2014,33 @@ export class BoardRenderer {
   }
 
   /** Selection outline geometry for a part at the current zoom — see
-   *  selectionOutlineWorld. The part's drawn box comes from the one body rule
-   *  (computePartRenderBounds); a single-pin part is its pin. */
-  private selOutline(part: Part): { pad: number; stroke: number } {
+   *  selectionOutlineWorld. `precise` measures the part with the body rule
+   *  (computePartRenderBounds) — right for the one primary part. Net-member
+   *  and search boxes pass false and use the parser AABB: a thousand-member
+   *  net repainted on every zoom settle cannot afford an OBB build per part,
+   *  and the minimum-size rule only needs to know "is it tiny on screen". */
+  private selOutline(part: Part, precise = true): { pad: number; stroke: number } {
     const s = renderSettingsStore.settings;
     let minWorld: number;
     if (part.pins.length === 1) {
       minWorld = computePinRadius(s, part.pins[0].radius) * 2;
-    } else {
+    } else if (precise) {
       const rb = computePartRenderBounds(part, s);
       minWorld = Math.min(rb.pw, rb.ph);
+    } else {
+      const b = part.bounds;
+      minWorld = Math.max(1, Math.min(b.maxX - b.minX, b.maxY - b.minY));
     }
     const { padWorld, strokeWorld } = selectionOutlineWorld(s, this.viewScale(), minWorld);
     return { pad: padWorld, stroke: strokeWorld };
   }
+
+  /** Zoom at which the selection was last painted — the settle timer repaints
+   *  only when the zoom has moved enough (≈13 %) for the screen-constant
+   *  stroke or the minimum-size padding to look different. Repainting on every
+   *  settle made a lit GND net (thousands of rings) repaint on every wheel
+   *  notch — the lag reported on 2026-09-05. */
+  private lastSelectionPaintScale = 0;
 
   private syncHdrOverlay(overlay: HdrSelectionOutline, scene: BoardScene): void {
     const sel = boardStore.selection;
@@ -2158,11 +2192,15 @@ export class BoardRenderer {
         this.textHiddenForZoom = false;
         this.applyLabelVisibility();
       }
-      // The selection outline is zoom-dependent (screen-constant stroke,
-      // minimum on-screen size), so repaint it at the settled zoom.
-      if (boardStore.selection.partIndex !== null || boardStore.selection.highlightedNet
-          || boardStore.searchResultIndices.size > 0) {
-        this.renderSelection();
+      // The primary selection outline is zoom-dependent (screen-constant
+      // stroke, minimum on-screen size): redraw just that shape at the settled
+      // zoom. Member boxes and rings keep the stroke of their last full paint
+      // until the selection changes — rebuilding their geometry is what made
+      // zooming with a lit net lag.
+      if (boardStore.selection.partIndex !== null
+          && Math.abs(Math.log(this.viewScale() / (this.lastSelectionPaintScale || this.viewScale()))) > 0.12) {
+        this.renderSelectionPrimary();
+        this.needsRender = true;
       }
       if (this.netLinesHiddenForZoom) {
         this.netLinesHiddenForZoom = false;
@@ -4073,6 +4111,41 @@ export class BoardRenderer {
     this.netLabelPoolIdx++;
   }
 
+  /** Draw (only) the primary selection outline into its child Graphics. Cheap
+   *  enough to run on every zoom settle — the outline's padding and stroke are
+   *  zoom-dependent (selectionOutlineWorld) — without touching the member
+   *  boxes and rings in the parent, whose geometry rebuild is the expensive
+   *  part. Called from renderSelection too, so there is one drawing of it. */
+  private renderSelectionPrimary(): void {
+    this.primarySelGfx?.clear();
+    this.butterflyPrimarySelGfx?.clear();
+    const sel = boardStore.selection;
+    if (sel.partIndex === null || !this.board) return;
+    const part = this.board.parts[sel.partIndex];
+    // No side-visibility gate here, on purpose: selectPart() does not flip
+    // the view to the part's side (focusPart does), and the outline has
+    // always been drawn regardless — the label-raise below is what checks
+    // visibility. Keeping that parity also keeps the selection findable when
+    // a search result sits on the other side.
+    if (!part) return;
+    const s = renderSettingsStore.settings;
+    const butterfly = boardStore.butterfly && !!this.activeScene?.butterflyRoot;
+    const gfx = butterfly && part.side === 'bottom' ? this.butterflyPrimarySelGfx : this.primarySelGfx;
+    const { pad, stroke } = this.selOutline(part);
+    this.lastSelectionPaintScale = this.viewScale();
+    emitPartOutlineShape(gfx, part, s, pad);
+    // Primary (clicked) part: bold WHITE accent + stronger fill so it is
+    // unmistakably THE selection amid muted net-members (#23). White stays
+    // distinct from the yellow members, the worklist mark colours
+    // (amber/red/green) and the cyan selection-set, and matches the white
+    // selected-part name label. Focus-blink still flashes red.
+    const PRIMARY_SEL = 0xffffff;
+    const blinkRed = this.selectionBlinkPhase > 0 && this.selectionBlinkPhase % 2 === 1;
+    const selColor = blinkRed ? 0xcc2222 : PRIMARY_SEL;
+    gfx.fill({ color: PRIMARY_SEL, alpha: Math.min(0.22, s.selectionFillAlpha * 3 + 0.08) });
+    gfx.stroke({ width: stroke * 1.7, color: selColor, alpha: 1.0 });
+  }
+
   private renderSelection() {
     const perf = this.perfVisible;
     const selStart = perf ? performance.now() : 0;
@@ -4196,7 +4269,7 @@ export class BoardRenderer {
         if (!part || !this.isPartVisible(part)) continue;
         const gfx = gfxFor(part);
         const outlines = gfx === this.butterflySelectionGfx ? botSearchOutlines : topSearchOutlines;
-        outlines.push(() => emitPartOutlineShape(gfx, part, s, this.selOutline(part).pad));
+        outlines.push(() => emitPartOutlineShape(gfx, part, s, this.selOutline(part, false).pad));
       }
       for (const fn of topSearchOutlines) fn();
       if (topSearchOutlines.length > 0) {
@@ -4210,22 +4283,8 @@ export class BoardRenderer {
       }
     }
 
+    this.renderSelectionPrimary();
     if (sel.partIndex !== null) {
-      const part = this.board.parts[sel.partIndex];
-      if (part) {
-        const gfx = gfxFor(part);
-        emitPartOutlineShape(gfx, part, s, this.selOutline(part).pad);
-        // Primary (clicked) part: bold WHITE accent + stronger fill so it is
-        // unmistakably THE selection amid muted net-members (#23). White stays
-        // distinct from the yellow members, the worklist mark colours
-        // (amber/red/green) and the cyan selection-set, and matches the white
-        // selected-part name label. Focus-blink still flashes red.
-        const PRIMARY_SEL = 0xffffff;
-        const blinkRed = this.selectionBlinkPhase > 0 && this.selectionBlinkPhase % 2 === 1;
-        const selColor = blinkRed ? 0xcc2222 : PRIMARY_SEL;
-        gfx.fill({ color: PRIMARY_SEL, alpha: Math.min(0.22, s.selectionFillAlpha * 3 + 0.08) });
-        gfx.stroke({ width: selStroke * 1.7, color: selColor, alpha: 1.0 });
-      }
 
       // Raise the selected part's pin labels into netLabelLayer so they render
       // above the selection fill (zIndex 30) and the netDim overlay alike.
@@ -4450,7 +4509,7 @@ export class BoardRenderer {
             const gfx = gfxFor(part);
             const isBot = gfx === this.butterflySelectionGfx;
             const outlines = isBot ? botPartOutlines : topPartOutlines;
-            outlines.push(() => emitPartOutlineShape(gfx, part, s, this.selOutline(part).pad));
+            outlines.push(() => emitPartOutlineShape(gfx, part, s, this.selOutline(part, false).pad));
           }
         }
 
