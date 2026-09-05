@@ -7204,99 +7204,81 @@ body {
     letter-spacing: 0.05em;
   }
 }
-/* HDR selection outline card — top-level on the start page (its discovery
-   surface), and only rendered at all on an HDR-capable display. */
-.home-hdr-card {
-  padding: 12px 14px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
-  border-radius: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.home-hdr-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  cursor: pointer;
-}
-.home-hdr-title {
+/* HDR selection outline card — shares the .ui-scale-full shell with the
+   Interface scale card directly above it (both live in .home-ui-scale-row).
+   Always rendered; the readout carries the detection result. */
+.ui-scale-full-readout.home-hdr-readout-off { color: var(--text-secondary); font-weight: 400; }
+.home-hdr-controls { gap: 16px; flex-wrap: wrap; }
+.home-hdr-toggle {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 0.95rem;
-  font-weight: 600;
+  gap: 6px;
+  font-size: 0.85rem;
   color: var(--text-primary);
-}
-.home-hdr-badge {
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  padding: 2px 5px;
-  border-radius: 3px;
-  background: var(--accent);
-  color: var(--accent-text, #fff);
-}
-.home-hdr-desc {
-  margin: 0;
-  font-size: 0.82rem;
-  line-height: 1.5;
-  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
 }
 .home-hdr-slider {
+  flex: 1;
+  min-width: 180px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   font-size: 0.82rem;
   color: var(--text-secondary);
 }
-.home-hdr-slider input[type='range'] { flex: 1; }
-/* Discovery demo: a real PQ patch beside reference white. Side-by-side is the
-   point — an isolated bright patch is hard to judge, next to white it isn't.
-   dynamic-range-limit must be set here too; the card itself is ordinary SDR. */
-.home-hdr-demo { display: flex; gap: 14px; align-items: flex-start; }
-.home-hdr-demo-patches {
-  display: flex;
-  flex-shrink: 0;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  overflow: hidden;
-}
-.home-hdr-demo-patch { width: 46px; height: 46px; }
-.home-hdr-demo-sdr { background: #fff; }
-/* background-image is set inline from DEMO_RUNG so the rung has one source of
-   truth; only the compositing hint lives here. */
-.home-hdr-demo-hdr {
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
-  dynamic-range-limit: no-limit;
-}
-.home-hdr-actions { display: flex; gap: 8px; }
-.home-hdr-btn {
-  padding: 5px 12px;
-  font-size: 0.82rem;
-  border-radius: 5px;
-  border: 1px solid var(--border);
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  cursor: pointer;
-}
-.home-hdr-btn:hover { border-color: var(--accent); }
-.home-hdr-btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-text);
-  font-weight: 600;
-}
+.home-hdr-slider input[type='range'] { flex: 1; accent-color: var(--accent); }
+.home-hdr-slider input[type='range']:disabled { opacity: 0.45; }
 .home-hdr-value {
   min-width: 1.5em;
   text-align: right;
   font-variant-numeric: tabular-nums;
   color: var(--text-primary);
+}
+/* Mockup: the same miniature board twice. The right one outlines the selected
+   part with stretched PQ tiles exactly like the renderer, so on an HDR panel
+   it really is brighter than white — and on SDR it looks like the left one,
+   which is the point of showing both. dynamic-range-limit is set on the board
+   so the compositor does not tone-map the tiles down. */
+.home-hdr-mockups { display: flex; gap: 12px; }
+.home-hdr-mock { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.home-hdr-mock-board {
+  position: relative;
+  height: 64px;
+  background: #0e1a12;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  dynamic-range-limit: no-limit;
+}
+.home-hdr-mock-part {
+  position: absolute;
+  background: #23302a;
+  border: 1px solid #55665d;
+  box-sizing: border-box;
+}
+.home-hdr-mock-bga {
+  background-image: radial-gradient(#7d8f86 0.8px, transparent 0.9px);
+  background-size: 4px 4px;
+  background-position: 2px 2px;
+}
+.home-hdr-mock-sel {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid #ffff44;    /* the theme's SDR selection colour */
+}
+.home-hdr-mock-sel.is-hdr { border-color: transparent; }
+.home-hdr-mock-edge {
+  position: absolute;
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+}
+.home-hdr-mock-edge-h { left: -2px; right: -2px; height: 2px; }
+.home-hdr-mock-edge-v { top: -2px; bottom: -2px; width: 2px; }
+.home-hdr-mock-label {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  text-align: center;
 }
 
 .home-toggle-row {
@@ -8287,6 +8269,9 @@ body {
   align-self: center;
   width: 100%;
   max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 /* ── Session-restore boot prompt ─────────────────────────────────────────── */

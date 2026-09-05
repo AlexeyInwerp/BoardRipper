@@ -10,7 +10,7 @@ import { pdfStore } from '../../store/pdf-store';
 import { updateStore } from '../../store/update-store';
 import { renderSettingsStore, type RenderSettings } from '../../store/render-settings';
 import { themeStore, ACCENT_PRESETS } from '../../store/themes';
-import { isHdrCapable, onHdrCapabilityChange, isHdrPromptDismissed, dismissHdrPrompt, DEMO_RUNG } from '../../renderer/hdr-selection-outline';
+import { isHdrCapable, onHdrCapabilityChange, rungForIntensity } from '../../renderer/hdr-selection-outline';
 import { InterfaceScaleSlider } from '../InterfaceScaleSlider';
 import { ReleaseNotes } from '../ReleaseNotes';
 import {
@@ -806,101 +806,100 @@ function setGlobal<K extends 'hdrFocusGlow' | 'hdrGlowIntensity'>(
   renderSettingsStore.applyGlobal(snap);
 }
 
-/** Top-level start-page card for the HDR selection outline.
+/** Start-page card for the HDR selection outline. Sits directly under the
+ *  Interface scale card and shares its shell, so the two read as one pair of
+ *  display settings.
  *
- *  Deliberately NOT inside the collapsible "Quick settings" card: this is the
- *  feature's discovery surface, and buried under a sub-heading inside a card
- *  users collapse, nobody finds it.
+ *  Always rendered: the readout on the right is the detection result, and a
+ *  user on an SDR screen should see "not detected" rather than nothing. The
+ *  mockup shows what the setting changes — the same miniature board twice, the
+ *  selected part outlined the normal way on the left and with the HDR tiles on
+ *  the right. On an HDR display the right outline is visibly brighter than
+ *  white; on an SDR display both look the same, which is also the honest
+ *  answer to "does this do anything here". `(dynamic-range: high)` is a
+ *  boolean and cannot tell a marginal HDR panel from an XDR one, so the mockup
+ *  is the real test, not the readout.
  *
- *  Three states:
- *   - capable + OFF + not dismissed -> the DEMO prompt (below)
- *   - capable + ON                  -> compact control with the intensity slider
- *   - not capable, or dismissed+OFF -> nothing
- *
- *  The demo exists because `(dynamic-range: high)` is a boolean and cannot tell
- *  us whether the headroom is actually *visible* on this panel — a marginal HDR
- *  monitor reports exactly what an XDR display reports. Showing a real PQ patch
- *  beside reference white lets the user answer that with their own eyes, which
- *  no API can. Side-by-side and not a lone patch: an isolated bright thing is
- *  hard to judge, next to white it is unambiguous.
- *
- *  Note the demo can only be a PATCH, not brighter TEXT — the image technique
- *  lights stretched tiles, and live text cannot carry HDR. */
+ *  The HDR outline can only be tiles, never live text or a shader — the
+ *  renderer works the same way (see hdr-selection-outline.ts). */
 function HdrGlowCard() {
   const enabled = useHdrGlow();
   const intensity = useHdrIntensity();
   const [capable, setCapable] = useState(isHdrCapable);
-  const [dismissed, setDismissed] = useState(isHdrPromptDismissed);
   useEffect(() => onHdrCapabilityChange(setCapable), []);
-
-  if (!capable) return null;
-  if (!enabled && dismissed) return null;
-
-  if (!enabled) {
-    return (
-      <div className="home-hdr-card">
-        <div className="home-hdr-head">
-          <span className="home-hdr-title">
-            Your monitor supports HDR
-            <span className="home-hdr-badge">NEW</span>
-          </span>
-        </div>
-        <div className="home-hdr-demo">
-          <div className="home-hdr-demo-patches">
-            <div className="home-hdr-demo-patch home-hdr-demo-sdr" />
-            <div
-              className="home-hdr-demo-patch home-hdr-demo-hdr"
-              style={{ backgroundImage: `url(/hdr-line-${DEMO_RUNG}.avif)` }}
-            />
-          </div>
-          <p className="home-hdr-desc">
-            <strong>If the right patch looks brighter than the left</strong>, your display
-            has headroom above normal white — and BoardRipper can spend it on the
-            selected component's outline, so the part you searched for, looked up from a
-            PDF, or stepped to along a net is unmistakable on a dense board.
-            <br />
-            If both look identical, HDR is not reaching this window and turning it on
-            will change nothing.
-          </p>
-        </div>
-        <div className="home-hdr-actions">
-          <button
-            type="button"
-            className="home-hdr-btn home-hdr-btn-primary"
-            onClick={() => setGlobal('hdrFocusGlow', true)}
-          >
-            Turn it on
-          </button>
-          <button
-            type="button"
-            className="home-hdr-btn"
-            onClick={() => { dismissHdrPrompt(); setDismissed(true); }}
-          >
-            Don't show again
-          </button>
-        </div>
-      </div>
-    );
-  }
+  const rung = rungForIntensity(intensity);
 
   return (
-    <div className="home-hdr-card">
-      <label className="home-hdr-head">
-        <span className="home-hdr-title">HDR selection outline</span>
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={(e) => setGlobal('hdrFocusGlow', e.target.checked)}
-        />
-      </label>
-      <label className="home-hdr-slider">
-        <span>Intensity</span>
-        <input
-          type="range" min={1} max={10} step={1} value={intensity}
-          onChange={(e) => setGlobal('hdrGlowIntensity', Number(e.target.value))}
-        />
-        <span className="home-hdr-value">{intensity}</span>
-      </label>
+    <div className="ui-scale-full home-hdr-card" data-testid="home-hdr-card">
+      <div className="ui-scale-full-label">
+        <span>HDR selection outline</span>
+        <span className={`ui-scale-full-readout${capable ? '' : ' home-hdr-readout-off'}`}>
+          {capable ? 'HDR display detected' : 'no HDR display detected'}
+        </span>
+      </div>
+      <div className="home-hdr-mockups" aria-hidden="true">
+        <HdrMockBoard label="now" hdr={false} rung={rung} />
+        <HdrMockBoard label="with HDR" hdr={true} rung={rung} />
+      </div>
+      <div className="ui-scale-full-controls home-hdr-controls">
+        <label className="home-hdr-toggle">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setGlobal('hdrFocusGlow', e.target.checked)}
+          />
+          <span>Turn on</span>
+        </label>
+        <label className="home-hdr-slider">
+          <span>Intensity</span>
+          <input
+            type="range" min={1} max={10} step={1} value={intensity}
+            disabled={!enabled}
+            onChange={(e) => setGlobal('hdrGlowIntensity', Number(e.target.value))}
+            aria-label="HDR outline intensity"
+          />
+          <span className="home-hdr-value">{intensity}</span>
+        </label>
+      </div>
+      <div className="ui-scale-full-hint">
+        The outline of the selected part is drawn brighter than white, so you do not lose
+        it on a dense board. The right board above shows the result. If both boards look
+        the same, this screen has no HDR and the setting changes nothing.
+        {!capable && ' Needs an HDR screen in HDR mode; on Windows HDR has to be enabled in the display settings.'}
+      </div>
+    </div>
+  );
+}
+
+/** A miniature board with one selected part. The HDR variant outlines it the
+ *  way the renderer does: one stretched PQ tile per edge, at the rung the
+ *  intensity slider selects, so the slider previews live. The SDR variant is a
+ *  plain border in the theme's selection yellow. */
+function HdrMockBoard({ label, hdr, rung }: { label: string; hdr: boolean; rung: number }) {
+  const tile = { backgroundImage: `url(/hdr-line-${rung}.avif)` };
+  return (
+    <div className="home-hdr-mock">
+      <div className="home-hdr-mock-board">
+        <div className="home-hdr-mock-part" style={{ left: 8, top: 8, width: 26, height: 12 }} />
+        <div className="home-hdr-mock-part" style={{ left: 8, top: 26, width: 26, height: 12 }} />
+        <div className="home-hdr-mock-part" style={{ left: 40, top: 8, width: 12, height: 30 }} />
+        <div className="home-hdr-mock-part home-hdr-mock-bga" style={{ left: 60, top: 12, width: 34, height: 34 }} />
+        <div className="home-hdr-mock-part" style={{ left: 102, top: 8, width: 20, height: 10 }} />
+        <div className="home-hdr-mock-part" style={{ left: 102, top: 24, width: 20, height: 10 }} />
+        <div className="home-hdr-mock-part" style={{ left: 8, top: 46, width: 44, height: 10 }} />
+        <div className="home-hdr-mock-part" style={{ left: 102, top: 40, width: 20, height: 16 }} />
+        <div className={`home-hdr-mock-sel${hdr ? ' is-hdr' : ''}`} style={{ left: 60, top: 12, width: 34, height: 34 }}>
+          {hdr && (
+            <>
+              <div className="home-hdr-mock-edge home-hdr-mock-edge-h" style={{ ...tile, top: -2 }} />
+              <div className="home-hdr-mock-edge home-hdr-mock-edge-h" style={{ ...tile, bottom: -2 }} />
+              <div className="home-hdr-mock-edge home-hdr-mock-edge-v" style={{ ...tile, left: -2 }} />
+              <div className="home-hdr-mock-edge home-hdr-mock-edge-v" style={{ ...tile, right: -2 }} />
+            </>
+          )}
+        </div>
+      </div>
+      <div className="home-hdr-mock-label">{label}</div>
     </div>
   );
 }
@@ -1240,9 +1239,9 @@ export function HomeBackdrop() {
           <Banner />
           <div className="home-ui-scale-row">
             <InterfaceScaleSlider />
+            <HdrGlowCard />
           </div>
           {isLiteBuild() && <LiteOpenCard />}
-          <HdrGlowCard />
           <Instructions />
           <QuickSettings />
           <LatestUpdate />

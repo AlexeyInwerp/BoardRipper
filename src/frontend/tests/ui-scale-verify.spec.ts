@@ -17,7 +17,7 @@ test.describe('global interface scale', () => {
     await page.reload();
     await page.waitForSelector('.home-backdrop', { state: 'attached' });
 
-    const slider = page.locator('.home-ui-scale-row input[type="range"]');
+    const slider = page.locator('.home-ui-scale-row input[aria-label="Interface scale"]');
     await expect(slider).toBeVisible();
 
     // Toolbar before scaling

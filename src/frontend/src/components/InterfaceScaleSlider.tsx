@@ -84,9 +84,9 @@ export function InterfaceScaleSlider() {
         />
       </div>
       <div className="ui-scale-full-hint">
-        Scales every panel, toolbar, dialog, and the start page. Board and PDF
-        rendering keep their native resolution. Applied on release; double-click
-        the slider to reset to 100%.
+        Scales the whole interface: panels, toolbar, dialogs and this page. The board
+        and the PDF keep their resolution. Applied when you release the slider.
+        Double-click the slider to go back to 100%.
       </div>
     </div>
   );

@@ -20,6 +20,9 @@ import {
  *   - Inline: **bold**, *italic*, `code`, [link](url)
  *   - Inline icons via `:icon-<name>:` — see ICONS below for the available set.
  *
+ * List items and paragraphs may be hard-wrapped; continuation lines join.
+ * Inline markup nests (`**\`code\`**`, `[**bold**](url)`).
+ *
  * Not supported: nested lists, code fences, tables.
  */
 
@@ -51,6 +54,18 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode {
     slots.push({ marker, node });
     return marker;
   };
+  // Replace markers already in `s` with their nodes. Used for the final
+  // string AND for the inside of bold / italic / links, so `**\`/library\`**`
+  // nests instead of printing the private-use marker characters.
+  const resolve = (s: string): React.ReactNode[] => {
+    const out: React.ReactNode[] = [];
+    for (const part of s.split(/(\uE000\d+\uE000)/)) {
+      if (!part) continue;
+      const slot = slots.find((sl) => sl.marker === part);
+      out.push(slot ? slot.node : part);
+    }
+    return out;
+  };
 
   let t = text;
   t = t.replace(ICON_RE, (raw, name: string) => {
@@ -67,7 +82,7 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode {
   t = t.replace(LINK_RE, (_m, label: string, url: string) =>
     push(
       <a key={`${keyPrefix}-lnk-${slots.length}`} href={url} target="_blank" rel="noreferrer">
-        {label}
+        {resolve(label)}
       </a>,
     ),
   );
@@ -75,20 +90,13 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode {
     push(<code key={`${keyPrefix}-cd-${slots.length}`}>{code}</code>),
   );
   t = t.replace(BOLD_RE, (_m, inner: string) =>
-    push(<strong key={`${keyPrefix}-b-${slots.length}`}>{inner}</strong>),
+    push(<strong key={`${keyPrefix}-b-${slots.length}`}>{resolve(inner)}</strong>),
   );
   t = t.replace(ITALIC_RE, (_m, lead: string, inner: string) =>
-    lead + push(<em key={`${keyPrefix}-i-${slots.length}`}>{inner}</em>),
+    lead + push(<em key={`${keyPrefix}-i-${slots.length}`}>{resolve(inner)}</em>),
   );
 
-  const parts = t.split(/(\uE000\d+\uE000)/);
-  const out: React.ReactNode[] = [];
-  for (const part of parts) {
-    if (!part) continue;
-    const slot = slots.find((s) => s.marker === part);
-    out.push(slot ? slot.node : part);
-  }
-  return out;
+  return resolve(t);
 }
 
 // ── Block renderer ──────────────────────────────────────────────────────────
@@ -154,11 +162,17 @@ export function renderMarkdown(md: string): React.ReactNode {
     if (/^[-*]\s+/.test(trimmed)) {
       const items: React.ReactNode[] = [];
       while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
-        const itemText = lines[i].replace(/^\s*[-*]\s+/, '');
-        items.push(
-          <li key={items.length}>{renderInline(itemText, `li${key}-${items.length}`)}</li>,
-        );
+        const itemLines: string[] = [lines[i].replace(/^\s*[-*]\s+/, '')];
         i++;
+        while (i < lines.length) {
+          const nxt = lines[i].trim();
+          if (!nxt || /^(#{1,3})\s+/.test(nxt) || /^[-*]\s+/.test(nxt)) break;
+          itemLines.push(nxt);
+          i++;
+        }
+        items.push(
+          <li key={items.length}>{renderInline(itemLines.join(' '), `li${key}-${items.length}`)}</li>,
+        );
       }
       push(<ul key={key++}>{items}</ul>);
       continue;
