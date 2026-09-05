@@ -227,6 +227,13 @@ func ExtractMetadataWithBoardDB(relPath string, bdb *boarddb.DB) Metadata {
 				m.BoardUUID = match.UUID
 				m.BoardColor = match.Color
 				m.BoardColorHex = match.ColorHex
+				// boards.db files uncurated Apple numbers under a placeholder
+				// model; a model read off the path is better than that.
+				if strings.Contains(strings.ToLower(match.Model), "unsorted") {
+					if name, ok := appleDeviceModel(relPath); ok {
+						m.Model = name
+					}
+				}
 				return m
 			}
 

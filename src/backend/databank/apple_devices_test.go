@@ -48,3 +48,12 @@ func TestExtractMetadataAppleDevice(t *testing.T) {
 		t.Errorf("unexpected metadata: %+v", m)
 	}
 }
+
+func TestApplePlaceholderModelReplaced(t *testing.T) {
+	// The placeholder-model override only fires on a boards.db hit; without a
+	// DB the path model must still come through the keyword fallback.
+	m := ExtractMetadataWithBoardDB("iPhone16Pro_ProMax/iPhone16Pro_ProMax-820-03424-14 AP+BB Boardview.pcb", nil)
+	if m.Model != "iPhone 16 Pro / Pro Max" || m.BoardNumber != "820-03424" {
+		t.Errorf("unexpected metadata: %+v", m)
+	}
+}
