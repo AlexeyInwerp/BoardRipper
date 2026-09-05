@@ -1,7 +1,11 @@
 # XZZ multi-board split and unfold — review and improvement plan
 
 Date: 2026-09-05
-Status: review complete, plan proposed, nothing implemented
+Status: implemented 2026-09-05 (commit `c91f02a` + follow-up view fix):
+Phases 1–3 and the pack part of Phase 5 (folded default view, board names,
+swap sides) are in; Phase 4 (point-in-polygon membership) and the survey
+harness of Phase 0 (`scripts/xzz-survey`) remain. Section 2 is the evidence
+the implementation rests on.
 Scope: XZZ `.pcb` files that pack several physical boards (iPhone AP+BB, MB+SUB,
 four-board packs) with each board stored as two side-by-side halves.
 
@@ -104,14 +108,17 @@ half on top (exporter rule). Users comparing the two files see one of them
 
 ### 2.3 Chirality correction on packs
 
-The file-wide mirror fix fired on 8 pack files. On `iPhoneX Qualcomm PCB
-layer` it moved the L1 halves from the left to the right, i.e. it mirrored a
-file that already obeyed the exporter convention; on `iPhone8 Qualcomm PCB
-layer` (single board) the L1 half sat on the right before the fix, so that
-file may genuinely be mirrored. The detector's votes on an unfolded pack come
-from both sides at once, and iPhone boards give it few qualifying parts
-(`analyzed=0` on the iPhone 16 pack), so its verdicts on packs are not
-trustworthy without a copper cross-check.
+The file-wide mirror fix fired on 8 pack files before the change. On the
+raw pack the detector's top-side votes come from parts of both sides at
+once, so its verdict there was noise (`iPhoneX Qualcomm PCB layer` was
+flipped although its layout obeys the exporter rule). Copper cannot replace
+the detector: on all 78 trace-carrying files the design's top half sits at
+the lower coordinate, whether or not the pins wind clockwise — mirroring
+changes the winding, not where the exporter puts the halves. What the pack
+pass changed is the detector's input: it now votes on folded boards with
+real sides. Net effect on the corpus: 7 files no longer flip (the iPhone 14
+packs, 17 Air, flex cables), 4 newly flip (13 Pro AP deliveries, iPhone 5,
+8 Qualcomm "Common problems"), 33 unchanged.
 
 ### 2.4 Other observations
 

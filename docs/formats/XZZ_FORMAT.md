@@ -99,6 +99,62 @@ Sequential entries, each containing:
 └──────────────┘
 ```
 
+### Board packs — split, pair, fold
+
+A `.pcb` draws every board twice: the top side as seen from above and the
+bottom side as seen from below, each a closed loop on layer 28, placed side
+by side about 20 mil apart (up to ~280 mil on iPhone 4/5-era exports). iPhone
+deliveries pack two or three physical boards into one file ("AP+BB",
+"MB+SUB"), and older exports add cutout loops (SIM slot, camera hole — up to
+28 on the iPhone 6s), fiducials, and the odd sheet-border rectangle. The
+parser turns that into `BoardData.boards` in four steps
+(`foldBoardPack` in `xzz-parser.ts`, geometry in `xzz-boards.ts`):
+
+1. **Classify loops.** A loop nested inside a larger one is a *cutout* and
+   belongs to that board; a 4-segment rectangle enclosing two or more boards
+   is a *frame* and is dropped; a tiny empty loop, or an empty plain
+   rectangle, is a *fragment*. The rest are board-sized.
+2. **Pair halves** by score: bbox dimensions within 3 mil (or 0.2 %), no
+   overlap on the separation axis, ≥ 80 % overlap on the other, gap ≤ 300 mil
+   or 30 % of the short side. Greedy by score, so two identical boards next
+   to each other still pair with their own neighbour. An exact
+   `(w, h, segCount)` key is not used: halves differ by one segment on the
+   iPhone 5 boardview and by a notch on the XS Max.
+3. **Decide the top half.**
+   - *Copper* when the file has traces (the "PCB layer" deliveries): a
+     half's routed pins all have a trace endpoint on the first copper layer
+     or all on the last, never mixed. Decisive at ≥ 20 pins and a 4:1 margin.
+   - Otherwise the *layout rule*: the left half (lower x) is the design's
+     top; for vertically stacked pairs the upper half (higher y — the raw
+     frame is y-up). Verified against copper on 78 of 78 trace-carrying
+     files, MacBook and iPhone, including files whose pin winding says they
+     are stored mirrored — mirroring changes the winding, not where the
+     exporter puts the halves.
+   - The most-pinned part's half (the old CPU rule) is right on MacBooks and
+     a coin flip on iPhone sandwich boards (the SoC sits on the design's L1
+     on iPhone 14/16/17 and on the last layer on X/XS/11/12/13/15). It is
+     logged when it disagrees, never obeyed. The sidebar's per-board
+     "Swap sides" is the override, persisted per file.
+4. **Fold and slide.** Every bottom-half item — pins, per-part silk lines,
+   top-level silk, traces, vias, test pads — is mirrored across the pair's
+   axis; the bottom half's loops (and its cutouts) are dropped from the
+   outline; on a pack the folded boards are slid next to each other.
+   `Part.boardIndex`, `boards[i].bounds` (final coordinates),
+   `boards[i].fold.axis` (in `rawOutline` coordinates) and `boards[i].shift`
+   let the store undo it for the raw-layout view.
+
+There is **no side field** in the file. The 18 + 30 unknown header bytes of
+the part block decode to `[u32 1][i32 x][i32 y][u32 rot×10⁴][u16 1]` and a
+silkscreen label element (`[u32 style][u32 17][x][y][height][stroke][rot]
+[u8 2][u8 label-orientation]`); the pin sub-block's three pad records are
+identical copies; the JSON tail carries only names and diode readings.
+OpenBoardView hard-codes `mounting_side = Top`.
+
+The file-wide mirror correction stays with the pin-direction detector, run
+after the fold: on a folded pack its top-side votes come from one side only,
+which removed the false flip on `iPhoneX Qualcomm PCB layer` (the raw pack
+had both sides voting at once).
+
 ### Outline integrity — the butterfly fold must not eat the loop
 
 The board outline is a set of **closed** loops: the perimeter plus one loop per
