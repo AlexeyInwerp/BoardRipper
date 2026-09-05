@@ -1,6 +1,6 @@
 # BoardRipper changelog
 
-## v0.38.0 — 2026-09-05
+## v0.37.3 — 2026-09-05
 
 ### XZZ board packs
 
