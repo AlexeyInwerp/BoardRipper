@@ -157,6 +157,13 @@ func ExtractMetadata(relPath string) Metadata {
 		}
 	}
 
+	// Apple phones and tablets are named by model, never by 820-number:
+	// "iPhone16_16Plus AP+BB Boardview.pcb". See apple_devices.go.
+	if model, ok := appleDeviceModel(relPath); ok {
+		m.Manufacturer = "Apple"
+		m.Model = model
+	}
+
 	// If still no manufacturer, use parent directory name as hint
 	if m.Manufacturer == "" && dir != "." && dir != "" {
 		// Use the top-level directory as manufacturer hint
@@ -239,6 +246,12 @@ func ExtractMetadataWithBoardDB(relPath string, bdb *boarddb.DB) Metadata {
 			if kw.Model != "" {
 				m.Model = kw.Model
 			}
+			// A model read off the name is a resolution the library can
+			// group by, even though boards.db has no row for the number
+			// (iPhone 820-numbers are not in it).
+			if m.Manufacturer == "Apple" && m.Model != "" {
+				m.ResolutionStatus = "resolved"
+			}
 			return m
 		}
 	}
@@ -298,9 +311,12 @@ func ExtractMetadataWithBoardDB(relPath string, bdb *boarddb.DB) Metadata {
 
 	// Final fallback: keyword-based extraction
 	m := ExtractMetadata(relPath)
-	if m.BoardNumber == "" && m.Manufacturer == "" {
+	switch {
+	case m.Manufacturer == "Apple" && m.Model != "":
+		m.ResolutionStatus = "resolved"
+	case m.BoardNumber == "" && m.Manufacturer == "":
 		m.ResolutionStatus = "unresolved"
-	} else {
+	default:
 		m.ResolutionStatus = "pattern_matched"
 	}
 	return m

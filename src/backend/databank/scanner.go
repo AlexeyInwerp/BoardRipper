@@ -362,7 +362,7 @@ func (s *Scanner) Scan() ScanStatus {
 // fingerprint so a code update forces exactly one re-resolve pass over
 // disk-unchanged files even when boards.db itself is byte-identical.
 // Mirrors the frontend PARSER_VERSION pattern.
-const resolverLogicVersion = 1
+const resolverLogicVersion = 2 // 2: Apple phone/tablet model names (apple_devices.go)
 
 // resolveFingerprint is the value stored under config key "resolve_fingerprint".
 // It changes when boards.db changes on disk (mtime+size) or resolverLogicVersion
