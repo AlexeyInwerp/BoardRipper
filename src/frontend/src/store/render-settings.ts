@@ -710,6 +710,54 @@ export function computeMultiPinPadding(s: RenderSettings, pinRadii: number[]): n
   return s.partPadding + maxR;
 }
 
+/** Smallest centre-to-centre distance between two pins, or Infinity for
+ *  fewer than two distinct positions. Sorted-axis sweep, O(N log N): sort by
+ *  X and stop scanning a pin's neighbours once the X gap alone beats the best
+ *  distance so far. */
+export function computeMinPinSpacing(pins: { position: { x: number; y: number } }[]): number {
+  if (pins.length < 2) return Infinity;
+  const sorted = pins.slice().sort((a, b) => a.position.x - b.position.x);
+  let minDist2 = Infinity;
+  for (let i = 0; i < sorted.length; i++) {
+    for (let j = i + 1; j < sorted.length; j++) {
+      const dx = sorted[j].position.x - sorted[i].position.x;
+      if (dx * dx >= minDist2) break;
+      const dy = sorted[j].position.y - sorted[i].position.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > 0 && d2 < minDist2) minDist2 = d2;
+    }
+  }
+  return minDist2 < Infinity ? Math.sqrt(minDist2) : Infinity;
+}
+
+/** Radius a part's pins are actually drawn with when the part is dense: 45%
+ *  of the pitch, so neighbouring pins never overlap. Infinity = no clamp. */
+export function pinOverlapClamp(pins: { position: { x: number; y: number } }[]): number {
+  const spacing = computeMinPinSpacing(pins);
+  return spacing < Infinity ? spacing * 0.45 : Infinity;
+}
+
+/** Outline padding for a multi-pin part: partPadding + the largest pin radius
+ *  AS DRAWN. On a dense part (BGA, fine-pitch QFP) the drawn radius is clamped
+ *  by pinOverlapClamp; padding with the unclamped radius put the selection
+ *  rectangle, hit box, halo and net-line anchors past the drawn border by
+ *  (unclamped − clamped) — a gap that grew with the file's pin radius, changed
+ *  from part to part with the pitch, and ignored selectionPadding. board-scene
+ *  used to re-shrink only its own border for this while every
+ *  computePartRenderBounds consumer kept the wide box. */
+export function computeOutlinePadding(
+  s: RenderSettings,
+  pins: { position: { x: number; y: number }; radius?: number }[],
+): number {
+  const clamp = pinOverlapClamp(pins);
+  let maxR = s.pinMinRadius;
+  for (const pin of pins) {
+    const r = Math.min(computePinRadius(s, pin.radius ?? 0), clamp);
+    if (r > maxR) maxR = r;
+  }
+  return s.partPadding + maxR;
+}
+
 /** Inflate flat bounds for small parts (≤4 pins) and return padded outline rect */
 export interface EffectiveBounds {
   minX: number; minY: number; maxX: number; maxY: number;
@@ -764,7 +812,7 @@ export function computeEffectiveBounds(
   // Small parts (≤4 pins) have no padding — pads fill the outline exactly
   const pad = isSmallPart
     ? 0
-    : computeMultiPinPadding(s, pins.map(p => p.radius ?? 0));
+    : computeOutlinePadding(s, pins);
 
   const bw = maxX - minX;
   const bh = maxY - minY;
@@ -909,7 +957,7 @@ export function computeDiagonalOBB(
   // Pad the OBB
   const pad = pins.length <= 4
     ? 0
-    : computeMultiPinPadding(s, pins.map(p => p.radius ?? 0));
+    : computeOutlinePadding(s, pins);
   minU -= pad; maxU += pad;
   minV -= pad; maxV += pad;
 
@@ -1032,7 +1080,7 @@ function computeRotatedOBB(
     if (u < minU) minU = u; if (u > maxU) maxU = u;
     if (v < minV) minV = v; if (v > maxV) maxV = v;
   }
-  const pad = pins.length <= 4 ? 0 : computeMultiPinPadding(s, pins.map(p => p.radius ?? 0));
+  const pad = pins.length <= 4 ? 0 : computeOutlinePadding(s, pins);
   minU -= pad; maxU += pad; minV -= pad; maxV += pad;
   return [
     [cx + minU * ux + minV * vx, cy + minU * uy + minV * vy],
@@ -1118,26 +1166,54 @@ export function applyBodyShapeOverride(eb: EffectiveBounds, override: PartTypeOv
   else                 { eb.px = cx - newNarrow / 2; eb.pw = newNarrow; }
 }
 
+/** The body rectangle of an axis-aligned 2-pin part — the rect its border is
+ *  drawn with, and therefore the rect the selection, hit box and halo must
+ *  use too.
+ *
+ *  With real pad outlines (TVW / Allegro / XZZ iPhone deliveries) `eb` is
+ *  already the union of the two pads, so the body IS `eb`. Without them the
+ *  pads are synthesised as `padDepth`-deep rectangles centred on the pin
+ *  centres and the body is the pin span plus one pad depth.
+ *
+ *  Before this helper the scene drew the border from the pin span while
+ *  computePartRenderBounds widened `eb` by a pad depth on top — on a part
+ *  with real pads that is the pad-union box PLUS a pad depth, so the yellow
+ *  net-member box and the white selection sat a full pad outside the border,
+ *  by an amount that changed with the pad size and ignored selectionPadding. */
+export function computeTwoPinBodyRect(
+  eb: EffectiveBounds,
+  pins: { position: { x: number; y: number }; padBounds?: { minX: number; minY: number; maxX: number; maxY: number } }[],
+): { px: number; py: number; pw: number; ph: number } {
+  if (pins.length === 2 && pins[0].padBounds && pins[1].padBounds) {
+    return { px: eb.px, py: eb.py, pw: eb.pw, ph: eb.ph };
+  }
+  const padDepth = eb.horiz ? Math.min(eb.ph, eb.pw * 0.4) : Math.min(eb.pw, eb.ph * 0.4);
+  const p0 = pins[0].position;
+  const p1 = pins[pins.length - 1].position;
+  if (eb.horiz) {
+    const minX = Math.min(p0.x, p1.x);
+    return { px: minX - padDepth / 2, py: eb.py, pw: Math.abs(p1.x - p0.x) + padDepth, ph: eb.ph };
+  }
+  const minY = Math.min(p0.y, p1.y);
+  return { px: eb.px, py: minY - padDepth / 2, pw: eb.pw, ph: Math.abs(p1.y - p0.y) + padDepth };
+}
+
 /**
  * Compute the final rendered body rect for a part.
- * Applies bodyShape override and 2-pin pad expansion (the visible border rect).
+ * Applies bodyShape override and the 2-pin body rule (the visible border rect).
  * Use this for selection highlights and hit-testing.
  */
 export function computePartRenderBounds(
-  part: { name: string; bounds: { minX: number; minY: number; maxX: number; maxY: number }; pins: { position: { x: number; y: number }; radius?: number }[] },
+  part: { name: string; bounds: { minX: number; minY: number; maxX: number; maxY: number }; pins: { position: { x: number; y: number }; radius?: number; padBounds?: { minX: number; minY: number; maxX: number; maxY: number } }[] },
   s: RenderSettings,
 ): { px: number; py: number; pw: number; ph: number } {
   const eb = computeEffectiveBounds(part.bounds, part.pins, s);
   const isSmallPart = part.pins.length <= 4;
   applyBodyShapeOverride(eb, resolvePartTypeOverride(part.name, s), isSmallPart);
   if (part.pins.length === 2) {
-    const d = eb.horiz ? Math.min(eb.ph, eb.pw * 0.4) : Math.min(eb.pw, eb.ph * 0.4);
-    return {
-      px: eb.horiz ? eb.px - d / 2 : eb.px,
-      py: eb.horiz ? eb.py : eb.py - d / 2,
-      pw: eb.horiz ? eb.pw + d : eb.pw,
-      ph: eb.horiz ? eb.ph : eb.ph + d,
-    };
+    // Diagonal 2-pin parts get an OBB from computePartRenderPoly; callers
+    // that reach the AABB fallback want the axis-aligned body.
+    return computeTwoPinBodyRect(eb, part.pins);
   }
   return { px: eb.px, py: eb.py, pw: eb.pw, ph: eb.ph };
 }

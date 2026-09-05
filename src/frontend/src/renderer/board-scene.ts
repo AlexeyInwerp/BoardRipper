@@ -23,7 +23,8 @@ import type { Point, Pin, DiodeReading, BBox } from '../parsers/types';
 import { computeBBox } from '../parsers/types';
 import {
   computePinRadius,
-  computeMultiPinPadding,
+  computeMinPinSpacing,
+  computeTwoPinBodyRect,
   computeEffectiveBounds,
   computePartRenderPoly,
   computeTwoPinOBB,
@@ -1307,39 +1308,16 @@ export function buildBoardScene(
     // Uses sorted-axis approach: O(N log N) instead of O(N²) for finding
     // minimum pin-to-pin distance. Sort by X, then only check neighbors
     // whose X-gap is smaller than the current best distance.
+    // The border padding already uses the clamped radius — computeEffective-
+    // Bounds pads with computeOutlinePadding, the same rule the selection
+    // rectangle, hit box and halo go through, so all of them share one box.
     let maxNonOverlapRadius = Infinity;
-    let minPinSpacing = Infinity; // sqrt of minDist2, used for row grouping below
+    let minPinSpacing = Infinity; // used for row grouping below
     if (isMultiPin) {
-      const sorted = part.pins.slice().sort((a, b) => a.position.x - b.position.x);
-      let minDist2 = Infinity;
-      for (let i = 0; i < sorted.length; i++) {
-        for (let j = i + 1; j < sorted.length; j++) {
-          const dx = sorted[j].position.x - sorted[i].position.x;
-          if (dx * dx >= minDist2) break; // sorted by X — all further j are worse
-          const dy = sorted[j].position.y - sorted[i].position.y;
-          const d2 = dx * dx + dy * dy;
-          if (d2 > 0 && d2 < minDist2) minDist2 = d2;
-        }
-      }
-      if (minDist2 < Infinity) {
-        minPinSpacing = Math.sqrt(minDist2);
+      minPinSpacing = computeMinPinSpacing(part.pins);
+      if (minPinSpacing < Infinity) {
         maxNonOverlapRadius = minPinSpacing * 0.45;
         pinRadiusClamp.set(pi, maxNonOverlapRadius);
-        // Shrink eb bounds if overlap clamp reduces effective pin radius.
-        // Original padding used unclamped maxR; re-pad with clamped maxR so
-        // border outline matches drawn pin extents.
-        let maxDrawnR = s.pinMinRadius;
-        for (const pin of part.pins) {
-          const r = Math.min(computePinRadius(s, pin.radius), maxNonOverlapRadius);
-          if (r > maxDrawnR) maxDrawnR = r;
-        }
-        const clampedPad = s.partPadding + maxDrawnR;
-        const origPad = computeMultiPinPadding(s, part.pins.map(p => p.radius ?? 0));
-        const shrink = origPad - clampedPad;
-        if (shrink > 0) {
-          eb.px += shrink; eb.py += shrink;
-          eb.pw -= shrink * 2; eb.ph -= shrink * 2;
-        }
       }
     }
 
@@ -1792,29 +1770,13 @@ export function buildBoardScene(
         borderRect = { x: eb.px, y: eb.py, w: eb.pw, h: eb.ph };
         fillX = eb.px; fillY = eb.py; fillW = eb.pw; fillH = eb.ph;
       } else if (isTwoPinPart) {
-        // Expand border to encompass pads centered on pin vertices.
-        // Use pin positions directly (not eb bounds) so the outline matches
-        // the pads exactly — eb bounds may be inflated by parser bboxes.
-        const p0 = part.pins[0].position;
-        const p1 = part.pins[part.pins.length - 1].position;
-        let bx: number, by: number, bw: number, bh: number;
-        if (eb.horiz) {
-          const pinMinX = Math.min(p0.x, p1.x);
-          const pinSpanX = Math.abs(p1.x - p0.x);
-          bx = pinMinX - padDepth / 2;
-          by = eb.py;
-          bw = pinSpanX + padDepth;
-          bh = eb.ph;
-        } else {
-          const pinMinY = Math.min(p0.y, p1.y);
-          const pinSpanY = Math.abs(p1.y - p0.y);
-          bx = eb.px;
-          by = pinMinY - padDepth / 2;
-          bw = eb.pw;
-          bh = pinSpanY + padDepth;
-        }
-        borderRect = { x: bx, y: by, w: bw, h: bh };
-        fillX = bx; fillY = by; fillW = bw; fillH = bh;
+        // The body rect: the real pad union when the parser gave pad
+        // outlines, else the pin span plus one synthesised pad depth. Shared
+        // with computePartRenderBounds so selection / hit box / halo draw
+        // the same rectangle as this border.
+        const body = computeTwoPinBodyRect(eb, part.pins);
+        borderRect = { x: body.px, y: body.py, w: body.pw, h: body.ph };
+        fillX = body.px; fillY = body.py; fillW = body.pw; fillH = body.ph;
       } else {
         // For diagonal 2-pin parts, compute a simple OBB along the pin axis.
         // For multi-pin parts, defer to computePartRenderPoly — it honours
