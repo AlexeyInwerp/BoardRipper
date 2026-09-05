@@ -1,5 +1,59 @@
 # BoardRipper changelog
 
+## v0.38.0 — 2026-09-05
+
+### XZZ board packs
+
+- **Multi-board XZZ files open properly.** XZZ draws every board twice, top
+  and bottom side by side, and iPhone files pack two or three boards into one
+  file. The parser now finds the boards, pairs the halves and folds each
+  board, including pads, silkscreen, traces, vias and test pads. Before, only
+  parts, traces and the outline were folded when you picked a board, and a
+  notch or a cutout in the outline could break the pairing (iPhone 5, XS Max,
+  6/6s/8) or fold a file across two physical boards (XR, iPhone SE).
+- **The file opens in its own layout**, as XZZ's viewer shows it, with both
+  sides visible. The folded view is one click away in the board panel, and
+  that is where "Swap sides" acts.
+- **Which half is the top** is read from the copper layers when the file has
+  traces, otherwise from the exporter's layout rule. Checked on the whole
+  corpus. The old rule (the part with the most pins is on top) was a coin flip
+  on iPhone boards and is no longer used.
+- Swapping sides rebuilds the scene, and selecting a board fits the whole
+  board.
+
+### Library
+
+- **iPhone and iPad boards are recognised by name.** These files are named by
+  model, not by 820-number, and 124 of the 213 iPhone files in the corpus
+  landed in "Unrecognized". The scanner now reads the model from the folder or
+  the file name and groups the files under it. A model from the path beats the
+  "unsorted-apple" placeholder in the board database, and an 820-number in the
+  name no longer reads as an iPhone generation. Already-scanned files are
+  re-resolved on the next scan.
+
+### Selection
+
+- **The selection box matches the part outline.** On boards with real pad
+  outlines (XZZ iPhone files, TVW, Allegro) the yellow box around a part on
+  the highlighted net sat a full pad outside the part border, and the gap did
+  not follow the selection padding setting. Dense parts (BGA, fine-pitch QFN)
+  had a smaller version of the same gap. Border, selection, hit box and halo
+  now use one rule.
+
+### Start page
+
+- The HDR selection outline card sits under Interface scale and matches it.
+  It is always shown, with the detection result on the right and a small
+  mockup of the outline with and without HDR. The "Your monitor supports HDR"
+  prompt is gone.
+- Getting started rewritten and shortened. The format list was out of date,
+  and wrapped list items and bold code rendered broken.
+
+### Landing page
+
+- The two editions (Docker / Desktop and Web / HTML) are listed above the
+  menu, with the latest version line.
+
 ## v0.37.2 — 2026-09-04
 
 A release for the browser version and for tablets. The browser build at
