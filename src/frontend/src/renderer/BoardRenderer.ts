@@ -631,7 +631,8 @@ export class BoardRenderer {
     const raw = boardStore.rawBoard ?? _board;
     let ref = this.boardRefs.get(raw);
     if (ref == null) { ref = ++this.boardRefCounter; this.boardRefs.set(raw, ref); }
-    return `${ref}|${boardStore.foldMode}|${boardStore.selectedBoardIndex ?? 'all'}`;
+    const swaps = [...boardStore.swappedBoards].sort((a, b) => a - b).join(',');
+    return `${ref}|${boardStore.foldMode}|${boardStore.selectedBoardIndex ?? 'all'}|${swaps}`;
   }
   private activeScene: BoardScene | null = null;
   /** Snapshot of settings at the last onSettingsUpdate — enables a cheap diff
@@ -3179,7 +3180,12 @@ export class BoardRenderer {
 
       // Handle focus requests (animated zoom to part/net + blink selection)
       const focus = boardStore.consumeFocusRequest();
-      if (focus) {
+      if (focus && focus.fit) {
+        // A board-selection / fold-mode change: frame the whole derived board
+        // the way the initial load does, rotation included.
+        if (this.board) this.fitToBoard(this.board);
+        this.needsRender = true;
+      } else if (focus) {
         const focusPart = focus.partIndex != null ? this.board?.parts[focus.partIndex] : undefined;
         const focusRoot = focusPart ? this.rootForPart(focusPart) : undefined;
         // Same nav settings apply to both part and net focus. Nets get a

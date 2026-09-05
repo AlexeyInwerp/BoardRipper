@@ -177,6 +177,8 @@ export interface PreviewPulse {
 }
 
 export interface FocusRequest {
+  /** Frame the whole derived board (fit-to-view) instead of zooming to `bounds`. */
+  fit?: boolean;
   partIndex: number | null;
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
   /** Blink the selection once the camera arrives. Default true. Preview
@@ -1746,7 +1748,7 @@ class BoardStore extends Emitter {
   private requestFitDerivedBoard(tab: BoardTab): void {
     const derived = ensureDerivedBoard(tab);
     if (!derived) return;
-    this._focusRequest = { partIndex: null, bounds: { ...derived.bounds } };
+    this._focusRequest = { partIndex: null, bounds: { ...derived.bounds }, fit: true };
   }
 
   // ── Cache control actions ────────────────────────────────────────────
