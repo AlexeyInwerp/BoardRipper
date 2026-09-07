@@ -345,7 +345,7 @@ export class BoardRenderer {
   private viewport!: Viewport;
   private selectionGfx!: Graphics;
   /** The primary (clicked) part's outline lives in a CHILD of selectionGfx /
-   *  butterflySelectionGfx, so the zoom-settle repaint can redraw just this
+   *  butterflySelectionGfx, so the per-frame zoom redraw touches just this
    *  one shape. Repainting the parent — which on a lit GND holds ~7 000
    *  member rings — makes PixiJS re-triangulate all of it on the next frame:
    *  ~1 s per zoom notch under SwiftShader, a visible hitch on real hardware
@@ -868,6 +868,19 @@ export class BoardRenderer {
     // Also skip if WebGL context was lost — PixiJS internals are corrupted
     if (this.needsRender && !this.contextLost) {
       this.needsRender = false;
+      // The primary selection outline is zoom-dependent (screen-constant
+      // stroke, minimum on-screen size). It is ONE polygon in its own child
+      // Graphics, so it is simply redrawn on any frame whose zoom differs from
+      // the last paint — no settle timer, no threshold, no lag where a
+      // world-unit stroke thickens until a debounce catches up. The rest of
+      // the scene is static world geometry and never rebuilds on zoom; this
+      // is the one shape whose world geometry legitimately follows the zoom.
+      if (boardStore.selection.partIndex !== null) {
+        const k = this.viewScale();
+        if (Math.abs(k - this.lastSelectionPaintScale) > this.lastSelectionPaintScale * 0.005) {
+          this.renderSelectionPrimary();
+        }
+      }
       t0 = perf ? performance.now() : 0;
       try {
         this.app.render();
@@ -2033,11 +2046,8 @@ export class BoardRenderer {
     return { pad: padWorld, stroke: strokeWorld };
   }
 
-  /** Zoom at which the selection was last painted — the settle timer repaints
-   *  only when the zoom has moved enough (≈13 %) for the screen-constant
-   *  stroke or the minimum-size padding to look different. Repainting on every
-   *  settle made a lit GND net (thousands of rings) repaint on every wheel
-   *  notch — the lag reported on 2026-09-05. */
+  /** Zoom at which the primary outline was last painted; onTick redraws it
+   *  on any frame whose zoom differs (see the needsRender block). */
   private lastSelectionPaintScale = 0;
 
   private syncHdrOverlay(overlay: HdrSelectionOutline, scene: BoardScene): void {
@@ -2094,9 +2104,9 @@ export class BoardRenderer {
       wt.b * wx + wt.d * wy + wt.ty,
     ] as ScreenPoint);
 
-    // Match the SDR primary-selection stroke: selectionWidth is screen px
-    // now, so the HDR line is simply that × 1.7, floored at 1 px.
-    const thickness = Math.max(1, s.selectionWidth * 1.7);
+    // Match the SDR primary-selection stroke: selectionWidth is screen px,
+    // so the HDR line is simply that × 1.25, floored at 1 px.
+    const thickness = Math.max(1, s.selectionWidth * 1.25);
 
     overlay.showPolygon(pts, thickness, rungForIntensity(s.hdrGlowIntensity));
   }
@@ -2189,16 +2199,6 @@ export class BoardRenderer {
       if (this.textHiddenForZoom) {
         this.textHiddenForZoom = false;
         this.applyLabelVisibility();
-      }
-      // The primary selection outline is zoom-dependent (screen-constant
-      // stroke, minimum on-screen size): redraw just that shape at the settled
-      // zoom. Member boxes and rings keep the stroke of their last full paint
-      // until the selection changes — rebuilding their geometry is what made
-      // zooming with a lit net lag.
-      if (boardStore.selection.partIndex !== null
-          && Math.abs(Math.log(this.viewScale() / (this.lastSelectionPaintScale || this.viewScale()))) > 0.12) {
-        this.renderSelectionPrimary();
-        this.needsRender = true;
       }
       if (this.netLinesHiddenForZoom) {
         this.netLinesHiddenForZoom = false;
@@ -4109,11 +4109,12 @@ export class BoardRenderer {
     this.netLabelPoolIdx++;
   }
 
-  /** Draw (only) the primary selection outline into its child Graphics. Cheap
-   *  enough to run on every zoom settle — the outline's padding and stroke are
-   *  zoom-dependent (selectionOutlineWorld) — without touching the member
-   *  boxes and rings in the parent, whose geometry rebuild is the expensive
-   *  part. Called from renderSelection too, so there is one drawing of it. */
+  /** Draw (only) the primary selection outline into its child Graphics. One
+   *  polygon — cheap enough to redraw on every frame whose zoom changed (the
+   *  outline's padding and stroke are zoom-dependent, selectionOutlineWorld)
+   *  without touching the member boxes and rings in the parent, whose
+   *  geometry rebuild is the expensive part. Called from renderSelection too,
+   *  so there is one drawing of it. */
   private renderSelectionPrimary(): void {
     this.primarySelGfx?.clear();
     this.butterflyPrimarySelGfx?.clear();
@@ -4141,7 +4142,9 @@ export class BoardRenderer {
     const blinkRed = this.selectionBlinkPhase > 0 && this.selectionBlinkPhase % 2 === 1;
     const selColor = blinkRed ? 0xcc2222 : PRIMARY_SEL;
     gfx.fill({ color: PRIMARY_SEL, alpha: Math.min(0.22, s.selectionFillAlpha * 3 + 0.08) });
-    gfx.stroke({ width: stroke * 1.7, color: selColor, alpha: 1.0 });
+    // ×1.25 over the setting (default 2 px → 2.5 px): enough primacy over
+    // the member boxes, without the band the old ×1.7 world-mil stroke became.
+    gfx.stroke({ width: stroke * 1.25, color: selColor, alpha: 1.0 });
   }
 
   private renderSelection() {
