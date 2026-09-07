@@ -40,7 +40,7 @@ func multipartUpload(t *testing.T, filename string, content []byte) *http.Reques
 func TestUpload_SavesBoardToIncomingAndIndexes(t *testing.T) {
 	root := t.TempDir()
 	var indexed []string
-	h := NewFileHandler(root, func() string { return root }, nil, func(relPath string) (*databank.FileRecord, error) {
+	h := NewFileHandler(root, func() string { return root }, nil, func(relPath string, _ []byte) (*databank.FileRecord, error) {
 		indexed = append(indexed, relPath)
 		return &databank.FileRecord{ID: 99, FileType: "board", Path: relPath}, nil
 	})
@@ -234,5 +234,111 @@ func TestGetByPath_DownloadQueryFlipsToAttachment(t *testing.T) {
 	want := `attachment; filename="a.brd"`
 	if got != want {
 		t.Errorf("Content-Disposition: got %q, want %q", got, want)
+	}
+}
+
+// A drop whose bytes already exist in the library (any name, any folder) must
+// not be written: the response points at the existing record instead.
+func TestUpload_IdenticalContentIsNotCopied(t *testing.T) {
+	root := t.TempDir()
+	var indexed []string
+	h := NewFileHandler(root, func() string { return root }, nil, func(relPath string, _ []byte) (*databank.FileRecord, error) {
+		indexed = append(indexed, relPath)
+		return &databank.FileRecord{ID: 7, FileType: "pdf", Path: relPath}, nil
+	})
+	h.SetDedupFunc(func(absPath string, size int64) (*databank.FileRecord, []byte, error) {
+		return &databank.FileRecord{ID: 42, FileType: "pdf", Path: "Apple/820-1/orig.pdf", Filename: "orig.pdf"}, []byte{9}, nil
+	})
+	var submitted []int64
+	h.SetPdfSubmitHook(func(id int64) { submitted = append(submitted, id) })
+
+	w := httptest.NewRecorder()
+	h.Upload(w, multipartUpload(t, "copy.pdf", []byte("%PDF-1.4 same bytes")))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["status"] != "exists" || resp["id"] != float64(42) || resp["path"] != "Apple/820-1/orig.pdf" {
+		t.Fatalf("unexpected response: %v", resp)
+	}
+	if _, err := os.Stat(filepath.Join(root, "incoming", "copy.pdf")); !os.IsNotExist(err) {
+		t.Fatalf("duplicate must not be written to incoming/, stat err=%v", err)
+	}
+	if len(indexed) != 0 {
+		t.Fatalf("duplicate must not be indexed as a new row, got %v", indexed)
+	}
+	if len(submitted) != 1 || submitted[0] != 42 {
+		t.Fatalf("expected the existing pdf to be (re)submitted, got %v", submitted)
+	}
+	// No temp file left behind.
+	entries, _ := os.ReadDir(filepath.Join(root, "incoming"))
+	if len(entries) != 0 {
+		t.Fatalf("incoming/ should be empty, got %d entries", len(entries))
+	}
+}
+
+// Same name at the destination but different bytes: never overwrite — save
+// under a "(2)" sibling and say so.
+func TestUpload_NameCollisionIsRenamedNotOverwritten(t *testing.T) {
+	root := t.TempDir()
+	var got []string
+	h := NewFileHandler(root, func() string { return root }, nil, func(relPath string, _ []byte) (*databank.FileRecord, error) {
+		got = append(got, relPath)
+		return &databank.FileRecord{ID: int64(len(got)), FileType: "board", Path: relPath}, nil
+	})
+	// No dedup fn: the on-disk comparison alone must protect the original.
+
+	h.Upload(httptest.NewRecorder(), multipartUpload(t, "820-1.brd", []byte("original bytes")))
+	w := httptest.NewRecorder()
+	h.Upload(w, multipartUpload(t, "820-1.brd", []byte("different bytes!")))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["status"] != "renamed" || resp["name"] != "820-1 (2).brd" || resp["path"] != "incoming/820-1 (2).brd" {
+		t.Fatalf("unexpected response: %v", resp)
+	}
+	orig, _ := os.ReadFile(filepath.Join(root, "incoming", "820-1.brd"))
+	if string(orig) != "original bytes" {
+		t.Fatalf("original was overwritten: %q", orig)
+	}
+	if _, err := os.Stat(filepath.Join(root, "incoming", "820-1 (2).brd")); err != nil {
+		t.Fatalf("renamed copy missing: %v", err)
+	}
+	if len(got) != 2 || got[1] != "incoming/820-1 (2).brd" {
+		t.Fatalf("expected index of renamed path, got %v", got)
+	}
+}
+
+// Same name AND same bytes already on disk (e.g. copied in by hand before a
+// scan): nothing is written and the existing path is (re)indexed.
+func TestUpload_SameBytesOnDiskIsReused(t *testing.T) {
+	root := t.TempDir()
+	var got []string
+	h := NewFileHandler(root, func() string { return root }, nil, func(relPath string, _ []byte) (*databank.FileRecord, error) {
+		got = append(got, relPath)
+		return &databank.FileRecord{ID: 5, FileType: "board", Path: relPath}, nil
+	})
+	if err := os.MkdirAll(filepath.Join(root, "incoming"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "incoming", "820-1.brd"), []byte("the very same bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	h.Upload(w, multipartUpload(t, "820-1.brd", []byte("the very same bytes")))
+	var resp map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["status"] != "exists" || resp["id"] != float64(5) || resp["path"] != "incoming/820-1.brd" {
+		t.Fatalf("unexpected response: %v", resp)
+	}
+	entries, _ := os.ReadDir(filepath.Join(root, "incoming"))
+	if len(entries) != 1 {
+		t.Fatalf("expected exactly the original file, got %d entries", len(entries))
+	}
+	if len(got) != 1 || got[0] != "incoming/820-1.brd" {
+		t.Fatalf("expected reindex of the existing path, got %v", got)
 	}
 }

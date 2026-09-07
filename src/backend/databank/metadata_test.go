@@ -63,3 +63,18 @@ func TestIsLikelyJunkPdfName(t *testing.T) {
 		}
 	}
 }
+
+// The drop-to-library staging folder must never be taken as a brand: a PDF
+// with no recognisable name under incoming/ stays unresolved (→ routed to
+// incoming/uncategorized/), while a real top-level brand folder still counts.
+func TestExtractMetadata_IncomingFolderIsNotABrand(t *testing.T) {
+	if m := ExtractMetadata("incoming/schematic.pdf"); m.Manufacturer != "" {
+		t.Fatalf("incoming/ must not resolve to a brand, got %q", m.Manufacturer)
+	}
+	if m := ExtractMetadata("incoming/uncategorized/schematic.pdf"); m.Manufacturer != "" {
+		t.Fatalf("incoming/uncategorized/ must not resolve to a brand, got %q", m.Manufacturer)
+	}
+	if m := ExtractMetadata("Framework/laptop13.pdf"); m.Manufacturer != "Framework" {
+		t.Fatalf("top-level brand folder should still hint, got %q", m.Manufacturer)
+	}
+}

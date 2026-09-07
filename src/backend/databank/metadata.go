@@ -166,9 +166,12 @@ func ExtractMetadata(relPath string) Metadata {
 
 	// If still no manufacturer, use parent directory name as hint
 	if m.Manufacturer == "" && dir != "." && dir != "" {
-		// Use the top-level directory as manufacturer hint
+		// Use the top-level directory as manufacturer hint — unless it is
+		// the drop-to-library staging folder: "incoming" is ours, not a
+		// brand, and taking it as one routed every unrecognised drop into
+		// incoming/incoming/ under a brand bucket literally named "incoming".
 		parts := strings.SplitN(dir, string(filepath.Separator), 2)
-		if parts[0] != "" {
+		if parts[0] != "" && !strings.EqualFold(parts[0], "incoming") {
 			m.Manufacturer = parts[0]
 		}
 	}

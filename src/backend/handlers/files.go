@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -23,7 +25,17 @@ type ScanRootFunc func() string
 // without a full rescan, and returns the resulting file record (so the
 // upload response can hand the caller a real databank id). May be nil
 // (indexing is then skipped).
-type IndexFileFunc func(relPath string) (*databank.FileRecord, error)
+//
+// contentHash is the ingest-time dedup key from DedupFunc (nil for a
+// unique-size file) and is stored on the new row.
+type IndexFileFunc func(relPath string, contentHash []byte) (*databank.FileRecord, error)
+
+// DedupFunc answers "does the library already hold these exact bytes?" for
+// a file that has been received into absPath but not yet placed. It returns
+// the matching stored record (nil when none), plus the content key to store
+// on the new row when the size collided with something (nil when the size
+// is unique and the file was never hashed). May be nil (no dedup).
+type DedupFunc func(absPath string, size int64) (*databank.FileRecord, []byte, error)
 
 // ExtractMetadataFunc runs the resolver / pattern-matcher used by the
 // scanner so the upload handler can pre-route the file into a brand /
@@ -53,6 +65,8 @@ type FileHandler struct {
 	scanRootFn ScanRootFunc        // returns the active scan root (may differ from dataDir if library_dir is set)
 	extractFn  ExtractMetadataFunc // resolves brand/model so we can pick a subfolder (may be nil → flat incoming/)
 	indexFn    IndexFileFunc       // indexes an uploaded file into the databank (may be nil)
+	dedupFn    DedupFunc           // finds an existing byte-identical library file (may be nil)
+	pdfSubmit  func(fileID int64)  // hands a freshly ingested PDF to the text indexer (may be nil)
 }
 
 type FileInfo struct {
@@ -63,6 +77,52 @@ type FileInfo struct {
 
 func NewFileHandler(dataDir string, scanRootFn ScanRootFunc, extractFn ExtractMetadataFunc, indexFn IndexFileFunc) *FileHandler {
 	return &FileHandler{dataDir: dataDir, scanRootFn: scanRootFn, extractFn: extractFn, indexFn: indexFn}
+}
+
+// SetDedupFunc installs the ingest-time duplicate check. Without it every
+// upload is written, even when the library already holds the same bytes.
+func (h *FileHandler) SetDedupFunc(fn DedupFunc) { h.dedupFn = fn }
+
+// SetPdfSubmitHook installs the callback that pushes an ingested PDF's id to
+// the text indexer so it becomes searchable without waiting for a scan.
+func (h *FileHandler) SetPdfSubmitHook(fn func(fileID int64)) { h.pdfSubmit = fn }
+
+// freeDestName returns destPath if nothing is there, else the first free
+// "stem (n).ext" sibling. Guards against silently overwriting a library file
+// that happens to share a name with the drop but not its bytes.
+func freeDestName(destPath string) (string, error) {
+	if _, err := os.Lstat(destPath); os.IsNotExist(err) {
+		return destPath, nil
+	}
+	ext := filepath.Ext(destPath)
+	stem := strings.TrimSuffix(destPath, ext)
+	for n := 2; n < 1000; n++ {
+		cand := fmt.Sprintf("%s (%d)%s", stem, n, ext)
+		if _, err := os.Lstat(cand); os.IsNotExist(err) {
+			return cand, nil
+		}
+	}
+	return "", fmt.Errorf("no free name for %s", filepath.Base(destPath))
+}
+
+// sameBytesOnDisk reports whether the file at other has exactly the bytes of
+// the upload at tmpPath (already known to be `size` bytes). key is the
+// upload's content key if already computed, else it is computed here.
+func sameBytesOnDisk(tmpPath, other string, size int64, key []byte) (bool, []byte) {
+	st, err := os.Stat(other)
+	if err != nil || st.IsDir() || st.Size() != size {
+		return false, key
+	}
+	if key == nil {
+		if key, err = databank.ContentKey(tmpPath, size); err != nil {
+			return false, nil
+		}
+	}
+	oh, err := databank.ContentKey(other, size)
+	if err != nil {
+		return false, key
+	}
+	return bytes.Equal(oh, key), key
 }
 
 // sanitizePathPart strips characters that would break the on-disk layout
@@ -179,14 +239,19 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	destPath := filepath.Join(incomingDir, safeName)
-	tmpPath := destPath + ".part"
-	dst, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	// Receive into a private temp file first. The upload is compared against
+	// the library BEFORE it gets a final name, so a duplicate never touches
+	// the tree, and a same-name collision is resolved without overwriting.
+	// A unique temp name (not "<dest>.part") keeps two concurrent drops of
+	// the same filename from clobbering each other's partial bytes.
+	dst, err := os.CreateTemp(incomingDir, "."+safeName+".*.part")
 	if err != nil {
 		http.Error(w, "Failed to save file: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if _, err := io.Copy(dst, file); err != nil {
+	tmpPath := dst.Name()
+	size, err := io.Copy(dst, file)
+	if err != nil {
 		dst.Close()
 		os.Remove(tmpPath)
 		http.Error(w, "Failed to write file: "+err.Error(), http.StatusInternalServerError)
@@ -199,31 +264,96 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dst.Close()
+	if err := os.Chmod(tmpPath, 0o644); err != nil {
+		log.Printf("Upload: chmod %s: %v", tmpPath, err)
+	}
+
+	// Content dedup against the databank: byte-identical to a stored file
+	// (any name, any folder) → keep the original, drop the upload, answer
+	// with the original's record so the client tags its open tab with it.
+	var key []byte
+	if h.dedupFn != nil {
+		match, k, err := h.dedupFn(tmpPath, size)
+		if err != nil {
+			log.Printf("Upload: dedup probe for %s failed: %v (saving anyway)", safeName, err)
+		}
+		key = k
+		if match != nil {
+			os.Remove(tmpPath)
+			log.Printf("Upload: %s is byte-identical to %s (id=%d) — not saved", safeName, match.Path, match.ID)
+			if match.FileType == "pdf" && h.pdfSubmit != nil {
+				h.pdfSubmit(match.ID) // no-op if already indexed
+			}
+			h.writeUploadResponse(w, "exists", match, match.Path)
+			return
+		}
+	}
+
+	// Name collision at the destination. The bytes on disk may still equal
+	// the upload when the library has a copy the databank has not scanned
+	// yet — treat that as "exists" too. Otherwise pick a free sibling name;
+	// silently replacing a library file is never what a drop means.
+	destPath := filepath.Join(incomingDir, safeName)
+	status := "ok"
+	if same, k := sameBytesOnDisk(tmpPath, destPath, size, key); same {
+		key = k
+		os.Remove(tmpPath)
+		relPath := filepath.ToSlash(filepath.Join(incomingSubdir, subDir, safeName))
+		var rec *databank.FileRecord
+		if h.indexFn != nil {
+			if rec, err = h.indexFn(relPath, key); err != nil {
+				log.Printf("Upload: %s already on disk but indexing failed: %v", relPath, err)
+			}
+		}
+		h.writeUploadResponse(w, "exists", rec, relPath)
+		return
+	} else {
+		key = k
+	}
+	if free, err := freeDestName(destPath); err != nil {
+		os.Remove(tmpPath)
+		http.Error(w, "Failed to pick a name: "+err.Error(), http.StatusInternalServerError)
+		return
+	} else if free != destPath {
+		destPath = free
+		status = "renamed"
+	}
 	if err := os.Rename(tmpPath, destPath); err != nil {
 		os.Remove(tmpPath)
 		http.Error(w, "Failed to finalize file: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	relPath := filepath.ToSlash(filepath.Join(incomingSubdir, subDir, safeName))
-	resp := map[string]any{
-		"name":   safeName,
-		"path":   relPath,
-		"status": "ok",
-	}
+	relPath := filepath.ToSlash(filepath.Join(incomingSubdir, subDir, filepath.Base(destPath)))
+	var rec *databank.FileRecord
 	if h.indexFn != nil {
 		// Return the ingested databank record so the client can tag the open
 		// board/PDF with a real file id immediately (no name+size fallback).
-		rec, err := h.indexFn(relPath)
-		if err != nil {
+		if rec, err = h.indexFn(relPath, key); err != nil {
 			// File is saved; indexing failure is non-fatal (next scan picks it up).
 			log.Printf("Upload: saved %s but indexing failed: %v", relPath, err)
-		} else if rec != nil {
-			resp["id"] = rec.ID
-			resp["file_type"] = rec.FileType
+		} else if rec != nil && rec.FileType == "pdf" && h.pdfSubmit != nil {
+			h.pdfSubmit(rec.ID)
 		}
 	}
+	h.writeUploadResponse(w, status, rec, relPath)
+}
 
+// writeUploadResponse emits the upload result. status is "ok" (saved under
+// its own name), "renamed" (saved under a "(n)" sibling name because a
+// different file already had that name), or "exists" (nothing written — the
+// library already holds these bytes; path/id point at that file). id and
+// file_type are present whenever the databank produced a record.
+func (h *FileHandler) writeUploadResponse(w http.ResponseWriter, status string, rec *databank.FileRecord, relPath string) {
+	resp := map[string]any{
+		"name":   path.Base(relPath),
+		"path":   relPath,
+		"status": status,
+	}
+	if rec != nil {
+		resp["id"] = rec.ID
+		resp["file_type"] = rec.FileType
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }

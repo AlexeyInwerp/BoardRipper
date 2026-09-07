@@ -30,6 +30,10 @@ type Source interface {
 	// CanonicalFor returns the canonical file_id for this file's content group
 	// and true, or (0,false) if the file has no content hash (singleton).
 	CanonicalFor(fileID int64) (int64, bool, error)
+	// Lookup resolves a single file id to its PdfFile, or ok=false when the id
+	// is unknown or not a PDF. Lets Submit/Enqueue reach rows created after a
+	// sweep enumerated its work list (e.g. a drop-to-library upload).
+	Lookup(fileID int64) (PdfFile, bool, error)
 }
 
 // Extractor is satisfied by Engine (real pdfium WASM) and by fakes in tests.
@@ -89,6 +93,38 @@ func (ix *Indexer) Enqueue(fileID int64) {
 	case ix.priority <- fileID:
 	default:
 	}
+}
+
+// Submit indexes one file id as soon as possible, regardless of sweep state.
+// If a sweep is running the id goes down the priority lane and the worker
+// resolves it via Source.Lookup (so ids enumerated after the sweep started are
+// still honoured); otherwise a one-file sweep is started. Unknown ids and
+// already-indexed files are no-ops (Claim only wins on pending/failed/absent
+// rows). Used by the upload path so a dropped PDF never waits for the next
+// scheduled scan.
+func (ix *Indexer) Submit(fileID int64) error {
+	f, ok, err := ix.src.Lookup(fileID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	ix.mu.Lock()
+	running := ix.running
+	ix.mu.Unlock()
+	if running {
+		ix.Enqueue(fileID)
+		return nil
+	}
+	err = ix.startScoped(func() ([]PdfFile, error) { return []PdfFile{f}, nil })
+	if errors.Is(err, ErrAlreadyRunning) {
+		// Lost the race with a sweep that started in between — the lane
+		// still reaches it.
+		ix.Enqueue(fileID)
+		return nil
+	}
+	return err
 }
 
 // Progress returns a point-in-time snapshot (safe to call from any goroutine).
@@ -266,6 +302,21 @@ func (ix *Indexer) sweep(ctx context.Context, files []PdfFile) {
 	for _, f := range files {
 		byID[f.ID] = f
 	}
+	// Priority ids normally come from this sweep's own list; anything else
+	// (a row inserted after enumeration, or a scoped sweep that never listed
+	// it) is resolved against the Source so Submit/PriorityIndex still work
+	// mid-sweep instead of being dropped on the floor.
+	resolve := func(id int64) (PdfFile, bool) {
+		if f, ok := byID[id]; ok {
+			return f, true
+		}
+		f, ok, err := ix.src.Lookup(id)
+		if err != nil {
+			log.Printf("pdfindex: lookup file_id=%d: %v", id, err)
+			return PdfFile{}, false
+		}
+		return f, ok
+	}
 
 	var wg sync.WaitGroup
 	for i := 0; i < ix.workers; i++ {
@@ -278,7 +329,7 @@ func (ix *Indexer) sweep(ctx context.Context, files []PdfFile) {
 				case <-ctx.Done():
 					return
 				case id := <-ix.priority:
-					if f, ok := byID[id]; ok {
+					if f, ok := resolve(id); ok {
 						ix.process(f)
 					}
 					continue
@@ -289,7 +340,7 @@ func (ix *Indexer) sweep(ctx context.Context, files []PdfFile) {
 				case <-ctx.Done():
 					return
 				case id := <-ix.priority:
-					if f, ok := byID[id]; ok {
+					if f, ok := resolve(id); ok {
 						ix.process(f)
 					}
 				case f, ok := <-bulk:

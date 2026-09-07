@@ -590,10 +590,32 @@ class PdfStore extends Emitter {
   pageOf(fileName: string): number | null { return this._documents.get(fileName)?.currentPage ?? null; }
   pageCountOf(fileName: string): number | null { return this._documents.get(fileName)?.pageCount ?? null; }
 
-  /** Tag an open PDF doc with its databank file id (after a drop is ingested). */
+  /** Tag an open PDF doc with its databank file id (after a drop is ingested).
+   *  A drop is opened before the upload returns, so both fast-path index
+   *  sites in `_extractText` already ran with no id and skipped; tagging is
+   *  therefore also the moment to (re)arm the fast path. Extraction may
+   *  still be running — `_indexWhenTextReady` waits for it. */
   setDocFileId(fileName: string, fileId: number): void {
     const d = this._documents.get(fileName);
-    if (d && d.fileId !== fileId) { d.fileId = fileId; this.notify(); }
+    if (!d || d.fileId === fileId) return;
+    d.fileId = fileId;
+    this.notify();
+    void this._indexWhenTextReady(d);
+  }
+
+  /** Upload the doc's pdf.js-extracted text to the backend index once every
+   *  page is in (`ensureIndexed` is idempotent per id and a no-op when the
+   *  backend already has the file). Generous cap: a 500-page schematic can
+   *  take a while on a slow machine; on timeout the backend's own pdfium
+   *  pass — queued by the upload — still covers the file. */
+  private async _indexWhenTextReady(d: PdfDocument): Promise<void> {
+    if (d.fileId == null) return;
+    const ok = await this.whenTextReady(d.fileName, Number.MAX_SAFE_INTEGER, 180_000);
+    const doc = this._documents.get(d.fileName);
+    if (!ok || !doc || doc.fileId == null || doc.textPages.length !== doc.pageCount) return;
+    void ensureIndexed(doc.fileId, () =>
+      doc.textPages.map((page) => page.map((item) => item.str)),
+    );
   }
 
   /** Per-document accessors — allow panels to render without being the "active" doc */

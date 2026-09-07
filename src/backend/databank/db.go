@@ -262,6 +262,7 @@ func (db *DB) migrateV1() error {
 		`CREATE INDEX IF NOT EXISTS idx_files_manufacturer ON files(manufacturer)`,
 		`CREATE INDEX IF NOT EXISTS idx_files_donor ON files(donor_pool)`,
 		`CREATE INDEX IF NOT EXISTS idx_files_content_hash ON files(content_hash) WHERE content_hash IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_files_size ON files(size)`,
 	}
 
 	for _, stmt := range stmts {
@@ -1305,6 +1306,36 @@ func (db *DB) SizeCollisionFiles() ([]CollisionFile, error) {
 			return nil, err
 		}
 		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// SizeMatch is a stored file sharing an exact byte size with a candidate
+// being ingested. Hash is the stored content_hash, nil when the row has never
+// been hashed (unique-size files are never read by the scanner's dedup pass).
+type SizeMatch struct {
+	ID   int64
+	Path string
+	Size int64
+	Hash []byte
+}
+
+// FilesBySize returns every stored file of exactly `size` bytes — the only
+// rows that can be byte-identical to a file of that size. Backed by
+// idx_files_size so an upload's dedup probe is an index seek, not a scan.
+func (db *DB) FilesBySize(size int64) ([]SizeMatch, error) {
+	rows, err := db.reader.Query(`SELECT id, path, size, content_hash FROM files WHERE size = ? ORDER BY id`, size)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SizeMatch
+	for rows.Next() {
+		var m SizeMatch
+		if err := rows.Scan(&m.ID, &m.Path, &m.Size, &m.Hash); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
 	}
 	return out, rows.Err()
 }

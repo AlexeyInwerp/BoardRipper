@@ -931,15 +931,19 @@ class DatabankStore extends Emitter {
    *  the completeness chip so a torn cache can recover even when its
    *  signature still matches the backend. */
   async fetchFiles(opts: { force?: boolean } = {}): Promise<void> {
-    if (this._filesInflight) {
-      await this._filesInflight;
-      return;
-    }
     if (opts.force) {
-      // Wipe the cache + in-memory match so neither shortcut can fire.
+      // A forced refresh must never be swallowed by an in-flight load: the
+      // old ordering awaited the running stream and returned, so a force
+      // fired while the boot stream was still going (the common case right
+      // after a drop) silently did nothing. Let the old stream finish, then
+      // wipe the cache + in-memory match so neither shortcut can fire.
+      await this._drainFilesInflight();
       this._filesComplete = false;
       this._filesSignature = null;
       await libraryCache.clear();
+    } else if (this._filesInflight) {
+      await this._filesInflight;
+      return;
     }
     this._filesInflight = this._doFetchFiles().finally(() => {
       this._filesInflight = null;
@@ -1288,6 +1292,46 @@ class DatabankStore extends Emitter {
       if (data) out.push(...data);
     }
     return out;
+  }
+
+  /** Merge freshly ingested rows (e.g. a drop-to-library upload) into the
+   *  in-memory list by id, without re-streaming the whole library. Rows
+   *  already present are replaced in place; new ones are appended. The
+   *  metadata/model trees invalidate through `_filesVersion`; the folder
+   *  tree is dropped and re-fetched so the rows land in their real folder.
+   *
+   *  The IDB snapshot and the persisted signature are left alone on
+   *  purpose: the backend's file count moved, so the stats signature no
+   *  longer matches and the next boot re-streams once — the same cost a
+   *  forced refresh paid immediately, deferred to a cold start. */
+  async mergeFilesById(ids: number[]): Promise<void> {
+    if (ids.length === 0 || !hasBackend()) return;
+    await this._drainFilesInflight();
+    const rows = await this.fetchFileRows(ids);
+    if (rows.length === 0) return;
+    const fresh: DatabankFile[] = [];
+    for (const row of rows) {
+      const existing = this._filesById.get(row.id);
+      if (existing) {
+        Object.assign(existing, row);
+      } else {
+        fresh.push(row);
+      }
+    }
+    if (fresh.length > 0) {
+      this._appendFiles(fresh);
+    } else {
+      this._filesVersion++;
+      this._metadataCache = null;
+      this._modelCache = null;
+      this._unrecognizedTreeCache = null;
+    }
+    // Stats (and therefore the tree-cache signature) changed server-side;
+    // refresh them so fetchTree misses the IDB tree and hits the network.
+    await this.fetchStats();
+    this._folderTree = null;
+    this.notify();
+    void this.fetchTree();
   }
 
   /** Resolve once the full file list is present. Awaits an in-flight stream if

@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"strings"
 
 	"boardripper/databank"
@@ -52,6 +54,22 @@ func (s *dbSource) ListPDFsUnder(prefix string) ([]pdfindex.PdfFile, error) {
 		}
 	}
 	return out, nil
+}
+
+// Lookup resolves one databank id to an indexable PdfFile. Non-PDF rows and
+// unknown ids report ok=false so the indexer treats them as no-ops.
+func (s *dbSource) Lookup(fileID int64) (pdfindex.PdfFile, bool, error) {
+	rec, err := s.db.GetFileByID(context.Background(), fileID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return pdfindex.PdfFile{}, false, nil
+		}
+		return pdfindex.PdfFile{}, false, err
+	}
+	if rec == nil || rec.FileType != "pdf" {
+		return pdfindex.PdfFile{}, false, nil
+	}
+	return pdfindex.PdfFile{ID: rec.ID, Path: rec.Path}, true, nil
 }
 
 func (s *dbSource) ReadFile(relPath string) ([]byte, error) {

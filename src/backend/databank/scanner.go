@@ -4,6 +4,7 @@ import (
 	"boardripper/boarddb"
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -240,7 +241,12 @@ func (s *Scanner) ExtractMetadata(relPath string) Metadata {
 // are intentionally NOT run here — that pass is O(boards×pdfs) and is left
 // to the next full scan; the frontend already binds the open board↔PDF in
 // memory for the current session.
-func (s *Scanner) IndexFile(relPath string) (*FileRecord, error) {
+//
+// contentHash (nilable) is the ingest-time dedup key computed by
+// FindIdenticalFile when the file's size collides with a stored row; it is
+// persisted on the new row so the file joins its size-collision group without
+// waiting for the next scan. Unique-size uploads pass nil and stay unhashed.
+func (s *Scanner) IndexFile(relPath string, contentHash []byte) (*FileRecord, error) {
 	relPath = filepath.ToSlash(filepath.Clean(relPath))
 	abs := filepath.Join(s.ScanRoot(), filepath.FromSlash(relPath))
 	info, err := os.Stat(abs)
@@ -263,6 +269,15 @@ func (s *Scanner) IndexFile(relPath string) (*FileRecord, error) {
 			if err := s.db.UpdateFileScan(existing.ID, size, modTime, time.Now().Unix()); err != nil {
 				return nil, err
 			}
+			// The bytes changed under a known path: flip the PDF back to
+			// 'pending' exactly as the scan worker does, or the index keeps
+			// serving text from the old file.
+			if s.onPdfModified != nil && FileTypeFromExt(relPath) == "pdf" {
+				if err := s.onPdfModified(existing.ID); err != nil {
+					log.Printf("Scanner: pdf-modified hook (id=%d): %v", existing.ID, err)
+				}
+			}
+			existing.Size, existing.ModTime = size, modTime
 		}
 		log.Printf("Scanner: indexed (update) %s", relPath)
 		return existing, nil
@@ -291,12 +306,20 @@ func (s *Scanner) IndexFile(relPath string) (*FileRecord, error) {
 		return nil, err
 	}
 	rec.ID = id
+	if contentHash != nil {
+		if err := s.db.SetContentHash(id, contentHash); err != nil {
+			log.Printf("Scanner: store content hash id=%d: %v", id, err)
+		} else {
+			rec.ContentHash = hex.EncodeToString(contentHash)
+		}
+	}
 	log.Printf("Scanner: indexed (new) %s [%s] %s", rec.Path, rec.FileType, formatSize(rec.Size))
 
 	// PDF text extraction is no longer done here: it moved to the separate
-	// pdfindex pipeline (wazero/pdfium). A dropped PDF gets indexed via the
-	// on-open fast-path or the next pdfindex run; IndexFile only ensures the
-	// file is present in the databank immediately.
+	// pdfindex pipeline (wazero/pdfium). The upload handler submits a
+	// dropped PDF to the indexer right after this returns (and the browser
+	// uploads its pdf.js text via the on-open fast path); IndexFile only
+	// ensures the file is present in the databank immediately.
 	return &rec, nil
 }
 
@@ -362,7 +385,7 @@ func (s *Scanner) Scan() ScanStatus {
 // fingerprint so a code update forces exactly one re-resolve pass over
 // disk-unchanged files even when boards.db itself is byte-identical.
 // Mirrors the frontend PARSER_VERSION pattern.
-const resolverLogicVersion = 4 // 2–4: Apple phone/tablet model names (apple_devices.go)
+const resolverLogicVersion = 5 // 2–4: Apple phone/tablet model names (apple_devices.go); 5: "incoming" is no longer a brand hint (metadata.go)
 
 // resolveFingerprint is the value stored under config key "resolve_fingerprint".
 // It changes when boards.db changes on disk (mtime+size) or resolverLogicVersion

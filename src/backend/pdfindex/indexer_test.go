@@ -29,6 +29,15 @@ func (f *fakeSource) ListPDFsUnder(prefix string) ([]PdfFile, error) {
 	return out, nil
 }
 
+func (f *fakeSource) Lookup(id int64) (PdfFile, bool, error) {
+	for _, file := range f.files {
+		if file.ID == id {
+			return file, true, nil
+		}
+	}
+	return PdfFile{}, false, nil
+}
+
 func (f *fakeSource) ReadFile(p string) ([]byte, error) { return f.data[p], nil }
 
 func (f *fakeSource) CanonicalFor(fileID int64) (int64, bool, error) { return 0, false, nil }
@@ -336,4 +345,73 @@ func TestIndexerSkipsDuplicate(t *testing.T) {
 	if p.Done != p.Total {
 		t.Errorf("Done=%d != Total=%d (duplicate skip should still count)", p.Done, p.Total)
 	}
+}
+
+// Submit while idle starts a one-file sweep; Submit for an id the Source does
+// not know is a no-op.
+func TestSubmitIdleIndexesOneFile(t *testing.T) {
+	db := openTestDB(t)
+	src := &fakeSource{
+		files: []PdfFile{{ID: 1, Path: "a.pdf"}, {ID: 2, Path: "b.pdf"}},
+		data:  map[string][]byte{"a.pdf": []byte("alpha"), "b.pdf": []byte("beta")},
+	}
+	ix := NewIndexer(db, fakeExtractor{}, src, func() []string { return nil }, 1)
+	if err := ix.Submit(99); err != nil {
+		t.Fatalf("Submit(unknown): %v", err)
+	}
+	if ix.Progress().Running {
+		t.Fatal("unknown id must not start a sweep")
+	}
+	if err := ix.Submit(2); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	waitFor(t, func() bool { return !ix.Progress().Running })
+	st1, _ := db.Status(1)
+	st2, _ := db.Status(2)
+	if st2.Status != "indexed" || st1.Status == "indexed" {
+		t.Fatalf("want only file 2 indexed, got 1=%q 2=%q", st1.Status, st2.Status)
+	}
+}
+
+// gatedExtractor blocks every extraction until gate is closed, holding a
+// sweep in its worker phase (enumeration already done) for as long as a test
+// needs.
+type gatedExtractor struct{ gate chan struct{} }
+
+func (g gatedExtractor) ExtractFile(b []byte) ([]string, error) {
+	<-g.gate
+	return []string{string(b)}, nil
+}
+
+// A file that appears (in the Source) after a sweep enumerated its list must
+// still be reachable through Submit/Enqueue mid-sweep — the old byID-only
+// gate silently dropped such ids.
+func TestSubmitMidSweepReachesUnlistedFile(t *testing.T) {
+	db := openTestDB(t)
+	gate := make(chan struct{})
+	src := &fakeSource{
+		files: []PdfFile{{ID: 1, Path: "a.pdf"}},
+		data:  map[string][]byte{"a.pdf": []byte("alpha")},
+	}
+	ix := NewIndexer(db, gatedExtractor{gate}, src, func() []string { return nil }, 1)
+	if err := ix.RunFolder(""); err != nil {
+		t.Fatalf("RunFolder: %v", err)
+	}
+	// Enumeration is complete once Total is known; the single worker is now
+	// parked inside ExtractFile for file 1. A new row lands now.
+	waitFor(t, func() bool { p := ix.Progress(); return p.Running && p.Total == 1 })
+	src.files = append(src.files, PdfFile{ID: 2, Path: "late.pdf"})
+	src.data["late.pdf"] = []byte("late arrival")
+	if err := ix.Submit(2); err != nil {
+		t.Fatalf("Submit mid-sweep: %v", err)
+	}
+	if !ix.Progress().Running {
+		t.Fatal("Submit mid-sweep must not have started a second sweep")
+	}
+	close(gate)
+	waitFor(t, func() bool {
+		st, _ := db.Status(2)
+		return st.Status == "indexed"
+	})
+	waitFor(t, func() bool { return !ix.Progress().Running })
 }

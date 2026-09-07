@@ -383,6 +383,21 @@ searchable immediately, before the background indexer reaches it. The PDF Search
 tab queries the index; results include donor-scoped filtering via the
 `pdf_donors` membership table in `databank.db`.
 
+**Dropped PDFs.** A drag-and-drop is opened in memory *before* it has a
+databank id, so both fast-path call sites in `_extractText` skip it. The upload
+(`POST /api/upload`) returns the id and the client tags the open doc with
+`pdfStore.setDocFileId`, which is what (re)arms the fast path: it waits for
+extraction to finish (`whenTextReady`, up to 3 min) and then runs `ensureIndexed`.
+Independently, the backend hands the new id to `Indexer.Submit` right after the
+databank insert — priority lane if a sweep is running (the worker resolves ids
+that were not in its enumerated list via `Source.Lookup`), or a one-file sweep
+when idle — so the file is indexed within seconds even if the browser tab is
+closed, and regardless of the auto-resume toggle. Whichever side wins `Claim`
+does the work; the other is a no-op. The earlier `index-folder('incoming')`
+call from the client was dropped: it returned 409 whenever any sweep was
+running and the client ignored it, leaving the file unindexed until the next
+scan.
+
 ### Engine
 
 Pdfium compiled to WASM, embedded as a ~5 MB blob in the server binary and

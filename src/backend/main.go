@@ -212,6 +212,9 @@ func main() {
 
 	// File API routes (existing)
 	fileHandler := handlers.NewFileHandler(dataDir, scanner.ScanRoot, scanner.ExtractMetadata, scanner.IndexFile)
+	// Drop-to-library dedup: a byte-identical file anywhere in the library
+	// is reused instead of copied into incoming/.
+	fileHandler.SetDedupFunc(scanner.FindIdenticalFile)
 	mux.HandleFunc("POST /api/upload", fileHandler.Upload)                  // streaming upload — no wrap
 	mux.HandleFunc("GET /api/files", read(fileHandler.List))
 	mux.HandleFunc("GET /api/files/{name}", fileHandler.Get)                // streaming download — no wrap
@@ -364,6 +367,17 @@ func main() {
 			// reference; safe to call concurrently with scans.
 			scanner.SetPdfModifiedHook(func(fileID int64) error {
 				return pdfIndex.MarkPending(fileID)
+			})
+			// A dropped PDF is handed straight to the indexer (priority lane
+			// mid-sweep, or a one-file sweep when idle) so it is searchable
+			// seconds after the drop, independent of the auto-resume toggle
+			// and of whatever bulk sweep happens to be running.
+			fileHandler.SetPdfSubmitHook(func(fileID int64) {
+				go func() {
+					if err := indexer.Submit(fileID); err != nil {
+						log.Printf("pdfindex: submit uploaded file_id=%d: %v", fileID, err)
+					}
+				}()
 			})
 			// Symmetric drop: when the Phase-4 prune removes a file that
 			// vanished from disk, drop its rows in the separate pdfindex.db too
