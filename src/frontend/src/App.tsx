@@ -320,15 +320,18 @@ function App() {
       onDrop={handleDrop}
     >
       <Toolbar />
-      <div className="dockview-wrapper">
-        {/* Activity rail: visible whenever enabled and not hidden by the
-            toolbar ≡; orders itself to the outer edge (-1 left / 3 right) so
-            the sidebar + dockview orders below stay exactly as they were. */}
+      {/* Body row: [rail] [dockview area over status bar]. The rail sits
+          OUTSIDE the dockview wrapper so it spans the status bar's row too —
+          its foot toggle lines up exactly with the bar it controls. The rail
+          orders itself to the outer edge (-1 left / 3 right). */}
+      <div className="app-body">
         {sidebarRail && !sidebarRailHidden && (
           <PanelErrorBoundary label="Activity rail">
             <ActivityRail />
           </PanelErrorBoundary>
         )}
+      <div className="app-main">
+      <div className="dockview-wrapper">
         {showEdgeArrow && (
           <button
             className={`sidebar-toggle collapsed sidebar-toggle-${sidebarSide}`}
@@ -355,6 +358,8 @@ function App() {
         </div>
       </div>
       {!statusBarHidden && <StatusBar />}
+      </div>
+      </div>
       <ContextMenu />
       {/* Interactive Mode handles. Mounted ONCE here, not per board panel:
           the popup state and the settings it edits are global, and a second

@@ -73,6 +73,9 @@ test.describe('activity rail', () => {
     await gotoApp(page);
     const st = page.getByTestId('rail-status-toggle');
     await expect(st).toHaveAttribute('aria-pressed', 'true');
+    // The toggle lives in the status bar's own row: same top, same height.
+    const [tb, sb] = await Promise.all([st.boundingBox(), page.locator('.statusbar').boundingBox()]);
+    expect(tb && sb && Math.abs(tb.y - sb.y) <= 1 && Math.abs(tb.height - sb.height) <= 1).toBeTruthy();
     await st.click();
     await expect(page.locator('.statusbar')).toHaveCount(0);
     await expect(page.locator('.sidebar')).toBeVisible();           // panel unaffected

@@ -819,6 +819,22 @@ body {
   background: rgba(204, 68, 68, 0.15);
 }
 
+/* Body row under the toolbar: [activity rail] [app-main]. app-main stacks the
+   dockview wrapper over the status bar, so the rail runs the full height of
+   both and its foot toggle sits in the status bar's row. */
+.app-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+}
+.app-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 /* Dockview wrapper (positions the sidebar toggle above dockview) */
 .dockview-wrapper {
   flex: 1;
@@ -963,7 +979,7 @@ body {
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  padding: 4px 0;
+  padding: 4px 0 0; /* no bottom padding: the foot cell must end where the status bar ends */
   position: relative;
   z-index: 2;
   user-select: none;
@@ -973,18 +989,19 @@ body {
   border-left: 1px solid var(--border);
 }
 .activity-rail-spacer { flex: 1; }
-/* Foot-of-rail status-bar toggle: deliberately small and quiet, set off from
-   the destinations by a rule. Lit (accent) while the bar is showing, dim when
-   hidden — the icon itself doesn't change. */
-.activity-rail-status {
-  height: 28px;
-  margin-top: 2px;
+/* Foot-of-rail status-bar toggle: exactly the status bar's height and border,
+   so it sits in the bar's own row — the control is where the thing is. When
+   the bar is hidden the cell stays put at the rail's foot. Lit (accent) while
+   the bar is showing, dim when hidden — the icon itself doesn't change. */
+.activity-rail-item.activity-rail-status {
+  height: var(--statusbar-height);
+  margin-top: 0;
   border-top: 1px solid var(--border);
   color: var(--text-secondary);
   opacity: 0.55;
 }
-.activity-rail-status.on { color: var(--accent); opacity: 0.9; }
-.activity-rail-status:hover { opacity: 1; }
+.activity-rail-item.activity-rail-status.on { color: var(--accent); opacity: 0.9; }
+.activity-rail-item.activity-rail-status:hover { opacity: 1; }
 
 .activity-rail-item {
   position: relative;
