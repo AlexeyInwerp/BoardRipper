@@ -2013,23 +2013,21 @@ export class BoardRenderer {
     return k > 0 ? k : 1;
   }
 
-  /** Selection outline geometry for a part at the current zoom — see
-   *  selectionOutlineWorld. `precise` measures the part with the body rule
-   *  (computePartRenderBounds) — right for the one primary part. Net-member
-   *  and search boxes pass false and use the parser AABB: a thousand-member
-   *  net repainted on every zoom settle cannot afford an OBB build per part,
-   *  and the minimum-size rule only needs to know "is it tiny on screen". */
-  private selOutline(part: Part, precise = true): { pad: number; stroke: number } {
+  /** Outline geometry for THE selected part at the current zoom — see
+   *  selectionOutlineWorld. Primary selection only (SDR child Graphics and
+   *  the HDR mirror). Net-member boxes, highlight rings, search outlines,
+   *  ghosts and the disco halo keep their fixed world-unit padding and
+   *  stroke: they are context, not the thing being pointed at, and padding
+   *  every member of a lit net out to 24 px turned a highlighted rail into a
+   *  field of boxes (reported 2026-09-07). */
+  private selOutline(part: Part): { pad: number; stroke: number } {
     const s = renderSettingsStore.settings;
     let minWorld: number;
     if (part.pins.length === 1) {
       minWorld = computePinRadius(s, part.pins[0].radius) * 2;
-    } else if (precise) {
+    } else {
       const rb = computePartRenderBounds(part, s);
       minWorld = Math.min(rb.pw, rb.ph);
-    } else {
-      const b = part.bounds;
-      minWorld = Math.max(1, Math.min(b.maxX - b.minX, b.maxY - b.minY));
     }
     const { padWorld, strokeWorld } = selectionOutlineWorld(s, this.viewScale(), minWorld);
     return { pad: padWorld, stroke: strokeWorld };
@@ -4254,10 +4252,6 @@ export class BoardRenderer {
     const gfxFor = (part: { side: string }) =>
       butterfly && part.side === 'bottom' ? this.butterflySelectionGfx : this.selectionGfx;
 
-    // Selection strokes are screen-constant (selectionWidth is px): one world
-    // width for this frame's zoom. Padding is per part (selOutline).
-    const selStroke = s.selectionWidth / this.viewScale();
-
     // ── Highlight all search results ──
     const searchIndices = boardStore.searchResultIndices;
     if (searchIndices.size > 0) {
@@ -4269,17 +4263,17 @@ export class BoardRenderer {
         if (!part || !this.isPartVisible(part)) continue;
         const gfx = gfxFor(part);
         const outlines = gfx === this.butterflySelectionGfx ? botSearchOutlines : topSearchOutlines;
-        outlines.push(() => emitPartOutlineShape(gfx, part, s, this.selOutline(part, false).pad));
+        outlines.push(() => emitPartOutlineShape(gfx, part, s, s.selectionPadding));
       }
       for (const fn of topSearchOutlines) fn();
       if (topSearchOutlines.length > 0) {
         this.selectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha * 0.5 });
-        this.selectionGfx.stroke({ width: selStroke * 0.7, color: BOARD_COLORS.butterflySelection, alpha: 0.5 });
+        this.selectionGfx.stroke({ width: s.selectionWidth * 0.7, color: BOARD_COLORS.butterflySelection, alpha: 0.5 });
       }
       for (const fn of botSearchOutlines) fn();
       if (botSearchOutlines.length > 0) {
         this.butterflySelectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha * 0.5 });
-        this.butterflySelectionGfx.stroke({ width: selStroke * 0.7, color: BOARD_COLORS.butterflySelection, alpha: 0.5 });
+        this.butterflySelectionGfx.stroke({ width: s.selectionWidth * 0.7, color: BOARD_COLORS.butterflySelection, alpha: 0.5 });
       }
     }
 
@@ -4509,7 +4503,7 @@ export class BoardRenderer {
             const gfx = gfxFor(part);
             const isBot = gfx === this.butterflySelectionGfx;
             const outlines = isBot ? botPartOutlines : topPartOutlines;
-            outlines.push(() => emitPartOutlineShape(gfx, part, s, this.selOutline(part, false).pad));
+            outlines.push(() => emitPartOutlineShape(gfx, part, s, s.selectionPadding));
           }
         }
 
@@ -4592,7 +4586,7 @@ export class BoardRenderer {
       // which parts are connected; the distinction from the primary comes from
       // the primary's bold WHITE outline (drawn in the `sel.partIndex` block
       // above), not from dimming the members. (#23)
-      const memberWidth = selStroke;
+      const memberWidth = s.selectionWidth;
       const memberStrokeAlpha = 0.85;
       for (const fn of topPartOutlines) fn();
       if (topPartOutlines.length > 0) {
@@ -4640,7 +4634,7 @@ export class BoardRenderer {
       // ring sits beyond the pad and outside any pin label that renders on
       // top of selectionGfx, so it carries the "highlighted" cue past the
       // label coverage on dense BGA rails.
-      const ringW = selStroke * 0.6;
+      const ringW = s.selectionWidth * 0.6;
       for (const [glowColor, fns] of topHighlightsByColor) {
         for (const fn of fns) fn();
         this.selectionGfx.fill({ color: glowColor, alpha: s.netHighlightAlpha });
@@ -5293,7 +5287,7 @@ export class BoardRenderer {
 
       drawPartOutline(gfx, part, s, 0);
       gfx.fill({ color: ghostColor, alpha: ghostAlpha * 0.5 });
-      gfx.stroke({ width: s.selectionWidth / this.viewScale(), color: ghostColor, alpha: outlineAlpha });
+      gfx.stroke({ width: s.selectionWidth, color: ghostColor, alpha: outlineAlpha });
 
       // Draw pins — same shape the sprite uses, capsules included.
       for (const pin of part.pins) {
@@ -5370,7 +5364,7 @@ export class BoardRenderer {
     }
 
     const s = renderSettingsStore.settings;
-    const width = (s.selectionWidth * 1.2) / this.viewScale();
+    const width = Math.max(s.selectionWidth * 1.2, 2);
     const pad = Math.max(s.selectionPadding * 0.5, 1);
     const RED = 0xff2a2a;        // disco / burst — solid fill
     const BEACON_RED = 0xcc2222; // matches the focus blink's red

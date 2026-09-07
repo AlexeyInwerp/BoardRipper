@@ -159,9 +159,12 @@ export interface RenderSettings {
    */
   textFastMode: boolean;
 
-  /** Selection outline stroke, in SCREEN pixels — constant at every zoom.
-   *  (Was world mils: a 2-mil stroke is invisible at 10 % and a 20 px band at
-   *  600 %, and it was the "huge padding even at 0" — the band itself.) */
+  /** Stroke of the SELECTED part's outline, in screen pixels — constant at
+   *  every zoom. (Was world mils: a 2-mil stroke is invisible at 10 % and a
+   *  20 px band at 600 %, and it was the "huge padding even at 0" — the band
+   *  itself.) Net-member boxes, rings, search outlines and ghosts still read
+   *  this value as world mils, as they always did: they are context and
+   *  deliberately not zoom-dynamic. */
   selectionWidth: number;
   /** Extra gap between the part border and the selection outline, in mils.
    *  0 = the outline IS the border. The dynamic minimum below is applied on
