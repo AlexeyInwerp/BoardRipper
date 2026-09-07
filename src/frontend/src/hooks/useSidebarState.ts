@@ -7,6 +7,7 @@ import {
   getSidebarRail,
   getSidebarRailHidden,
   getSidebarCaptions,
+  getStatusBarHidden,
   type SidebarTab,
   type SidebarSide,
 } from '../components/Sidebar.utils';
@@ -19,6 +20,8 @@ export interface SidebarSnapshot {
   /** Rail layout with the rail itself hidden ("nothing but the board"). */
   railHidden: boolean;
   captions: boolean;
+  /** Status bar hidden (rail layout only). */
+  statusHidden: boolean;
 }
 
 /**
@@ -35,5 +38,6 @@ export const useSidebarState = createStoreHook<SidebarSnapshot>(
     rail: getSidebarRail(),
     railHidden: getSidebarRailHidden(),
     captions: getSidebarCaptions(),
+    statusHidden: getStatusBarHidden(),
   }),
 );

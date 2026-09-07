@@ -13,7 +13,7 @@ import { StatusBar } from './components/StatusBar';
 import { ContextMenu } from './components/ContextMenu';
 import { ShortcutsOverlay } from './components/ShortcutsOverlay';
 import { Sidebar } from './components/Sidebar';
-import { isSidebarCollapsed, onSidebarChange, getSidebarSide, getSidebarRail, getSidebarRailHidden, toggleSidebarArea, showSidebarTab } from './components/Sidebar.utils';
+import { isSidebarCollapsed, onSidebarChange, getSidebarSide, getSidebarRail, getSidebarRailHidden, getStatusBarHidden, toggleSidebarArea, showSidebarTab } from './components/Sidebar.utils';
 import { ActivityRail } from './components/ActivityRail';
 import { PanelErrorBoundary } from './components/PanelErrorBoundary';
 import { BoardViewerPanel } from './panels/BoardViewerPanel';
@@ -161,6 +161,7 @@ function App() {
   // screen: legacy layout with the panel hidden, or rail layout with the rail
   // hidden too ("nothing but the board" via the toolbar ≡).
   const showEdgeArrow = sidebarRail ? sidebarRailHidden : sidebarCollapsed;
+  const statusBarHidden = getStatusBarHidden();
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -353,7 +354,7 @@ function App() {
           <HomeBackdrop />
         </div>
       </div>
-      <StatusBar />
+      {!statusBarHidden && <StatusBar />}
       <ContextMenu />
       {/* Interactive Mode handles. Mounted ONCE here, not per board panel:
           the popup state and the settings it edits are global, and a second

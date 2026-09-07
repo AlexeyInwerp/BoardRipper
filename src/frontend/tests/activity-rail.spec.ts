@@ -38,6 +38,7 @@ test.describe('activity rail', () => {
       sessionStorage.setItem('activity-rail-spec-init', '1');
       for (const k of [
         'boardripper-sidebar-collapsed', 'boardripper-sidebar-tab', 'boardripper-sidebar-rail',
+        'boardripper-sidebar-rail-hidden', 'boardripper-statusbar-hidden',
         'boardripper-sidebar-side', 'boardripper-sidebar-captions', 'boardripper-settings-active-tab',
       ]) {
         localStorage.removeItem(k);
@@ -45,12 +46,14 @@ test.describe('activity rail', () => {
     });
   });
 
-  test('renders the four destinations plus a hide control, and retires the text strip and the edge arrow', async ({ page }) => {
+  test('renders the four destinations plus the status-bar toggle, and retires the text strip and the edge arrow', async ({ page }) => {
     await gotoApp(page);
     for (const id of ['library', 'tools', 'debug', 'settings']) {
       await expect(page.locator(`${RAIL} ${tab(id)}`)).toBeVisible();
     }
-    await expect(page.getByTestId('rail-toggle')).toBeVisible();
+    await expect(page.getByTestId('rail-status-toggle')).toBeVisible();
+    // No separate "hide panel" button: clicking the active destination is the gesture.
+    await expect(page.getByTestId('rail-toggle')).toHaveCount(0);
     await expect(page.locator('.sidebar-tabs')).toHaveCount(0);
     await expect(page.locator('.sidebar-toggle.collapsed')).toHaveCount(0);
     // The toolbar ≡ stays: it is the "nothing but the board" control.
@@ -59,15 +62,27 @@ test.describe('activity rail', () => {
     await expect(page.locator(`${RAIL} ${tab('library')}`)).toHaveAttribute('aria-selected', 'true');
   });
 
-  test('the rail hide control hides and shows the panel; the rail stays', async ({ page }) => {
+  test('clicking the active icon hides only the panel — the status bar is not touched', async ({ page }) => {
     await gotoApp(page);
-    await page.getByTestId('rail-toggle').click();
+    await page.click(`${RAIL} ${tab('library')}`);
     await expect(page.locator('.sidebar')).toBeHidden();
-    await expect(page.locator(RAIL)).toBeVisible();
-    await expect(page.getByTestId('rail-toggle')).toHaveAttribute('data-title', /Show Library/);
-    await page.getByTestId('rail-toggle').click();
-    await expect(page.locator('.sidebar')).toBeVisible();
-    await expect(page.getByTestId('rail-toggle')).toHaveAttribute('data-title', 'Hide sidebar');
+    await expect(page.locator('.statusbar')).toBeVisible();
+  });
+
+  test('the foot-of-rail control toggles the status bar alone and persists', async ({ page }) => {
+    await gotoApp(page);
+    const st = page.getByTestId('rail-status-toggle');
+    await expect(st).toHaveAttribute('aria-pressed', 'true');
+    await st.click();
+    await expect(page.locator('.statusbar')).toHaveCount(0);
+    await expect(page.locator('.sidebar')).toBeVisible();           // panel unaffected
+    await expect(st).toHaveAttribute('aria-pressed', 'false');
+
+    await page.reload();
+    await page.waitForLoadState('networkidle');
+    await expect(page.locator('.statusbar')).toHaveCount(0);
+    await page.getByTestId('rail-status-toggle').click();
+    await expect(page.locator('.statusbar')).toBeVisible();
   });
 
   test('toolbar ≡ hides panel AND rail — nothing but the board — and the edge arrow or ≡ brings both back', async ({ page }) => {
@@ -76,6 +91,7 @@ test.describe('activity rail', () => {
     await page.getByTestId('sidebar-area-toggle').click();
     await expect(page.locator('.sidebar')).toBeHidden();
     await expect(page.locator(RAIL)).toHaveCount(0);
+    await expect(page.locator('.statusbar')).toHaveCount(0);        // nothing but the board
     await expect(page.locator('.sidebar-toggle.collapsed')).toBeVisible();
 
     // Persists: reload keeps everything hidden.
@@ -84,10 +100,11 @@ test.describe('activity rail', () => {
     await expect(page.locator(RAIL)).toHaveCount(0);
     await expect(page.locator('.sidebar-toggle.collapsed')).toBeVisible();
 
-    // Edge arrow restores rail + panel, on the tab you left.
+    // Edge arrow restores rail + panel + status bar, on the tab you left.
     await page.click('.sidebar-toggle.collapsed');
     await expect(page.locator(RAIL)).toBeVisible();
     await expect(page.locator('.sidebar')).toBeVisible();
+    await expect(page.locator('.statusbar')).toBeVisible();
     await expect(page.locator(`${RAIL} ${tab('tools')}`)).toHaveAttribute('aria-selected', 'true');
 
     // ≡ again hides both; ≡ once more restores both.
@@ -315,15 +332,20 @@ test.describe('activity rail', () => {
     await expect(page.locator(`${RAIL} ${tab('settings')}`)).toHaveAttribute('aria-selected', 'true');
   });
 
-  test('legacy strip mode: ≡ and the edge arrow still hide and show', async ({ page }) => {
-    await page.addInitScript(() => { localStorage.setItem('boardripper-sidebar-rail', 'false'); });
+  test('legacy strip mode: ≡ and the edge arrow still hide and show; status bar always present', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('boardripper-sidebar-rail', 'false');
+      localStorage.setItem('boardripper-statusbar-hidden', 'true'); // must be ignored without a rail to un-hide it
+    });
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     await expect(page.locator(RAIL)).toHaveCount(0);
     await expect(page.locator('.sidebar-tabs')).toBeVisible();
+    await expect(page.locator('.statusbar')).toBeVisible();
 
     await page.getByTestId('sidebar-area-toggle').click();
     await expect(page.locator('.sidebar')).toBeHidden();
+    await expect(page.locator('.statusbar')).toBeVisible();
     await expect(page.locator('.sidebar-toggle.collapsed')).toBeVisible();
     await page.click('.sidebar-toggle.collapsed');
     await expect(page.locator('.sidebar')).toBeVisible();

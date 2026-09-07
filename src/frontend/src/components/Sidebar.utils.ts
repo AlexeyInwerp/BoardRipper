@@ -25,6 +25,7 @@ const SIDEBAR_TAB_KEY = 'boardripper-sidebar-tab';
 const SIDEBAR_RAIL_KEY = 'boardripper-sidebar-rail';
 const SIDEBAR_RAIL_HIDDEN_KEY = 'boardripper-sidebar-rail-hidden';
 const SIDEBAR_CAPTIONS_KEY = 'boardripper-sidebar-captions';
+const STATUSBAR_HIDDEN_KEY = 'boardripper-statusbar-hidden';
 const DEFAULT_WIDTH = 320;
 export const MIN_WIDTH = 200;
 export const MAX_WIDTH_RATIO = 0.5; // never wider than half the screen
@@ -101,6 +102,9 @@ const state = {
   railHidden: readBool(SIDEBAR_RAIL_HIDDEN_KEY, false),
   /** 8px captions under the rail icons. */
   captions: readBool(SIDEBAR_CAPTIONS_KEY, true),
+  /** Status bar hidden. Only honoured in the rail layout, which is the only
+   *  place with a control to bring it back; the legacy strip always shows it. */
+  statusHidden: readBool(STATUSBAR_HIDDEN_KEY, false),
 };
 const listeners = new Set<() => void>();
 
@@ -119,6 +123,7 @@ export function getSidebarSide(): SidebarSide { return state.side; }
 export function getSidebarRail(): boolean { return state.rail; }
 export function getSidebarRailHidden(): boolean { return state.rail && state.railHidden; }
 export function getSidebarCaptions(): boolean { return state.captions; }
+export function getStatusBarHidden(): boolean { return state.rail && state.statusHidden; }
 
 function setCollapsed(v: boolean): void {
   state.collapsed = v;
@@ -130,7 +135,13 @@ function setRailHidden(v: boolean): void {
   writeKey(SIDEBAR_RAIL_HIDDEN_KEY, String(v));
 }
 
-/** Panel-level toggle: open ↔ hidden. The rail (when on) stays. */
+function setStatusHidden(v: boolean): void {
+  state.statusHidden = v;
+  writeKey(STATUSBAR_HIDDEN_KEY, String(v));
+}
+
+/** Panel-level toggle: open ↔ hidden. The rail (when on) stays. Used by the
+ *  keyboard shortcut and clicking the active rail icon — status bar untouched. */
 export function toggleSidebar(): void {
   if (state.collapsed && state.railHidden) setRailHidden(false); // showing the panel needs the rail back
   setCollapsed(!state.collapsed);
@@ -143,19 +154,28 @@ export function hideSidebar(): void {
   emitSidebarChange();
 }
 
+/** Status bar on its own — the small control at the foot of the rail. */
+export function toggleStatusBar(): void {
+  setStatusHidden(!state.statusHidden);
+  emitSidebarChange();
+}
+
 /**
  * Area-level toggle — the toolbar ≡ and the edge arrow. "Nothing but the
- * board": hides panel AND rail together; the reverse brings both back.
- * In the legacy strip layout there is no rail, so it is plain toggleSidebar.
+ * board": hides panel, rail AND status bar; the reverse brings all three
+ * back. In the legacy strip layout there is no rail, so it is plain
+ * toggleSidebar and the status bar is never touched.
  */
 export function toggleSidebarArea(): void {
   if (!state.rail) { toggleSidebar(); return; }
   if (state.railHidden) {
     setRailHidden(false);
     setCollapsed(false);
+    setStatusHidden(false);
   } else {
     setRailHidden(true);
     setCollapsed(true);
+    setStatusHidden(true);
   }
   emitSidebarChange();
 }
@@ -222,6 +242,8 @@ if (typeof window !== 'undefined' && import.meta.env.DEV) {
       setRail: (v: boolean) => void;
       railHidden: () => boolean;
       toggleArea: () => void;
+      statusHidden: () => boolean;
+      toggleStatus: () => void;
     };
   }).__sidebar = {
     isCollapsed: isSidebarCollapsed,
@@ -233,5 +255,7 @@ if (typeof window !== 'undefined' && import.meta.env.DEV) {
     setRail: setSidebarRail,
     railHidden: getSidebarRailHidden,
     toggleArea: toggleSidebarArea,
+    statusHidden: getStatusBarHidden,
+    toggleStatus: toggleStatusBar,
   };
 }

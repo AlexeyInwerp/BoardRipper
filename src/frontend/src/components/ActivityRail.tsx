@@ -9,17 +9,14 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import {
-  IconBooks, IconCalculator, IconBug, IconSettings,
-  IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand,
-  IconLayoutSidebarRightCollapse, IconLayoutSidebarRightExpand,
-} from '@tabler/icons-react';
+import { IconBooks, IconCalculator, IconBug, IconSettings, IconLayoutBottombar } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import {
   SIDEBAR_GROUPS,
   TABS,
   showSidebarTab,
   toggleSidebar,
+  toggleStatusBar,
   flipSidebarSide,
   setSidebarCaptions,
   type SidebarTab,
@@ -41,7 +38,7 @@ const LABELS: Record<SidebarTab, string> = Object.fromEntries(
 interface MenuPos { x: number; y: number }
 
 export function ActivityRail() {
-  const { collapsed, activeTab, side, captions } = useSidebarState();
+  const { collapsed, activeTab, side, captions, statusHidden } = useSidebarState();
   const badges = useRailBadges();
   const [menu, setMenu] = useState<MenuPos | null>(null);
   const railRef = useRef<HTMLElement>(null);
@@ -160,28 +157,21 @@ export function ActivityRail() {
         {SIDEBAR_GROUPS.top.map(renderItem)}
         <div className="activity-rail-spacer" />
         {SIDEBAR_GROUPS.bottom.map(renderItem)}
-        {/* Explicit panel hide/show. Clicking the active icon does the same,
-            but a visible control is what people reach for when they want
-            the board and nothing else. Not a tab: excluded from roving focus. */}
-        {(() => {
-          const Hide = side === 'left' ? IconLayoutSidebarLeftCollapse : IconLayoutSidebarRightCollapse;
-          const Show = side === 'left' ? IconLayoutSidebarLeftExpand : IconLayoutSidebarRightExpand;
-          const Ico = collapsed ? Show : Hide;
-          const label = collapsed ? `Show ${LABELS[activeTab]}` : 'Hide sidebar';
-          return (
-            <button
-              type="button"
-              className="activity-rail-item activity-rail-toggle"
-              aria-label={label}
-              data-title={label}
-              data-testid="rail-toggle"
-              onClick={() => { toggleSidebar(); closeMenu(); }}
-            >
-              <span className="activity-rail-ico"><Ico size={20} stroke={1.75} /></span>
-              {captions && <span className="activity-rail-cap">{collapsed ? 'Show' : 'Hide'}</span>}
-            </button>
-          );
-        })()}
+        {/* Status bar toggle — small, at the very foot, lit while the bar is
+            showing. The glyph is a window with a bottom bar: the thing it
+            toggles. (Hiding the PANEL needs no button of its own: clicking the
+            active destination does it. The toolbar ≡ clears everything.) */}
+        <button
+          type="button"
+          className={`activity-rail-item activity-rail-status${statusHidden ? '' : ' on'}`}
+          aria-label={statusHidden ? 'Show status bar' : 'Hide status bar'}
+          aria-pressed={!statusHidden}
+          data-title={statusHidden ? 'Show status bar' : 'Hide status bar'}
+          data-testid="rail-status-toggle"
+          onClick={() => { toggleStatusBar(); closeMenu(); }}
+        >
+          <IconLayoutBottombar size={15} stroke={1.75} />
+        </button>
       </nav>
       {menu && createPortal(
         <div

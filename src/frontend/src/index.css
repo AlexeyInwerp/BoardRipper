@@ -973,12 +973,18 @@ body {
   border-left: 1px solid var(--border);
 }
 .activity-rail-spacer { flex: 1; }
-.activity-rail-toggle {
+/* Foot-of-rail status-bar toggle: deliberately small and quiet, set off from
+   the destinations by a rule. Lit (accent) while the bar is showing, dim when
+   hidden — the icon itself doesn't change. */
+.activity-rail-status {
+  height: 28px;
   margin-top: 2px;
   border-top: 1px solid var(--border);
-  height: 38px;
+  color: var(--text-secondary);
+  opacity: 0.55;
 }
-.activity-rail-nocap .activity-rail-toggle { height: 34px; }
+.activity-rail-status.on { color: var(--accent); opacity: 0.9; }
+.activity-rail-status:hover { opacity: 1; }
 
 .activity-rail-item {
   position: relative;
