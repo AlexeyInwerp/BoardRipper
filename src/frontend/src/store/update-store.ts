@@ -497,6 +497,16 @@ class UpdateStore extends Emitter {
 
 export const updateStore = new UpdateStore();
 
+/** Display form of a version string: "0.31.18" → "v0.31.18", "v0.31.18" and
+ *  "dev" unchanged. Shared by the toolbar badge and the rail badge so the two
+ *  never disagree (raw values once produced "vv0.31.18" / "vdev"). */
+export function fmtVersion(v: string | undefined | null): string {
+  if (!v) return '';
+  if (/^v/i.test(v)) return v;
+  if (/^\d/.test(v)) return 'v' + v;
+  return v; // "dev", "local", etc.
+}
+
 // Test-harness hook: expose the singleton on window so e2e tests can probe
 // `updating` / `restarting` / `progress.length` without having to drive
 // React-DevTools or walk the fiber tree. No security concern — every method

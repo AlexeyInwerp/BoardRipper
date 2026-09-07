@@ -388,6 +388,34 @@ test.describe('activity rail', () => {
     await expect(badge).toHaveCount(0);
   });
 
+  test('Debug badge still counts when Debug is the active tab but the panel is hidden', async ({ page }) => {
+    await gotoApp(page);
+    await page.click(`${RAIL} ${tab('debug')}`);              // open Debug
+    await page.click(`${RAIL} ${tab('debug')}`);              // hide it — Debug stays the active tab
+    await expect(page.locator('.sidebar')).toBeHidden();
+    await page.evaluate(() => { console.error('hidden-debug probe'); });
+    await expect(page.getByTestId('rail-badge-debug')).toHaveText('1');
+    await page.click(`${RAIL} ${tab('debug')}`);              // look at it → seen
+    await expect(page.getByTestId('rail-badge-debug')).toHaveCount(0);
+  });
+
+  test('Settings ▸ Sidebar navigation also exposes side and auto-hide (touch has no right-click)', async ({ page }) => {
+    await gotoApp(page);
+    await page.click(`${RAIL} ${tab('settings')}`);
+    await page.locator('.sidebar').getByRole('button', { name: 'Theme' }).click();
+    await page.getByTestId('sidebar-nav-side-right').click();
+    await expect(page.locator(RAIL)).toHaveClass(/activity-rail-right/);
+    await page.getByTestId('sidebar-nav-side-left').click();
+    await expect(page.locator(RAIL)).toHaveClass(/activity-rail-left/);
+    await page.getByTestId('sidebar-nav-autohide').check();
+    // Switching auto-hide on starts hidden, like boot.
+    await expect(page.locator('.sidebar')).toBeHidden();
+    await page.click(`${RAIL} ${tab('settings')}`);
+    await expect(page.locator('.sidebar')).toHaveClass(/sidebar-overlay/);
+    await page.getByTestId('sidebar-nav-autohide').uncheck();
+    await expect(page.locator('.sidebar')).not.toHaveClass(/sidebar-overlay/);
+  });
+
   test('Settings ▸ Sidebar navigation switches to the legacy strip and back without losing state', async ({ page }) => {
     await gotoApp(page);
     await page.click(`${RAIL} ${tab('settings')}`);
@@ -410,6 +438,7 @@ test.describe('activity rail', () => {
     await page.addInitScript(() => {
       localStorage.setItem('boardripper-sidebar-rail', 'false');
       localStorage.setItem('boardripper-statusbar-hidden', 'true'); // must be ignored without a rail to un-hide it
+      localStorage.setItem('boardripper-sidebar-autohide', 'true');  // rail-only too: must not force the strip to boot hidden
     });
     await page.goto('/');
     await page.waitForLoadState('networkidle');

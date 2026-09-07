@@ -968,10 +968,18 @@ body {
   border-radius: 4px 0 0 4px;
 }
 
-/* Auto-hide: the panel floats over the board area (inline position from
-   Sidebar.tsx); a shadow on the board-facing edge says "this is on top". */
-.sidebar-overlay.sidebar-left  { box-shadow: 8px 0 24px -8px var(--scrim-strong); }
-.sidebar-overlay.sidebar-right { box-shadow: -8px 0 24px -8px var(--scrim-strong); }
+/* Auto-hide: the panel is taken out of flow and floats over the board area
+   (the wrapper is position:relative; the rail sits outside it). A shadow on
+   the board-facing edge says "this is on top". z-index sits below the rail
+   (70) so the rail's hover labels still paint over the panel. */
+.sidebar-overlay {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 60;
+}
+.sidebar-overlay.sidebar-left  { left: 0;  box-shadow: 8px 0 24px -8px var(--scrim-strong); }
+.sidebar-overlay.sidebar-right { right: 0; box-shadow: -8px 0 24px -8px var(--scrim-strong); }
 
 /* --- Activity rail (icon column replacing the sidebar's text tab strip) ---
  * A second view over Sidebar.utils.ts state. Always visible; the sidebar
@@ -986,7 +994,7 @@ body {
   flex-direction: column;
   padding: 4px 0 0; /* no bottom padding: the foot cell must end where the status bar ends */
   position: relative;
-  z-index: 2;
+  z-index: 70; /* above the auto-hide overlay (60) so hover labels paint over it */
   user-select: none;
 }
 .activity-rail-right {
@@ -5277,6 +5285,7 @@ body {
   border-bottom: 1px solid var(--border);
   background: var(--bg-primary);
   flex-shrink: 0;
+  overflow: visible; /* the open icon-tab caption may hang past the row edge */
 }
 
 .library-tabs {
@@ -7997,10 +8006,6 @@ body {
   flex-wrap: wrap;
   row-gap: 2px;
 }
-/* The open tab's caption may be wider than its cell; let it hang out over
-   the row padding rather than be clipped at the edge. */
-.settings-tabs-row { overflow: visible; }
-
 /* ── Icon tab cell — the one tab design for panel-internal strips (Library,
    Settings). Fixed width and height with the icon pinned at a fixed spot, so
    switching tabs never moves an icon. The caption (open tab only) and any
@@ -8039,9 +8044,6 @@ body {
   height: 14px;
   font-size: 9px;
 }
-/* Library's row has no bottom margin of its own; captions need the row to
-   not clip them at the edge, same as Settings. */
-.library-tabs-row { overflow: visible; }
 
 /* ── Overlay inline filter inputs (Parts + Nets dropdowns) ─────────────────── */
 

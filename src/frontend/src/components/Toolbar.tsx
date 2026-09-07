@@ -1,19 +1,16 @@
 import { useRef, useEffect, useState, useCallback, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import {
-  IconBoxMultiple, IconFlipHorizontal, IconLayoutBoardSplit, IconUpload, IconDownload, IconInfoCircle,
-  IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconLayoutSidebarRightCollapse, IconLayoutSidebarRightExpand,
-} from '@tabler/icons-react';
+import { IconBoxMultiple, IconFlipHorizontal, IconLayoutBoardSplit, IconUpload, IconDownload, IconInfoCircle } from '@tabler/icons-react';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { useUpdateStore } from '../hooks/useUpdateStore';
-import { useSidebarState } from '../hooks/useSidebarState';
-import { cycleSidebar, showSidebarTab } from './Sidebar.utils';
+import { showSidebarTab } from './Sidebar.utils';
+import { SidebarCycleButton } from './SidebarCycleButton';
 import { getAllExtensions, getFileExtension, getFormat } from '../parsers';
 import { fileInputRefs } from '../store/file-inputs';
 import { formatShortcut } from '../store/keyboard-shortcuts';
 import { openPdfFiles } from '../store/file-actions';
-import { updateStore } from '../store/update-store';
+import { updateStore, fmtVersion } from '../store/update-store';
 import { ReleaseNotes } from './ReleaseNotes';
 import { pdfStore } from '../store/pdf-store';
 import { databankStore, isElectron } from '../store/databank-store';
@@ -34,12 +31,6 @@ declare const __APP_VERSION__: string;
  *  Version (release.sh tag, e.g. "v0.31.18") already carries the prefix, so
  *  the old `v${state.current_version}` rendered "vv0.31.18". Non-numeric
  *  builds like "dev" are shown verbatim (no spurious "vdev"). */
-function fmtVersion(v: string | undefined | null): string {
-  if (!v) return '';
-  if (/^v/i.test(v)) return v;
-  if (/^\d/.test(v)) return 'v' + v;
-  return v; // "dev", "local", etc.
-}
 
 /** Hosted lite build only: download the single self-contained offline copy
  *  (boardripper-lite.html). Sits in the top-right slot where the self-update
@@ -455,7 +446,6 @@ export function Toolbar() {
   const uiShowTop    = board?.primarySide === 'bottom' ? showBottom : showTop;
   const uiShowBottom = board?.primarySide === 'bottom' ? showTop    : showBottom;
   const update = useUpdateStore();
-  const { rail: sidebarRail, side: sidebarSide, stage: sidebarStage, activeTab: sidebarTab } = useSidebarState();
   const fmt = board ? getFormat(board.format) : undefined;
   const hasLayers = fmt?.hasLayers ?? false;
   const hasTraces = fmt?.hasTraces ?? false;
@@ -578,35 +568,7 @@ export function Toolbar() {
       />
       {/* ── Files ── */}
       <div className="toolbar-group">
-        {/* Sidebar cycle: open → icons only → completely hidden (nothing but
-            the board, status bar included) → open again on the tab you had.
-            The glyph is the sidebar-collapse icon, flipped to "expand" when the
-            next click brings things back. In the legacy layout it toggles the
-            panel as it always did. */}
-        {(() => {
-          const willExpand = sidebarStage === 'hidden';
-          const Ico = sidebarSide === 'left'
-            ? (willExpand ? IconLayoutSidebarLeftExpand : IconLayoutSidebarLeftCollapse)
-            : (willExpand ? IconLayoutSidebarRightExpand : IconLayoutSidebarRightCollapse);
-          const tabName = sidebarTab.charAt(0).toUpperCase() + sidebarTab.slice(1);
-          const tip = !sidebarRail
-            ? 'Toggle Library / Settings panel'
-            : sidebarStage === 'open' ? 'Sidebar → icons only'
-            : sidebarStage === 'icons' ? 'Sidebar → hide completely (nothing but the board)'
-            : `Sidebar → show ${tabName}`;
-          return (
-            <button
-              onClick={cycleSidebar}
-              className="toolbar-btn toolbar-btn-icon"
-              data-testid="sidebar-area-toggle"
-              data-sidebar-stage={sidebarStage}
-              data-tooltip={tip}
-              aria-label={tip}
-            >
-              <Ico size={17} stroke={1.75} />
-            </button>
-          );
-        })()}
+        <SidebarCycleButton />
         {/* Pop-out needs a real second window. The offline single file has
          *  no popout.html to open, and a tablet's window.open is a new tab
          *  (iPadOS) or nothing — so the control is hidden where it can only

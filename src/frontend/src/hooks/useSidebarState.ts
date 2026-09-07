@@ -5,7 +5,6 @@ import {
   getActiveTabRaw,
   getSideRaw,
   getSidebarRail,
-  getSidebarRailHidden,
   getSidebarCaptions,
   getStatusBarHidden,
   getSidebarAutoHide,
@@ -20,8 +19,6 @@ export interface SidebarSnapshot {
   activeTab: SidebarTab;
   side: SidebarSide;
   rail: boolean;
-  /** Rail layout with the rail itself hidden ("nothing but the board"). */
-  railHidden: boolean;
   captions: boolean;
   /** Status bar hidden (rail layout only). */
   statusHidden: boolean;
@@ -32,9 +29,9 @@ export interface SidebarSnapshot {
 }
 
 /**
- * Reactive view of the sidebar's module state for components that need to
- * re-render when it changes (ActivityRail, Toolbar, App). Sidebar.tsx still
- * uses its original forceUpdate subscription; both read the same source.
+ * Reactive view of the sidebar's module state — the one subscription path for
+ * every component that renders it (App, Sidebar, ActivityRail, the toolbar's
+ * cycle button, the Settings switch, the rail badges).
  */
 export const useSidebarState = createStoreHook<SidebarSnapshot>(
   { subscribe: onSidebarChange },
@@ -43,7 +40,6 @@ export const useSidebarState = createStoreHook<SidebarSnapshot>(
     activeTab: getActiveTabRaw(),
     side: getSideRaw(),
     rail: getSidebarRail(),
-    railHidden: getSidebarRailHidden(),
     captions: getSidebarCaptions(),
     statusHidden: getStatusBarHidden(),
     autoHide: getSidebarAutoHide(),

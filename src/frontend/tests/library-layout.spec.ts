@@ -23,8 +23,9 @@ test.describe('Library panel layout', () => {
   test('Folder tab is positioned directly after Board #', async ({ page }) => {
     await openLibrary(page);
     const tabs = page.locator('.library-tabs .library-tab');
-    // 0 = History (icon), 1 = Board # (text), 2 = Folder (icon, title="Browse folders")
-    await expect(tabs.nth(1)).toHaveText('Board #');
+    // 0 = History, 1 = Board #, 2 = Folder — all icon cells now; the caption
+    // is drawn only under the open tab, so identify by attribute, not text.
+    await expect(tabs.nth(1)).toHaveAttribute('data-library-tab', 'metadata');
     await expect(tabs.nth(2)).toHaveAttribute('title', 'Browse folders');
     // The inline DB/Live pill must be gone from the tab row.
     await expect(page.locator('.library-browse-pill')).toHaveCount(0);

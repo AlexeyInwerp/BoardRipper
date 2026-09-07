@@ -13,7 +13,8 @@ import { StatusBar } from './components/StatusBar';
 import { ContextMenu } from './components/ContextMenu';
 import { ShortcutsOverlay } from './components/ShortcutsOverlay';
 import { Sidebar } from './components/Sidebar';
-import { isSidebarCollapsed, onSidebarChange, getSidebarSide, getSidebarRail, getSidebarRailHidden, getStatusBarHidden, toggleSidebarArea, showSidebarTab } from './components/Sidebar.utils';
+import { cycleSidebar, showSidebarTab } from './components/Sidebar.utils';
+import { useSidebarState } from './hooks/useSidebarState';
 import { ActivityRail } from './components/ActivityRail';
 import { PanelErrorBoundary } from './components/PanelErrorBoundary';
 import { BoardViewerPanel } from './panels/BoardViewerPanel';
@@ -127,8 +128,6 @@ function App() {
   const [dragOver, setDragOver] = useState(false);
   const dragCounter = useRef(0);
   // Subscribe to all sidebar changes (collapse, side flip, tab switch)
-  const [, sidebarTick] = useState(0);
-  useEffect(() => onSidebarChange(() => sidebarTick(n => n + 1)), []);
 
   // Pre-load the library at app boot so the sidebar's Library tab is
   // ready by the time the user opens it. ensureLoaded is idempotent —
@@ -153,15 +152,11 @@ function App() {
     }
   }, []);
 
-  const sidebarCollapsed = isSidebarCollapsed();
-  const sidebarSide = getSidebarSide();
-  const sidebarRail = getSidebarRail();
-  const sidebarRailHidden = getSidebarRailHidden();
+  const { side: sidebarSide, rail: sidebarRail, stage: sidebarStage, statusHidden: statusBarHidden } = useSidebarState();
   // The edge arrow is the way back when nothing of the sidebar area is on
-  // screen: legacy layout with the panel hidden, or rail layout with the rail
-  // hidden too ("nothing but the board" via the toolbar ≡).
-  const showEdgeArrow = sidebarRail ? sidebarRailHidden : sidebarCollapsed;
-  const statusBarHidden = getStatusBarHidden();
+  // screen — the 'hidden' stage in either layout (legacy: panel hidden; rail:
+  // rail hidden too, "nothing but the board").
+  const showEdgeArrow = sidebarStage === 'hidden';
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -325,40 +320,40 @@ function App() {
           its foot toggle lines up exactly with the bar it controls. The rail
           orders itself to the outer edge (-1 left / 3 right). */}
       <div className="app-body">
-        {sidebarRail && !sidebarRailHidden && (
+        {sidebarRail && sidebarStage !== 'hidden' && (
           <PanelErrorBoundary label="Activity rail">
             <ActivityRail />
           </PanelErrorBoundary>
         )}
-      <div className="app-main">
-      <div className="dockview-wrapper">
-        {showEdgeArrow && (
-          <button
-            className={`sidebar-toggle collapsed sidebar-toggle-${sidebarSide}`}
-            style={{ order: sidebarSide === 'left' ? 0 : 2 }}
-            onClick={toggleSidebarArea}
-            title="Show sidebar"
-          >
-            {sidebarSide === 'left' ? '▶' : '◀'}
-          </button>
-        )}
-        <PanelErrorBoundary label="Sidebar">
-          <Sidebar />
-        </PanelErrorBoundary>
-        <div className="dockview-container" style={{ order: sidebarSide === 'left' ? 1 : 0 }}>
-          <DockviewReact
-            className="dockview-theme-dark"
-            onReady={onReady}
-            components={components}
-            tabComponents={tabComponents}
-            disableFloatingGroups={false}
-            popoutUrl="popout.html"
-          />
-          <HomeBackdrop />
+        <div className="app-main">
+          <div className="dockview-wrapper">
+            {showEdgeArrow && (
+              <button
+                className={`sidebar-toggle collapsed sidebar-toggle-${sidebarSide}`}
+                style={{ order: sidebarSide === 'left' ? 0 : 2 }}
+                onClick={cycleSidebar}
+                title="Show sidebar"
+              >
+                {sidebarSide === 'left' ? '▶' : '◀'}
+              </button>
+            )}
+            <PanelErrorBoundary label="Sidebar">
+              <Sidebar />
+            </PanelErrorBoundary>
+            <div className="dockview-container" style={{ order: sidebarSide === 'left' ? 1 : 0 }}>
+              <DockviewReact
+                className="dockview-theme-dark"
+                onReady={onReady}
+                components={components}
+                tabComponents={tabComponents}
+                disableFloatingGroups={false}
+                popoutUrl="popout.html"
+              />
+              <HomeBackdrop />
+            </div>
+          </div>
+          {!statusBarHidden && <StatusBar />}
         </div>
-      </div>
-      {!statusBarHidden && <StatusBar />}
-      </div>
       </div>
       <ContextMenu />
       {/* Interactive Mode handles. Mounted ONCE here, not per board panel:

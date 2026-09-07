@@ -9,11 +9,10 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { IconBooks, IconCalculator, IconBug, IconSettings, IconLayoutBottombar } from '@tabler/icons-react';
-import type { Icon } from '@tabler/icons-react';
+import { IconLayoutBottombar } from '@tabler/icons-react';
 import {
   SIDEBAR_GROUPS,
-  TABS,
+  TAB_LABELS,
   showSidebarTab,
   toggleSidebar,
   toggleStatusBar,
@@ -21,20 +20,10 @@ import {
   setSidebarCaptions,
   setSidebarAutoHide,
   type SidebarTab,
+  type SidebarTabDef,
 } from './Sidebar.utils';
 import { useSidebarState } from '../hooks/useSidebarState';
 import { useRailBadges, type RailBadge } from '../hooks/useRailBadges';
-
-const ICONS: Record<SidebarTab, Icon> = {
-  library: IconBooks,
-  tools: IconCalculator,
-  debug: IconBug,
-  settings: IconSettings,
-};
-
-const LABELS: Record<SidebarTab, string> = Object.fromEntries(
-  TABS.map(t => [t.id, t.label]),
-) as Record<SidebarTab, string>;
 
 interface MenuPos { x: number; y: number }
 
@@ -103,9 +92,7 @@ export function ActivityRail() {
     el.style.top = `${Math.max(4, y)}px`;
   }, [menu]);
 
-  const renderItem = (id: SidebarTab) => {
-    const Ico = ICONS[id];
-    const label = LABELS[id];
+  const renderItem = ({ id, label, icon: Ico }: SidebarTabDef) => {
     const active = id === activeTab;
     const badge: RailBadge | undefined = badges[id];
     const title = active
@@ -201,7 +188,7 @@ export function ActivityRail() {
           </button>
           <button type="button" role="menuitem" onClick={() => { toggleSidebar(); closeMenu(); }}>
             <span className="activity-rail-menu-tick" />
-            {collapsed ? `Show ${LABELS[activeTab]}` : 'Hide sidebar'}
+            {collapsed ? `Show ${TAB_LABELS[activeTab]}` : 'Hide sidebar'}
           </button>
         </div>,
         document.body,
