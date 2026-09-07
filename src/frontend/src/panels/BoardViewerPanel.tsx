@@ -11,6 +11,8 @@ import { log } from '../store/log-store';
 import { useBareScrollAction } from '../store/scroll-mode';
 import { obdStore, extractBoardNumberFromFilename } from '../store/obd-store';
 import { renderOverlayLayout } from '../components/overlay/slot-renderers';
+import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
+import { useOverlayCollapsed, toggleOverlayCollapsed } from '../store/overlay-collapse-store';
 import { useRenderSettings } from '../hooks/useRenderSettings';
 import type { SlotCtx } from '../components/overlay/slot-ctx';
 import {
@@ -35,9 +37,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   const renderSettings = useRenderSettings();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<'layers' | 'info' | 'search' | 'worklist' | null>(null);
-  const [sidebarOpacity, setSidebarOpacity] = useState(1);
-  const [sliderVisible, setSliderVisible] = useState(false);
-  const sliderGroupRef = useRef<HTMLDivElement>(null);
+  const overlayCollapsed = useOverlayCollapsed();
   const prevLayerCountRef = useRef(0);
 
   // Register per-tab handler for toolbar → board search
@@ -189,18 +189,6 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
     return () => { disposable.dispose(); visDisposable.dispose(); };
   }, [tabId, props.api]);
 
-  // Auto-hide slider on outside click (sidebar stays open)
-  useEffect(() => {
-    if (!sliderVisible) return;
-    const handler = (e: MouseEvent) => {
-      if (sliderGroupRef.current && !sliderGroupRef.current.contains(e.target as Node)) {
-        setSliderVisible(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [sliderVisible]);
-
   const slotCtx: SlotCtx = {
     tabId: tabId!,
     thisTab: {
@@ -237,46 +225,40 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
           <span className="board-loading-text">Loading board...</span>
         </div>
       )}
-      <div className="board-sidebar-toggle-group" ref={sliderGroupRef}>
+      <div className="board-sidebar-toggle-group">
         <button
           className={`board-sidebar-toggle ${sidebarOpen ? 'active' : ''}`}
-          onClick={() => {
-            const next = !sidebarOpen;
-            setSidebarOpen(next);
-            setSliderVisible(next);
-          }}
+          onClick={() => setSidebarOpen(!sidebarOpen)}
           title={sidebarOpen ? 'Hide board panel (Layers · Info · Search · Worklist)' : 'Show board panel (Layers · Info · Search · Worklist)'}
         >
           ☰
         </button>
-        {sliderVisible && (
-          <div className="board-sidebar-slider-wrap">
-            <input
-              type="range"
-              className="board-sidebar-opacity-slider"
-              min={20}
-              max={100}
-              value={sidebarOpacity * 100}
-              onChange={(e) => setSidebarOpacity(Number(e.target.value) / 100)}
-              onDoubleClick={() => setSidebarOpacity(1)}
-            />
-            <div
-              className="board-sidebar-slider-tooltip"
-              style={{ top: `${(1 - (sidebarOpacity * 100 - 20) / 80) * 100}%` }}
-            >
-              {Math.round(sidebarOpacity * 100)}%
-            </div>
-          </div>
-        )}
       </div>
-      <div className={`board-status-indicators${renderSettings.overlayPosition === 'center' ? ' center' : ''}`}>
-        {renderOverlayLayout(renderSettings.overlayLayout, slotCtx)}
+      {/* Overlay controls. The handle at the left end rolls the bar up into
+          the edge like a Classic Mac window shade — only the handle stays,
+          the board underneath gets the room. Persisted across tabs and reloads. */}
+      <div
+        className={`board-status-indicators${renderSettings.overlayPosition === 'center' ? ' center' : ''}${overlayCollapsed ? ' collapsed' : ''}`}
+        data-testid="board-overlay-bar"
+        data-collapsed={overlayCollapsed ? 'true' : 'false'}
+      >
+        <button
+          type="button"
+          className="overlay-collapse"
+          data-testid="overlay-collapse"
+          aria-expanded={!overlayCollapsed}
+          aria-label={overlayCollapsed ? 'Show board controls' : 'Hide board controls'}
+          title={overlayCollapsed ? 'Show board controls' : 'Hide board controls'}
+          onClick={toggleOverlayCollapsed}
+        >
+          {overlayCollapsed ? <IconChevronRight size={14} stroke={2} /> : <IconChevronLeft size={14} stroke={2} />}
+        </button>
+        {!overlayCollapsed && renderOverlayLayout(renderSettings.overlayLayout, slotCtx)}
       </div>
       <BoardSidebar
         visible={sidebarOpen}
         requestedTab={sidebarTab}
         onTabApplied={() => setSidebarTab(null)}
-        opacity={sidebarOpacity}
         tabId={tabId!}
       />
     </div>

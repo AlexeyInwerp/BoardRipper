@@ -17,7 +17,7 @@ async function openInfoTab(page: Page) {
   await page.getByTestId('file-input').setInputFiles(BOARD);
   await expect(page.getByTestId('statusbar')).toContainText('Components:', { timeout: 60000 });
   await page.locator('.board-sidebar-toggle').first().click();
-  await page.locator('.board-sidebar-tab', { hasText: 'Info' }).click();
+  await page.locator('[data-board-tab="info"]').click();
 }
 
 /** Pick a part+pin whose net carries a component count inside [min,max]

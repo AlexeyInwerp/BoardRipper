@@ -1,5 +1,8 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { IconPin, IconPinFilled, IconChevronRight, IconChevronDown } from '@tabler/icons-react';
+import {
+  IconPin, IconPinFilled, IconChevronRight, IconChevronDown,
+  IconInfoCircle, IconStack2, IconEye, IconSearch, IconVersions, IconChecklist,
+} from '@tabler/icons-react';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { useWorklist } from '../hooks/useWorklist';
 import { boardStore, ghostPairSig, bomClusterSig } from '../store/board-store';
@@ -34,7 +37,6 @@ interface BoardSidebarProps {
   /** One-shot tab switch request (cleared after applying) */
   requestedTab?: SidebarTab | null;
   onTabApplied?: () => void;
-  opacity?: number;
 }
 
 const BOARD_SIDEBAR_W_KEY = 'boardripper.boardSidebar.width';
@@ -68,7 +70,7 @@ function nameBoards(
   return names;
 }
 
-export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied, opacity = 1 }: BoardSidebarProps) {
+export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied }: BoardSidebarProps) {
   const { tabs } = useBoardStore();
   const tab = tabs.find(t => t.id === tabId);
   const board = tab?.board ?? null;
@@ -163,7 +165,7 @@ export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied, opaci
   if (!visible) return null;
 
   return (
-    <div className="board-sidebar" style={{ opacity, width: sbWidth }}>
+    <div className="board-sidebar" style={{ width: sbWidth }}>
       <div
         className="board-sidebar-resize-handle"
         onPointerDown={onSbResizeDown}
@@ -172,29 +174,45 @@ export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied, opaci
         title="Drag to resize"
       />
       <div className="board-sidebar-header">
+        {/* Same icon-tab cell as the Library and Settings strips: icons stay
+            put, the open tab's name sits underneath. Tests use data-board-tab. */}
         <div className="board-sidebar-tabs">
           <button
-            className={`board-sidebar-tab ${activeTab === 'info' ? 'active' : ''}`}
+            className={`library-tab icon-tab ${activeTab === 'info' ? 'active' : ''}`}
+            data-board-tab="info"
             onClick={() => pickTab('info')}
+            title="Info"
+            aria-label="Info"
           >
-            Info
+            <IconInfoCircle size={14} />
+            {activeTab === 'info' && <span className="icon-tab-caption">Info</span>}
           </button>
           <button
-            className={`board-sidebar-tab ${activeTab === 'layers' ? 'active' : ''}`}
+            className={`library-tab icon-tab ${activeTab === 'layers' ? 'active' : ''}`}
+            data-board-tab="layers"
             onClick={() => pickTab('layers')}
+            title={hasLayers ? 'Layers' : 'View'}
+            aria-label={hasLayers ? 'Layers' : 'View'}
           >
-            {hasLayers ? 'Layers' : 'View'}
+            {hasLayers ? <IconStack2 size={14} /> : <IconEye size={14} />}
+            {activeTab === 'layers' && <span className="icon-tab-caption">{hasLayers ? 'Layers' : 'View'}</span>}
           </button>
           <button
-            className={`board-sidebar-tab ${activeTab === 'search' ? 'active' : ''}`}
+            className={`library-tab icon-tab ${activeTab === 'search' ? 'active' : ''}`}
+            data-board-tab="search"
             onClick={() => pickTab('search')}
+            title="Search"
+            aria-label="Search"
           >
-            Search
+            <IconSearch size={14} />
+            {activeTab === 'search' && <span className="icon-tab-caption">Search</span>}
           </button>
           {showRevisionsTab && (
             <button
-              className={`board-sidebar-tab ${activeTab === 'revisions' ? 'active' : ''}`}
+              className={`library-tab icon-tab ${activeTab === 'revisions' ? 'active' : ''}`}
+              data-board-tab="revisions"
               onClick={() => pickTab('revisions')}
+              aria-label="Revisions"
               title={
                 hasRevisions
                   ? 'Multiple board revisions detected in this file'
@@ -203,15 +221,20 @@ export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied, opaci
                     : 'Suspicious overlapping components detected'
               }
             >
-              Revisions{(hasGhosts || hasBomClusters) && <span className="tab-badge">!</span>}
+              <IconVersions size={14} />
+              {activeTab === 'revisions' && <span className="icon-tab-caption">Revisions</span>}
+              {(hasGhosts || hasBomClusters) && <span className="tab-badge">!</span>}
             </button>
           )}
           <button
-            className={`board-sidebar-tab ${activeTab === 'worklist' ? 'active' : ''}`}
+            className={`library-tab icon-tab ${activeTab === 'worklist' ? 'active' : ''}`}
+            data-board-tab="worklist"
             onClick={() => pickTab('worklist')}
-            title="Multi-select scratchpad + named worklistes (mark/note/export)"
+            aria-label="Worklist"
+            title="Multi-select scratchpad + named worklists (mark/note/export)"
           >
-            Worklist
+            <IconChecklist size={14} />
+            {activeTab === 'worklist' && <span className="icon-tab-caption">Worklist</span>}
           </button>
         </div>
       </div>

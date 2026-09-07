@@ -21,7 +21,7 @@ test('worklist scroll position survives a board part-selection', async ({ page }
 
   // Expand the (right-anchored) board sidebar, then open the Worklist tab.
   await page.locator('.board-sidebar-toggle').first().click();
-  await page.locator('.board-sidebar-tab', { hasText: 'Worklist' }).click();
+  await page.locator('[data-board-tab="worklist"]').click();
 
   // Populate a long worklist (40 parts) so the list overflows and scrolls.
   await page.evaluate(() => {
@@ -62,8 +62,8 @@ test('worklist scroll position survives a board part-selection', async ({ page }
 
   // And it must also survive a genuine remount of the panel (switch the
   // sidebar tab away and back) — the durable-scroll guarantee for #22.
-  await page.locator('.board-sidebar-tab', { hasText: 'Info' }).click();
-  await page.locator('.board-sidebar-tab', { hasText: 'Worklist' }).click();
+  await page.locator('[data-board-tab="info"]').click();
+  await page.locator('[data-board-tab="worklist"]').click();
   const list2 = page.getByTestId('worklist-scroll');
   await expect(list2).toBeVisible();
   await expect

@@ -1,5 +1,21 @@
 # BoardRipper changelog
 
+## Unreleased
+
+### Board panel
+
+- **The board's control bar folds away.** The small handle at its left end
+  rolls the whole bar up into itself, the way a Classic Mac window shade did,
+  and the board gets the room. Click the handle again to bring it back. The
+  choice is remembered.
+- **Board panel tabs match the rest.** Info, View or Layers, Search,
+  Revisions and Worklist are now the same icon cells as the Library and
+  Settings tabs: icons stay where they are, the open tab's name sits
+  underneath.
+- **The panel transparency slider is gone.** It appeared next to the ☰ when
+  you opened the panel and was not useful. The ☰ now only opens and closes
+  the panel.
+
 ## v0.38.0 — 2026-09-07
 
 ### Sidebar

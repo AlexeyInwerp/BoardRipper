@@ -3079,7 +3079,7 @@ body {
   to { transform: rotate(360deg); }
 }
 
-/* Sidebar toggle group (button + opacity slider) */
+/* Sidebar toggle group (the ☰ at the panel's top-right) */
 .board-sidebar-toggle-group {
   position: absolute;
   top: 6px;
@@ -3117,46 +3117,7 @@ body {
   border-color: var(--accent);
 }
 
-.board-sidebar-slider-wrap {
-  position: relative;
-}
 
-.board-sidebar-opacity-slider {
-  -webkit-appearance: slider-vertical;
-  appearance: slider-vertical;
-  writing-mode: vertical-lr;
-  direction: rtl;
-  width: 28px;
-  height: 80px;
-  accent-color: var(--accent);
-  cursor: pointer;
-  background: var(--chip-bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0;
-  margin: 0;
-}
-
-.board-sidebar-slider-tooltip {
-  position: absolute;
-  right: 34px;
-  transform: translateY(-50%);
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  font-size: 10px;
-  font-family: monospace;
-  padding: 1px 5px;
-  border-radius: 3px;
-  border: 1px solid var(--border);
-  white-space: nowrap;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.1s;
-}
-
-.board-sidebar-opacity-slider:active + .board-sidebar-slider-tooltip {
-  opacity: 1;
-}
 
 /* Board status indicators — left edge by default */
 .board-status-indicators {
@@ -3179,6 +3140,28 @@ body {
   left: 50%;
   transform: translateX(-50%);
 }
+
+/* Window-shade handle at the bar's left end. Collapsed, the bar is just the
+   handle: same chip, same corner, the board gets the room. */
+.overlay-collapse {
+  width: 18px;
+  height: 28px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+.overlay-collapse:hover { opacity: 1; background: var(--surface-hover); color: var(--text-primary); }
+.overlay-collapse:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
+.board-status-indicators.collapsed { gap: 0; }
+.board-status-indicators.collapsed .overlay-collapse { opacity: 0.85; }
 
 .overlay-sep {
   width: 12px;
@@ -3303,34 +3286,18 @@ body {
 
 .board-sidebar-tabs {
   display: flex;
+  gap: 2px;
+  padding: 0 6px;
   flex: 1;
   min-width: 0;
 }
-
-.board-sidebar-tab {
-  flex: 1;
-  padding: 6px 10px;
-  border: none;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-  min-height: 28px;
-  display: flex;
-  align-items: center;
-  box-sizing: border-box;
-}
-
-.board-sidebar-tab:hover {
-  color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.board-sidebar-tab.active {
-  color: var(--accent-text);
-  border-bottom-color: var(--accent);
+/* Tabs are the shared `library-tab icon-tab` cell (see .icon-tab). The
+   Revisions "!" badge sits in the cell's top-right corner, off the glyph. */
+.icon-tab .tab-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  margin-left: 0;
 }
 
 .board-sidebar-close {
