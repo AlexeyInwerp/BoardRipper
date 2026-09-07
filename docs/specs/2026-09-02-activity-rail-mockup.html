@@ -1,0 +1,1318 @@
+<title>BoardRipper Activity Rail</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  /* ──────────────────────────────────────────────────────────────
+     Committed single-theme dark: this page IS BoardRipper's chrome.
+     Interior tokens copied verbatim from src/frontend/src/index.css.
+
+     ARCHITECTURE: every layout variant is driven by data-* attributes
+     on #app (mode / side / collapsed / captions). CSS reads them; JS
+     only ever writes them. No inline style.display juggling — that was
+     the desync bug in the first pass.
+     ────────────────────────────────────────────────────────────── */
+  :root {
+    --bg-primary: #08080c;
+    --bg-secondary: #0f0f18;
+    --bg-tertiary: #0c1424;
+    --canvas-bg: #050508;
+    --text-primary: #e0e0e0;
+    --text-secondary: #a0a0b0;
+    --accent: #4a9eff;
+    --accent-fg: #ffffff;
+    --border: #1a1a28;
+    --red: #cc4444;
+    --orange: #ffaa00;
+    --icon-board-bg: #44cc44;
+    --icon-pdf-bg: #cc4444;
+    --toolbar-height: 40px;
+    --statusbar-height: 24px;
+
+    --page-bg: #060609;
+    --page-ink: #d8dae2;
+    --page-dim: #7c8298;
+    --page-rule: #191a24;
+    --page-surface: #0b0b11;
+    --add: #4a9eff;
+    --rm: #cc4444;
+    --mv: #ffaa00;
+
+    --app-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  body {
+    background: var(--page-bg);
+    color: var(--page-ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 48px 28px 80px;
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+  }
+
+  /* ── masthead ── */
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .eyebrow::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(90deg, var(--page-rule), transparent);
+  }
+  h1 {
+    font-weight: 600;
+    font-size: clamp(28px, 4vw, 40px);
+    letter-spacing: -0.02em;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin-top: 12px;
+  }
+  .lede {
+    color: var(--page-dim);
+    max-width: 66ch;
+    margin-top: 12px;
+    font-size: 16px;
+  }
+  .lede b { color: var(--page-ink); font-weight: 500; }
+
+  /* ── control strip ── */
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 18px;
+    padding: 14px 16px;
+    background: var(--page-surface);
+    border: 1px solid var(--page-rule);
+    border-radius: 3px;
+  }
+  .ctl-group { display: flex; align-items: center; gap: 9px; }
+  .ctl-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--page-dim);
+  }
+  .seg { display: inline-flex; border: 1px solid var(--page-rule); border-radius: 2px; overflow: hidden; }
+  .seg button {
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 6px 13px;
+    background: #101017;
+    color: var(--page-dim);
+    border: none;
+    cursor: pointer;
+    transition: background .12s, color .12s;
+  }
+  .seg button + button { border-left: 1px solid var(--page-rule); }
+  .seg button:hover { color: var(--page-ink); }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #04101f; font-weight: 600; }
+  .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .ctl-spacer { flex: 1; }
+  .hint { font-family: var(--mono); font-size: 11px; color: var(--page-dim); }
+  .hint kbd {
+    font-family: var(--mono);
+    background: #14141d;
+    border: 1px solid var(--page-rule);
+    border-bottom-width: 2px;
+    border-radius: 3px;
+    padding: 1px 5px;
+    color: var(--page-ink);
+    font-size: 10px;
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     THE MOCKUP
+     ══════════════════════════════════════════════════════════════ */
+  .stage {
+    border: 1px solid var(--page-rule);
+    border-radius: 3px;
+    overflow-x: auto;
+    box-shadow: 0 24px 60px -30px #000;
+  }
+  .app {
+    font-family: var(--app-font);
+    font-size: 13px;
+    color: var(--text-primary);
+    background: var(--canvas-bg);
+    height: 560px;
+    min-width: 760px;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    user-select: none;
+  }
+
+  /* ── toolbar ── */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    height: var(--toolbar-height);
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border);
+    padding: 0 8px;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .toolbar-group {
+    display: inline-flex;
+    align-items: stretch;
+    gap: 2px;
+    background: var(--bg-primary);
+    padding: 2px 3px;
+    border: 1px solid var(--border);
+    height: 28px;
+  }
+  .tb {
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    padding: 4px 11px;
+    font-size: 11.7px;
+    font-family: inherit;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    white-space: nowrap;
+    border-radius: 1px;
+  }
+  .tb:hover, .tb.active { background: var(--accent); color: var(--accent-fg); }
+  .tb:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+  .tb-icon { font-size: 17px; line-height: 1; padding: 4px 9px; }
+  .tb-sm { font-size: 10px; padding: 4px 6px; }
+  .toolbar-spacer { flex: 1; }
+  .tb-badge {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-size: 10.5px;
+    padding: 4px 9px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 1px;
+  }
+  .tb-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--orange); }
+  /* The ≡ exists only in the current layout — the rail replaces it. */
+  .app[data-mode="rail"] #tb-hamburger { display: none; }
+
+  /* ── body row ── */
+  .body-row { flex: 1; display: flex; flex-direction: row; min-height: 0; position: relative; }
+
+  /* Side is pure flex order — one rule, no JS. */
+  .app[data-side="left"]  .rail { order: 0; }
+  .app[data-side="left"]  .sidebar { order: 1; }
+  .app[data-side="left"]  .dock { order: 2; }
+  .app[data-side="right"] .dock { order: 0; }
+  .app[data-side="right"] .sidebar { order: 1; }
+  .app[data-side="right"] .rail { order: 2; }
+
+  /* ══ ACTIVITY RAIL ══ */
+  .rail {
+    width: 46px;
+    flex-shrink: 0;
+    background: var(--bg-tertiary);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 4px 0;
+    z-index: 2;
+  }
+  .app[data-side="right"] .rail { border-right: none; border-left: 1px solid var(--border); }
+  .app[data-mode="current"] .rail { display: none; }
+
+  .rail-item {
+    position: relative;
+    width: 100%;
+    height: 44px;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    font-family: inherit;
+    transition: color .1s, background .1s;
+  }
+  /* Icon box: badges anchor to THIS, not the cell — so a count never sits on the glyph. */
+  .rail-ico { position: relative; width: 20px; height: 20px; flex-shrink: 0; }
+  .rail-ico svg { width: 20px; height: 20px; display: block; }
+  .rail-cap { font-size: 8px; letter-spacing: .02em; line-height: 1; }
+  .app[data-captions="off"] .rail-cap { display: none; }
+  .app[data-captions="off"] .rail-item { height: 40px; }
+
+  .rail-item:hover { color: var(--text-primary); background: rgba(255,255,255,.035); }
+  .rail-item[aria-selected="true"] { color: var(--accent); }
+  .rail-item[aria-selected="true"]::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 5px; bottom: 5px;
+    width: 2px;
+    background: var(--accent);
+  }
+  .app[data-side="right"] .rail-item[aria-selected="true"]::before { left: auto; right: 0; }
+  /* Collapsed: the destination stays marked, but muted — it isn't showing. */
+  .app[data-collapsed="true"] .rail-item[aria-selected="true"] { color: var(--text-primary); }
+  .app[data-collapsed="true"] .rail-item[aria-selected="true"]::before { background: var(--text-secondary); opacity: .5; }
+  .rail-item:focus-visible { outline: 1px solid var(--accent); outline-offset: -3px; }
+  .rail-spacer { flex: 1; }
+
+  /* VS Code-style hover label — the discoverability net under icon-only mode */
+  .rail-item::after {
+    content: attr(data-title);
+    position: absolute;
+    left: calc(100% + 6px);
+    top: 50%;
+    transform: translateY(-50%);
+    background: #16202f;
+    border: 1px solid #23324a;
+    color: var(--text-primary);
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 2px;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .1s .35s;
+    z-index: 30;
+  }
+  .app[data-side="right"] .rail-item::after { left: auto; right: calc(100% + 6px); }
+  .rail-item:hover::after, .rail-item:focus-visible::after { opacity: 1; }
+  /* Collapsed: the muted active item says how to get the panel back. */
+  .app[data-collapsed="true"] .rail-item[aria-selected="true"]::after { content: attr(data-title) "  ·  click to show"; }
+
+  /* VS Code convention: bottom-right of the icon, ringed in the rail colour so it
+     reads as sitting ON the icon rather than behind it. */
+  .rail-badge {
+    position: absolute;
+    right: -9px;
+    bottom: -5px;
+    min-width: 13px;
+    height: 13px;
+    padding: 0 3px;
+    border-radius: 7px;
+    font-size: 8.5px;
+    font-weight: 700;
+    line-height: 13px;
+    text-align: center;
+    font-family: var(--app-font);
+    color: #08080c;
+    box-shadow: 0 0 0 2px var(--bg-tertiary);
+  }
+  .rail-badge.err { background: var(--red); color: #fff; }
+  .rail-badge.warn { background: var(--orange); }
+  .rail-badge.info { background: var(--accent); color: #04101f; }
+  .rail-badge.dot { min-width: 7px; width: 7px; height: 7px; padding: 0; right: -4px; bottom: -2px; border-radius: 50%; }
+  .app[data-badges="off"] .rail-badge { display: none; }
+
+  /* rail context menu — where the flip control lives once the tab strip is gone */
+  .rail-menu {
+    position: absolute;
+    z-index: 60;
+    min-width: 178px;
+    background: var(--bg-tertiary);
+    border: 1px solid #23324a;
+    border-radius: 3px;
+    padding: 3px;
+    box-shadow: 0 10px 30px -8px #000;
+    display: none;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .rail-menu[data-open="true"] { display: flex; }
+  .rail-menu button {
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 11.5px;
+    text-align: left;
+    padding: 6px 9px;
+    cursor: pointer;
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .rail-menu button:hover { background: var(--accent); color: var(--accent-fg); }
+  .rail-menu .tick { width: 10px; color: var(--accent); font-size: 10px; }
+  .rail-menu button:hover .tick { color: var(--accent-fg); }
+
+  /* ── sidebar ── */
+  .sidebar {
+    width: 292px;
+    flex-shrink: 0;
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    position: relative;
+  }
+  .app[data-side="right"] .sidebar { border-right: none; border-left: 1px solid var(--border); }
+  .app[data-collapsed="true"] .sidebar { display: none; }
+
+  /* the CURRENT text tab strip — the row the rail deletes */
+  .sidebar-tabs {
+    display: flex;
+    align-items: center;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border);
+    height: 32px;
+    flex-shrink: 0;
+    padding: 0 2px;
+  }
+  .app[data-mode="rail"] .sidebar-tabs { display: none; }
+  .sidebar-tab {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-family: inherit;
+    padding: 6px 10px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    display: inline-flex;
+    align-items: center;
+  }
+  .sidebar-tab:hover { color: var(--text-primary); }
+  .sidebar-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .sidebar-tab:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
+  .sidebar-action-btn { padding: 4px 6px; font-size: 9px; }
+  .sidebar-action-btn svg { width: 14px; height: 14px; }
+  /* Real Sidebar.tsx mirrors this group to the far edge — so does this. */
+  .acts { display: flex; align-items: center; }
+  .acts-end { margin-left: auto; }
+  .acts-start { margin-right: auto; }
+  .app[data-side="left"]  .acts-start { display: none; }
+  .app[data-side="right"] .acts-end { display: none; }
+
+  .sidebar-resize {
+    position: absolute;
+    top: 0; right: -3px;
+    width: 7px; height: 100%;
+    cursor: col-resize;
+    z-index: 10;
+  }
+  .app[data-side="right"] .sidebar-resize { right: auto; left: -3px; }
+  .sidebar-resize:hover, .app[data-resizing="true"] .sidebar-resize { background: var(--accent); opacity: .35; }
+  .app[data-resizing="true"] { cursor: col-resize; }
+  /* width readout lives on the handle while dragging — not in the statusbar */
+  .resize-readout {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: #16202f;
+    border: 1px solid #23324a;
+    color: var(--text-primary);
+    font-size: 10.5px;
+    font-variant-numeric: tabular-nums;
+    padding: 2px 6px;
+    border-radius: 2px;
+    pointer-events: none;
+    display: none;
+    z-index: 20;
+  }
+  .app[data-side="right"] .resize-readout { right: auto; left: 8px; }
+  .app[data-resizing="true"] .resize-readout { display: block; }
+
+  /* panel-internal tab strip */
+  .lib-tabs-row {
+    display: flex;
+    align-items: stretch;
+    gap: 2px;
+    padding: 0 8px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-primary);
+    flex-shrink: 0;
+  }
+  .lib-tab {
+    background: transparent;
+    border: none;
+    border-bottom: 3px solid transparent;
+    color: var(--text-secondary);
+    padding: 7px 9px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    font-family: inherit;
+    letter-spacing: .2px;
+    margin-bottom: -1px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .lib-tab svg { width: 13px; height: 13px; }
+  .lib-tab:hover:not(.active) { color: var(--text-primary); background: var(--bg-secondary); }
+  .lib-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    background: var(--bg-secondary);
+    font-weight: 600;
+  }
+
+  .pane { flex: 1; overflow: hidden; display: none; flex-direction: column; min-height: 0; }
+  .pane.on { display: flex; }
+  .pane-body { flex: 1; overflow: hidden; padding: 6px 0; }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 10px;
+    font-size: 12px;
+    color: var(--text-primary);
+  }
+  .row:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .row .sq { width: 11px; height: 11px; border-radius: 1px; flex-shrink: 0; }
+  .row .meta { margin-left: auto; color: var(--text-secondary); font-size: 10.5px; }
+  .row small { display: block; color: var(--text-secondary); font-size: 10.5px; line-height: 1.35; }
+  .group-label {
+    font-size: 10px;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    padding: 10px 10px 4px;
+  }
+  .logline {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    padding: 2px 10px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .logline .sc { color: var(--accent); }
+  .logline.e { color: #d89a9a; }
+  .logline.e .sc { color: var(--red); }
+
+  .set-strip {
+    display: flex;
+    gap: 2px;
+    padding: 0 6px;
+    background: var(--bg-primary);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .set-tab {
+    background: transparent;
+    border: none;
+    border-bottom: 3px solid transparent;
+    color: var(--text-secondary);
+    padding: 7px 8px;
+    cursor: pointer;
+    margin-bottom: -1px;
+    display: inline-flex;
+    align-items: center;
+  }
+  .set-tab svg { width: 15px; height: 15px; }
+  .set-tab.active { color: var(--accent); border-bottom-color: var(--accent); background: var(--bg-secondary); }
+  .set-tab:hover:not(.active) { color: var(--text-primary); }
+
+  .toggle-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; font-size: 12px; }
+  .switch { width: 28px; height: 15px; border-radius: 8px; background: #23232f; flex-shrink: 0; position: relative; }
+  .switch.on { background: var(--accent); }
+  .switch::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 11px; height: 11px; border-radius: 50%; background: #d7dbe4;
+  }
+  .switch.on::after { left: 15px; background: #fff; }
+
+  /* ── floating collapsed arrow (current layout only) ── */
+  .float-arrow {
+    position: absolute;
+    left: 0; top: 50%;
+    transform: translateY(-50%);
+    z-index: 40;
+    width: 16px; height: 48px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-left: none;
+    border-radius: 0 4px 4px 0;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    opacity: .6;
+    padding: 0;
+  }
+  .app[data-side="right"] .float-arrow {
+    left: auto; right: 0;
+    border-left: 1px solid var(--border);
+    border-right: none;
+    border-radius: 4px 0 0 4px;
+  }
+  .app[data-mode="current"][data-collapsed="true"] .float-arrow { display: flex; }
+
+  /* ── dockview area ── */
+  .dock { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg-primary); }
+  .dv-tabs { height: 32px; background: var(--bg-tertiary); border-bottom: 1px solid var(--border); display: flex; flex-shrink: 0; }
+  .dv-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0 13px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
+    border-right: 1px solid var(--border);
+  }
+  .dv-tab.on { background: var(--bg-secondary); color: var(--text-primary); }
+  .dv-tab .sq { width: 10px; height: 10px; border-radius: 1px; }
+  .dv-tab .x { color: var(--text-secondary); font-size: 13px; opacity: .55; margin-left: 3px; }
+  .canvas { flex: 1; background: var(--canvas-bg); position: relative; overflow: hidden; }
+  .canvas svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .canvas-chip { position: absolute; left: 10px; top: 10px; display: flex; flex-direction: column; gap: 3px; }
+  .chip {
+    background: color-mix(in srgb, var(--bg-tertiary) 82%, transparent);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-size: 10px;
+    padding: 3px 7px;
+    border-radius: 2px;
+    white-space: nowrap;
+  }
+  .chip.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+
+  /* ── statusbar ── */
+  .statusbar {
+    height: var(--statusbar-height);
+    background: var(--bg-tertiary);
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 10px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+  }
+  .statusbar .sep { width: 1px; height: 12px; background: var(--border); }
+  .statusbar .right { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+  /* ── cross-highlight (no !important — keyframes ignore it) ── */
+  .app .hl {
+    outline: 2px solid var(--mv);
+    outline-offset: -1px;
+    border-radius: 2px;
+    animation: pulse 1.1s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { outline-color: var(--mv); }
+    50% { outline-color: color-mix(in srgb, var(--mv) 22%, transparent); }
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     annotation columns
+     ══════════════════════════════════════════════════════════════ */
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 30px; }
+  h2 {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .15em;
+    text-transform: uppercase;
+    color: var(--page-dim);
+    font-weight: 500;
+    padding-bottom: 9px;
+    border-bottom: 1px solid var(--page-rule);
+    margin-bottom: 14px;
+  }
+  .diff { list-style: none; display: flex; flex-direction: column; gap: 2px; }
+  .diff button {
+    width: 100%;
+    text-align: left;
+    display: grid;
+    grid-template-columns: 58px 1fr;
+    gap: 14px;
+    align-items: baseline;
+    background: none;
+    border: none;
+    border-left: 2px solid transparent;
+    padding: 9px 10px 9px 12px;
+    color: inherit;
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+    border-radius: 2px;
+    transition: background .12s, border-color .12s;
+  }
+  .diff button:hover, .diff button:focus-visible {
+    background: #0d0d14;
+    border-left-color: var(--mv);
+    outline: none;
+  }
+  .diff button[data-pinned="true"] { background: #0d0d14; border-left-color: var(--mv); }
+  .diff .tag {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    text-align: right;           /* reads as a gutter, not a floating word */
+  }
+  .tag.add { color: var(--add); }
+  .tag.rm  { color: var(--rm); }
+  .tag.mv  { color: var(--mv); }
+  .diff .txt { color: var(--page-ink); line-height: 1.45; }
+  .diff .txt em { display: block; font-style: normal; color: var(--page-dim); font-size: 13px; margin-top: 2px; }
+
+  .notes { display: flex; flex-direction: column; gap: 17px; max-width: 62ch; }
+  .note { display: grid; grid-template-columns: 74px 1fr; gap: 12px; align-items: start; }
+  .note .k {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .1em;
+    color: var(--accent);
+    background: #0c1424;
+    border: 1px solid #16233a;
+    padding: 3px 7px;
+    border-radius: 2px;
+    white-space: nowrap;
+    margin-top: 3px;
+    justify-self: end;
+  }
+  .note .k.warn { color: var(--mv); background: #1a1408; border-color: #2c2211; }
+  .note p { font-size: 14px; color: var(--page-dim); line-height: 1.55; }
+  .note p b { color: var(--page-ink); font-weight: 500; }
+  .note code {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: #9fc4ee;
+    background: #0c1220;
+    padding: 1px 5px;
+    border-radius: 2px;
+  }
+
+  footer {
+    border-top: 1px solid var(--page-rule);
+    padding-top: 20px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--page-dim);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 22px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .app .hl { animation: none; }
+    *, *::before, *::after { transition-duration: .001s !important; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">BoardRipper &nbsp;·&nbsp; interface proposal</div>
+    <h1>An activity rail for the sidebar</h1>
+    <p class="lede">
+      A working preview of the VS&nbsp;Code-style icon rail, drawn in BoardRipper's own chrome tokens.
+      Flip between <b>Current</b> and <b>With rail</b>; click a rail icon to switch panels, click the
+      <b>active</b> icon to collapse, <b>right-click the rail</b> for its menu, and drag the sidebar's
+      inner edge to resize.
+    </p>
+  </header>
+
+  <div class="controls">
+    <div class="ctl-group">
+      <span class="ctl-label">Layout</span>
+      <div class="seg" id="seg-mode" role="group" aria-label="Layout mode">
+        <button type="button" data-mode="current" aria-pressed="false">Current</button>
+        <button type="button" data-mode="rail" aria-pressed="true">With rail</button>
+      </div>
+    </div>
+    <div class="ctl-group">
+      <span class="ctl-label">Side</span>
+      <div class="seg" id="seg-side" role="group" aria-label="Sidebar side">
+        <button type="button" data-side="left" aria-pressed="true">Left</button>
+        <button type="button" data-side="right" aria-pressed="false">Right</button>
+      </div>
+    </div>
+    <div class="ctl-group">
+      <span class="ctl-label">Captions</span>
+      <div class="seg" id="seg-captions" role="group" aria-label="Rail captions">
+        <button type="button" data-captions="on" aria-pressed="true">On</button>
+        <button type="button" data-captions="off" aria-pressed="false">Icons only</button>
+      </div>
+    </div>
+    <div class="ctl-group">
+      <span class="ctl-label">Badges</span>
+      <div class="seg" id="seg-badges" role="group" aria-label="Badges">
+        <button type="button" data-badges="on" aria-pressed="true">On</button>
+        <button type="button" data-badges="off" aria-pressed="false">Off</button>
+      </div>
+    </div>
+    <div class="ctl-spacer"></div>
+    <div class="hint"><kbd>↑</kbd><kbd>↓</kbd> move along the rail</div>
+  </div>
+
+  <!-- ══════════ THE MOCKUP ══════════ -->
+  <div class="stage">
+    <div class="app" id="app" data-mode="rail" data-side="left" data-collapsed="false" data-badges="on" data-captions="on">
+
+      <!-- toolbar -->
+      <div class="toolbar">
+        <div class="toolbar-group">
+          <button class="tb tb-icon" id="tb-hamburger" title="Toggle Library / Settings panel">&#x2261;</button>
+          <button class="tb">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M4 15v2a2 2 0 002 2h12a2 2 0 002-2v-2"/><path d="M12 4v11"/><path d="M8 8l4-4 4 4"/></svg>
+            Upload
+          </button>
+        </div>
+        <div class="toolbar-group">
+          <button class="tb active">Top</button>
+          <button class="tb tb-sm">&#8646;</button>
+          <button class="tb">Bottom</button>
+        </div>
+        <div class="toolbar-group">
+          <button class="tb tb-icon">&#8634;</button>
+          <button class="tb tb-sm" style="font-weight:600">180&deg;</button>
+          <button class="tb tb-icon">&#8635;</button>
+          <button class="tb tb-icon">&#8660;</button>
+        </div>
+        <div class="toolbar-spacer"></div>
+        <span class="tb-badge" id="tb-update"><span class="dot"></span>v0.36.1</span>
+      </div>
+
+      <div class="body-row" id="body-row">
+
+        <!-- ══ ACTIVITY RAIL ══ -->
+        <div class="rail" id="rail" role="tablist" aria-orientation="vertical" aria-label="Activity">
+          <!-- top group: where you WORK -->
+          <button class="rail-item" role="tab" data-dest="library" data-title="Library" aria-selected="true" tabindex="0">
+            <span class="rail-ico">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 4.5h3.2v15H4.5zM10.2 4.5h3.2v15h-3.2zM16.4 5.1l2.7.7-3.3 14.3-2.7-.7z"/></svg>
+              <span class="rail-badge err dot" title="Library sync error"></span>
+            </span>
+            <span class="rail-cap">Library</span>
+          </button>
+          <button class="rail-item" role="tab" data-dest="tools" data-title="Tools" aria-selected="false" tabindex="-1">
+            <span class="rail-ico">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="3" width="15" height="18" rx="2"/><rect x="7.5" y="6" width="9" height="3.5" rx="1"/><path d="M8.4 13.4h.01M12 13.4h.01M15.6 13.4h.01M8.4 17h.01M12 17h.01M15.6 17h.01"/></svg>
+            </span>
+            <span class="rail-cap">Tools</span>
+          </button>
+          <div class="rail-spacer"></div>
+          <!-- bottom group: where you CHECK and CONFIGURE -->
+          <button class="rail-item" role="tab" data-dest="debug" data-title="Debug" aria-selected="false" tabindex="-1">
+            <span class="rail-ico">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9V7.5a3 3 0 016 0V9"/><path d="M8 9h8a2 2 0 012 2v3a6 6 0 01-12 0v-3a2 2 0 012-2z"/><path d="M3 13h3M18 13h3M4.5 8.5L7.2 10M19.5 8.5L16.8 10M4.5 18l2.7-1.5M19.5 18l-2.7-1.5"/></svg>
+              <span class="rail-badge warn" title="3 errors in the log">3</span>
+            </span>
+            <span class="rail-cap">Debug</span>
+          </button>
+          <button class="rail-item" role="tab" data-dest="settings" data-title="Settings" aria-selected="false" tabindex="-1">
+            <span class="rail-ico">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10.4 4.4a1.7 1.7 0 013.2 0 1.7 1.7 0 002.5 1.05 1.7 1.7 0 012.25 2.25A1.7 1.7 0 0019.6 10.4a1.7 1.7 0 010 3.2 1.7 1.7 0 00-1.05 2.5 1.7 1.7 0 01-2.25 2.25 1.7 1.7 0 00-2.5 1.05 1.7 1.7 0 01-3.2 0 1.7 1.7 0 00-2.5-1.05 1.7 1.7 0 01-2.25-2.25A1.7 1.7 0 004.4 13.6a1.7 1.7 0 010-3.2 1.7 1.7 0 001.05-2.5 1.7 1.7 0 012.25-2.25A1.7 1.7 0 0010.4 4.4z"/><circle cx="12" cy="12" r="2.5"/></svg>
+              <span class="rail-badge info dot" title="Update available: v0.36.1"></span>
+            </span>
+            <span class="rail-cap">Settings</span>
+          </button>
+        </div>
+
+        <!-- rail context menu -->
+        <div class="rail-menu" id="rail-menu" role="menu" aria-label="Rail options">
+          <button type="button" role="menuitem" data-act="flip"><span class="tick"></span><span id="menu-flip-label">Move rail to right</span></button>
+          <button type="button" role="menuitem" data-act="captions"><span class="tick" id="menu-cap-tick">&#10003;</span>Show captions</button>
+          <button type="button" role="menuitem" data-act="badges"><span class="tick" id="menu-badge-tick">&#10003;</span>Show badges</button>
+          <button type="button" role="menuitem" data-act="hide"><span class="tick"></span>Hide sidebar</button>
+        </div>
+
+        <!-- ══ SIDEBAR ══ -->
+        <aside class="sidebar" id="sidebar">
+
+          <!-- CURRENT-layout text tab strip -->
+          <div class="sidebar-tabs" id="sidebar-tabs">
+            <span class="acts acts-start">
+              <button class="sidebar-tab sidebar-action-btn" data-act="hide" title="Hide sidebar">&#9654;</button>
+              <button class="sidebar-tab sidebar-action-btn" data-act="flip" title="Move sidebar to left">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+              </button>
+            </span>
+            <button class="sidebar-tab active" data-dest="library">Library</button>
+            <button class="sidebar-tab" data-dest="tools">Tools</button>
+            <button class="sidebar-tab" data-dest="settings">Settings</button>
+            <button class="sidebar-tab" data-dest="debug">Debug</button>
+            <span class="acts acts-end">
+              <button class="sidebar-tab sidebar-action-btn" data-act="flip" title="Move sidebar to right">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>
+              </button>
+              <button class="sidebar-tab sidebar-action-btn" data-act="hide" title="Hide sidebar">&#9664;</button>
+            </span>
+          </div>
+
+          <!-- Library -->
+          <section class="pane on" data-pane="library">
+            <div class="lib-tabs-row">
+              <button class="lib-tab" title="History">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>
+              </button>
+              <button class="lib-tab">Board#</button>
+              <button class="lib-tab active">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19V6a1 1 0 011-1h4l2 2h6a1 1 0 011 1v11a1 1 0 01-1 1H6a1 1 0 01-1-1z"/></svg>
+                Folders
+              </button>
+              <button class="lib-tab">Model</button>
+              <button class="lib-tab">PDF</button>
+            </div>
+            <div class="pane-body">
+              <div class="row"><span class="sq" style="background:var(--icon-board-bg)"></span>820-00875.brd<span class="meta">BRD</span></div>
+              <div class="row"><span class="sq" style="background:var(--icon-board-bg)"></span>J680_MLB.fz<span class="meta">FZ</span></div>
+              <div class="row"><span class="sq" style="background:var(--icon-board-bg)"></span>X99-A_II.xzz<span class="meta">XZZ</span></div>
+              <div class="row"><span class="sq" style="background:var(--icon-pdf-bg)"></span>820-00875_schem.pdf<span class="meta">PDF</span></div>
+              <div class="row"><span class="sq" style="background:var(--icon-pdf-bg)"></span>K61_boardview.pdf<span class="meta">PDF</span></div>
+              <div class="row"><span class="sq" style="background:var(--icon-board-bg)"></span>ROG_STRIX.cad<span class="meta">GENCAD</span></div>
+            </div>
+          </section>
+
+          <!-- Tools -->
+          <section class="pane" data-pane="tools">
+            <div class="pane-body">
+              <div class="group-label">Calculators</div>
+              <div class="row"><span>Resistor color-band<small>4 / 5 / 6-band to ohms</small></span></div>
+              <div class="row"><span>SMD resistor code<small>103, 4R7, 01C to ohms</small></span></div>
+              <div class="row"><span>Capacitor converter<small>convert pF / nF / &micro;F</small></span></div>
+              <div class="group-label">Workbench</div>
+              <div class="row"><span>Worklists<small>every worklist stored on this device</small></span></div>
+              <div class="row"><span>Database Editor</span><span class="meta">opens panel</span></div>
+            </div>
+          </section>
+
+          <!-- Settings -->
+          <section class="pane" data-pane="settings">
+            <div class="set-strip">
+              <button class="set-tab active" title="Theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a9 9 0 010-18c4.5 0 8 3 8 6.5 0 2.5-2 3.5-4 3.5h-1.5a2 2 0 00-1.3 3.5A1.8 1.8 0 0112 21z"/><circle cx="8" cy="10" r="1"/><circle cx="12" cy="7.5" r="1"/><circle cx="16" cy="10" r="1"/></svg></button>
+              <button class="set-tab" title="Board"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 12h18M12 4v8"/></svg></button>
+              <button class="set-tab" title="Input"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg></button>
+              <button class="set-tab" title="Library"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 4.5h3.2v15H4.5zM10.2 4.5h3.2v15h-3.2zM16.4 5.1l2.7.7-3.3 14.3-2.7-.7z"/></svg></button>
+              <button class="set-tab" title="System"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2.6"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg></button>
+              <button class="set-tab" title="Integrations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v6M15 3v6M6 9h12v3a6 6 0 01-12 0z"/><path d="M12 18v3"/></svg></button>
+            </div>
+            <div class="pane-body">
+              <div class="group-label">Appearance</div>
+              <div class="toggle-row"><span class="switch on"></span>Text fast mode</div>
+              <div class="toggle-row"><span class="switch on"></span>Smooth zoom</div>
+              <div class="toggle-row"><span class="switch"></span>HDR selection outline</div>
+              <div class="group-label">Board overlay</div>
+              <div class="toggle-row"><span class="switch on"></span>Spotlight dim</div>
+            </div>
+          </section>
+
+          <!-- Debug -->
+          <section class="pane" data-pane="debug">
+            <div class="pane-body">
+              <div class="logline"><span class="sc">parser</span> BRD decoded in 41ms &mdash; 8142 parts</div>
+              <div class="logline"><span class="sc">render</span> scene built: 61338 pins, 12 batches</div>
+              <div class="logline"><span class="sc">render</span> label overlay 60fps (fast mode)</div>
+              <div class="logline e"><span class="sc">scan</span> WebDAV 504 on /mirror/apple</div>
+              <div class="logline"><span class="sc">obd</span> cache hit 820-00875</div>
+              <div class="logline e"><span class="sc">cloud</span> short-read retry 2/6</div>
+              <div class="logline"><span class="sc">pdf</span> tier 3 tiles 8/8 settled</div>
+              <div class="logline e"><span class="sc">scan</span> WebDAV giving up after 3 tries</div>
+            </div>
+          </section>
+
+          <div class="sidebar-resize" id="sidebar-resize" title="Drag to resize"></div>
+          <div class="resize-readout" id="resize-readout">292 px</div>
+        </aside>
+
+        <!-- collapsed floating arrow (current layout only) -->
+        <button class="float-arrow" id="float-arrow" title="Show sidebar">&#9658;</button>
+
+        <!-- ══ DOCKVIEW ══ -->
+        <div class="dock">
+          <div class="dv-tabs">
+            <div class="dv-tab on"><span class="sq" style="background:var(--icon-board-bg)"></span>820-00875.brd<span class="x">&times;</span></div>
+            <div class="dv-tab"><span class="sq" style="background:var(--icon-pdf-bg)"></span>820-00875_schem.pdf<span class="x">&times;</span></div>
+          </div>
+          <div class="canvas">
+            <svg viewBox="0 0 800 460" preserveAspectRatio="xMidYMid meet" aria-label="Board canvas placeholder">
+              <rect x="86" y="42" width="628" height="376" rx="10" fill="none" stroke="#4a9eff" stroke-opacity=".55" stroke-width="1.5"/>
+              <g stroke="#4a9eff" stroke-opacity=".16" stroke-width="1" fill="none">
+                <path d="M140 120h180l40 40h150"/><path d="M140 150h140l60 60h190"/>
+                <path d="M170 350h150l50-50h180"/><path d="M600 110v90l-40 40"/>
+                <path d="M240 400h300l60-60"/>
+              </g>
+              <g fill="#ffffff" fill-opacity=".5">
+                <rect x="300" y="150" width="130" height="112" rx="2"/>
+                <rect x="500" y="110" width="76" height="52" rx="2"/>
+                <rect x="170" y="300" width="58" height="30" rx="2"/>
+                <rect x="560" y="300" width="94" height="44" rx="2"/>
+                <rect x="150" y="90" width="40" height="22" rx="2"/>
+              </g>
+              <rect x="299" y="149" width="132" height="114" rx="2" fill="none" stroke="#ffff44" stroke-width="2"/>
+              <g fill="#88ccff" font-family="monospace" font-size="11" fill-opacity=".85">
+                <text x="311" y="146">U8800</text>
+                <text x="503" y="106">U7000</text>
+                <text x="173" y="296">Q4310</text>
+                <text x="563" y="296">J6100</text>
+              </g>
+              <g fill="#ffffff" fill-opacity=".72">
+                <circle cx="150" cy="120" r="3"/><circle cx="150" cy="150" r="3"/>
+                <circle cx="640" cy="160" r="3"/><circle cx="640" cy="210" r="3"/>
+                <circle cx="640" cy="260" r="3"/><circle cx="240" cy="400" r="3"/>
+              </g>
+            </svg>
+            <div class="canvas-chip">
+              <span class="chip on">Top</span>
+              <span class="chip">Spotlight</span>
+              <span class="chip">Nets</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- statusbar -->
+      <div class="statusbar">
+        <span>820-00875.brd</span><span class="sep"></span>
+        <span>8,142 parts</span><span class="sep"></span>
+        <span>61,338 pins</span><span class="sep"></span>
+        <span>PP3V3_S5</span>
+        <span class="right">60 fps &middot; 1:2.4</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ annotations ══════════ -->
+  <div class="cols">
+    <div>
+      <h2>What changes — hover to locate</h2>
+      <ul class="diff" id="diff-list">
+        <li><button type="button" data-hl="#rail">
+          <span class="tag add">added</span>
+          <span class="txt">46px activity rail<em>Always visible. The destinations stay legible whether the sidebar is open or shut.</em></span>
+        </button></li>
+        <li><button type="button" data-hl="#sidebar-tabs" data-force="current">
+          <span class="tag rm">removed</span>
+          <span class="txt">The sidebar's text tab strip<em>32px reclaimed, and each panel's own strip becomes the top row instead of the third.</em></span>
+        </button></li>
+        <li><button type="button" data-hl="#tb-hamburger" data-force="current">
+          <span class="tag rm">removed</span>
+          <span class="txt">The toolbar ≡ button<em>One of three ways to do one thing, none of which showed state.</em></span>
+        </button></li>
+        <li><button type="button" data-hl="#float-arrow" data-force="current-collapsed">
+          <span class="tag rm">removed</span>
+          <span class="txt">The 16px floating arrow<em>Existed only while collapsed, and told you nothing about what was behind it.</em></span>
+        </button></li>
+        <li><button type="button" data-hl=".rail-badge">
+          <span class="tag add">added</span>
+          <span class="txt">Badges on destinations<em>Sync failure, log errors, update available — state you already track, finally visible without going looking.</em></span>
+        </button></li>
+        <li><button type="button" data-hl="#rail-menu" data-force="rail-menu">
+          <span class="tag mv">moved</span>
+          <span class="txt">Side-flip into a rail menu<em>Right-click the rail. It was a nameless icon on the strip the rail deletes, so it needed somewhere to go.</em></span>
+        </button></li>
+        <li><button type="button" data-hl='.rail-item[data-dest="debug"], .rail-item[data-dest="settings"]'>
+          <span class="tag mv">moved</span>
+          <span class="txt">Debug and Settings pinned to the bottom<em>Top group is where you work, bottom is where you check and configure. The empty run between them is deliberate — it is where BoardSidebar's tabs would land.</em></span>
+        </button></li>
+      </ul>
+    </div>
+
+    <div>
+      <h2>Notes on the build</h2>
+      <div class="notes">
+        <div class="note">
+          <span class="k">state</span>
+          <p>The rail needs <b>no new state</b>. It reads the same <code>activeTab</code> / <code>collapsed</code> / <code>side</code> module state in <code>Sidebar.utils.ts</code>, through exports that already exist — <code>showSidebarTab</code>, <code>toggleSidebar</code>, <code>flipSidebarSide</code>.</p>
+        </div>
+        <div class="note">
+          <span class="k">gesture</span>
+          <p>Click a destination to switch; click the <b>active</b> one to collapse. That one rule replaces all three current toggles, and the rail stays put while collapsed so the destinations never disappear — only the indicator goes grey.</p>
+        </div>
+        <div class="note">
+          <span class="k">captions</span>
+          <p>Switch <b>Captions</b> to <i>Icons only</i> above to judge the tradeoff yourself. Icon-only saves 4px per item and looks tighter; the hover label is the safety net either way. My read: keep captions until the rail is muscle memory.</p>
+        </div>
+        <div class="note">
+          <span class="k">badges</span>
+          <p>Wired to state that exists today — <code>updateStore</code>, librarysync errors, the log store's error count. This is the one thing a horizontal tab strip structurally cannot give you. The toolbar version chip stays; it names the build, which is not a destination.</p>
+        </div>
+        <div class="note">
+          <span class="k warn">open</span>
+          <p><b>BoardSidebar is untouched here.</b> Its five tabs are a second, board-local sidebar on the canvas's right edge. A secondary rail is the obvious sequel — deliberately not in this step.</p>
+        </div>
+        <div class="note">
+          <span class="k warn">open</span>
+          <p><b>Where does 2-window mode go?</b> It is a layout control sitting in the Files group. If the rail becomes the layout surface, that button has a better home than beside Upload.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <span>Tokens from src/frontend/src/index.css</span>
+    <span>40px toolbar · 46px rail · 200–560px sidebar · 24px statusbar</span>
+    <span>Board canvas is a placeholder</span>
+  </footer>
+</div>
+
+<script>
+(function () {
+  var app     = document.getElementById('app');
+  var railBtns = [].slice.call(document.querySelectorAll('.rail-item'));
+  var tabBtns  = [].slice.call(document.querySelectorAll('.sidebar-tab[data-dest]'));
+  var panes    = [].slice.call(document.querySelectorAll('.pane'));
+  var menu     = document.getElementById('rail-menu');
+  var sidebar  = document.getElementById('sidebar');
+  var readout  = document.getElementById('resize-readout');
+
+  var MIN_W = 200, MAX_RATIO = 0.5;   // mirrors Sidebar.utils.ts
+
+  // ── single source of truth: #app dataset. CSS reads it, JS writes it. ──
+  function set(k, v) { app.dataset[k] = v; syncControls(); }
+
+  function setDest(dest) {
+    railBtns.forEach(function (b) {
+      var on = b.dataset.dest === dest;
+      b.setAttribute('aria-selected', String(on));
+      b.tabIndex = on ? 0 : -1;
+    });
+    tabBtns.forEach(function (b) { b.classList.toggle('active', b.dataset.dest === dest); });
+    panes.forEach(function (p) { p.classList.toggle('on', p.dataset.pane === dest); });
+  }
+  function activeDest() {
+    var a = railBtns.filter(function (b) { return b.getAttribute('aria-selected') === 'true'; })[0];
+    return a ? a.dataset.dest : 'library';
+  }
+  function flip() { set('side', app.dataset.side === 'left' ? 'right' : 'left'); }
+
+  // ── rail: switch, or collapse if it's already the one you're on ──
+  railBtns.forEach(function (b) {
+    b.addEventListener('click', function () {
+      var isActive = b.getAttribute('aria-selected') === 'true';
+      if (isActive && app.dataset.collapsed !== 'true') {
+        set('collapsed', 'true');
+      } else {
+        set('collapsed', 'false');
+        setDest(b.dataset.dest);
+      }
+      closeMenu();
+    });
+  });
+
+  // roving-tabindex keyboard nav along the rail
+  document.getElementById('rail').addEventListener('keydown', function (e) {
+    var i = railBtns.indexOf(document.activeElement);
+    if (i < 0) return;
+    var next = null;
+    if (e.key === 'ArrowDown') next = railBtns[(i + 1) % railBtns.length];
+    else if (e.key === 'ArrowUp') next = railBtns[(i - 1 + railBtns.length) % railBtns.length];
+    else if (e.key === 'Home') next = railBtns[0];
+    else if (e.key === 'End') next = railBtns[railBtns.length - 1];
+    if (!next) return;
+    e.preventDefault();
+    next.tabIndex = 0;
+    next.focus();
+  });
+
+  tabBtns.forEach(function (b) {
+    b.addEventListener('click', function () { setDest(b.dataset.dest); });
+  });
+
+  // ── current-layout affordances (both mirrored copies share data-act) ──
+  [].forEach.call(document.querySelectorAll('.sidebar-tab[data-act]'), function (b) {
+    b.addEventListener('click', function () {
+      if (b.dataset.act === 'hide') set('collapsed', 'true'); else flip();
+    });
+  });
+  document.getElementById('float-arrow').addEventListener('click', function () { set('collapsed', 'false'); });
+  document.getElementById('tb-hamburger').addEventListener('click', function () {
+    set('collapsed', app.dataset.collapsed === 'true' ? 'false' : 'true');
+  });
+
+  // ── rail context menu ──
+  /* The menu is absolutely positioned inside .body-row, so it must be measured
+     against .body-row — measuring against #app offset it by the toolbar height.
+     Called with no args (the diff preview) it parks itself beside the rail on
+     whichever side the rail currently lives. */
+  function openMenu(clientX, clientY) {
+    var row = document.getElementById('body-row');
+    var host = row.getBoundingClientRect();
+    menu.dataset.open = 'true';                       // must be visible to measure
+    var w = menu.offsetWidth, h = menu.offsetHeight;
+    var x, y;
+    if (clientX == null) {
+      var r = document.getElementById('rail').getBoundingClientRect();
+      x = app.dataset.side === 'left' ? r.right + 6 : r.left - w - 6;
+      y = host.top + 96;
+    } else {
+      x = clientX; y = clientY;
+    }
+    menu.style.left = Math.min(Math.max(4, x - host.left), host.width - w - 4) + 'px';
+    menu.style.top  = Math.min(Math.max(4, y - host.top),  host.height - h - 4) + 'px';
+  }
+  function closeMenu() { menu.dataset.open = 'false'; }
+
+  document.getElementById('rail').addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+    openMenu(e.clientX, e.clientY);
+  });
+  menu.addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    var a = b.dataset.act;
+    if (a === 'flip') flip();
+    else if (a === 'captions') set('captions', app.dataset.captions === 'on' ? 'off' : 'on');
+    else if (a === 'badges') set('badges', app.dataset.badges === 'on' ? 'off' : 'on');
+    else if (a === 'hide') set('collapsed', 'true');
+    closeMenu();
+  });
+  document.addEventListener('pointerdown', function (e) {
+    if (menu.dataset.open === 'true' && !menu.contains(e.target)) closeMenu();
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeMenu(); });
+
+  // ── sidebar resize (clamped like the real one: 200px … 50% of the app) ──
+  (function () {
+    var handle = document.getElementById('sidebar-resize');
+    var startX = 0, startW = 0, active = false;
+    function report(w) { readout.textContent = Math.round(w) + ' px'; }
+    handle.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      active = true;
+      startX = e.clientX;
+      startW = sidebar.offsetWidth;
+      report(startW);
+      app.dataset.resizing = 'true';
+      handle.setPointerCapture(e.pointerId);
+    });
+    handle.addEventListener('pointermove', function (e) {
+      if (!active) return;
+      var raw = e.clientX - startX;
+      var delta = app.dataset.side === 'left' ? raw : -raw;
+      var max = Math.round(app.getBoundingClientRect().width * MAX_RATIO);
+      var w = Math.min(max, Math.max(MIN_W, startW + delta));
+      sidebar.style.width = w + 'px';
+      report(w);
+    });
+    function end(e) {
+      if (!active) return;
+      active = false;
+      app.dataset.resizing = 'false';
+      try { handle.releasePointerCapture(e.pointerId); } catch (err) { /* already released */ }
+    }
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+  })();
+
+  // ── segmented controls, driven off the dataset so they never desync ──
+  var segs = [
+    { el: document.getElementById('seg-mode'),     key: 'mode' },
+    { el: document.getElementById('seg-side'),     key: 'side' },
+    { el: document.getElementById('seg-captions'), key: 'captions' },
+    { el: document.getElementById('seg-badges'),   key: 'badges' }
+  ];
+  segs.forEach(function (s) {
+    s.el.addEventListener('click', function (e) {
+      var b = e.target.closest('button');
+      if (b) set(s.key, b.dataset[s.key]);
+    });
+  });
+
+  function syncControls() {
+    segs.forEach(function (s) {
+      [].forEach.call(s.el.querySelectorAll('button'), function (b) {
+        b.setAttribute('aria-pressed', String(b.dataset[s.key] === app.dataset[s.key]));
+      });
+    });
+    document.getElementById('menu-flip-label').textContent =
+      app.dataset.side === 'left' ? 'Move rail to right' : 'Move rail to left';
+    document.getElementById('menu-cap-tick').innerHTML = app.dataset.captions === 'on' ? '&#10003;' : '';
+    document.getElementById('menu-badge-tick').innerHTML = app.dataset.badges === 'on' ? '&#10003;' : '';
+  }
+
+  // ── diff cross-highlight: PREVIEW on hover, RESTORE on leave, PIN on click ──
+  var hlNodes = [], saved = null, pinned = null;
+
+  function snapshot() {
+    return { mode: app.dataset.mode, collapsed: app.dataset.collapsed, menu: menu.dataset.open };
+  }
+  function restore(s) {
+    app.dataset.mode = s.mode;
+    app.dataset.collapsed = s.collapsed;
+    menu.dataset.open = s.menu;
+    syncControls();
+  }
+  function paint(btn) {
+    hlNodes.forEach(function (n) { n.classList.remove('hl'); });
+    var force = btn.dataset.force;
+    if (force === 'current' || force === 'current-collapsed') {
+      app.dataset.mode = 'current';
+      app.dataset.collapsed = force === 'current-collapsed' ? 'true' : 'false';
+      closeMenu();
+    } else {
+      app.dataset.mode = 'rail';
+      app.dataset.collapsed = 'false';
+      if (force === 'rail-menu') openMenu(); else closeMenu();
+    }
+    syncControls();
+    hlNodes = [].slice.call(document.querySelectorAll(btn.dataset.hl));
+    hlNodes.forEach(function (n) { n.classList.add('hl'); });
+  }
+  function clearPaint() {
+    hlNodes.forEach(function (n) { n.classList.remove('hl'); });
+    hlNodes = [];
+  }
+
+  [].forEach.call(document.querySelectorAll('.diff button'), function (btn) {
+    function enter() {
+      if (pinned === btn) return;
+      if (!saved) saved = snapshot();
+      paint(btn);
+    }
+    function leave() {
+      if (pinned === btn) return;
+      clearPaint();
+      if (saved) { restore(saved); saved = null; }
+      if (pinned) paint(pinned);
+    }
+    btn.addEventListener('mouseenter', enter);
+    btn.addEventListener('focus', enter);
+    btn.addEventListener('mouseleave', leave);
+    btn.addEventListener('blur', leave);
+    btn.addEventListener('click', function () {
+      if (pinned === btn) {                       // unpin → back to where you were
+        btn.dataset.pinned = 'false';
+        pinned = null;
+        clearPaint();
+        if (saved) { restore(saved); saved = null; }
+        return;
+      }
+      if (pinned) pinned.dataset.pinned = 'false';
+      pinned = btn;
+      btn.dataset.pinned = 'true';
+      paint(btn);
+    });
+  });
+
+  // ── init ──
+  setDest('library');
+  syncControls();
+})();
+</script>
