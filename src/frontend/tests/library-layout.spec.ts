@@ -78,21 +78,21 @@ test.describe('Library panel layout', () => {
     await expect(page.locator('.library-source-item', { hasText: 'Live filesystem' })).toHaveClass(/active/);
 
     // Outside click dismisses it.
-    await page.locator('.library-tab', { hasText: 'Board #' }).click();
+    await page.locator('[data-library-tab="metadata"]').click();
     await expect(page.locator('.library-source-popup')).toHaveCount(0);
   });
 
   test('switching tabs focuses the relevant search field', async ({ page }) => {
     await openLibrary(page);
     // PDF tab → the PDF search input gets focus.
-    await page.locator('.library-tab', { hasText: 'PDF' }).click();
+    await page.locator('[data-library-tab="pdf"]').click();
     await page.waitForTimeout(120); // one rAF + settle
     const pdfPlaceholder = await page.evaluate(() =>
       (document.activeElement as HTMLInputElement | null)?.placeholder ?? '');
     expect(pdfPlaceholder.toLowerCase()).toContain('search pdf');
 
     // Board # tab → the filter input gets focus.
-    await page.locator('.library-tab', { hasText: 'Board #' }).click();
+    await page.locator('[data-library-tab="metadata"]').click();
     await page.waitForTimeout(120);
     const filterPlaceholder = await page.evaluate(() =>
       (document.activeElement as HTMLInputElement | null)?.placeholder ?? '');

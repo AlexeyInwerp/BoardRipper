@@ -5,6 +5,7 @@ import {
   getActiveTabRaw,
   getSideRaw,
   getSidebarRail,
+  getSidebarRailHidden,
   getSidebarCaptions,
   type SidebarTab,
   type SidebarSide,
@@ -15,6 +16,8 @@ export interface SidebarSnapshot {
   activeTab: SidebarTab;
   side: SidebarSide;
   rail: boolean;
+  /** Rail layout with the rail itself hidden ("nothing but the board"). */
+  railHidden: boolean;
   captions: boolean;
 }
 
@@ -30,6 +33,7 @@ export const useSidebarState = createStoreHook<SidebarSnapshot>(
     activeTab: getActiveTabRaw(),
     side: getSideRaw(),
     rail: getSidebarRail(),
+    railHidden: getSidebarRailHidden(),
     captions: getSidebarCaptions(),
   }),
 );

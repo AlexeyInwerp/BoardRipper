@@ -23,6 +23,7 @@ const SIDEBAR_SIDE_KEY = 'boardripper-sidebar-side';
 const SIDEBAR_COLLAPSED_KEY = 'boardripper-sidebar-collapsed';
 const SIDEBAR_TAB_KEY = 'boardripper-sidebar-tab';
 const SIDEBAR_RAIL_KEY = 'boardripper-sidebar-rail';
+const SIDEBAR_RAIL_HIDDEN_KEY = 'boardripper-sidebar-rail-hidden';
 const SIDEBAR_CAPTIONS_KEY = 'boardripper-sidebar-captions';
 const DEFAULT_WIDTH = 320;
 export const MIN_WIDTH = 200;
@@ -95,6 +96,9 @@ const state = {
   side: loadSide(),
   /** Activity rail (icon column) instead of the text tab strip. */
   rail: readBool(SIDEBAR_RAIL_KEY, true),
+  /** "Nothing but the board": the rail itself is hidden too. Only meaningful
+   *  while `rail` is on; implies the panel is hidden as well. */
+  railHidden: readBool(SIDEBAR_RAIL_HIDDEN_KEY, false),
   /** 8px captions under the rail icons. */
   captions: readBool(SIDEBAR_CAPTIONS_KEY, true),
 };
@@ -113,6 +117,7 @@ export function isSidebarCollapsed(): boolean { return state.collapsed; }
 export function getSidebarActiveTab(): SidebarTab { return state.activeTab; }
 export function getSidebarSide(): SidebarSide { return state.side; }
 export function getSidebarRail(): boolean { return state.rail; }
+export function getSidebarRailHidden(): boolean { return state.rail && state.railHidden; }
 export function getSidebarCaptions(): boolean { return state.captions; }
 
 function setCollapsed(v: boolean): void {
@@ -120,7 +125,14 @@ function setCollapsed(v: boolean): void {
   writeKey(SIDEBAR_COLLAPSED_KEY, String(v));
 }
 
+function setRailHidden(v: boolean): void {
+  state.railHidden = v;
+  writeKey(SIDEBAR_RAIL_HIDDEN_KEY, String(v));
+}
+
+/** Panel-level toggle: open ↔ hidden. The rail (when on) stays. */
 export function toggleSidebar(): void {
+  if (state.collapsed && state.railHidden) setRailHidden(false); // showing the panel needs the rail back
   setCollapsed(!state.collapsed);
   emitSidebarChange();
 }
@@ -131,8 +143,26 @@ export function hideSidebar(): void {
   emitSidebarChange();
 }
 
+/**
+ * Area-level toggle — the toolbar ≡ and the edge arrow. "Nothing but the
+ * board": hides panel AND rail together; the reverse brings both back.
+ * In the legacy strip layout there is no rail, so it is plain toggleSidebar.
+ */
+export function toggleSidebarArea(): void {
+  if (!state.rail) { toggleSidebar(); return; }
+  if (state.railHidden) {
+    setRailHidden(false);
+    setCollapsed(false);
+  } else {
+    setRailHidden(true);
+    setCollapsed(true);
+  }
+  emitSidebarChange();
+}
+
 export function showSidebarTab(tab: SidebarTab): void {
   setActiveTabRaw(tab);
+  if (state.railHidden) setRailHidden(false);
   if (state.collapsed) setCollapsed(false);
   emitSidebarChange();
 }
@@ -190,6 +220,8 @@ if (typeof window !== 'undefined' && import.meta.env.DEV) {
       hide: () => void;
       rail: () => boolean;
       setRail: (v: boolean) => void;
+      railHidden: () => boolean;
+      toggleArea: () => void;
     };
   }).__sidebar = {
     isCollapsed: isSidebarCollapsed,
@@ -199,5 +231,7 @@ if (typeof window !== 'undefined' && import.meta.env.DEV) {
     hide: hideSidebar,
     rail: getSidebarRail,
     setRail: setSidebarRail,
+    railHidden: getSidebarRailHidden,
+    toggleArea: toggleSidebarArea,
   };
 }

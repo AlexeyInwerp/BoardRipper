@@ -45,16 +45,93 @@ test.describe('activity rail', () => {
     });
   });
 
-  test('renders the four destinations and retires the strip, the ≡ and the edge arrow', async ({ page }) => {
+  test('renders the four destinations plus a hide control, and retires the text strip and the edge arrow', async ({ page }) => {
     await gotoApp(page);
     for (const id of ['library', 'tools', 'debug', 'settings']) {
       await expect(page.locator(`${RAIL} ${tab(id)}`)).toBeVisible();
     }
+    await expect(page.getByTestId('rail-toggle')).toBeVisible();
     await expect(page.locator('.sidebar-tabs')).toHaveCount(0);
-    await expect(page.locator('[data-tooltip="Toggle Library / Settings panel"]')).toHaveCount(0);
     await expect(page.locator('.sidebar-toggle.collapsed')).toHaveCount(0);
+    // The toolbar ≡ stays: it is the "nothing but the board" control.
+    await expect(page.getByTestId('sidebar-area-toggle')).toBeVisible();
     // Library is the default and is marked active.
     await expect(page.locator(`${RAIL} ${tab('library')}`)).toHaveAttribute('aria-selected', 'true');
+  });
+
+  test('the rail hide control hides and shows the panel; the rail stays', async ({ page }) => {
+    await gotoApp(page);
+    await page.getByTestId('rail-toggle').click();
+    await expect(page.locator('.sidebar')).toBeHidden();
+    await expect(page.locator(RAIL)).toBeVisible();
+    await expect(page.getByTestId('rail-toggle')).toHaveAttribute('data-title', /Show Library/);
+    await page.getByTestId('rail-toggle').click();
+    await expect(page.locator('.sidebar')).toBeVisible();
+    await expect(page.getByTestId('rail-toggle')).toHaveAttribute('data-title', 'Hide sidebar');
+  });
+
+  test('toolbar ≡ hides panel AND rail — nothing but the board — and the edge arrow or ≡ brings both back', async ({ page }) => {
+    await gotoApp(page);
+    await page.click(`${RAIL} ${tab('tools')}`);
+    await page.getByTestId('sidebar-area-toggle').click();
+    await expect(page.locator('.sidebar')).toBeHidden();
+    await expect(page.locator(RAIL)).toHaveCount(0);
+    await expect(page.locator('.sidebar-toggle.collapsed')).toBeVisible();
+
+    // Persists: reload keeps everything hidden.
+    await page.reload();
+    await page.waitForLoadState('networkidle');
+    await expect(page.locator(RAIL)).toHaveCount(0);
+    await expect(page.locator('.sidebar-toggle.collapsed')).toBeVisible();
+
+    // Edge arrow restores rail + panel, on the tab you left.
+    await page.click('.sidebar-toggle.collapsed');
+    await expect(page.locator(RAIL)).toBeVisible();
+    await expect(page.locator('.sidebar')).toBeVisible();
+    await expect(page.locator(`${RAIL} ${tab('tools')}`)).toHaveAttribute('aria-selected', 'true');
+
+    // ≡ again hides both; ≡ once more restores both.
+    await page.getByTestId('sidebar-area-toggle').click();
+    await expect(page.locator(RAIL)).toHaveCount(0);
+    await page.getByTestId('sidebar-area-toggle').click();
+    await expect(page.locator(RAIL)).toBeVisible();
+    await expect(page.locator('.sidebar')).toBeVisible();
+  });
+
+  test('a deep link (showSidebarTab) brings the rail back when everything is hidden', async ({ page }) => {
+    await gotoApp(page);
+    await page.getByTestId('sidebar-area-toggle').click();
+    await expect(page.locator(RAIL)).toHaveCount(0);
+    await page.evaluate(() => (window as unknown as { __sidebar: { show: (t: string) => void } }).__sidebar.show('debug'));
+    await expect(page.locator(RAIL)).toBeVisible();
+    await expect(page.locator('.sidebar')).toBeVisible();
+    await expect(page.locator(`${RAIL} ${tab('debug')}`)).toHaveAttribute('aria-selected', 'true');
+  });
+
+  test('Library and Settings strips use the same icon-tab cell: icons stay put, only the open tab is captioned', async ({ page }) => {
+    await gotoApp(page);
+    // Settings strip.
+    await page.click(`${RAIL} ${tab('settings')}`);
+    const sTabs = page.locator('.sidebar [data-settings-tab]');
+    await expect(sTabs).toHaveCount(6);
+    const before = await sTabs.evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().x)));
+    await page.locator('.sidebar [data-settings-tab="input"]').click();
+    const after = await sTabs.evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().x)));
+    expect(after).toEqual(before);
+    await expect(page.locator('.sidebar [data-settings-tab] .icon-tab-caption')).toHaveCount(1);
+    await expect(page.locator('.sidebar [data-settings-tab="input"] .icon-tab-caption')).toHaveText('Input');
+
+    // Library strip — same class, same rule.
+    await page.click(`${RAIL} ${tab('library')}`);
+    const lTabs = page.locator('.sidebar [data-library-tab]');
+    await expect(lTabs).toHaveCount(4);
+    for (let i = 0; i < 4; i++) await expect(lTabs.nth(i)).toHaveClass(/icon-tab/);
+    const lBefore = await lTabs.evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().x)));
+    await page.locator('.sidebar [data-library-tab="folders"]').click();
+    const lAfter = await lTabs.evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().x)));
+    expect(lAfter).toEqual(lBefore);
+    await expect(page.locator('.sidebar [data-library-tab] .icon-tab-caption')).toHaveCount(1);
+    await expect(page.locator('.sidebar [data-library-tab="folders"] .icon-tab-caption')).toHaveText('Folders');
   });
 
   test('click switches; clicking the active item hides; clicking it again shows the same panel', async ({ page }) => {
@@ -229,7 +306,7 @@ test.describe('activity rail', () => {
 
     await expect(page.locator(RAIL)).toHaveCount(0);
     await expect(page.locator('.sidebar-tabs')).toBeVisible();
-    await expect(page.locator('[data-tooltip="Toggle Library / Settings panel"]')).toBeVisible();
+    await expect(page.getByTestId('sidebar-area-toggle')).toBeVisible();
     // Same selector, same active tab, on the strip.
     await expect(page.locator(`.sidebar-tabs ${tab('settings')}`)).toHaveClass(/active/);
 
@@ -245,7 +322,7 @@ test.describe('activity rail', () => {
     await expect(page.locator(RAIL)).toHaveCount(0);
     await expect(page.locator('.sidebar-tabs')).toBeVisible();
 
-    await page.click('[data-tooltip="Toggle Library / Settings panel"]');
+    await page.getByTestId('sidebar-area-toggle').click();
     await expect(page.locator('.sidebar')).toBeHidden();
     await expect(page.locator('.sidebar-toggle.collapsed')).toBeVisible();
     await page.click('.sidebar-toggle.collapsed');

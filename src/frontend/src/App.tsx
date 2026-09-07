@@ -13,7 +13,7 @@ import { StatusBar } from './components/StatusBar';
 import { ContextMenu } from './components/ContextMenu';
 import { ShortcutsOverlay } from './components/ShortcutsOverlay';
 import { Sidebar } from './components/Sidebar';
-import { isSidebarCollapsed, toggleSidebar, onSidebarChange, getSidebarSide, getSidebarRail, showSidebarTab } from './components/Sidebar.utils';
+import { isSidebarCollapsed, onSidebarChange, getSidebarSide, getSidebarRail, getSidebarRailHidden, toggleSidebarArea, showSidebarTab } from './components/Sidebar.utils';
 import { ActivityRail } from './components/ActivityRail';
 import { PanelErrorBoundary } from './components/PanelErrorBoundary';
 import { BoardViewerPanel } from './panels/BoardViewerPanel';
@@ -156,6 +156,11 @@ function App() {
   const sidebarCollapsed = isSidebarCollapsed();
   const sidebarSide = getSidebarSide();
   const sidebarRail = getSidebarRail();
+  const sidebarRailHidden = getSidebarRailHidden();
+  // The edge arrow is the way back when nothing of the sidebar area is on
+  // screen: legacy layout with the panel hidden, or rail layout with the rail
+  // hidden too ("nothing but the board" via the toolbar ≡).
+  const showEdgeArrow = sidebarRail ? sidebarRailHidden : sidebarCollapsed;
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -315,20 +320,19 @@ function App() {
     >
       <Toolbar />
       <div className="dockview-wrapper">
-        {/* Activity rail: always visible when enabled; orders itself to the
-            outer edge (-1 left / 3 right) so the sidebar + dockview orders
-            below stay exactly as they were. The floating collapsed arrow is
-            the legacy layout's only way back — the rail makes it redundant. */}
-        {sidebarRail && (
+        {/* Activity rail: visible whenever enabled and not hidden by the
+            toolbar ≡; orders itself to the outer edge (-1 left / 3 right) so
+            the sidebar + dockview orders below stay exactly as they were. */}
+        {sidebarRail && !sidebarRailHidden && (
           <PanelErrorBoundary label="Activity rail">
             <ActivityRail />
           </PanelErrorBoundary>
         )}
-        {sidebarCollapsed && !sidebarRail && (
+        {showEdgeArrow && (
           <button
             className={`sidebar-toggle collapsed sidebar-toggle-${sidebarSide}`}
             style={{ order: sidebarSide === 'left' ? 0 : 2 }}
-            onClick={toggleSidebar}
+            onClick={toggleSidebarArea}
             title="Show sidebar"
           >
             {sidebarSide === 'left' ? '▶' : '◀'}

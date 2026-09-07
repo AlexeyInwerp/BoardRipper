@@ -9,7 +9,11 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { IconBooks, IconCalculator, IconBug, IconSettings } from '@tabler/icons-react';
+import {
+  IconBooks, IconCalculator, IconBug, IconSettings,
+  IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand,
+  IconLayoutSidebarRightCollapse, IconLayoutSidebarRightExpand,
+} from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import {
   SIDEBAR_GROUPS,
@@ -156,6 +160,28 @@ export function ActivityRail() {
         {SIDEBAR_GROUPS.top.map(renderItem)}
         <div className="activity-rail-spacer" />
         {SIDEBAR_GROUPS.bottom.map(renderItem)}
+        {/* Explicit panel hide/show. Clicking the active icon does the same,
+            but a visible control is what people reach for when they want
+            the board and nothing else. Not a tab: excluded from roving focus. */}
+        {(() => {
+          const Hide = side === 'left' ? IconLayoutSidebarLeftCollapse : IconLayoutSidebarRightCollapse;
+          const Show = side === 'left' ? IconLayoutSidebarLeftExpand : IconLayoutSidebarRightExpand;
+          const Ico = collapsed ? Show : Hide;
+          const label = collapsed ? `Show ${LABELS[activeTab]}` : 'Hide sidebar';
+          return (
+            <button
+              type="button"
+              className="activity-rail-item activity-rail-toggle"
+              aria-label={label}
+              data-title={label}
+              data-testid="rail-toggle"
+              onClick={() => { toggleSidebar(); closeMenu(); }}
+            >
+              <span className="activity-rail-ico"><Ico size={20} stroke={1.75} /></span>
+              {captions && <span className="activity-rail-cap">{collapsed ? 'Show' : 'Hide'}</span>}
+            </button>
+          );
+        })()}
       </nav>
       {menu && createPortal(
         <div

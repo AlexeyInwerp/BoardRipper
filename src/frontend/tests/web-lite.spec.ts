@@ -71,8 +71,8 @@ test('backend-only UI is absent', async ({ page }) => {
   await expect(page.locator('[data-sidebar-tab="library"]')).toHaveCount(0);
   // Backend settings tabs — filtered out of TAB_ORDER (sidebar opens on the
   // Settings tab by default in the lite build, so the pills are rendered).
-  await expect(page.locator('.library-tab', { hasText: 'Integrations' })).toHaveCount(0);
-  await expect(page.locator('.library-tab', { hasText: /^Library$/ })).toHaveCount(0);
+  await expect(page.locator('[data-settings-tab="integrations"]')).toHaveCount(0);
+  await expect(page.locator('[data-settings-tab="library"]')).toHaveCount(0);
 });
 
 test('lite build offers the offline-copy download (where the update badge was)', async ({ page }) => {

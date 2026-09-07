@@ -1888,30 +1888,6 @@ export function SettingsPanel() {
   const [focusedSection, setFocusedSection] = useState<SectionId | null>(null);
   const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Responsive tab strip: show every tab's label when the panel is wide enough
-  // to fit them, otherwise collapse to icons (the active tab keeps its label).
-  // Hysteresis via `tabsNeedRef` (the width the fully-expanded strip needs)
-  // prevents oscillation: once collapsed we only re-expand when there's room
-  // for the full expanded width, not the smaller collapsed width.
-  const tabsRowRef = useRef<HTMLDivElement>(null);
-  const [tabsExpanded, setTabsExpanded] = useState(true);
-  const tabsNeedRef = useRef(0);
-  useEffect(() => {
-    const el = tabsRowRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => {
-      const avail = el.clientWidth;
-      if (tabsExpanded) {
-        tabsNeedRef.current = el.scrollWidth;
-        if (el.scrollWidth > avail + 1) setTabsExpanded(false);
-      } else if (tabsNeedRef.current > 0 && avail >= tabsNeedRef.current) {
-        setTabsExpanded(true);
-      }
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [tabsExpanded]);
-
   // Section scroll refs
   const outlineRef = useRef<HTMLDivElement>(null);
   const partsRef = useRef<HTMLDivElement>(null);
@@ -2084,11 +2060,13 @@ export function SettingsPanel() {
     <SettingsSearchProvider>
     <div className="panel-content settings-panel" data-testid="settings-panel" ref={panelRef}>
       <div className="settings-top">
-        {/* Tab strip — reuses LibraryPanel's library-tab CSS for visual consistency */}
+        {/* Tab strip — fixed-width icon cells so icons never shift; the open
+            tab's name sits underneath its icon, centred. Same library-tab
+            base styling as the Library panel's strip. */}
         <div className="library-tabs-row settings-tabs-row">
-          <div className="library-tabs" ref={tabsRowRef} style={{ flex: '1 1 auto', minWidth: 0, flexWrap: 'nowrap', overflow: 'hidden' }}>
+          <div className="library-tabs" style={{ flex: '1 1 auto', minWidth: 0 }}>
             {TAB_ORDER.map(tab => (
-              <TabPill key={tab} tab={tab} activeTab={activeTab} setActiveTab={setActiveTab} expanded={tabsExpanded} />
+              <TabPill key={tab} tab={tab} activeTab={activeTab} setActiveTab={setActiveTab} />
             ))}
           </div>
         </div>
@@ -2585,32 +2563,30 @@ function InteractiveModeToggle() {
   );
 }
 
-function TabPill({ tab, activeTab, setActiveTab, expanded }: {
+function TabPill({ tab, activeTab, setActiveTab }: {
   tab: SettingsTabId;
   activeTab: SettingsTabId;
   setActiveTab: (t: SettingsTabId) => void;
-  expanded: boolean;
 }) {
   const { active, matches } = useSettingsSearch();
   const count = matches.perTabCount.get(tab) ?? 0;
   const isActive = activeTab === tab;
   const Icon = TAB_ICONS[tab];
-  // The whole strip expands to icon + label when the panel is wide enough
-  // (`expanded`); when collapsed, only the active tab keeps its label so the
-  // current section stays named. The label is always the hover tooltip. Same
-  // library-tab styling as the Library panel's tab strip.
-  const showLabel = expanded || isActive;
+  // Every tab is a fixed-width cell with the icon at a fixed spot, so
+  // switching tabs never moves any icon. The open tab's name is drawn
+  // underneath its icon (absolutely positioned, so it doesn't widen the
+  // cell either). The label is always the hover tooltip.
   return (
     <button
       type="button"
-      className={`library-tab settings-tab-iconed ${isActive ? 'active' : ''}${active && count > 0 ? ' settings-tab-has-match' : ''}`}
+      className={`library-tab icon-tab settings-tab-iconed ${isActive ? 'active' : ''}${active && count > 0 ? ' settings-tab-has-match' : ''}`}
       onClick={() => setActiveTab(tab)}
       title={TAB_LABELS[tab]}
       aria-label={TAB_LABELS[tab]}
-      style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+      data-settings-tab={tab}
     >
       <Icon size={14} />
-      {showLabel && <span>{TAB_LABELS[tab]}</span>}
+      {isActive && <span className="icon-tab-caption">{TAB_LABELS[tab]}</span>}
       {active && count > 0 && <span className="settings-tab-match-badge">{count}</span>}
     </button>
   );

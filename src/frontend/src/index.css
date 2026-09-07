@@ -973,6 +973,12 @@ body {
   border-left: 1px solid var(--border);
 }
 .activity-rail-spacer { flex: 1; }
+.activity-rail-toggle {
+  margin-top: 2px;
+  border-top: 1px solid var(--border);
+  height: 38px;
+}
+.activity-rail-nocap .activity-rail-toggle { height: 34px; }
 
 .activity-rail-item {
   position: relative;
@@ -7963,6 +7969,51 @@ body {
   flex-wrap: wrap;
   row-gap: 2px;
 }
+/* The open tab's caption may be wider than its cell; let it hang out over
+   the row padding rather than be clipped at the edge. */
+.settings-tabs-row { overflow: visible; }
+
+/* ── Icon tab cell — the one tab design for panel-internal strips (Library,
+   Settings). Fixed width and height with the icon pinned at a fixed spot, so
+   switching tabs never moves an icon. The caption (open tab only) and any
+   count badge are absolutely positioned and never affect layout. Sits on top
+   of `.library-tab` for colours / active underline. */
+.icon-tab {
+  position: relative;
+  width: 44px;
+  height: 40px;
+  padding: 7px 0 0;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0;
+}
+.icon-tab svg { flex-shrink: 0; }
+.icon-tab-caption {
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.icon-tab .settings-tab-match-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  margin-left: 0;
+  min-width: 14px;
+  height: 14px;
+  font-size: 9px;
+}
+/* Library's row has no bottom margin of its own; captions need the row to
+   not clip them at the edge, same as Settings. */
+.library-tabs-row { overflow: visible; }
 
 /* ── Overlay inline filter inputs (Parts + Nets dropdowns) ─────────────────── */
 
