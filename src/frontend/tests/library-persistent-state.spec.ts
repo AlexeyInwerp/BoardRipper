@@ -8,7 +8,7 @@
  *      not the "click Scan to index" message.
  *
  * Key DOM facts (verified against source):
- *   - Sidebar tab buttons: `.sidebar-tab` with text "Library" / "Settings" / "Debug"
+ *   - Sidebar destinations: `[data-sidebar-tab="library|settings|debug"]` (same attribute on the activity rail and the legacy strip)
  *   - Library content region: `.library-content`
  *   - Library empty placeholder: `.library-empty`
  *   - All three sidebar panels are always mounted (display:none swap) — scroll
@@ -85,13 +85,13 @@ test.describe('library lazy-load', () => {
     }
 
     // Switch to Settings tab.
-    const settingsTab = page.locator('.sidebar-tab', { hasText: 'Settings' }).first();
+    const settingsTab = page.locator('[data-sidebar-tab="settings"]').first();
     await settingsTab.click();
     // Confirm the switch happened — the Settings tab button gains the 'active' class.
     await expect(settingsTab).toHaveClass(/active/);
 
     // Switch back to Library tab.
-    const libraryTab = page.locator('.sidebar-tab', { hasText: 'Library' }).first();
+    const libraryTab = page.locator('[data-sidebar-tab="library"]').first();
     await libraryTab.click();
     await expect(libraryTab).toHaveClass(/active/);
 

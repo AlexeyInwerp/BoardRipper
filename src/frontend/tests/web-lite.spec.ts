@@ -68,7 +68,7 @@ test('backend-only UI is absent', async ({ page }) => {
   // Self-update badge — gated off in the lite build.
   await expect(page.getByTestId('update-badge')).toHaveCount(0);
   // Library sidebar tab — filtered out of the TABS registry.
-  await expect(page.locator('.sidebar-tab', { hasText: 'Library' })).toHaveCount(0);
+  await expect(page.locator('[data-sidebar-tab="library"]')).toHaveCount(0);
   // Backend settings tabs — filtered out of TAB_ORDER (sidebar opens on the
   // Settings tab by default in the lite build, so the pills are rendered).
   await expect(page.locator('.library-tab', { hasText: 'Integrations' })).toHaveCount(0);

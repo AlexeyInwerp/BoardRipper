@@ -952,6 +952,191 @@ body {
   border-radius: 4px 0 0 4px;
 }
 
+/* --- Activity rail (icon column replacing the sidebar's text tab strip) ---
+ * A second view over Sidebar.utils.ts state. Always visible; the sidebar
+ * beside it opens/hides. Spec: docs/specs/2026-09-02-activity-rail-design.md */
+.activity-rail {
+  width: 46px;
+  flex-shrink: 0;
+  height: 100%;
+  background: var(--bg-tertiary);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+  position: relative;
+  z-index: 2;
+  user-select: none;
+}
+.activity-rail-right {
+  border-right: none;
+  border-left: 1px solid var(--border);
+}
+.activity-rail-spacer { flex: 1; }
+
+.activity-rail-item {
+  position: relative;
+  width: 100%;
+  height: 44px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-family: inherit;
+  padding: 0;
+  transition: color 0.1s, background 0.1s;
+}
+.activity-rail-nocap .activity-rail-item { height: 40px; }
+.activity-rail-item:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+.activity-rail-item.active { color: var(--accent); }
+/* Indicator bar on the inner edge — the edge facing the sidebar. */
+.activity-rail-item.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 5px;
+  bottom: 5px;
+  width: 2px;
+  background: var(--accent);
+}
+.activity-rail-right .activity-rail-item.active::before { left: auto; right: 0; }
+/* Hidden sidebar: the destination stays marked, but muted — it isn't showing. */
+.activity-rail[data-collapsed="true"] .activity-rail-item.active { color: var(--text-primary); }
+.activity-rail[data-collapsed="true"] .activity-rail-item.active::before {
+  background: var(--text-secondary);
+  opacity: 0.5;
+}
+.activity-rail-item:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -3px;
+}
+
+/* Icon box: badges anchor to THIS, not the cell, so a count never sits on the glyph. */
+.activity-rail-ico {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.activity-rail-ico svg { display: block; }
+.activity-rail-cap {
+  font-size: 8px;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Hover label — the discoverability net, and where "click to hide/show" lives. */
+.activity-rail-item::after {
+  content: attr(data-title);
+  position: absolute;
+  left: calc(100% + 6px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--tooltip-bg);
+  border: 1px solid var(--border);
+  color: var(--tooltip-fg);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 2px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s 0.35s;
+  z-index: 10001;
+}
+.activity-rail-right .activity-rail-item::after {
+  left: auto;
+  right: calc(100% + 6px);
+}
+.activity-rail-item:hover::after,
+.activity-rail-item:focus-visible::after { opacity: 1; }
+
+/* Badges — bottom-right of the icon, ringed in the rail colour. */
+.activity-rail-badge {
+  position: absolute;
+  right: -9px;
+  bottom: -5px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
+  border-radius: 7px;
+  font-size: 8.5px;
+  font-weight: 700;
+  line-height: 13px;
+  text-align: center;
+  color: var(--bg-primary);
+  box-shadow: 0 0 0 2px var(--bg-tertiary);
+  pointer-events: auto;
+}
+.activity-rail-badge.err  { background: var(--danger);  color: var(--danger-fg); }
+.activity-rail-badge.warn { background: var(--orange); }
+.activity-rail-badge.info { background: var(--accent);  color: var(--accent-fg); }
+.activity-rail-badge.dot {
+  min-width: 7px;
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  right: -4px;
+  bottom: -2px;
+  border-radius: 50%;
+}
+
+/* Right-click menu — portaled to body so Dockview transforms can't offset it. */
+.activity-rail-menu {
+  position: fixed;
+  z-index: 10002;
+  min-width: 184px;
+  background: var(--tooltip-bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px;
+  box-shadow: 0 10px 30px -8px var(--scrim-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.activity-rail-menu button {
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  padding: 6px 9px;
+  cursor: pointer;
+  border-radius: 2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.activity-rail-menu button:hover,
+.activity-rail-menu button:focus-visible {
+  background: var(--accent);
+  color: var(--accent-fg);
+  outline: none;
+}
+.activity-rail-menu-tick {
+  width: 10px;
+  font-size: 10px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.activity-rail-menu button:hover .activity-rail-menu-tick { color: var(--accent-fg); }
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-rail-item,
+  .activity-rail-item::after { transition: none; }
+}
+
 /* StatusBar */
 .statusbar {
   display: flex;

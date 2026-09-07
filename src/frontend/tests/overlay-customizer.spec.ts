@@ -205,7 +205,7 @@ test.describe('Overlay customizer DnD', () => {
       win.__renderSettings!.setOverlayLayout([{ id: 'pdfFollow', visible: false }]);
     });
 
-    const settingsBtn = page.locator('.sidebar-tab', { hasText: 'Settings' }).first();
+    const settingsBtn = page.locator('[data-sidebar-tab="settings"]').first();
     await settingsBtn.click();
     await page.click('button.settings-section-header:has-text("Board overlay")');
     await page.click('[data-testid="overlay-reset-btn"]');

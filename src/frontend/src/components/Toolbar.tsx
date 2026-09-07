@@ -4,6 +4,7 @@ import { IconBoxMultiple, IconFlipHorizontal, IconLayoutBoardSplit, IconUpload, 
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { useUpdateStore } from '../hooks/useUpdateStore';
+import { useSidebarState } from '../hooks/useSidebarState';
 import { toggleSidebar, showSidebarTab } from './Sidebar.utils';
 import { getAllExtensions, getFileExtension, getFormat } from '../parsers';
 import { fileInputRefs } from '../store/file-inputs';
@@ -451,6 +452,7 @@ export function Toolbar() {
   const uiShowTop    = board?.primarySide === 'bottom' ? showBottom : showTop;
   const uiShowBottom = board?.primarySide === 'bottom' ? showTop    : showBottom;
   const update = useUpdateStore();
+  const { rail: sidebarRail } = useSidebarState();
   const fmt = board ? getFormat(board.format) : undefined;
   const hasLayers = fmt?.hasLayers ?? false;
   const hasTraces = fmt?.hasTraces ?? false;
@@ -573,13 +575,18 @@ export function Toolbar() {
       />
       {/* ── Files ── */}
       <div className="toolbar-group">
-        <button
-          onClick={toggleSidebar}
-          className="toolbar-btn toolbar-btn-icon"
-          data-tooltip="Toggle Library / Settings panel"
-        >
-          &#x2261;
-        </button>
+        {/* Legacy layout only: with the activity rail on, hide/show is the
+            rail's own gesture and this button would be a second, stateless
+            way to do the same thing. */}
+        {!sidebarRail && (
+          <button
+            onClick={toggleSidebar}
+            className="toolbar-btn toolbar-btn-icon"
+            data-tooltip="Toggle Library / Settings panel"
+          >
+            &#x2261;
+          </button>
+        )}
         {/* Pop-out needs a real second window. The offline single file has
          *  no popout.html to open, and a tablet's window.open is a new tab
          *  (iPadOS) or nothing — so the control is hidden where it can only

@@ -20,6 +20,7 @@ import {
   toggleSidebar,
   flipSidebarSide,
   onSidebarChange,
+  getSidebarRail,
 } from './Sidebar.utils';
 
 export function Sidebar() {
@@ -70,6 +71,9 @@ export function Sidebar() {
   const collapsed = getCollapsed();
   const activeTab = getActiveTabRaw();
   const isLeft = side === 'left';
+  // With the activity rail on, navigation lives in the rail (App.tsx mounts it
+  // beside this component) and the text strip below is not rendered.
+  const rail = getSidebarRail();
 
   return (
     <div
@@ -84,7 +88,7 @@ export function Sidebar() {
         borderLeft: isLeft ? 'none' : '1px solid var(--border)',
       }}
     >
-      <div className="sidebar-tabs">
+      {!rail && <div className="sidebar-tabs">
         {!isLeft && (
           <div style={{ display: 'flex', alignItems: 'center', marginRight: 'auto' }}>
             <button
@@ -105,6 +109,7 @@ export function Sidebar() {
           <button
             key={tab.id}
             className={`sidebar-tab${activeTab === tab.id ? ' active' : ''}`}
+            data-sidebar-tab={tab.id}
             onClick={() => { setActiveTabRaw(tab.id); emitSidebarChange(); }}
           >
             {tab.label}
@@ -126,7 +131,7 @@ export function Sidebar() {
             >◀</button>
           </div>
         )}
-      </div>
+      </div>}
       <div className="sidebar-content">
         {/* All three panels stay mounted at all times — display toggling
             preserves React state (scroll, expanded folders, search query)

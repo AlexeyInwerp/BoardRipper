@@ -1,6 +1,6 @@
 # Activity rail for the sidebar — VS Code-style icon rail
 
-**Date:** 2026-09-02 · **Status:** in progress on `feat/activity-rail` since 2026-09-07 (plan: `docs/plans/2026-09-07-activity-rail.md`). Mockup built and visually verified.
+**Date:** 2026-09-02 · **Status:** implemented on `feat/activity-rail` 2026-09-07 (plan: `docs/plans/2026-09-07-activity-rail.md`, E2E `src/frontend/tests/activity-rail.spec.ts`, 11 passing). Rail is default on; the legacy strip stays one setting away until it has been compared on real boards. Phase 2 (peek, BoardSidebar rail) not started.
 **Problem owner:** anyone switching between Library / Tools / Settings / Debug during a repair session, and anyone who has lost the collapsed sidebar.
 
 ## Problem

@@ -13,7 +13,8 @@ import { StatusBar } from './components/StatusBar';
 import { ContextMenu } from './components/ContextMenu';
 import { ShortcutsOverlay } from './components/ShortcutsOverlay';
 import { Sidebar } from './components/Sidebar';
-import { isSidebarCollapsed, toggleSidebar, onSidebarChange, getSidebarSide, showSidebarTab } from './components/Sidebar.utils';
+import { isSidebarCollapsed, toggleSidebar, onSidebarChange, getSidebarSide, getSidebarRail, showSidebarTab } from './components/Sidebar.utils';
+import { ActivityRail } from './components/ActivityRail';
 import { PanelErrorBoundary } from './components/PanelErrorBoundary';
 import { BoardViewerPanel } from './panels/BoardViewerPanel';
 import { PdfViewerPanel } from './panels/PdfViewerPanel';
@@ -154,6 +155,7 @@ function App() {
 
   const sidebarCollapsed = isSidebarCollapsed();
   const sidebarSide = getSidebarSide();
+  const sidebarRail = getSidebarRail();
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -313,7 +315,16 @@ function App() {
     >
       <Toolbar />
       <div className="dockview-wrapper">
-        {sidebarCollapsed && (
+        {/* Activity rail: always visible when enabled; orders itself to the
+            outer edge (-1 left / 3 right) so the sidebar + dockview orders
+            below stay exactly as they were. The floating collapsed arrow is
+            the legacy layout's only way back — the rail makes it redundant. */}
+        {sidebarRail && (
+          <PanelErrorBoundary label="Activity rail">
+            <ActivityRail />
+          </PanelErrorBoundary>
+        )}
+        {sidebarCollapsed && !sidebarRail && (
           <button
             className={`sidebar-toggle collapsed sidebar-toggle-${sidebarSide}`}
             style={{ order: sidebarSide === 'left' ? 0 : 2 }}

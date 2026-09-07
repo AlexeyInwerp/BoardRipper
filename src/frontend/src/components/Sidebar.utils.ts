@@ -2,8 +2,15 @@
  * Sidebar state, persistence, and external API.
  *
  * This file is the non-component sibling of `Sidebar.tsx`. The Sidebar
- * component reads/mutates the module-level state declared here; Toolbar,
- * keyboard shortcuts, ContextMenu, etc. consume the named function exports.
+ * component and the ActivityRail both read/mutate the module-level state
+ * declared here; Toolbar, keyboard shortcuts, ContextMenu, etc. consume the
+ * named function exports.
+ *
+ * The activity rail is deliberately a second VIEW over this state, not a
+ * second store: `activeTab` / `collapsed` / `side` / `width` are the whole
+ * truth, and every caller that existed before the rail (`showSidebarTab`,
+ * `toggleSidebar`, `toggleLibrarySidebar`, `flipSidebarSide`) keeps its
+ * signature and semantics. See docs/plans/2026-09-07-activity-rail.md.
  *
  * Split out to satisfy `react-refresh/only-export-components` — Vite Fast
  * Refresh can only HMR a file whose only exports are React components.
@@ -13,12 +20,18 @@ import { isLiteBuild } from '../store/build-mode';
 
 const SIDEBAR_WIDTH_KEY = 'boardripper-sidebar-width';
 const SIDEBAR_SIDE_KEY = 'boardripper-sidebar-side';
+const SIDEBAR_COLLAPSED_KEY = 'boardripper-sidebar-collapsed';
+const SIDEBAR_TAB_KEY = 'boardripper-sidebar-tab';
+const SIDEBAR_RAIL_KEY = 'boardripper-sidebar-rail';
+const SIDEBAR_CAPTIONS_KEY = 'boardripper-sidebar-captions';
 const DEFAULT_WIDTH = 320;
 export const MIN_WIDTH = 200;
 export const MAX_WIDTH_RATIO = 0.5; // never wider than half the screen
 
 export type SidebarSide = 'left' | 'right';
 export type SidebarTab = 'library' | 'tools' | 'settings' | 'debug';
+
+const ALL_TABS: SidebarTab[] = ['library', 'tools', 'settings', 'debug'];
 
 export const TABS: { id: SidebarTab; label: string }[] = ([
   { id: 'library', label: 'Library' },
@@ -27,69 +40,120 @@ export const TABS: { id: SidebarTab; label: string }[] = ([
   { id: 'debug', label: 'Debug' },
 ] as { id: SidebarTab; label: string }[]).filter(t => !(isLiteBuild() && t.id === 'library'));
 
+/** Rail grouping: top = where you work, bottom = where you check and configure.
+ *  Derived from TABS so the lite build (no Library) needs no special case. */
+export const SIDEBAR_GROUPS: { top: SidebarTab[]; bottom: SidebarTab[] } = {
+  top: (['library', 'tools'] as SidebarTab[]).filter(id => TABS.some(t => t.id === id)),
+  bottom: (['debug', 'settings'] as SidebarTab[]).filter(id => TABS.some(t => t.id === id)),
+};
+
+// ---- storage helpers ---------------------------------------------------------
+
+function readKey(key: string): string | null {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function writeKey(key: string, value: string): void {
+  try { localStorage.setItem(key, value); } catch { /* private mode / quota */ }
+}
+function readBool(key: string, fallback: boolean): boolean {
+  const v = readKey(key);
+  return v === null ? fallback : v === 'true';
+}
+
 export function loadWidth(): number {
-  try {
-    const v = localStorage.getItem(SIDEBAR_WIDTH_KEY);
-    if (!v) return DEFAULT_WIDTH;
-    const maxPx = Math.round(window.innerWidth * MAX_WIDTH_RATIO);
-    return Math.min(maxPx, Math.max(MIN_WIDTH, parseInt(v, 10)));
-  } catch { return DEFAULT_WIDTH; }
+  const v = readKey(SIDEBAR_WIDTH_KEY);
+  if (!v) return DEFAULT_WIDTH;
+  const maxPx = Math.round(window.innerWidth * MAX_WIDTH_RATIO);
+  const parsed = parseInt(v, 10);
+  if (!Number.isFinite(parsed)) return DEFAULT_WIDTH;
+  return Math.min(maxPx, Math.max(MIN_WIDTH, parsed));
 }
 
 export function saveWidth(px: number): void {
-  try { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(px))); } catch { /* */ }
+  writeKey(SIDEBAR_WIDTH_KEY, String(Math.round(px)));
 }
 
 function loadSide(): SidebarSide {
-  try {
-    const v = localStorage.getItem(SIDEBAR_SIDE_KEY);
-    return v === 'right' ? 'right' : 'left';
-  } catch { return 'left'; }
+  return readKey(SIDEBAR_SIDE_KEY) === 'right' ? 'right' : 'left';
 }
 
-function saveSide(side: SidebarSide): void {
-  try { localStorage.setItem(SIDEBAR_SIDE_KEY, side); } catch { /* */ }
+/** Lite build has no Library tab — anything pointing at it lands on Settings. */
+function coerceTab(tab: SidebarTab): SidebarTab {
+  return (isLiteBuild() && tab === 'library') ? 'settings' : tab;
+}
+
+function loadTab(): SidebarTab {
+  const v = readKey(SIDEBAR_TAB_KEY);
+  const tab = (ALL_TABS as string[]).includes(v ?? '') ? (v as SidebarTab) : 'library';
+  return coerceTab(tab);
 }
 
 // --- Global sidebar state (for external access by Toolbar, keyboard shortcuts) ---
-// On the lite build there is no Library, so the left sidebar's only content
-// is Tools / Settings / Debug — and on a tablet it opened by default over
-// 320 of 834 px while the board sidebar (Info / Layers) started collapsed
-// (measured 2026-09-04). Start it closed on a touch device; the toolbar's ≡
-// button is one tap away.
-const COARSE_POINTER = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-  && window.matchMedia('(pointer: coarse)').matches;
 const state = {
-  collapsed: isLiteBuild() && COARSE_POINTER,
-  activeTab: (isLiteBuild() ? 'settings' : 'library') as SidebarTab,
+  collapsed: readBool(SIDEBAR_COLLAPSED_KEY, false),
+  activeTab: loadTab(),
   side: loadSide(),
+  /** Activity rail (icon column) instead of the text tab strip. */
+  rail: readBool(SIDEBAR_RAIL_KEY, true),
+  /** 8px captions under the rail icons. */
+  captions: readBool(SIDEBAR_CAPTIONS_KEY, true),
 };
 const listeners = new Set<() => void>();
 
 export function getCollapsed(): boolean { return state.collapsed; }
 export function getActiveTabRaw(): SidebarTab { return state.activeTab; }
 export function getSideRaw(): SidebarSide { return state.side; }
-export function setActiveTabRaw(tab: SidebarTab): void { state.activeTab = tab; }
+export function setActiveTabRaw(tab: SidebarTab): void {
+  state.activeTab = coerceTab(tab);
+  writeKey(SIDEBAR_TAB_KEY, state.activeTab);
+}
 export function emitSidebarChange(): void { listeners.forEach(fn => fn()); }
 
 export function isSidebarCollapsed(): boolean { return state.collapsed; }
 export function getSidebarActiveTab(): SidebarTab { return state.activeTab; }
 export function getSidebarSide(): SidebarSide { return state.side; }
+export function getSidebarRail(): boolean { return state.rail; }
+export function getSidebarCaptions(): boolean { return state.captions; }
+
+function setCollapsed(v: boolean): void {
+  state.collapsed = v;
+  writeKey(SIDEBAR_COLLAPSED_KEY, String(v));
+}
 
 export function toggleSidebar(): void {
-  state.collapsed = !state.collapsed;
+  setCollapsed(!state.collapsed);
+  emitSidebarChange();
+}
+
+export function hideSidebar(): void {
+  if (state.collapsed) return;
+  setCollapsed(true);
   emitSidebarChange();
 }
 
 export function showSidebarTab(tab: SidebarTab): void {
-  state.activeTab = (isLiteBuild() && tab === 'library') ? 'settings' : tab;
-  if (state.collapsed) state.collapsed = false;
+  setActiveTabRaw(tab);
+  if (state.collapsed) setCollapsed(false);
   emitSidebarChange();
 }
 
 export function flipSidebarSide(): void {
   state.side = state.side === 'left' ? 'right' : 'left';
-  saveSide(state.side);
+  writeKey(SIDEBAR_SIDE_KEY, state.side);
+  emitSidebarChange();
+}
+
+export function setSidebarRail(v: boolean): void {
+  if (state.rail === v) return;
+  state.rail = v;
+  writeKey(SIDEBAR_RAIL_KEY, String(v));
+  emitSidebarChange();
+}
+
+export function setSidebarCaptions(v: boolean): void {
+  if (state.captions === v) return;
+  state.captions = v;
+  writeKey(SIDEBAR_CAPTIONS_KEY, String(v));
   emitSidebarChange();
 }
 
@@ -118,10 +182,22 @@ export function getSidebarWidth(): number {
 
 if (typeof window !== 'undefined' && import.meta.env.DEV) {
   (window as unknown as {
-    __sidebar?: { isCollapsed: () => boolean; activeTab: () => SidebarTab; toggle: () => void };
+    __sidebar?: {
+      isCollapsed: () => boolean;
+      activeTab: () => SidebarTab;
+      toggle: () => void;
+      show: (tab: SidebarTab) => void;
+      hide: () => void;
+      rail: () => boolean;
+      setRail: (v: boolean) => void;
+    };
   }).__sidebar = {
     isCollapsed: isSidebarCollapsed,
     activeTab: getSidebarActiveTab,
     toggle: toggleSidebar,
+    show: showSidebarTab,
+    hide: hideSidebar,
+    rail: getSidebarRail,
+    setRail: setSidebarRail,
   };
 }

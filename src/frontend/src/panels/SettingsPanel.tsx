@@ -18,6 +18,7 @@ import {
 import type { RenderSettings, PartType, PadShape, BodyShape, PinGroup, PinGroupRule } from '../store/render-settings';
 import { SettingsMockup } from './SettingsMockup';
 import { InterfaceScaleSlider } from '../components/InterfaceScaleSlider';
+import { SidebarNavSwitch } from '../components/SidebarNavSwitch';
 import type { MockupSectionId } from './SettingsMockup';
 import { shortcuts, formatShortcut, CATEGORY_LABELS, CATEGORY_ORDER } from '../store/keyboard-shortcuts';
 import { useBoardStore } from '../hooks/useBoardStore';
@@ -3169,6 +3170,11 @@ function ThemeTab() {
         Interface scale
       </div>
       <InterfaceScaleSlider />
+
+      <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-secondary)', paddingTop: 4 }}>
+        Sidebar navigation
+      </div>
+      <SidebarNavSwitch />
 
       <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-secondary)', borderTop: '1px solid var(--border)', paddingTop: 12 }}>
         Board & pin colours

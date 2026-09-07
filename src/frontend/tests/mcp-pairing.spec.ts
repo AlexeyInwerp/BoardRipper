@@ -15,7 +15,7 @@ import { test, expect, type Page } from '@playwright/test';
 
 async function openIntegrations(page: Page) {
   await page.goto('/');
-  await page.locator('.sidebar-tab', { hasText: 'Settings' }).first().click();
+  await page.locator('[data-sidebar-tab="settings"]').first().click();
   await page.getByRole('button', { name: 'Integrations' }).click();
 }
 
