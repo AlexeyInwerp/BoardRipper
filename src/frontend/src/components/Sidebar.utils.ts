@@ -26,6 +26,7 @@ const SIDEBAR_RAIL_KEY = 'boardripper-sidebar-rail';
 const SIDEBAR_RAIL_HIDDEN_KEY = 'boardripper-sidebar-rail-hidden';
 const SIDEBAR_CAPTIONS_KEY = 'boardripper-sidebar-captions';
 const STATUSBAR_HIDDEN_KEY = 'boardripper-statusbar-hidden';
+const SIDEBAR_AUTOHIDE_KEY = 'boardripper-sidebar-autohide';
 const DEFAULT_WIDTH = 320;
 export const MIN_WIDTH = 200;
 export const MAX_WIDTH_RATIO = 0.5; // never wider than half the screen
@@ -91,8 +92,11 @@ function loadTab(): SidebarTab {
 }
 
 // --- Global sidebar state (for external access by Toolbar, keyboard shortcuts) ---
+const autoHideAtBoot = readBool(SIDEBAR_AUTOHIDE_KEY, false);
 const state = {
-  collapsed: readBool(SIDEBAR_COLLAPSED_KEY, false),
+  // Auto-hide always boots hidden: an overlay that pops open on reload,
+  // covering the board until the first click, is exactly what it exists to avoid.
+  collapsed: autoHideAtBoot ? true : readBool(SIDEBAR_COLLAPSED_KEY, false),
   activeTab: loadTab(),
   side: loadSide(),
   /** Activity rail (icon column) instead of the text tab strip. */
@@ -105,6 +109,9 @@ const state = {
   /** Status bar hidden. Only honoured in the rail layout, which is the only
    *  place with a control to bring it back; the legacy strip always shows it. */
   statusHidden: readBool(STATUSBAR_HIDDEN_KEY, false),
+  /** Auto-hide: the panel overlays the board instead of pushing it, and any
+   *  click into the board area hides it. Rail layout only. */
+  autoHide: autoHideAtBoot,
 };
 const listeners = new Set<() => void>();
 
@@ -123,7 +130,11 @@ export function getSidebarSide(): SidebarSide { return state.side; }
 export function getSidebarRail(): boolean { return state.rail; }
 export function getSidebarRailHidden(): boolean { return state.rail && state.railHidden; }
 export function getSidebarCaptions(): boolean { return state.captions; }
-export function getStatusBarHidden(): boolean { return state.rail && state.statusHidden; }
+/** Hidden by its own toggle, OR because the whole sidebar area is hidden
+ *  ("nothing but the board") — the latter without touching the preference,
+ *  so bringing the rail back restores whatever the foot toggle had chosen. */
+export function getStatusBarHidden(): boolean { return state.rail && (state.statusHidden || state.railHidden); }
+export function getSidebarAutoHide(): boolean { return state.rail && state.autoHide; }
 
 function setCollapsed(v: boolean): void {
   state.collapsed = v;
@@ -160,22 +171,60 @@ export function toggleStatusBar(): void {
   emitSidebarChange();
 }
 
+export function setSidebarAutoHide(v: boolean): void {
+  if (state.autoHide === v) return;
+  state.autoHide = v;
+  writeKey(SIDEBAR_AUTOHIDE_KEY, String(v));
+  if (v && !state.collapsed) setCollapsed(true); // switch on → start from hidden, like boot
+  emitSidebarChange();
+}
+
 /**
- * Area-level toggle — the toolbar ≡ and the edge arrow. "Nothing but the
- * board": hides panel, rail AND status bar; the reverse brings all three
- * back. In the legacy strip layout there is no rail, so it is plain
- * toggleSidebar and the status bar is never touched.
+ * Area-level toggle — the edge arrow. Between "nothing but the board" (panel,
+ * rail and status bar all gone) and fully back. In the legacy strip layout
+ * there is no rail, so it is plain toggleSidebar and the status bar is never
+ * touched. The status bar follows railHidden via getStatusBarHidden(); the
+ * foot toggle's own preference is left alone.
  */
 export function toggleSidebarArea(): void {
   if (!state.rail) { toggleSidebar(); return; }
   if (state.railHidden) {
     setRailHidden(false);
     setCollapsed(false);
-    setStatusHidden(false);
   } else {
     setRailHidden(true);
     setCollapsed(true);
-    setStatusHidden(true);
+  }
+  emitSidebarChange();
+}
+
+export type SidebarStage = 'open' | 'icons' | 'hidden';
+
+export function getSidebarStage(): SidebarStage {
+  if (!state.rail) return state.collapsed ? 'hidden' : 'open';
+  if (state.railHidden) return 'hidden';
+  return state.collapsed ? 'icons' : 'open';
+}
+
+/**
+ * The toolbar ≡: cycles open → icons only → completely hidden → open.
+ * Progressive: each click takes a bit more away, and the third brings it all
+ * back on the tab you had. Legacy strip layout has no icons stage.
+ */
+export function cycleSidebar(): void {
+  if (!state.rail) { toggleSidebar(); return; }
+  switch (getSidebarStage()) {
+    case 'open':
+      setCollapsed(true);
+      break;
+    case 'icons':
+      setRailHidden(true);
+      setCollapsed(true);
+      break;
+    case 'hidden':
+      setRailHidden(false);
+      setCollapsed(false);
+      break;
   }
   emitSidebarChange();
 }
@@ -244,6 +293,10 @@ if (typeof window !== 'undefined' && import.meta.env.DEV) {
       toggleArea: () => void;
       statusHidden: () => boolean;
       toggleStatus: () => void;
+      stage: () => SidebarStage;
+      cycle: () => void;
+      autoHide: () => boolean;
+      setAutoHide: (v: boolean) => void;
     };
   }).__sidebar = {
     isCollapsed: isSidebarCollapsed,
@@ -257,5 +310,9 @@ if (typeof window !== 'undefined' && import.meta.env.DEV) {
     toggleArea: toggleSidebarArea,
     statusHidden: getStatusBarHidden,
     toggleStatus: toggleStatusBar,
+    stage: getSidebarStage,
+    cycle: cycleSidebar,
+    autoHide: getSidebarAutoHide,
+    setAutoHide: setSidebarAutoHide,
   };
 }

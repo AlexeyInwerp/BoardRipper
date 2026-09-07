@@ -8,8 +8,11 @@ import {
   getSidebarRailHidden,
   getSidebarCaptions,
   getStatusBarHidden,
+  getSidebarAutoHide,
+  getSidebarStage,
   type SidebarTab,
   type SidebarSide,
+  type SidebarStage,
 } from '../components/Sidebar.utils';
 
 export interface SidebarSnapshot {
@@ -22,6 +25,10 @@ export interface SidebarSnapshot {
   captions: boolean;
   /** Status bar hidden (rail layout only). */
   statusHidden: boolean;
+  /** Panel overlays the board and hides on any click into it (rail layout only). */
+  autoHide: boolean;
+  /** open → icons → hidden, what the toolbar ≡ cycles through. */
+  stage: SidebarStage;
 }
 
 /**
@@ -39,5 +46,7 @@ export const useSidebarState = createStoreHook<SidebarSnapshot>(
     railHidden: getSidebarRailHidden(),
     captions: getSidebarCaptions(),
     statusHidden: getStatusBarHidden(),
+    autoHide: getSidebarAutoHide(),
+    stage: getSidebarStage(),
   }),
 );

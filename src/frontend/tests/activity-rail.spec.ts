@@ -38,7 +38,7 @@ test.describe('activity rail', () => {
       sessionStorage.setItem('activity-rail-spec-init', '1');
       for (const k of [
         'boardripper-sidebar-collapsed', 'boardripper-sidebar-tab', 'boardripper-sidebar-rail',
-        'boardripper-sidebar-rail-hidden', 'boardripper-statusbar-hidden',
+        'boardripper-sidebar-rail-hidden', 'boardripper-statusbar-hidden', 'boardripper-sidebar-autohide',
         'boardripper-sidebar-side', 'boardripper-sidebar-captions', 'boardripper-settings-active-tab',
       ]) {
         localStorage.removeItem(k);
@@ -88,38 +88,109 @@ test.describe('activity rail', () => {
     await expect(page.locator('.statusbar')).toBeVisible();
   });
 
-  test('toolbar ≡ hides panel AND rail — nothing but the board — and the edge arrow or ≡ brings both back', async ({ page }) => {
+  test('toolbar ≡ cycles open → icons only → nothing but the board → open, on the tab you had', async ({ page }) => {
     await gotoApp(page);
+    const cyc = page.getByTestId('sidebar-area-toggle');
     await page.click(`${RAIL} ${tab('tools')}`);
-    await page.getByTestId('sidebar-area-toggle').click();
+    await expect(cyc).toHaveAttribute('data-sidebar-stage', 'open');
+
+    // 1: icons only — rail and status bar stay, panel goes.
+    await cyc.click();
     await expect(page.locator('.sidebar')).toBeHidden();
+    await expect(page.locator(RAIL)).toBeVisible();
+    await expect(page.locator('.statusbar')).toBeVisible();
+    await expect(cyc).toHaveAttribute('data-sidebar-stage', 'icons');
+
+    // 2: nothing but the board — rail and status bar go too, edge arrow appears.
+    await cyc.click();
     await expect(page.locator(RAIL)).toHaveCount(0);
-    await expect(page.locator('.statusbar')).toHaveCount(0);        // nothing but the board
+    await expect(page.locator('.statusbar')).toHaveCount(0);
     await expect(page.locator('.sidebar-toggle.collapsed')).toBeVisible();
+    await expect(cyc).toHaveAttribute('data-sidebar-stage', 'hidden');
 
     // Persists: reload keeps everything hidden.
     await page.reload();
     await page.waitForLoadState('networkidle');
     await expect(page.locator(RAIL)).toHaveCount(0);
-    await expect(page.locator('.sidebar-toggle.collapsed')).toBeVisible();
+    await expect(page.locator('.statusbar')).toHaveCount(0);
 
-    // Edge arrow restores rail + panel + status bar, on the tab you left.
-    await page.click('.sidebar-toggle.collapsed');
+    // 3: back to open, on Tools, status bar back (its own preference was never touched).
+    await page.getByTestId('sidebar-area-toggle').click();
     await expect(page.locator(RAIL)).toBeVisible();
     await expect(page.locator('.sidebar')).toBeVisible();
     await expect(page.locator('.statusbar')).toBeVisible();
     await expect(page.locator(`${RAIL} ${tab('tools')}`)).toHaveAttribute('aria-selected', 'true');
+  });
 
-    // ≡ again hides both; ≡ once more restores both.
-    await page.getByTestId('sidebar-area-toggle').click();
+  test('edge arrow jumps straight from nothing-but-the-board back to open', async ({ page }) => {
+    await gotoApp(page);
+    const cyc = page.getByTestId('sidebar-area-toggle');
+    await cyc.click(); await cyc.click();
     await expect(page.locator(RAIL)).toHaveCount(0);
-    await page.getByTestId('sidebar-area-toggle').click();
+    await page.click('.sidebar-toggle.collapsed');
     await expect(page.locator(RAIL)).toBeVisible();
     await expect(page.locator('.sidebar')).toBeVisible();
+    await expect(page.locator('.statusbar')).toBeVisible();
+  });
+
+  test('nothing-but-the-board hides the status bar without clobbering the foot toggle preference', async ({ page }) => {
+    await gotoApp(page);
+    const cyc = page.getByTestId('sidebar-area-toggle');
+    // Explicitly hide the status bar first.
+    await page.getByTestId('rail-status-toggle').click();
+    await expect(page.locator('.statusbar')).toHaveCount(0);
+    await cyc.click(); await cyc.click(); await cyc.click();     // full cycle back to open
+    await expect(page.locator('.sidebar')).toBeVisible();
+    await expect(page.locator('.statusbar')).toHaveCount(0);      // still hidden: the preference survived
+    await expect(page.getByTestId('rail-status-toggle')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  test('auto-hide: panel overlays the board without moving it, and any click into the board hides it', async ({ page }) => {
+    await gotoApp(page);
+    const dock = page.locator('.dockview-container');
+    // Width of the board area with the panel HIDDEN is the reference.
+    await page.click(`${RAIL} ${tab('library')}`);
+    await expect(page.locator('.sidebar')).toBeHidden();
+    const hiddenBox = await dock.boundingBox();
+
+    // Turn auto-hide on from the rail menu. Starts hidden.
+    await page.click(RAIL, { button: 'right' });
+    await page.getByTestId('rail-menu-autohide').click();
+    await expect(page.locator('.sidebar')).toBeHidden();
+
+    // Open Library: the panel appears as an overlay, the board area does not shrink.
+    await page.click(`${RAIL} ${tab('library')}`);
+    await expect(page.locator('.sidebar')).toBeVisible();
+    await expect(page.locator('.sidebar')).toHaveClass(/sidebar-overlay/);
+    const openBox = await dock.boundingBox();
+    expect(openBox && hiddenBox && Math.abs(openBox.width - hiddenBox.width) <= 1 && Math.abs(openBox.x - hiddenBox.x) <= 1).toBeTruthy();
+
+    // A click on the toolbar does NOT hide it; a click into the board area does.
+    await page.mouse.click(700, 22);                                // toolbar row
+    await expect(page.locator('.sidebar')).toBeVisible();
+    const b = (await dock.boundingBox())!;
+    await page.mouse.click(b.x + b.width - 40, b.y + b.height - 40); // far corner of the board area, clear of the overlay
+    await expect(page.locator('.sidebar')).toBeHidden();
+    await expect(page.locator(RAIL)).toBeVisible();
+
+    // Reload with auto-hide on starts hidden even though the tab is remembered.
+    await page.click(`${RAIL} ${tab('library')}`);
+    await expect(page.locator('.sidebar')).toBeVisible();
+    await page.reload();
+    await page.waitForLoadState('networkidle');
+    await expect(page.locator('.sidebar')).toBeHidden();
+    await expect(page.locator(`${RAIL} ${tab('library')}`)).toHaveAttribute('aria-selected', 'true');
+
+    // Off again: back to pushing layout.
+    await page.click(RAIL, { button: 'right' });
+    await page.getByTestId('rail-menu-autohide').click();
+    await page.click(`${RAIL} ${tab('library')}`);
+    await expect(page.locator('.sidebar')).not.toHaveClass(/sidebar-overlay/);
   });
 
   test('a deep link (showSidebarTab) brings the rail back when everything is hidden', async ({ page }) => {
     await gotoApp(page);
+    await page.getByTestId('sidebar-area-toggle').click();
     await page.getByTestId('sidebar-area-toggle').click();
     await expect(page.locator(RAIL)).toHaveCount(0);
     await page.evaluate(() => (window as unknown as { __sidebar: { show: (t: string) => void } }).__sidebar.show('debug'));

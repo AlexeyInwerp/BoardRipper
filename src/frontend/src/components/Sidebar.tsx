@@ -21,6 +21,8 @@ import {
   flipSidebarSide,
   onSidebarChange,
   getSidebarRail,
+  getSidebarAutoHide,
+  hideSidebar,
 } from './Sidebar.utils';
 
 export function Sidebar() {
@@ -74,10 +76,27 @@ export function Sidebar() {
   // With the activity rail on, navigation lives in the rail (App.tsx mounts it
   // beside this component) and the text strip below is not rendered.
   const rail = getSidebarRail();
+  // Auto-hide: the panel is taken out of flow and laid over the board area
+  // (the wrapper is position:relative and the rail sits outside it), so
+  // opening and hiding never resize the WebGL canvas. Any pointerdown that
+  // lands in the dockview area hides it; the toolbar, dialogs, toasts and the
+  // rail's own menu do not — capture phase, no preventDefault, so the click
+  // still reaches the board.
+  const autoHide = getSidebarAutoHide();
+  useEffect(() => {
+    if (!autoHide || collapsed) return;
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Element | null;
+      if (t && t.closest('.dockview-container')) hideSidebar();
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, [autoHide, collapsed]);
 
   return (
     <div
-      className={`sidebar sidebar-${side}`}
+      className={`sidebar sidebar-${side}${autoHide ? ' sidebar-overlay' : ''}`}
+      data-testid="sidebar"
       style={{
         width: collapsed ? 0 : width,
         minWidth: collapsed ? 0 : MIN_WIDTH,
@@ -86,6 +105,7 @@ export function Sidebar() {
         display: collapsed ? 'none' : undefined,
         borderRight: isLeft ? '1px solid var(--border)' : 'none',
         borderLeft: isLeft ? 'none' : '1px solid var(--border)',
+        ...(autoHide ? { position: 'absolute', top: 0, bottom: 0, [isLeft ? 'left' : 'right']: 0, zIndex: 60 } : null),
       }}
     >
       {!rail && <div className="sidebar-tabs">

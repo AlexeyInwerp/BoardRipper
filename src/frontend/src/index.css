@@ -968,6 +968,11 @@ body {
   border-radius: 4px 0 0 4px;
 }
 
+/* Auto-hide: the panel floats over the board area (inline position from
+   Sidebar.tsx); a shadow on the board-facing edge says "this is on top". */
+.sidebar-overlay.sidebar-left  { box-shadow: 8px 0 24px -8px var(--scrim-strong); }
+.sidebar-overlay.sidebar-right { box-shadow: -8px 0 24px -8px var(--scrim-strong); }
+
 /* --- Activity rail (icon column replacing the sidebar's text tab strip) ---
  * A second view over Sidebar.utils.ts state. Always visible; the sidebar
  * beside it opens/hides. Spec: docs/specs/2026-09-02-activity-rail-design.md */

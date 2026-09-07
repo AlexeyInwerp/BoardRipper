@@ -19,6 +19,7 @@ import {
   toggleStatusBar,
   flipSidebarSide,
   setSidebarCaptions,
+  setSidebarAutoHide,
   type SidebarTab,
 } from './Sidebar.utils';
 import { useSidebarState } from '../hooks/useSidebarState';
@@ -38,7 +39,7 @@ const LABELS: Record<SidebarTab, string> = Object.fromEntries(
 interface MenuPos { x: number; y: number }
 
 export function ActivityRail() {
-  const { collapsed, activeTab, side, captions, statusHidden } = useSidebarState();
+  const { collapsed, activeTab, side, captions, statusHidden, autoHide } = useSidebarState();
   const badges = useRailBadges();
   const [menu, setMenu] = useState<MenuPos | null>(null);
   const railRef = useRef<HTMLElement>(null);
@@ -190,6 +191,13 @@ export function ActivityRail() {
             onClick={() => { setSidebarCaptions(!captions); closeMenu(); }}>
             <span className="activity-rail-menu-tick">{captions ? '✓' : ''}</span>
             Show captions
+          </button>
+          <button type="button" role="menuitemcheckbox" aria-checked={autoHide}
+            data-testid="rail-menu-autohide"
+            title="The panel opens over the board instead of pushing it, and hides again when you click into the board"
+            onClick={() => { setSidebarAutoHide(!autoHide); closeMenu(); }}>
+            <span className="activity-rail-menu-tick">{autoHide ? '✓' : ''}</span>
+            Auto-hide sidebar
           </button>
           <button type="button" role="menuitem" onClick={() => { toggleSidebar(); closeMenu(); }}>
             <span className="activity-rail-menu-tick" />

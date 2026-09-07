@@ -1,11 +1,14 @@
 import { useRef, useEffect, useState, useCallback, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { IconBoxMultiple, IconFlipHorizontal, IconLayoutBoardSplit, IconUpload, IconDownload, IconInfoCircle } from '@tabler/icons-react';
+import {
+  IconBoxMultiple, IconFlipHorizontal, IconLayoutBoardSplit, IconUpload, IconDownload, IconInfoCircle,
+  IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconLayoutSidebarRightCollapse, IconLayoutSidebarRightExpand,
+} from '@tabler/icons-react';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { useUpdateStore } from '../hooks/useUpdateStore';
 import { useSidebarState } from '../hooks/useSidebarState';
-import { toggleSidebarArea, showSidebarTab } from './Sidebar.utils';
+import { cycleSidebar, showSidebarTab } from './Sidebar.utils';
 import { getAllExtensions, getFileExtension, getFormat } from '../parsers';
 import { fileInputRefs } from '../store/file-inputs';
 import { formatShortcut } from '../store/keyboard-shortcuts';
@@ -452,7 +455,7 @@ export function Toolbar() {
   const uiShowTop    = board?.primarySide === 'bottom' ? showBottom : showTop;
   const uiShowBottom = board?.primarySide === 'bottom' ? showTop    : showBottom;
   const update = useUpdateStore();
-  const { rail: sidebarRail, railHidden: sidebarRailHidden } = useSidebarState();
+  const { rail: sidebarRail, side: sidebarSide, stage: sidebarStage, activeTab: sidebarTab } = useSidebarState();
   const fmt = board ? getFormat(board.format) : undefined;
   const hasLayers = fmt?.hasLayers ?? false;
   const hasTraces = fmt?.hasTraces ?? false;
@@ -575,19 +578,35 @@ export function Toolbar() {
       />
       {/* ── Files ── */}
       <div className="toolbar-group">
-        {/* "Nothing but the board": with the rail on this hides panel AND
-            rail together (the edge arrow or this button bring both back);
-            in the legacy layout it toggles the panel as it always did. */}
-        <button
-          onClick={toggleSidebarArea}
-          className="toolbar-btn toolbar-btn-icon"
-          data-testid="sidebar-area-toggle"
-          data-tooltip={sidebarRail
-            ? (sidebarRailHidden ? 'Show the sidebar' : 'Hide the sidebar and its icon rail — nothing but the board')
-            : 'Toggle Library / Settings panel'}
-        >
-          &#x2261;
-        </button>
+        {/* Sidebar cycle: open → icons only → completely hidden (nothing but
+            the board, status bar included) → open again on the tab you had.
+            The glyph is the sidebar-collapse icon, flipped to "expand" when the
+            next click brings things back. In the legacy layout it toggles the
+            panel as it always did. */}
+        {(() => {
+          const willExpand = sidebarStage === 'hidden';
+          const Ico = sidebarSide === 'left'
+            ? (willExpand ? IconLayoutSidebarLeftExpand : IconLayoutSidebarLeftCollapse)
+            : (willExpand ? IconLayoutSidebarRightExpand : IconLayoutSidebarRightCollapse);
+          const tabName = sidebarTab.charAt(0).toUpperCase() + sidebarTab.slice(1);
+          const tip = !sidebarRail
+            ? 'Toggle Library / Settings panel'
+            : sidebarStage === 'open' ? 'Sidebar → icons only'
+            : sidebarStage === 'icons' ? 'Sidebar → hide completely (nothing but the board)'
+            : `Sidebar → show ${tabName}`;
+          return (
+            <button
+              onClick={cycleSidebar}
+              className="toolbar-btn toolbar-btn-icon"
+              data-testid="sidebar-area-toggle"
+              data-sidebar-stage={sidebarStage}
+              data-tooltip={tip}
+              aria-label={tip}
+            >
+              <Ico size={17} stroke={1.75} />
+            </button>
+          );
+        })()}
         {/* Pop-out needs a real second window. The offline single file has
          *  no popout.html to open, and a tablet's window.open is a new tab
          *  (iPadOS) or nothing — so the control is hidden where it can only
