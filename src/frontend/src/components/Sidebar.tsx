@@ -12,23 +12,17 @@ import {
   TABS,
   loadWidth,
   saveWidth,
-  getCollapsed,
-  getActiveTabRaw,
   getSideRaw,
   setActiveTabRaw,
   emitSidebarChange,
   toggleSidebar,
   flipSidebarSide,
-  onSidebarChange,
+  hideSidebar,
 } from './Sidebar.utils';
+import { useSidebarState } from '../hooks/useSidebarState';
 
 export function Sidebar() {
-  const [, forceUpdate] = useState(0);
-  useEffect(() => {
-    const unsub = onSidebarChange(() => forceUpdate(n => n + 1));
-    return unsub;
-  }, []);
-
+  const { side, collapsed, activeTab, rail, autoHide } = useSidebarState();
   const [width, setWidth] = useState(loadWidth);
   const dragging = useRef(false);
   const startX = useRef(0);
@@ -66,14 +60,29 @@ export function Sidebar() {
     emitSidebarChange();
   }, [clampWidth]);
 
-  const side = getSideRaw();
-  const collapsed = getCollapsed();
-  const activeTab = getActiveTabRaw();
   const isLeft = side === 'left';
+  // `rail`: navigation lives in the ActivityRail (App.tsx mounts it beside
+  // this component) and the text strip below is not rendered.
+  // `autoHide`: the panel is taken out of flow and laid over the board area
+  // (.sidebar-overlay in index.css; the wrapper is position:relative and the
+  // rail sits outside it), so opening and hiding never resize the WebGL
+  // canvas. Any pointerdown that lands in the dockview area hides it; the
+  // toolbar, dialogs, toasts and the rail's own menu do not — capture phase,
+  // no preventDefault, so the click still reaches the board.
+  useEffect(() => {
+    if (!autoHide || collapsed) return;
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Element | null;
+      if (t && t.closest('.dockview-container')) hideSidebar();
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, [autoHide, collapsed]);
 
   return (
     <div
-      className={`sidebar sidebar-${side}`}
+      className={`sidebar sidebar-${side}${autoHide ? ' sidebar-overlay' : ''}`}
+      data-testid="sidebar"
       style={{
         width: collapsed ? 0 : width,
         minWidth: collapsed ? 0 : MIN_WIDTH,
@@ -84,7 +93,7 @@ export function Sidebar() {
         borderLeft: isLeft ? 'none' : '1px solid var(--border)',
       }}
     >
-      <div className="sidebar-tabs">
+      {!rail && <div className="sidebar-tabs">
         {!isLeft && (
           <div style={{ display: 'flex', alignItems: 'center', marginRight: 'auto' }}>
             <button
@@ -105,6 +114,7 @@ export function Sidebar() {
           <button
             key={tab.id}
             className={`sidebar-tab${activeTab === tab.id ? ' active' : ''}`}
+            data-sidebar-tab={tab.id}
             onClick={() => { setActiveTabRaw(tab.id); emitSidebarChange(); }}
           >
             {tab.label}
@@ -126,7 +136,7 @@ export function Sidebar() {
             >◀</button>
           </div>
         )}
-      </div>
+      </div>}
       <div className="sidebar-content">
         {/* All three panels stay mounted at all times — display toggling
             preserves React state (scroll, expanded folders, search query)

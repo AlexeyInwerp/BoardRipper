@@ -11,7 +11,7 @@ import { ensurePdfPanel, ensureBoardPanel } from '../store/dockview-api';
 import { loadLibraryBoard } from '../store/file-actions';
 import { loadBoardWithAscSiblings } from '../store/asc-open';
 import { lookupBoard } from '../store/apple-boards';
-import { IconStack2, IconHistory, IconFolder, IconPin, IconPinFilled, IconSettings, IconChevronsUp, IconChevronDown, IconDatabase, IconDeviceDesktop, IconCheck, IconFileText } from '@tabler/icons-react';
+import { IconStack2, IconHistory, IconFolder, IconHash, IconPin, IconPinFilled, IconSettings, IconChevronsUp, IconChevronDown, IconDatabase, IconDeviceDesktop, IconCheck, IconFileText } from '@tabler/icons-react';
 import { log } from '../store/log-store';
 import { fetchWithCloudRetry, readCloudError, formatCloudErrorToast } from '../store/fetch-with-cloud-retry';
 import { ObdSection } from '../components/ObdSection';
@@ -1013,52 +1013,69 @@ export function LibraryPanel() {
   return (
     <div className="library-panel">
       {failedModal}
-      {/* Tabs + inline DB/Live pill (row 1) */}
+      {/* Tab strip (row 1) — the shared `icon-tab` cell also used by Settings:
+          fixed-width cells, icon at a fixed spot, the open tab's name centred
+          underneath. Tests locate tabs by data-library-tab, never by text. */}
       <div className="library-tabs-row">
         <div className="library-tabs">
           <button
-            className={`library-tab ${viewMode === 'history' ? 'active' : ''}`}
+            className={`library-tab icon-tab ${viewMode === 'history' ? 'active' : ''}`}
+            data-library-tab="history"
             onClick={() => handleSetViewMode('history')}
             title="Recently opened"
+            aria-label="Recently opened"
           >
             <IconHistory size={14} />
+            {viewMode === 'history' && <span className="icon-tab-caption">Recent</span>}
           </button>
           <button
-            className={`library-tab ${viewMode === 'metadata' ? 'active' : ''}`}
+            className={`library-tab icon-tab ${viewMode === 'metadata' ? 'active' : ''}`}
+            data-library-tab="metadata"
             onClick={() => handleSetViewMode('metadata')}
+            title="Board #"
+            aria-label="Board #"
           >
-            Board #
+            <IconHash size={14} />
+            {viewMode === 'metadata' && <span className="icon-tab-caption">Board #</span>}
           </button>
           <div className="library-tab-folder-wrap" ref={sourceMenuWrapRef}>
             <button
-              className={`library-tab ${viewMode === 'folders' ? 'active' : ''}`}
+              className={`library-tab icon-tab ${viewMode === 'folders' ? 'active' : ''}`}
+              data-library-tab="folders"
               onClick={() => handleSetViewMode('folders')}
               title="Browse folders"
+              aria-label="Browse folders"
             >
               <IconFolder size={14} />
+              {viewMode === 'folders' && <span className="icon-tab-caption">Folders</span>}
             </button>
             {sourceMenuOpen && viewMode === 'folders' && folderSourceMenu}
           </div>
           {/* Model tab hidden — Board# now groups by model. Code kept (ModelView/modelTree) for future re-enable.
           <button
-            className={`library-tab ${viewMode === 'model' ? 'active' : ''}`}
+            className={`library-tab icon-tab ${viewMode === 'model' ? 'active' : ''}`}
+            data-library-tab="model"
             onClick={() => handleSetViewMode('model')}
           >
-            Model
+            <IconDeviceLaptop size={14} />
+            {viewMode === 'model' && <span className="icon-tab-caption">Model</span>}
           </button>
           */}
           <div className="library-tab-folder-wrap" ref={pdfMenuWrapRef}>
             <button
-              className={`library-tab ${(viewMode === 'search' || viewMode === 'bench') ? 'active' : ''}`}
+              className={`library-tab icon-tab ${(viewMode === 'search' || viewMode === 'bench') ? 'active' : ''}`}
               data-testid="pdf-tab"
+              data-library-tab="pdf"
               onClick={() => {
                 if (viewMode !== 'search' && viewMode !== 'bench') handleSetViewMode('search');
                 setPdfMenuOpen(true);
                 armPdfMenuTimeout();
               }}
               title="PDF text search · Donor boards"
+              aria-label="PDF"
             >
-              PDF
+              <IconFileText size={14} />
+              {(viewMode === 'search' || viewMode === 'bench') && <span className="icon-tab-caption">PDF</span>}
             </button>
             {pdfMenuOpen && (viewMode === 'search' || viewMode === 'bench') && pdfSourceMenu}
           </div>

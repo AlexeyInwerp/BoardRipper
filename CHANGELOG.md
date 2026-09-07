@@ -1,5 +1,43 @@
 # BoardRipper changelog
 
+## v0.38.0 — 2026-09-07
+
+### Sidebar
+
+- **An icon rail replaces the sidebar's tab strip.** A narrow column of
+  icons — Library and Tools at the top, Debug and Settings at the bottom —
+  stays on screen whether the panel is open or not. Click an icon to open it,
+  click the active one to hide the panel. The rail shows what is waiting for
+  you: new errors in the log, a failed library sync, an available update.
+- **The toolbar's sidebar button cycles** through the open panel, icons
+  only, and nothing at all. The last state hides the status bar too and
+  brings the small arrow at the screen edge back as the way home. The update
+  badge and Library links reopen the panel from any state.
+- **What you left is what you get back.** A hidden panel keeps its scroll
+  position, expanded folders, search text and the tool you were in. Whether
+  the sidebar was open, and on which tab, now survives a reload.
+- **Auto-hide.** Right-click the rail, or Settings ▸ Theme ▸ Sidebar
+  navigation. The panel opens over the board instead of pushing it aside, and
+  hides again when you click into the board. The board never moves.
+- **The status bar can be hidden** with the small toggle at the foot of the
+  rail, in the status bar's own row.
+- The old text tabs are still there: Settings ▸ Theme ▸ Sidebar navigation ▸
+  Text tabs. Side, captions and auto-hide are set there as well, for touch
+  screens that have no right-click.
+
+### Library and Settings tabs
+
+- **One tab design in both panels.** Icons stay where they are; the open
+  tab's name sits under its icon. Before, Settings put the name next to the
+  icon and pushed the other tabs along.
+
+### Maintainers
+
+- Tests locate sidebar and panel tabs by `data-sidebar-tab`,
+  `data-library-tab` and `data-settings-tab`, never by visible text.
+- Design and decisions: `docs/specs/2026-09-02-activity-rail-design.md`,
+  plan `docs/plans/2026-09-07-activity-rail.md`.
+
 ## v0.37.4 — 2026-09-07
 
 ### Selection

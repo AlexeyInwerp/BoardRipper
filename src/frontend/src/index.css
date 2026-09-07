@@ -819,6 +819,22 @@ body {
   background: rgba(204, 68, 68, 0.15);
 }
 
+/* Body row under the toolbar: [activity rail] [app-main]. app-main stacks the
+   dockview wrapper over the status bar, so the rail runs the full height of
+   both and its foot toggle sits in the status bar's row. */
+.app-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+}
+.app-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 /* Dockview wrapper (positions the sidebar toggle above dockview) */
 .dockview-wrapper {
   flex: 1;
@@ -950,6 +966,217 @@ body {
   border-left: 1px solid var(--accent);
   border-right: none;
   border-radius: 4px 0 0 4px;
+}
+
+/* Auto-hide: the panel is taken out of flow and floats over the board area
+   (the wrapper is position:relative; the rail sits outside it). A shadow on
+   the board-facing edge says "this is on top". z-index sits below the rail
+   (70) so the rail's hover labels still paint over the panel. */
+.sidebar-overlay {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 60;
+}
+.sidebar-overlay.sidebar-left  { left: 0;  box-shadow: 8px 0 24px -8px var(--scrim-strong); }
+.sidebar-overlay.sidebar-right { right: 0; box-shadow: -8px 0 24px -8px var(--scrim-strong); }
+
+/* --- Activity rail (icon column replacing the sidebar's text tab strip) ---
+ * A second view over Sidebar.utils.ts state. Always visible; the sidebar
+ * beside it opens/hides. Spec: docs/specs/2026-09-02-activity-rail-design.md */
+.activity-rail {
+  width: 46px;
+  flex-shrink: 0;
+  height: 100%;
+  background: var(--bg-tertiary);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0 0; /* no bottom padding: the foot cell must end where the status bar ends */
+  position: relative;
+  z-index: 70; /* above the auto-hide overlay (60) so hover labels paint over it */
+  user-select: none;
+}
+.activity-rail-right {
+  border-right: none;
+  border-left: 1px solid var(--border);
+}
+.activity-rail-spacer { flex: 1; }
+/* Foot-of-rail status-bar toggle: exactly the status bar's height and border,
+   so it sits in the bar's own row — the control is where the thing is. When
+   the bar is hidden the cell stays put at the rail's foot. Lit (accent) while
+   the bar is showing, dim when hidden — the icon itself doesn't change. */
+.activity-rail-item.activity-rail-status {
+  height: var(--statusbar-height);
+  margin-top: 0;
+  border-top: 1px solid var(--border);
+  color: var(--text-secondary);
+  opacity: 0.55;
+}
+.activity-rail-item.activity-rail-status.on { color: var(--accent); opacity: 0.9; }
+.activity-rail-item.activity-rail-status:hover { opacity: 1; }
+
+.activity-rail-item {
+  position: relative;
+  width: 100%;
+  height: 44px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-family: inherit;
+  padding: 0;
+  transition: color 0.1s, background 0.1s;
+}
+.activity-rail-nocap .activity-rail-item { height: 40px; }
+.activity-rail-item:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+.activity-rail-item.active { color: var(--accent); }
+/* Indicator bar on the inner edge — the edge facing the sidebar. */
+.activity-rail-item.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 5px;
+  bottom: 5px;
+  width: 2px;
+  background: var(--accent);
+}
+.activity-rail-right .activity-rail-item.active::before { left: auto; right: 0; }
+/* Hidden sidebar: the destination stays marked, but muted — it isn't showing. */
+.activity-rail[data-collapsed="true"] .activity-rail-item.active { color: var(--text-primary); }
+.activity-rail[data-collapsed="true"] .activity-rail-item.active::before {
+  background: var(--text-secondary);
+  opacity: 0.5;
+}
+.activity-rail-item:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -3px;
+}
+
+/* Icon box: badges anchor to THIS, not the cell, so a count never sits on the glyph. */
+.activity-rail-ico {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.activity-rail-ico svg { display: block; }
+.activity-rail-cap {
+  font-size: 8px;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Hover label — the discoverability net, and where "click to hide/show" lives. */
+.activity-rail-item::after {
+  content: attr(data-title);
+  position: absolute;
+  left: calc(100% + 6px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--tooltip-bg);
+  border: 1px solid var(--border);
+  color: var(--tooltip-fg);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 2px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s 0.35s;
+  z-index: 10001;
+}
+.activity-rail-right .activity-rail-item::after {
+  left: auto;
+  right: calc(100% + 6px);
+}
+.activity-rail-item:hover::after,
+.activity-rail-item:focus-visible::after { opacity: 1; }
+
+/* Badges — bottom-right of the icon, ringed in the rail colour. */
+.activity-rail-badge {
+  position: absolute;
+  right: -9px;
+  bottom: -5px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
+  border-radius: 7px;
+  font-size: 8.5px;
+  font-weight: 700;
+  line-height: 13px;
+  text-align: center;
+  color: var(--bg-primary);
+  box-shadow: 0 0 0 2px var(--bg-tertiary);
+  pointer-events: auto;
+}
+.activity-rail-badge.err  { background: var(--danger);  color: var(--danger-fg); }
+.activity-rail-badge.warn { background: var(--orange); }
+.activity-rail-badge.info { background: var(--accent);  color: var(--accent-fg); }
+.activity-rail-badge.dot {
+  min-width: 7px;
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  right: -4px;
+  bottom: -2px;
+  border-radius: 50%;
+}
+
+/* Right-click menu — portaled to body so Dockview transforms can't offset it. */
+.activity-rail-menu {
+  position: fixed;
+  z-index: 10002;
+  min-width: 184px;
+  background: var(--tooltip-bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px;
+  box-shadow: 0 10px 30px -8px var(--scrim-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.activity-rail-menu button {
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  padding: 6px 9px;
+  cursor: pointer;
+  border-radius: 2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.activity-rail-menu button:hover,
+.activity-rail-menu button:focus-visible {
+  background: var(--accent);
+  color: var(--accent-fg);
+  outline: none;
+}
+.activity-rail-menu-tick {
+  width: 10px;
+  font-size: 10px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.activity-rail-menu button:hover .activity-rail-menu-tick { color: var(--accent-fg); }
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-rail-item,
+  .activity-rail-item::after { transition: none; }
 }
 
 /* StatusBar */
@@ -5058,6 +5285,7 @@ body {
   border-bottom: 1px solid var(--border);
   background: var(--bg-primary);
   flex-shrink: 0;
+  overflow: visible; /* the open icon-tab caption may hang past the row edge */
 }
 
 .library-tabs {
@@ -7777,6 +8005,44 @@ body {
 .settings-tabs-row .library-tabs {
   flex-wrap: wrap;
   row-gap: 2px;
+}
+/* ── Icon tab cell — the one tab design for panel-internal strips (Library,
+   Settings). Fixed width and height with the icon pinned at a fixed spot, so
+   switching tabs never moves an icon. The caption (open tab only) and any
+   count badge are absolutely positioned and never affect layout. Sits on top
+   of `.library-tab` for colours / active underline. */
+.icon-tab {
+  position: relative;
+  width: 44px;
+  height: 40px;
+  padding: 7px 0 0;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0;
+}
+.icon-tab svg { flex-shrink: 0; }
+.icon-tab-caption {
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.icon-tab .settings-tab-match-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  margin-left: 0;
+  min-width: 14px;
+  height: 14px;
+  font-size: 9px;
 }
 
 /* ── Overlay inline filter inputs (Parts + Nets dropdowns) ─────────────────── */

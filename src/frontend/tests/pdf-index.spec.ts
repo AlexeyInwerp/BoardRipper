@@ -89,7 +89,7 @@ test.describe('PDF text index', () => {
 
     // Open the Library panel's "PDF ⌕" search tab.
     await page.waitForSelector('.library-tabs-row', { timeout: 10000 });
-    await page.locator('.library-tab', { hasText: 'PDF' }).click();
+    await page.locator('[data-library-tab="pdf"]').click();
 
     // Trigger the fast-path via the backend's priority-index endpoint so we
     // don't have to drag-drop a local file. This simulates what the frontend's

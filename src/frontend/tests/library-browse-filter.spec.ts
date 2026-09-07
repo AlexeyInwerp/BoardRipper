@@ -14,7 +14,7 @@
  * Key DOM facts (verified against source):
  *   - Search input: `.library-search-input`
  *   - Tree nodes (folders + files in DB/live view): `.library-tree-node`
- *   - Sidebar tab buttons: `.sidebar-tab` with text "Library" / "Settings" / "Debug"
+ *   - Sidebar destinations: `[data-sidebar-tab="library|settings|debug"]` (same attribute on the activity rail and the legacy strip)
  *   - Dev hook: `window.__databankStore` — present when `import.meta.env.DEV`
  *     (Vite dev server used by Playwright satisfies this).
  *   - `__databankStore.setBrowseMode('database'|'live')` — switches browse mode
@@ -141,12 +141,12 @@ test.describe('library browse-mode filter', () => {
     await expect(searchInput).toHaveValue(filterValue);
 
     // Switch to the Settings tab.
-    const settingsTab = page.locator('.sidebar-tab', { hasText: 'Settings' }).first();
+    const settingsTab = page.locator('[data-sidebar-tab="settings"]').first();
     await settingsTab.click();
     await expect(settingsTab).toHaveClass(/active/);
 
     // Switch back to the Library tab.
-    const libraryTab = page.locator('.sidebar-tab', { hasText: 'Library' }).first();
+    const libraryTab = page.locator('[data-sidebar-tab="library"]').first();
     await libraryTab.click();
     await expect(libraryTab).toHaveClass(/active/);
 

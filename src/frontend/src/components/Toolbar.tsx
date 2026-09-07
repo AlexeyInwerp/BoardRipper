@@ -4,12 +4,13 @@ import { IconBoxMultiple, IconFlipHorizontal, IconLayoutBoardSplit, IconUpload, 
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { useUpdateStore } from '../hooks/useUpdateStore';
-import { toggleSidebar, showSidebarTab } from './Sidebar.utils';
+import { showSidebarTab } from './Sidebar.utils';
+import { SidebarCycleButton } from './SidebarCycleButton';
 import { getAllExtensions, getFileExtension, getFormat } from '../parsers';
 import { fileInputRefs } from '../store/file-inputs';
 import { formatShortcut } from '../store/keyboard-shortcuts';
 import { openPdfFiles } from '../store/file-actions';
-import { updateStore } from '../store/update-store';
+import { updateStore, fmtVersion } from '../store/update-store';
 import { ReleaseNotes } from './ReleaseNotes';
 import { pdfStore } from '../store/pdf-store';
 import { databankStore, isElectron } from '../store/databank-store';
@@ -30,12 +31,6 @@ declare const __APP_VERSION__: string;
  *  Version (release.sh tag, e.g. "v0.31.18") already carries the prefix, so
  *  the old `v${state.current_version}` rendered "vv0.31.18". Non-numeric
  *  builds like "dev" are shown verbatim (no spurious "vdev"). */
-function fmtVersion(v: string | undefined | null): string {
-  if (!v) return '';
-  if (/^v/i.test(v)) return v;
-  if (/^\d/.test(v)) return 'v' + v;
-  return v; // "dev", "local", etc.
-}
 
 /** Hosted lite build only: download the single self-contained offline copy
  *  (boardripper-lite.html). Sits in the top-right slot where the self-update
@@ -573,13 +568,7 @@ export function Toolbar() {
       />
       {/* ── Files ── */}
       <div className="toolbar-group">
-        <button
-          onClick={toggleSidebar}
-          className="toolbar-btn toolbar-btn-icon"
-          data-tooltip="Toggle Library / Settings panel"
-        >
-          &#x2261;
-        </button>
+        <SidebarCycleButton />
         {/* Pop-out needs a real second window. The offline single file has
          *  no popout.html to open, and a tablet's window.open is a new tab
          *  (iPadOS) or nothing — so the control is hidden where it can only

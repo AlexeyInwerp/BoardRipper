@@ -85,7 +85,7 @@ async function navigateToMetadataTab(page: import('@playwright/test').Page) {
 
   // Switch to Board # (metadata) view — matches the tab label used in the
   // existing library-panel.spec.ts: `{ hasText: 'Board #' }`.
-  await page.locator('.library-tab', { hasText: 'Board #' }).click();
+  await page.locator('[data-library-tab="metadata"]').click();
 
   // Wait for the file list to be populated (the stubbed /api/databank/files
   // response) and the manufacturer group node to appear.

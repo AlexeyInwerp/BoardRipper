@@ -166,7 +166,7 @@ test.describe('FileDetailPane binding row UI', () => {
     // BoardRipper, override via VITE_PORT / BASE_URL).
     await page.goto('/');
     await page.waitForSelector('.library-tabs-row');
-    await page.locator('.library-tab', { hasText: 'Board #' }).click();
+    await page.locator('[data-library-tab="metadata"]').click();
     await page.locator('.library-search-input').fill('820-02020');
     // Expand the Apple manufacturer group (collapsed by default).
     await page.locator('.library-tree-node', { hasText: 'Apple' }).first().click();

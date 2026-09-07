@@ -23,8 +23,9 @@ test.describe('Library panel layout', () => {
   test('Folder tab is positioned directly after Board #', async ({ page }) => {
     await openLibrary(page);
     const tabs = page.locator('.library-tabs .library-tab');
-    // 0 = History (icon), 1 = Board # (text), 2 = Folder (icon, title="Browse folders")
-    await expect(tabs.nth(1)).toHaveText('Board #');
+    // 0 = History, 1 = Board #, 2 = Folder — all icon cells now; the caption
+    // is drawn only under the open tab, so identify by attribute, not text.
+    await expect(tabs.nth(1)).toHaveAttribute('data-library-tab', 'metadata');
     await expect(tabs.nth(2)).toHaveAttribute('title', 'Browse folders');
     // The inline DB/Live pill must be gone from the tab row.
     await expect(page.locator('.library-browse-pill')).toHaveCount(0);
@@ -78,21 +79,21 @@ test.describe('Library panel layout', () => {
     await expect(page.locator('.library-source-item', { hasText: 'Live filesystem' })).toHaveClass(/active/);
 
     // Outside click dismisses it.
-    await page.locator('.library-tab', { hasText: 'Board #' }).click();
+    await page.locator('[data-library-tab="metadata"]').click();
     await expect(page.locator('.library-source-popup')).toHaveCount(0);
   });
 
   test('switching tabs focuses the relevant search field', async ({ page }) => {
     await openLibrary(page);
     // PDF tab → the PDF search input gets focus.
-    await page.locator('.library-tab', { hasText: 'PDF' }).click();
+    await page.locator('[data-library-tab="pdf"]').click();
     await page.waitForTimeout(120); // one rAF + settle
     const pdfPlaceholder = await page.evaluate(() =>
       (document.activeElement as HTMLInputElement | null)?.placeholder ?? '');
     expect(pdfPlaceholder.toLowerCase()).toContain('search pdf');
 
     // Board # tab → the filter input gets focus.
-    await page.locator('.library-tab', { hasText: 'Board #' }).click();
+    await page.locator('[data-library-tab="metadata"]').click();
     await page.waitForTimeout(120);
     const filterPlaceholder = await page.evaluate(() =>
       (document.activeElement as HTMLInputElement | null)?.placeholder ?? '');

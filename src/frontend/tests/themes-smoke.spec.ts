@@ -86,7 +86,7 @@ test.describe('Themes', () => {
 
     // The Library/Settings/Debug sidebar is open by default; switch to its
     // Settings tab (a .sidebar-tab button), which reveals the SettingsPanel.
-    await page.locator('.sidebar-tab', { hasText: 'Settings' }).first().click();
+    await page.locator('[data-sidebar-tab="settings"]').first().click();
 
     const panel = page.locator('[data-testid="settings-panel"]');
     await expect(panel).toBeVisible();
@@ -107,7 +107,7 @@ test.describe('Themes', () => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
 
-    await page.locator('.sidebar-tab', { hasText: 'Settings' }).first().click();
+    await page.locator('[data-sidebar-tab="settings"]').first().click();
     const panel = page.locator('[data-testid="settings-panel"]');
     await expect(panel).toBeVisible();
 

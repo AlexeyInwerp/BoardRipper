@@ -52,6 +52,7 @@ export const SETTINGS_INDEX: IndexEntry[] = [
   S('theme', 'theme', 'Accent', ['focus color', 'active state', 'pill color', '--accent']),
   S('theme', 'theme', 'Background', ['canvas background', '--bg-primary']),
   S('theme', 'theme', 'Chrome', ['toolbar', 'status bar', 'tab strip', '--bg-tertiary']),
+  S('theme', 'theme', 'Sidebar navigation', ['activity rail', 'icon rail', 'sidebar tabs', 'text tabs', 'captions', 'hide sidebar']),
 
   // ── BOARD TAB ──────────────────────────────────────────────────────────
 

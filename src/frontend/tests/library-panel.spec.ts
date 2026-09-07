@@ -22,7 +22,7 @@ test.describe('Library panel header', () => {
   });
 
   test('board# tab shows the PDF search toggle', async ({ page }) => {
-    await page.locator('.library-tab', { hasText: 'Board #' }).click();
+    await page.locator('[data-library-tab="metadata"]').click();
     await expect(page.locator('.library-pdf-search-toggle')).toBeVisible();
   });
 
@@ -32,7 +32,7 @@ test.describe('Library panel header', () => {
     await expect(page.locator('.library-browse-pill')).toHaveCount(0);
 
     // Not on Board#
-    await page.locator('.library-tab', { hasText: 'Board #' }).click();
+    await page.locator('[data-library-tab="metadata"]').click();
     await expect(page.locator('.library-browse-pill')).toHaveCount(0);
 
     // Appears on Folders
