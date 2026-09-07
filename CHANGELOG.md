@@ -1,5 +1,45 @@
 # BoardRipper changelog
 
+## v0.37.4 — 2026-09-07
+
+### Selection
+
+- **The selected part's outline follows the zoom.** Zoomed out, the white
+  outline keeps a minimum size on screen (Settings ▸ Selection, default 24
+  px) so a small part does not shrink to a dot. Zoomed in, it sits exactly on
+  the part outline. The line is a fixed width on screen (the selection width
+  setting, in pixels now) and no longer grows into a band as you zoom in.
+  The outline is redrawn on every frame the zoom changes, so it does not lag
+  behind the board, and zooming with a large net lit costs the same as with
+  nothing selected.
+- Only the selected part behaves this way. Hovered parts, parts on the
+  highlighted net, search hits and the ghost outlines keep the fixed padding
+  and width from Settings.
+- On boards with real pad outlines (XZZ iPhone files, TVW, Allegro) the
+  selection outline hugs the pads. The gap that stayed even at 0 padding is
+  gone.
+- The HDR outline matches the SDR one in width.
+
+### Diode readings
+
+- **Readings are coloured by value.** Near zero is red, 0.2–0.4 V yellow,
+  above that green, and OL blue. The colours are set in Settings ▸ Diode
+  readings.
+- In "diode only" mode the reading sits on the pin, on top of everything, and
+  is never dimmed. Pin numbers, net names and single-pin designators stay
+  hidden.
+
+### XZZ board packs
+
+- **Focusing a part on a packed file no longer lands on empty space.** Search
+  results, the net list and the info panel aimed the camera at the part's
+  position in the file, not where it is drawn after the board is folded, so
+  on iPhone files the view flew off the board or showed the wrong half.
+
+### Maintainers
+
+- The desktop build step runs on Node 22; the packager hangs under Node 26.
+
 ## v0.37.3 — 2026-09-05
 
 ### XZZ board packs
