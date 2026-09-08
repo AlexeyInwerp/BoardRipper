@@ -26,6 +26,16 @@
 - **The suggestion list stays inside the window.** It shrinks to the room
   under the field, and opens upward when there is more room above.
 
+### Fixed
+
+- **Butterfly plus any settings change no longer kills the renderer.** With
+  Butterfly on, a scene rebuild destroyed the dim layer that shades the
+  unselected half and re-added the dead object next time, which stopped the
+  render ticker; every button then looked fine but nothing on the board
+  responded. The layer is now detached before the rebuild like its siblings.
+  Moving, folding or re-orienting the board bar also no longer rebuilds the
+  scene at all: those settings are pure layout.
+
 ### Sidebar
 
 - **Auto-hide no longer covers the board tabs.** The floating panel starts

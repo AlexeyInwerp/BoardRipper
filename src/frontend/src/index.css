@@ -1184,6 +1184,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 1px;
+  /* Never taller than the window: the ribbon menu lists every slot, and
+     in a short window its tail would otherwise be unreachable. */
+  max-height: calc(100vh - 8px);
+  overflow-y: auto;
 }
 .quick-menu button {
   background: none;

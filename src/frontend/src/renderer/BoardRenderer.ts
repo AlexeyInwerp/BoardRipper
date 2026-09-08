@@ -2964,12 +2964,18 @@ export class BoardRenderer {
       this.activeScene.root.removeChild(this.elevatedPinLabel!);
       this.viewport.removeChild(this.activeScene.root);
       if (this.activeScene.butterflyRoot) {
-        // Move bottomLayer back before destroying
+        // Both persistent butterfly overlays live in butterflyRoot; detach both
+        // or destroy({children:true}) below kills them and the next rebuild
+        // re-adds a dead Graphics (`_gpuData` / `instructions` of null, ticker
+        // stopped). butterflyDimGfx was missed here until 2026-09-08.
         this.activeScene.butterflyRoot.removeChild(this.butterflySelectionGfx);
+        this.activeScene.butterflyRoot.removeChild(this.butterflyDimGfx);
+        // Move bottomLayer back before destroying
         this.activeScene.butterflyRoot.removeChild(this.activeScene.bottomLayer);
         this.viewport.removeChild(this.activeScene.butterflyRoot);
       }
       this.butterflySelectionGfx.clear();
+      this.butterflyDimGfx.clear();
     }
 
     for (const [, scene] of this.sceneCache) {
@@ -3765,6 +3771,11 @@ export class BoardRenderer {
         // this needlessly redraws all geometry (and can hit the vertex ceiling
         // under an elevated pinSizeScale).
         'selectedLabelMinPx', 'selectedLabelLodRelax',
+        // Board-ribbon layout: pure DOM (which chips, where the bar sits, how
+        // it is oriented). Nothing in the scene reads these, so a drag of the
+        // floating bar must not rebuild — every rebuild is a chance to leave a
+        // destroyed Graphics in the tree (the `_gpuData of null` crash).
+        'overlayLayout', 'overlayPosition', 'overlayOrientation', 'overlayFloatX', 'overlayFloatY',
       ]);
       if (prev) {
         let visualChanged = false;
