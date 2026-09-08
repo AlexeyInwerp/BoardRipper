@@ -231,7 +231,8 @@ function derivePackAllSides(board: BoardData, boards: Board[], sel: number | nul
   const unfoldPt = (p: Point, b: Board, mirror: boolean): Point => {
     let x = p.x - b.shift.dx, y = p.y - b.shift.dy;
     if (mirror && b.fold) {
-      if (b.fold.dim === 'x') x = 2 * b.fold.axis - x; else y = 2 * b.fold.axis - y;
+      const back = (v: number) => b.fold!.offset !== undefined ? v - b.fold!.offset : 2 * b.fold!.axis - v;
+      if (b.fold.dim === 'x') x = back(x); else y = back(y);
     }
     return { x, y };
   };

@@ -94,7 +94,7 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 //     was ever read and the board died on "contains no parts or pins" (canary:
 //     XPS 15 9530 Compal HD055 LA-L663P). Those files never cached — they threw
 //     — but a mixed-ending file could have cached a partial board, so re-parse.
-const PARSER_VERSION = 91;
+const PARSER_VERSION = 92;
 
 interface CachedBoard {
   key: string;

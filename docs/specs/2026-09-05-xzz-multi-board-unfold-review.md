@@ -2,8 +2,8 @@
 
 Date: 2026-09-05
 Status: implemented 2026-09-05 (commit `c91f02a` + follow-up view fix):
-Phases 1–3 and the pack part of Phase 5 (folded default view, board names,
-swap sides) are in; Phase 4 (point-in-polygon membership) and the survey
+Phases 1–3 and the pack part of Phase 5 (board names, swap sides) are in,
+plus the touching-halves split of 2026-09-08 (97 single-loop Apple files); Phase 4 (point-in-polygon membership) and the survey
 harness of Phase 0 (`scripts/xzz-survey`) remain. Section 2 is the evidence
 the implementation rests on.
 Scope: XZZ `.pcb` files that pack several physical boards (iPhone AP+BB, MB+SUB,

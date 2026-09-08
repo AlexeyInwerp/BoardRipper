@@ -1,7 +1,7 @@
 import type { BoardData, Part, Pin, Nail, Point, Trace, SilkscreenPath, Pad, DiodeReading, DiodeReferenceChannel } from './types';
 import { computeBBox, buildNets } from './types';
 import { detectXMirrorByPinDirection } from './mirror-detect';
-import { classifyComponents, pairMajors, decideSide, unionBBox, makeRegionLookup, type OutlineComponent, type ComponentPair, type CopperVotes } from './xzz-boards';
+import { classifyComponents, pairMajors, decideSide, unionBBox, makeRegionLookup, splitSymmetricLoop, type OutlineComponent, type ComponentPair, type CopperVotes } from './xzz-boards';
 import { log } from '../store/log-store';
 
 // =====================================================================
@@ -1506,8 +1506,10 @@ interface PackBoard {
   components: number[];
   top: number;
   bottom?: number;
-  fold?: { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean };
-  sideSource: 'copper' | 'layout' | 'single';
+  /** `offset` is set on a translate fold: bottom-half items move by it
+   *  along `dim` instead of mirroring across `axis`. */
+  fold?: { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean; mode?: 'translate'; offset?: number };
+  sideSource: 'copper' | 'layout' | 'cpu' | 'single';
   cpuDisagrees?: boolean;
   region: { minX: number; minY: number; maxX: number; maxY: number };
   shift: { dx: number; dy: number };
@@ -1550,7 +1552,7 @@ function foldBoardPack(args: {
   rawTraces: RawTrace[]; vias: ViaData[]; silk: Segment[]; testPads: TestPadData[];
 }): PackResult | null {
   const { segments, comps, parts, rawTraces, vias, silk, testPads } = args;
-  if (comps.length < 2) return null;
+  if (comps.length < 1) return null;
 
   const centroid = (pd: PartData): Point | null => {
     if (pd.pins.length === 0) return null;
@@ -1558,17 +1560,64 @@ function foldBoardPack(args: {
     for (const p of pd.pins) { x += p.x; y += p.y; }
     return { x: x / pd.pins.length, y: y / pd.pins.length };
   };
-  const compAt = makeRegionLookup(comps);
-  const partCount = new Array<number>(comps.length).fill(0);
-  const partComp = parts.map(pd => {
-    const c = centroid(pd);
-    if (!c) return -1;
-    const i = compAt(c.x, c.y);
-    if (i >= 0) partCount[i]++;
-    return i;
-  });
-  const cls = classifyComponents(comps, partCount);
-  const { pairs, singles } = pairMajors(comps, cls.majors);
+  const analyse = () => {
+    const compAt = makeRegionLookup(comps);
+    const partCount = new Array<number>(comps.length).fill(0);
+    const partComp = parts.map(pd => {
+      const c = centroid(pd);
+      if (!c) return -1;
+      const i = compAt(c.x, c.y);
+      if (i >= 0) partCount[i]++;
+      return i;
+    });
+    const cls = classifyComponents(comps, partCount);
+    const { pairs, singles } = pairMajors(comps, cls.majors);
+    return { compAt, partComp, cls, pairs, singles };
+  };
+  let { partComp, cls, pairs, singles } = analyse();
+
+  // One board-sized loop and nothing to pair it with: the halves may be
+  // touching, drawn as a single loop that is its own mirror image. Cut it at
+  // the seam and try again (see splitSymmetricLoop).
+  let seamSegs = new Set<number>();
+  let splitMode: 'mirror' | 'translate' = 'mirror';
+  let splitNote = '';
+  if (pairs.length === 0 && cls.majors.length === 1) {
+    const m = cls.majors[0];
+    const inMajor = parts.filter((_, i) => partComp[i] === m).map(centroid).filter((c): c is Point => c !== null);
+    const inMajorParts = parts.filter((_, i) => partComp[i] === m);
+    const probe = (pd: PartData): Part => ({
+      name: pd.name, side: 'top', type: 'smd', origin: { x: 0, y: 0 },
+      bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
+      pins: pd.pins.map((p, i) => ({ name: '', number: String(i + 1), position: { x: p.x, y: p.y }, radius: 0, side: 'top', net: '' })),
+    });
+    const split = splitSymmetricLoop(segments, comps[m], (dim, axis) => {
+      let below = 0, above = 0;
+      for (const c of inMajor) { if ((dim === 'x' ? c.x : c.y) < axis) below++; else above++; }
+      return { below, above };
+    }, (dim, axis) => {
+      const lo: Part[] = [], up: Part[] = [];
+      for (const pd of inMajorParts) {
+        const c = centroid(pd);
+        if (!c) continue;
+        ((dim === 'x' ? c.x : c.y) < axis ? lo : up).push(probe(pd));
+      }
+      const vl = detectXMirrorByPinDirection(lo, { minSamples: 1 });
+      const vu = detectXMirrorByPinDirection(up, { minSamples: 1 });
+      const w = { lowerCW: vl.topCW, lowerCCW: vl.topCCW, upperCW: vu.topCW, upperCCW: vu.topCCW };
+      log.parser.log(`(pcb boards) single loop, ${dim} axis: lower half winds CW ${w.lowerCW} / CCW ${w.lowerCCW}, upper half CW ${w.upperCW} / CCW ${w.upperCCW}, parts ${lo.length} / ${up.length}` +
+        (w.lowerCW + w.lowerCCW >= 3 && w.upperCW + w.upperCCW >= 3 && ((w.lowerCW > w.lowerCCW) !== (w.upperCW > w.upperCCW)) ? ' — halves wind opposite ways: one half drawn through the board, folding by translation' : ''));
+      return w;
+    });
+    if (split) {
+      comps[m] = split.lower;
+      comps.push(split.upper);
+      seamSegs = new Set(split.seam);
+      splitMode = split.mode;
+      splitNote = ` | split one symmetric loop at ${split.dim}=${split.axis.toFixed(0)} (seam ${split.seam.length} segs, ${split.mode} fold)`;
+      ({ partComp, cls, pairs, singles } = analyse());
+    }
+  }
   const majorOf = (i: number): number => {
     let guard = 0;
     while (i >= 0 && cls.cls[i] === 'cutout' && guard++ < comps.length) i = cls.parentOf[i]!;
@@ -1627,7 +1676,12 @@ function foldBoardPack(args: {
     parts.forEach((pd, i) => { if (pd.pins.length > bestPins) { bestPins = pd.pins.length; best = i; } });
     if (best >= 0) cpuTop = majorOf(partComp[best]);
   }
-  const decisions = pairs.map(p => decideSide(p, votes, cpuTop));
+  // On a split single loop the CPU rule decides (see decideSide) — only
+  // when the most-pinned part is a real CPU-class BGA.
+  let cpuPins = 0;
+  for (const pd of parts) if (pd.pins.length > cpuPins) cpuPins = pd.pins.length;
+  const preferCpu = seamSegs.size > 0 && cpuPins >= 500;
+  const decisions = pairs.map(p => decideSide(p, votes, cpuTop, preferCpu));
   // Copper's view of whether the design's top half sits where the layout
   // rule expects it. Across the corpus it always has (78/78), which is what
   // lets the layout rule stand in when a file carries no copper.
@@ -1650,9 +1704,17 @@ function foldBoardPack(args: {
   pairs.forEach((p, i) => {
     const d = decisions[i];
     const all = [d.top, d.bottom, ...cutoutsOf(d.top), ...cutoutsOf(d.bottom)];
+    const fold: NonNullable<PackBoard['fold']> = { dim: p.dim, axis: p.axis, lowerIsBottom: d.top === p.upper };
+    if (seamSegs.size > 0 && splitMode === 'translate') {
+      // Slide the bottom half's extent onto the top half's.
+      const lo = comps[p.lower], hi = comps[p.upper];
+      const span = p.dim === 'x' ? hi.minX - lo.minX : hi.minY - lo.minY;
+      fold.mode = 'translate';
+      fold.offset = d.top === p.upper ? span : -span;
+    }
     boards.push({
       components: all, top: d.top, bottom: d.bottom,
-      fold: { dim: p.dim, axis: p.axis, lowerIsBottom: d.top === p.upper },
+      fold,
       sideSource: d.source,
       cpuDisagrees: d.cpuDisagrees,
       region: unionBBox(comps, [d.top, ...cutoutsOf(d.top)]),
@@ -1677,6 +1739,7 @@ function foldBoardPack(args: {
   const tpBoard = testPads.map(tp => boardAt(tp.x, tp.y));
   const segBoard = new Int32Array(segments.length).fill(-1);
   comps.forEach((c, ci) => { for (const si of c.segIdxs) segBoard[si] = compBoard[ci]; });
+  if (seamSegs.size > 0 && boards.length > 0) for (const si of seamSegs) segBoard[si] = 0;
 
   // ── Fold each pair ──
   const dropSeg = new Set<number>();
@@ -1684,8 +1747,11 @@ function foldBoardPack(args: {
   boards.forEach((b, bi) => {
     if (!b.fold || b.bottom === undefined) return;
     const { dim, axis, lowerIsBottom } = b.fold;
+    const off = b.fold.offset;
     const isBottom = (x: number, y: number) => { const c = dim === 'x' ? x : y; return lowerIsBottom ? c < axis : c > axis; };
-    const mx = (p: { x: number; y: number }) => { if (dim === 'x') p.x = 2 * axis - p.x; else p.y = 2 * axis - p.y; };
+    // Bottom-half transform: mirror across the axis, or slide by `offset`.
+    const fv = (v: number) => off !== undefined ? v + off : 2 * axis - v;
+    const mx = (p: { x: number; y: number }) => { if (dim === 'x') p.x = fv(p.x); else p.y = fv(p.y); };
     for (const pd of parts) {
       if (pd.boardIndex !== bi) continue;
       const c = centroid(pd);
@@ -1694,14 +1760,14 @@ function foldBoardPack(args: {
       mirroredParts++;
       for (const p of pd.pins) mx(p);
       for (const s of pd.silkLines) {
-        if (dim === 'x') { s.x1 = 2 * axis - s.x1; s.x2 = 2 * axis - s.x2; }
-        else             { s.y1 = 2 * axis - s.y1; s.y2 = 2 * axis - s.y2; }
+        if (dim === 'x') { s.x1 = fv(s.x1); s.x2 = fv(s.x2); }
+        else             { s.y1 = fv(s.y1); s.y2 = fv(s.y2); }
       }
     }
     rawTraces.forEach((t, i) => {
       if (traceBoard[i] !== bi || !isBottom((t.x1 + t.x2) / 2, (t.y1 + t.y2) / 2)) return;
-      if (dim === 'x') { t.x1 = 2 * axis - t.x1; t.x2 = 2 * axis - t.x2; }
-      else             { t.y1 = 2 * axis - t.y1; t.y2 = 2 * axis - t.y2; }
+      if (dim === 'x') { t.x1 = fv(t.x1); t.x2 = fv(t.x2); }
+      else             { t.y1 = fv(t.y1); t.y2 = fv(t.y2); }
       t.mirrored = true;
     });
     vias.forEach((v, i) => { if (viaBoard[i] === bi && isBottom(v.x, v.y)) { mx(v); v.mirrored = true; } });
@@ -1713,7 +1779,7 @@ function foldBoardPack(args: {
       if (tpBoard[i] !== bi) return;
       if (isBottom(tp.x, tp.y)) { tp.side = 'bottom'; mx(tp); } else tp.side = 'top';
     });
-    for (const ci of [b.bottom, ...cutoutsOf(b.bottom)]) for (const si of comps[ci].segIdxs) dropSeg.add(si);
+    for (const ci of [b.bottom, ...cutoutsOf(b.bottom)]) for (const si of comps[ci].segIdxs) if (!seamSegs.has(si)) dropSeg.add(si);
   });
   // Frames go; fragments on a discarded half go with it.
   comps.forEach((c, ci) => {
@@ -1783,11 +1849,11 @@ function foldBoardPack(args: {
     `(pcb ${isPack ? 'pack' : 'butterfly'}) ${boards.length} board${boards.length === 1 ? '' : 's'} from ${comps.length} outline loops ` +
     `(${cls.majors.length} board-sized, ${cls.cls.filter(c => c === 'cutout').length} cutouts, ${cls.cls.filter(c => c === 'fragment').length} fragments, ${cls.cls.filter(c => c === 'frame').length} frames)` +
     ` | mirrored parts=${mirroredParts} | outline ${before}→${segments.length} segs (dup=${dup})` +
-    ` | file mirrored: ${fileMirrored === null ? 'unknown' : fileMirrored}`,
+    ` | file mirrored: ${fileMirrored === null ? 'unknown' : fileMirrored}` + splitNote,
   );
 
   let compatFold: FoldResult | null = null;
-  if (!isPack && boards.length === 1 && boards[0].fold && boards[0].pair) {
+  if (!isPack && boards.length === 1 && boards[0].fold && boards[0].pair && boards[0].fold.offset === undefined) {
     const b = boards[0];
     compatFold = {
       axis: b.fold!.axis, dim: b.fold!.dim, lowerIsBottom: b.fold!.lowerIsBottom,
@@ -2255,7 +2321,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         if (fold && fold.dim === 'x') fold.axis = -fold.axis;
         for (const b of packBoards) {
           const r = b.region; const oMin = r.minX; r.minX = -r.maxX; r.maxX = -oMin;
-          if (b.fold && b.fold.dim === 'x') b.fold.axis = -b.fold.axis;
+          if (b.fold && b.fold.dim === 'x') { b.fold.axis = -b.fold.axis; if (b.fold.offset !== undefined) b.fold.offset = -b.fold.offset; }
           b.shift.dx = -b.shift.dx;
         }
       } else {
@@ -2275,7 +2341,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         if (fold && fold.dim === 'y') fold.axis = -fold.axis;
         for (const b of packBoards) {
           const r = b.region; const oMin = r.minY; r.minY = -r.maxY; r.maxY = -oMin;
-          if (b.fold && b.fold.dim === 'y') b.fold.axis = -b.fold.axis;
+          if (b.fold && b.fold.dim === 'y') { b.fold.axis = -b.fold.axis; if (b.fold.offset !== undefined) b.fold.offset = -b.fold.offset; }
           b.shift.dy = -b.shift.dy;
         }
       }

@@ -342,6 +342,7 @@ function LayersTab({ tabId }: { tabId: number }) {
                   const swapped = swappedBoards.has(i);
                   const source = pb.sideSource === 'copper' ? 'sides from copper'
                     : pb.sideSource === 'layout' ? 'sides from layout'
+                    : pb.sideSource === 'cpu' ? 'CPU side on top'
                     : 'single-sided';
                   return (
                     <div key={i} className="fold-option fold-board-row">
@@ -404,6 +405,11 @@ function LayersTab({ tabId }: { tabId: number }) {
               </div>
             </div>
           )}
+          {packBoards.length === 0 && !board.foldInfo ? (
+            <p className="fold-section-desc">
+              One outline loop and no mirror-image halves — nothing to fold. Shown as stored.
+            </p>
+          ) : (
           <div className="fold-resolution">
             <label className="fold-option">
               <input
@@ -432,6 +438,7 @@ function LayersTab({ tabId }: { tabId: number }) {
               </span>
             </label>
           </div>
+          )}
         </div>
       )}
       {layerStates.length > 0 && (
