@@ -273,6 +273,44 @@ body {
   }
 }
 
+/* App-bar buttons (v0.39): quiet — no inset box, no border; the accent
+   only appears on hover or when the control is on. */
+.toolbar-btn.toolbar-quiet {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-primary);
+  gap: 6px;
+  border-radius: 3px;
+}
+.toolbar-btn.toolbar-quiet:hover:not(:disabled) { background: rgba(255,255,255,0.06); color: var(--text-primary); }
+.toolbar-btn.toolbar-quiet.active { background: var(--accent); color: var(--accent-fg); }
+
+/* Segmented side switch in the board ribbon */
+.overlay-seg {
+  display: inline-flex;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  overflow: hidden;
+  height: 28px;
+}
+.overlay-seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 48px;
+  padding: 0 9px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.overlay-seg-btn + .overlay-seg-btn { border-left: 1px solid rgba(255,255,255,0.1); }
+.overlay-seg-btn:hover { color: var(--text-primary); background: rgba(255,255,255,0.08); }
+.overlay-seg-btn.active { background: var(--accent); color: var(--accent-fg); }
+.overlay-seg-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
+
 .toolbar-separator {
   width: 1px;
   height: 20px;
@@ -284,9 +322,9 @@ body {
   border: 1px solid var(--border);
   color: var(--text-primary);
   padding: 4px 10px;
-  border-radius: 0;
+  border-radius: 3px;
   font-size: 0.9em;
-  width: 240px;
+  width: min(440px, 36vw);
   height: 28px;
   box-sizing: border-box;
 }
@@ -1132,8 +1170,9 @@ body {
   border-radius: 50%;
 }
 
-/* Right-click menu — portaled to body so Dockview transforms can't offset it. */
-.activity-rail-menu {
+/* QuickMenu — the shared right-click menu (rail, board ribbon). Portaled to
+   body so Dockview transforms can't offset it. */
+.quick-menu {
   position: fixed;
   z-index: 10002;
   min-width: 184px;
@@ -1145,8 +1184,12 @@ body {
   display: flex;
   flex-direction: column;
   gap: 1px;
+  /* Never taller than the window: the ribbon menu lists every slot, and
+     in a short window its tail would otherwise be unreachable. */
+  max-height: calc(100vh - 8px);
+  overflow-y: auto;
 }
-.activity-rail-menu button {
+.quick-menu button {
   background: none;
   border: none;
   color: var(--text-primary);
@@ -1160,19 +1203,29 @@ body {
   align-items: center;
   gap: 8px;
 }
-.activity-rail-menu button:hover,
-.activity-rail-menu button:focus-visible {
+.quick-menu button:hover:not(:disabled),
+.quick-menu button:focus-visible {
   background: var(--accent);
   color: var(--accent-fg);
   outline: none;
 }
-.activity-rail-menu-tick {
+.quick-menu button:disabled { opacity: 0.4; cursor: default; }
+.quick-menu-header {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  padding: 6px 9px 2px;
+}
+.quick-menu-sep { height: 1px; background: var(--border); margin: 3px 4px; }
+.quick-menu-tick {
   width: 10px;
   font-size: 10px;
   color: var(--accent);
   flex-shrink: 0;
 }
-.activity-rail-menu button:hover .activity-rail-menu-tick { color: var(--accent-fg); }
+.quick-menu button:hover .quick-menu-tick { color: var(--accent-fg); }
 
 @media (prefers-reduced-motion: reduce) {
   .activity-rail-item,
@@ -3079,26 +3132,29 @@ body {
   to { transform: rotate(360deg); }
 }
 
-/* Sidebar toggle group (button + opacity slider) */
+/* Sidebar toggle group (the ☰ at the panel's top-right) */
 .board-sidebar-toggle-group {
   position: absolute;
   top: 6px;
   right: 8px;
   z-index: 20;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 4px;
-}
-
-.board-sidebar-toggle {
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  padding: 3px;
   background: var(--chip-bg);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+}
+/* The board sidebar's toggle is a ribbon button: same size, hover and
+   active treatment as .board-netlines-toggle, in a chip like the ribbon's. */
+.board-sidebar-toggle {
+  width: 34px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
   color: var(--text-secondary);
-  font-size: 14px;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -3106,57 +3162,17 @@ body {
   padding: 0;
   line-height: 1;
 }
-
 .board-sidebar-toggle:hover {
   color: var(--text-primary);
-  background: rgba(26, 26, 46, 0.9);
+  background: rgba(255, 255, 255, 0.08);
 }
-
 .board-sidebar-toggle.active {
   color: var(--accent-text);
-  border-color: var(--accent);
+  background: var(--surface-hover);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
-.board-sidebar-slider-wrap {
-  position: relative;
-}
 
-.board-sidebar-opacity-slider {
-  -webkit-appearance: slider-vertical;
-  appearance: slider-vertical;
-  writing-mode: vertical-lr;
-  direction: rtl;
-  width: 28px;
-  height: 80px;
-  accent-color: var(--accent);
-  cursor: pointer;
-  background: var(--chip-bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0;
-  margin: 0;
-}
-
-.board-sidebar-slider-tooltip {
-  position: absolute;
-  right: 34px;
-  transform: translateY(-50%);
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  font-size: 10px;
-  font-family: monospace;
-  padding: 1px 5px;
-  border-radius: 3px;
-  border: 1px solid var(--border);
-  white-space: nowrap;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.1s;
-}
-
-.board-sidebar-opacity-slider:active + .board-sidebar-slider-tooltip {
-  opacity: 1;
-}
 
 /* Board status indicators — left edge by default */
 .board-status-indicators {
@@ -3179,6 +3195,59 @@ body {
   left: 50%;
   transform: translateX(-50%);
 }
+/* Floating: left/top come from settings (inline); the shade handle is the grip. */
+.board-status-indicators.floating { transform: none; }
+.board-status-indicators.floating .overlay-collapse { cursor: grab; }
+.board-status-indicators.floating .overlay-collapse:active { cursor: grabbing; }
+/* Vertical: the same chip as a column. Separators turn into horizontal
+   rules, the side switch stacks, the handle sits at the foot. */
+.board-status-indicators.vertical {
+  flex-direction: column;
+  flex-wrap: wrap;
+  align-items: stretch;
+  max-height: calc(100% - 12px);
+  overflow: visible;
+}
+/* Column stays one button wide: the side switch shows icons only, and a
+   search field pops out beside the column instead of widening it. */
+.board-status-indicators.vertical .overlay-seg-lbl { display: none; }
+.board-status-indicators.vertical .overlay-seg-btn { min-width: 0; padding: 0; justify-content: center; height: 28px; }
+.board-status-indicators.vertical .overlay-dropdown-wrap.expanded .overlay-filter-input {
+  position: absolute;
+  left: calc(100% + 6px);
+  top: 0;
+  width: 180px;
+  z-index: 5;
+  box-shadow: 0 6px 20px -8px #000;
+}
+.board-status-indicators.vertical .overlay-sep { width: auto; height: 8px; }
+.board-status-indicators.vertical .overlay-seg { flex-direction: column; height: auto; }
+.board-status-indicators.vertical .overlay-seg-btn + .overlay-seg-btn { border-left: none; border-top: 1px solid rgba(255,255,255,0.1); }
+.board-status-indicators.vertical .overlay-collapse { width: 100%; height: 18px; }
+.board-status-indicators.vertical .board-netlines-toggle { width: 100%; justify-content: center; }
+
+/* Window-shade handle at the bar's RIGHT end (the Classic Mac collapse box).
+   Collapsed, the bar is just the handle at its left anchor: same chip, same
+   corner, the board gets the room. */
+.overlay-collapse {
+  width: 18px;
+  height: 28px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+.overlay-collapse:hover { opacity: 1; background: var(--surface-hover); color: var(--text-primary); }
+.overlay-collapse:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
+.board-status-indicators.collapsed { gap: 0; }
+.board-status-indicators.collapsed .overlay-collapse { opacity: 0.85; }
 
 .overlay-sep {
   width: 12px;
@@ -3303,34 +3372,18 @@ body {
 
 .board-sidebar-tabs {
   display: flex;
+  gap: 2px;
+  padding: 0 6px;
   flex: 1;
   min-width: 0;
 }
-
-.board-sidebar-tab {
-  flex: 1;
-  padding: 6px 10px;
-  border: none;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-  min-height: 28px;
-  display: flex;
-  align-items: center;
-  box-sizing: border-box;
-}
-
-.board-sidebar-tab:hover {
-  color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.board-sidebar-tab.active {
-  color: var(--accent-text);
-  border-bottom-color: var(--accent);
+/* Tabs are the shared `library-tab icon-tab` cell (see .icon-tab). The
+   Revisions "!" badge sits in the cell's top-right corner, off the glyph. */
+.icon-tab .tab-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  margin-left: 0;
 }
 
 .board-sidebar-close {
@@ -8035,6 +8088,35 @@ body {
   white-space: nowrap;
   pointer-events: none;
 }
+/* Hover preview of the tab's name — the same label the activity rail shows,
+   because only the open tab carries a caption. Reads data-title (falls back
+   to nothing for tabs without one). Suppressed on the active tab, whose name
+   is already drawn. Native `title` is NOT set on icon tabs, so there is one
+   tooltip, not two. */
+.icon-tab[data-title]:not(.active)::after {
+  content: attr(data-title);
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--tooltip-bg);
+  border: 1px solid var(--border);
+  color: var(--tooltip-fg);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 3px 8px;
+  border-radius: 2px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s 0.3s;
+  z-index: 10001;
+}
+.icon-tab[data-title]:not(.active):hover::after,
+.icon-tab[data-title]:not(.active):focus-visible::after { opacity: 1; }
+
 .icon-tab .settings-tab-match-badge {
   position: absolute;
   top: 2px;
@@ -8162,69 +8244,59 @@ body {
 }
 .overlay-dropdown-wrap {
   position: relative;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }
-.overlay-customizer-zone {
+/* Vertical ribbon only: the magnifier with the searched thing inside the
+   lens (chip / net). Tabler's lens is the circle at (10,10) r7 of a 24 box,
+   so at 20px it is centred at 8.33px with radius 5.83px, and a 10px inner
+   icon centred on it sits at 3.33px from the glyph's top-left. */
+.overlay-search-ico { position: relative; width: 20px; height: 20px; display: inline-flex; }
+.overlay-search-ico-inner { position: absolute; left: 3.33px; top: 3.33px; }
+/* Board overlay editor (Settings ▸ Board ▸ Board overlay): one list in
+   ribbon order. Row = grip · live chip · name · eye · up · down · (× on
+   separators). Hidden rows dim; drag reorders. */
+.ovc-list {
   display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 8px;
+  padding: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.ovc-row {
+  display: grid;
+  grid-template-columns: 16px 40px 1fr 24px 24px 24px 24px;
   align-items: center;
   gap: 6px;
-  min-height: 44px;
-  padding: 6px 8px;
-  margin: 4px 0 12px;
-  background: var(--bg-secondary, #1a1a2e);
-  border: 1px dashed var(--border-primary, #555);
-  border-radius: 4px;
-  flex-wrap: wrap;
-}
-/* Hidden zone keeps chips at full opacity (otherwise the dim slot icons
-   are too hard to read) — the dashed border + label already mark it as
-   the off-stage area. */
-.overlay-customizer-zone.hidden-zone {
-  background: var(--bg-tertiary, #14142a);
-  border-style: dotted;
-}
-/* Make the cosmetic separator slot legible inside the customizer.
-   In the live overlay it's a 12px transparent spacer; here we draw a
-   visible vertical bar so users can grab it. */
-.overlay-customizer-chip-wrap .overlay-sep {
-  width: 6px;
-  height: 24px;
-  background: var(--text-muted, #888);
-  opacity: 0.6;
-  border-radius: 2px;
-}
-.overlay-customizer-chip-wrap {
-  position: relative;
+  padding: 3px 4px;
+  border-radius: 3px;
   cursor: grab;
 }
-.overlay-customizer-chip-wrap:active {
-  cursor: grabbing;
+.ovc-row:hover { background: var(--surface-hover); }
+.ovc-row:active { cursor: grabbing; }
+.ovc-row.dragging { opacity: 0.4; }
+.ovc-row.is-hidden .ovc-chip,
+.ovc-row.is-hidden .ovc-label { opacity: 0.4; }
+.ovc-grip { color: var(--text-secondary); opacity: 0.6; display: flex; align-items: center; }
+.ovc-chip { display: flex; align-items: center; justify-content: center; pointer-events: none; width: 40px; overflow: hidden; color: var(--text-secondary); }
+.ovc-chip .overlay-sep { width: 6px; height: 22px; background: var(--text-secondary); opacity: 0.6; border-radius: 2px; }
+.ovc-label { font-size: 12px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ovc-btn {
+  width: 24px; height: 24px;
+  border: 1px solid transparent; border-radius: 3px;
+  background: transparent; color: var(--text-secondary);
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0; cursor: pointer;
 }
-.overlay-customizer-chip-wrap.dragging {
-  opacity: 0.4;
-}
-.overlay-customizer-chip {
-  position: relative;
-  display: inline-block;
-}
-.overlay-customizer-chip-inner {
-  pointer-events: none;
-}
-.overlay-customizer-chip-mask {
-  position: absolute;
-  inset: 0;
-  cursor: grab;
-}
-.overlay-customizer-chip-wrap.dragging .overlay-customizer-chip-mask {
-  cursor: grabbing;
-}
-.overlay-customizer-empty {
-  flex: 1;
-  text-align: center;
-  font-size: 11px;
-  color: var(--text-muted, #888);
-  font-style: italic;
-}
+.ovc-btn:hover:not(:disabled) { color: var(--text-primary); background: rgba(255,255,255,0.06); border-color: var(--border); }
+.ovc-btn:disabled { opacity: 0.25; cursor: default; }
+.ovc-btn[aria-pressed="true"] { color: var(--accent); }
+.ovc-remove:hover:not(:disabled) { color: var(--danger); }
+.ovc-spacer { visibility: hidden; }
 
 /* --- Update-in-progress overlay (full-screen modal during self-update) --- */
 .update-progress-overlay {

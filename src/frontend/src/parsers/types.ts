@@ -322,8 +322,11 @@ export interface BoardData {
     components: number[];                 // indices into foldComponents
     top: number;                          // component that is the top side
     bottom?: number;                      // its mirror twin, when two-sided
-    fold?: { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean };
-    sideSource: 'copper' | 'layout' | 'single';
+    /** `mode: 'translate'` with `offset`: the bottom half was slid onto the
+     *  top by `offset` along `dim` instead of mirrored across `axis` (one
+     *  half of the file was drawn through the board). */
+    fold?: { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean; mode?: 'translate'; offset?: number };
+    sideSource: 'copper' | 'layout' | 'cpu' | 'single';
     bounds: BBox;
     shift: { dx: number; dy: number };
     name?: string;

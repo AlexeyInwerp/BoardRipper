@@ -32,6 +32,7 @@ import type { ScrollAction, ScrollBindings } from '../../panels/PdfViewerPanel';
 import { sessionRant } from './rants';
 import { renderMarkdown } from './markdown';
 import instructionsMd from './instructions.md?raw';
+import { hdrTileUrl } from '../../renderer/hdr-selection-outline';
 
 // ─────────────────────────────────────────────────────────────
 // Small store subscriptions (inline — only used here)
@@ -875,7 +876,7 @@ function HdrGlowCard() {
  *  intensity slider selects, so the slider previews live. The SDR variant is a
  *  plain border in the theme's selection yellow. */
 function HdrMockBoard({ label, hdr, rung }: { label: string; hdr: boolean; rung: number }) {
-  const tile = { backgroundImage: `url(/hdr-line-${rung}.avif)` };
+  const tile = { backgroundImage: `url(${hdrTileUrl(rung)})` };
   const parts: Array<[number, number, number, number]> = [
     [6, 6, 20, 9], [6, 19, 20, 9], [30, 6, 9, 22], [80, 6, 16, 8], [80, 18, 16, 8], [6, 32, 33, 8], [80, 30, 16, 12],
   ];

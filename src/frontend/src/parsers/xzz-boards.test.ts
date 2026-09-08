@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyComponents, pairMajors, decideSide, type OutlineComponent, type ComponentPair } from './xzz-boards';
+import { classifyComponents, pairMajors, decideSide, splitSymmetricLoop, windingMode, type OutlineComponent, type ComponentPair } from './xzz-boards';
 
 const comp = (minX: number, minY: number, w: number, h: number, segCount = 100): OutlineComponent =>
   ({ minX, minY, maxX: minX + w, maxY: minY + h, segCount, segIdxs: [] });
@@ -117,5 +117,57 @@ describe('decideSide', () => {
     const d = decideSide(pairX, null, 1);
     expect(d).toMatchObject({ top: 0, source: 'layout', cpuDisagrees: true });
     expect(decideSide(pairX, null, 0).cpuDisagrees).toBeUndefined();
+  });
+});
+
+describe('splitSymmetricLoop', () => {
+  // A board outline with a notch on its top edge, drawn twice: once as the
+  // top half and once mirrored below it, the halves touching at y = 0.
+  const half = (sign: number) => {
+    const y = (v: number) => sign * v;
+    const pts = [[0, 0], [0, 800], [300, 800], [300, 600], [700, 600], [700, 800], [1000, 800], [1000, 0]];
+    const segs: Array<{ p1: { x: number; y: number }; p2: { x: number; y: number } }> = [];
+    for (let i = 0; i < pts.length - 1; i++) segs.push({ p1: { x: pts[i][0], y: y(pts[i][1]) }, p2: { x: pts[i + 1][0], y: y(pts[i + 1][1]) } });
+    // seam edge, drawn by each half
+    segs.push({ p1: { x: 1000, y: 0 }, p2: { x: 0, y: 0 } });
+    return segs;
+  };
+  it('cuts a self-mirrored loop at its seam and keeps the seam segments aside', () => {
+    const segments = [...half(1), ...half(-1)];
+    const comp = { minX: 0, minY: -800, maxX: 1000, maxY: 800, segCount: segments.length, segIdxs: segments.map((_, i) => i) };
+    const split = splitSymmetricLoop(segments, comp, () => ({ below: 100, above: 120 }));
+    expect(split).not.toBeNull();
+    expect(split!.dim).toBe('y');
+    expect(split!.axis).toBe(0);
+    expect(split!.seam).toHaveLength(2);
+    expect(split!.lower.maxY).toBeLessThanOrEqual(0);
+    expect(split!.upper.minY).toBeGreaterThanOrEqual(0);
+    expect(split!.lower.segCount).toBe(split!.upper.segCount);
+  });
+  it('refuses a loop that is not its own mirror image', () => {
+    // One board with an off-centre notch: symmetric about neither centre line.
+    const pts = [[0, 0], [0, 800], [100, 800], [100, 600], [400, 600], [400, 800], [1000, 800], [1000, 0], [0, 0]];
+    const segments = pts.slice(0, -1).map((p, i) => ({ p1: { x: p[0], y: p[1] }, p2: { x: pts[i + 1][0], y: pts[i + 1][1] } }));
+    const comp = { minX: 0, minY: 0, maxX: 1000, maxY: 800, segCount: segments.length, segIdxs: segments.map((_, i) => i) };
+    expect(splitSymmetricLoop(segments, comp, () => ({ below: 50, above: 50 }))).toBeNull();
+  });
+  it('refuses when one side would hold almost no parts', () => {
+    const segments = [...half(1), ...half(-1)];
+    const comp = { minX: 0, minY: -800, maxX: 1000, maxY: 800, segCount: segments.length, segIdxs: segments.map((_, i) => i) };
+    expect(splitSymmetricLoop(segments, comp, () => ({ below: 2, above: 500 }))).toBeNull();
+  });
+});
+
+describe('windingMode', () => {
+  it('reads a mirror fold from same-direction halves', () => {
+    expect(windingMode({ lowerCW: 0, lowerCCW: 29, upperCW: 3, upperCCW: 30 })).toBe('mirror');  // K90I
+    expect(windingMode({ lowerCW: 20, lowerCCW: 1, upperCW: 18, upperCCW: 2 })).toBe('mirror');  // stored mirrored
+  });
+  it('reads a translate fold from opposite-direction halves', () => {
+    expect(windingMode({ lowerCW: 22, lowerCCW: 0, upperCW: 3, upperCCW: 16 })).toBe('translate'); // 820-2494 K22
+  });
+  it('refuses mixed winding and too few samples', () => {
+    expect(windingMode({ lowerCW: 10, lowerCCW: 9, upperCW: 8, upperCCW: 11 })).toBeNull();
+    expect(windingMode({ lowerCW: 1, lowerCCW: 1, upperCW: 0, upperCCW: 30 })).toBeNull();
   });
 });

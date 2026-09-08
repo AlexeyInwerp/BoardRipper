@@ -1,6 +1,6 @@
 # Activity rail for the sidebar — VS Code-style icon rail
 
-**Date:** 2026-09-02 · **Status:** shipped in **v0.38.0** (2026-09-07). Plan: `docs/plans/2026-09-07-activity-rail.md`; E2E `src/frontend/tests/activity-rail.spec.ts` (22 passing). Rail is default on; the legacy strip stays one setting away. Phase 2 (hover-peek, BoardSidebar rail) not started.
+**Date:** 2026-09-02 · **Status:** shipped in **v0.38.0** (2026-09-07). Plan: `docs/plans/2026-09-07-activity-rail.md`; E2E `src/frontend/tests/activity-rail.spec.ts` (22 passing). Rail is default on; the legacy strip stays one setting away. Follow-ups on `feat/ui-consistency-2` (2026-09-08): collapsible ribbon with right-hand shade handle, icon-tab board sidebar, editable ribbon (right-click menu + labelled Settings editor), and **proposal C implemented** — per-board transforms moved into the ribbon as slots, the toolbar reduced to app-level controls (`docs/specs/2026-09-08-toolbar-c-mockup.html`). Phase 2 (hover-peek, BoardSidebar rail) not started.
 **Problem owner:** anyone switching between Library / Tools / Settings / Debug during a repair session, and anyone who has lost the collapsed sidebar.
 
 ## Problem

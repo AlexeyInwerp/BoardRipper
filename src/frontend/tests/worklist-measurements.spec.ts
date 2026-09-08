@@ -91,7 +91,7 @@ test('highlight: worklist outlines only when toggle on; button relabeled', async
     if (wl) ws.pushParts(wl.id, [0]);
   });
   await page.locator('.board-sidebar-toggle').first().click();
-  await page.locator('.board-sidebar-tab', { hasText: 'Worklist' }).click();
+  await page.locator('[data-board-tab="worklist"]').click();
   const btn = page.getByRole('button', { name: 'Highlight' });
   await expect(btn).toBeVisible();
   const on = await page.evaluate(() => { /* @ts-expect-error test-only global exposed by the app for E2E */ return window.__boardStore.connectionHighlight; });
@@ -116,7 +116,7 @@ test('net row: records V + diode + Ω independently (three values coexist)', asy
     return r;
   });
   await page.locator('.board-sidebar-toggle').first().click();
-  await page.locator('.board-sidebar-tab', { hasText: 'Worklist' }).click();
+  await page.locator('[data-board-tab="worklist"]').click();
   const netRow = page.locator('[data-testid="worklist-net-row"]', { hasText: 'GND' }).first();
   await expect(netRow).toBeVisible();
   // Fill all three slots independently — they coexist (no type switch).
@@ -148,7 +148,7 @@ test('net row: diode chip shows the circuit-diode icon, not the word "Diode"', a
     window.__worklistStore.pushNetToActive('GND');
   });
   await page.locator('.board-sidebar-toggle').first().click();
-  await page.locator('.board-sidebar-tab', { hasText: 'Worklist' }).click();
+  await page.locator('[data-board-tab="worklist"]').click();
   const netRow = page.locator('[data-testid="worklist-net-row"]', { hasText: 'GND' }).first();
   await expect(netRow).toBeVisible();
   const diodeChip = netRow.locator('[data-testid="net-meas-chip-diode"]');

@@ -1,0 +1,292 @@
+<title>BoardRipper Toolbar Review</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  /* Committed single-theme dark: these ARE BoardRipper's chrome tokens
+     (src/frontend/src/index.css), so each strip below is a faithful render. */
+  :root {
+    --bg-primary: #08080c; --bg-secondary: #0f0f18; --bg-tertiary: #0c1424; --canvas-bg: #050508;
+    --text-primary: #e0e0e0; --text-secondary: #a0a0b0; --accent: #4a9eff; --accent-fg: #fff;
+    --border: #1a1a28; --orange: #ffaa00; --green: #44cc44; --chip-bg: rgba(12,20,36,.82);
+    --page-bg: #060609; --page-ink: #d8dae2; --page-dim: #7c8298; --page-rule: #191a24; --page-surface: #0b0b11;
+    --app-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+    --sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  body { background: var(--page-bg); color: var(--page-ink); font: 15px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 48px 28px 80px; display: flex; flex-direction: column; gap: 40px; }
+  .eyebrow { font: 11px var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--accent); display: flex; align-items: center; gap: 10px; }
+  .eyebrow::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, var(--page-rule), transparent); }
+  h1 { font-weight: 600; font-size: clamp(28px, 4vw, 40px); letter-spacing: -.02em; line-height: 1.12; text-wrap: balance; margin-top: 12px; }
+  .lede { color: var(--page-dim); max-width: 66ch; margin-top: 12px; font-size: 16px; }
+  .lede b { color: var(--page-ink); font-weight: 500; }
+  h2 { font: 500 11px var(--mono); letter-spacing: .15em; text-transform: uppercase; color: var(--page-dim); padding-bottom: 9px; border-bottom: 1px solid var(--page-rule); margin-bottom: 14px; display: flex; align-items: baseline; gap: 12px; }
+  h2 .name { font: 600 15px var(--sans); letter-spacing: 0; text-transform: none; color: var(--page-ink); }
+  h2 .rec { margin-left: auto; font-size: 10px; color: var(--green); }
+  p.note { color: var(--page-dim); font-size: 14px; max-width: 70ch; margin-top: 10px; }
+  p.note b { color: var(--page-ink); font-weight: 500; }
+  ul.pts { margin: 10px 0 0 18px; color: var(--page-dim); font-size: 14px; max-width: 70ch; }
+  ul.pts li { margin: 4px 0; } ul.pts b { color: var(--page-ink); font-weight: 500; }
+  .stage { border: 1px solid var(--page-rule); border-radius: 3px; overflow-x: auto; box-shadow: 0 24px 60px -30px #000; }
+
+  /* ── app chrome (faithful) ── */
+  .app { font-family: var(--app-font); font-size: 13px; color: var(--text-primary); background: var(--canvas-bg); min-width: 1100px; }
+  .toolbar { display: flex; align-items: center; height: 40px; background: var(--bg-tertiary); border-bottom: 1px solid var(--border); padding: 0 8px; gap: 6px; }
+  .toolbar.tall { height: 52px; }
+  .toolbar-group { display: inline-flex; align-items: stretch; gap: 2px; background: var(--bg-primary); padding: 2px 3px; border: 1px solid var(--border); height: 28px; }
+  .tb { background: transparent; border: none; color: var(--text-primary); padding: 4px 11px; font-size: 11.7px; font-family: inherit; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; border-radius: 1px; }
+  .tb.active { background: var(--accent); color: var(--accent-fg); }
+  .tb.glyph { font-size: 17px; padding: 4px 9px; line-height: 1; }
+  .tb.small { font-size: 10px; padding: 4px 6px; font-weight: 600; }
+  .tb svg { width: 14px; height: 14px; }
+  .search { background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-secondary); height: 28px; padding: 0 10px; font-size: 12px; display: flex; align-items: center; width: 340px; border-radius: 1px; }
+  .spacer { flex: 1; }
+  .badge { background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-secondary); font-size: 10.5px; padding: 4px 9px; display: inline-flex; align-items: center; gap: 6px; height: 28px; }
+  .badge.dev { background: #1e7a3a; color: #fff; border-color: #1e7a3a; font-weight: 600; }
+  .icon-btn { width: 28px; height: 28px; border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-primary); display: inline-flex; align-items: center; justify-content: center; }
+  .icon-btn svg { width: 15px; height: 15px; }
+
+  /* quiet variant */
+  .sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
+  .qb { background: transparent; border: none; color: var(--text-secondary); height: 28px; padding: 0 8px; font: 11.5px var(--app-font); display: inline-flex; align-items: center; gap: 6px; border-radius: 3px; cursor: pointer; }
+  .qb svg { width: 16px; height: 16px; }
+  .qb.primary { color: var(--text-primary); }
+  .qb:hover { background: rgba(255,255,255,.05); color: var(--text-primary); }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 3px; overflow: hidden; height: 26px; }
+  .seg button { border: none; background: var(--bg-primary); color: var(--text-secondary); font: 11.5px var(--app-font); padding: 0 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button.on { background: var(--accent); color: var(--accent-fg); }
+  .seg button svg { width: 13px; height: 13px; }
+  .caret { width: 10px; height: 10px; opacity: .6; }
+
+  /* captioned variant (rail language) */
+  .cb { background: transparent; border: none; color: var(--text-secondary); width: 48px; height: 46px; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; cursor: pointer; border-radius: 3px; font-family: var(--app-font); position: relative; }
+  .cb svg { width: 18px; height: 18px; }
+  .cb span { font-size: 8px; letter-spacing: .02em; line-height: 1; }
+  .cb.on { color: var(--accent); }
+  .cb.on::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: 2px; height: 2px; background: var(--accent); }
+  .cb:hover { color: var(--text-primary); background: rgba(255,255,255,.04); }
+  .cseg { display: inline-flex; gap: 0; border: 1px solid var(--border); border-radius: 4px; padding: 1px; background: var(--bg-primary); }
+  .cseg .cb { height: 42px; width: 52px; }
+  .cseg .cb.on { background: var(--accent); color: var(--accent-fg); border-radius: 3px; }
+  .cseg .cb.on::after { display: none; }
+
+  /* board area under the toolbar (for variant C) */
+  .dv-tabs { height: 32px; background: var(--bg-tertiary); border-bottom: 1px solid var(--border); display: flex; padding-left: 0; }
+  .dv-tab { display: inline-flex; align-items: center; gap: 7px; padding: 0 13px; font-size: 12px; color: var(--text-primary); background: var(--bg-secondary); border-right: 1px solid var(--border); }
+  .dv-tab .sq { width: 10px; height: 10px; border-radius: 1px; background: var(--green); }
+  .canvas { height: 92px; background: var(--canvas-bg); position: relative; }
+  .ovl { position: absolute; top: 6px; left: 8px; display: flex; gap: 3px; align-items: center; padding: 3px; background: var(--chip-bg); border: 1px solid rgba(255,255,255,.06); border-radius: 8px; }
+  .ovl .h { width: 18px; height: 28px; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); opacity: .6; }
+  .ovl .h svg { width: 14px; height: 14px; }
+  .ovl .o { width: 34px; height: 28px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-secondary); border-radius: 5px; }
+  .ovl .o svg { width: 16px; height: 16px; }
+  .ovl .o.on { color: var(--accent); background: rgba(74,158,255,.14); box-shadow: inset 0 0 0 1px rgba(74,158,255,.45); }
+  .ovl .t { color: var(--text-secondary); font-size: 12px; padding: 0 14px; }
+  .ovl .osep { width: 1px; height: 18px; background: rgba(255,255,255,.08); margin: 0 4px; }
+  .ovl .oseg { display: inline-flex; border-radius: 5px; overflow: hidden; border: 1px solid rgba(255,255,255,.1); }
+  .ovl .oseg .o { border-radius: 0; width: auto; padding: 0 9px; font-size: 11px; gap: 4px; }
+  .ovl .oseg .o.on { box-shadow: none; background: var(--accent); color: var(--accent-fg); }
+
+  /* annotation */
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 28px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th { text-align: left; font: 500 10px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--page-dim); padding: 6px 8px; border-bottom: 1px solid var(--page-rule); }
+  td { padding: 7px 8px; border-bottom: 1px solid #101017; vertical-align: top; color: var(--page-dim); }
+  td:first-child { color: var(--page-ink); white-space: nowrap; }
+  .tag { font: 600 9.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; padding: 1px 6px; border-radius: 2px; }
+  .tag.keep { color: var(--page-ink); background: #14141d; } .tag.move { color: var(--orange); background: #1a1408; } .tag.drop { color: #e07070; background: #1c0e0e; } .tag.new { color: var(--accent); background: #0c1424; }
+  footer { border-top: 1px solid var(--page-rule); padding-top: 20px; font: 11px var(--mono); color: var(--page-dim); display: flex; flex-wrap: wrap; gap: 8px 22px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">BoardRipper &nbsp;·&nbsp; interface review</div>
+    <h1>The toolbar, three ways</h1>
+    <p class="lede">
+      What is on the top bar today, what is wrong with it, and three directions drawn in the app's own
+      chrome. <b>C is the recommendation</b>; A is the safe first step toward it, B is what "one icon
+      language" looks like if you want the toolbar to match the rail.
+    </p>
+  </header>
+
+  <!-- ─────────── CURRENT ─────────── -->
+  <section>
+    <h2>Today <span class="name">as shipped in v0.38.0</span></h2>
+    <div class="stage"><div class="app">
+      <div class="toolbar">
+        <div class="toolbar-group">
+          <button class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 10l-2 2 2 2"/></svg></button>
+          <button class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>2 window mode</button>
+          <button class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v11M8 8l4-4 4 4"/></svg>Upload</button>
+        </div>
+        <div class="toolbar-group">
+          <button class="tb active">Top</button><button class="tb small">⇅</button><button class="tb">Bottom</button><button class="tb glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M5 7l7 5-7 5zM19 7l-7 5 7 5z"/></svg></button>
+        </div>
+        <div class="toolbar-group">
+          <button class="tb glyph">↺</button><button class="tb small">180°</button><button class="tb glyph">↻</button><button class="tb glyph">⇔</button><button class="tb glyph">⇕</button>
+        </div>
+        <div class="search">Global search…</div>
+        <div class="spacer"></div>
+        <span class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+        <span class="badge dev">dev</span>
+      </div>
+    </div></div>
+    <ul class="pts">
+      <li><b>Three icon languages in one bar.</b> Tabler icons (sidebar, upload, butterfly), Unicode arrows (⇅ ↺ ↻ ⇔ ⇕) and text ("2 window mode", "Top", "180°"). The arrows render differently per OS font and never match the icon weight next to them.</li>
+      <li><b>Each group is a boxed inset.</b> Three dark boxes with borders make a 40px bar read heavy, and the boxes do not say what the groups mean.</li>
+      <li><b>A rare action owns the widest button.</b> "2 window mode" is used once a session at most; it sits first, labelled, beside Upload.</li>
+      <li><b>The most-used control is buried in the middle.</b> Top / Bottom is what a repair session toggles all day; it sits between file actions and transforms, with a cryptic ⇅ between the two words.</li>
+      <li><b>App-level and board-level controls are mixed.</b> Sidebar, Upload, search, version are about the app. Side, rotate, mirror, traces are about <i>this board</i> — and change per tab. Nothing in the bar says which is which.</li>
+      <li><b>Right half is empty.</b> Search stops mid-bar; info and version float at the far right.</li>
+    </ul>
+  </section>
+
+  <!-- ─────────── A ─────────── -->
+  <section>
+    <h2>A <span class="name">Quiet groups, one icon language</span></h2>
+    <div class="stage"><div class="app">
+      <div class="toolbar">
+        <button class="qb primary" title="Sidebar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 10l-2 2 2 2"/></svg></button>
+        <button class="qb primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v11M8 8l4-4 4 4"/></svg>Open</button>
+        <div class="sep"></div>
+        <div class="seg">
+          <button class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8l8-4 8 4-8 4z"/><path d="M4 12l8 4 8-4M4 16l8 4 8-4" opacity=".35"/></svg>Top</button>
+          <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8l8-4 8 4-8 4z" opacity=".35"/><path d="M4 12l8 4 8-4" opacity=".35"/><path d="M4 16l8 4 8-4"/></svg>Bottom</button>
+          <button title="Flip axis, butterfly, both sides…"><svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
+        </div>
+        <div class="sep"></div>
+        <button class="qb" title="Rotate left"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12a7 7 0 1 0 2-5"/><path d="M3 4v4h4"/></svg></button>
+        <button class="qb" title="Rotate right"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12a7 7 0 1 1-2-5"/><path d="M21 4v4h-4"/></svg></button>
+        <button class="qb" title="180°, mirror, traces…"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg></button>
+        <div class="spacer"></div>
+        <div class="search" style="width:380px">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10" cy="10" r="6"/><path d="M20 20l-5-5"/></svg>&nbsp; Search parts, nets, PDFs, library…
+        </div>
+        <div class="spacer"></div>
+        <button class="qb" title="2-window mode"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg></button>
+        <span class="icon-btn" style="border:none;background:transparent;color:var(--text-secondary)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+        <span class="badge dev">dev</span>
+      </div>
+    </div></div>
+    <ul class="pts">
+      <li><b>Same order, same reach, half the noise.</b> Boxes become hairline separators; every glyph becomes a Tabler icon at one weight.</li>
+      <li><b>Top / Bottom is a real segmented control</b> with a caret for the rare options (flip axis, butterfly, show both). The ⇅ mystery button goes away.</li>
+      <li><b>Rotate keeps two buttons; the rest moves into a "more" menu</b> (180°, mirror H/V, traces). Five transform buttons were four too many for how often mirror is used.</li>
+      <li><b>Search is centred and says what it searches.</b> 2-window mode moves to the right cluster as an icon; it is a window action, not a file action.</li>
+      <li>Risk: lowest. Nothing moves between surfaces, so every existing shortcut and test still applies. It does <i>not</i> fix the app-vs-board mixing.</li>
+    </ul>
+  </section>
+
+  <!-- ─────────── B ─────────── -->
+  <section>
+    <h2>B <span class="name">Captioned, the rail's language</span></h2>
+    <div class="stage"><div class="app">
+      <div class="toolbar tall">
+        <button class="cb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 10l-2 2 2 2"/></svg><span>Sidebar</span></button>
+        <button class="cb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v11M8 8l4-4 4 4"/></svg><span>Open</span></button>
+        <div class="sep" style="height:30px"></div>
+        <div class="cseg">
+          <button class="cb on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8l8-4 8 4-8 4z"/><path d="M4 12l8 4 8-4M4 16l8 4 8-4" opacity=".4"/></svg><span>Top</span></button>
+          <button class="cb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8l8-4 8 4-8 4z" opacity=".4"/><path d="M4 12l8 4 8-4" opacity=".4"/><path d="M4 16l8 4 8-4"/></svg><span>Bottom</span></button>
+        </div>
+        <button class="cb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M5 7l7 5-7 5zM19 7l-7 5 7 5z"/></svg><span>Both</span></button>
+        <div class="sep" style="height:30px"></div>
+        <button class="cb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12a7 7 0 1 0 2-5"/><path d="M3 4v4h4"/></svg><span>Rotate ↺</span></button>
+        <button class="cb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12a7 7 0 1 1-2-5"/><path d="M21 4v4h-4"/></svg><span>Rotate ↻</span></button>
+        <button class="cb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M8 7l-4 5 4 5M16 7l4 5-4 5"/></svg><span>Mirror</span></button>
+        <div class="spacer"></div>
+        <div class="search" style="width:360px;height:30px">Search parts, nets, PDFs, library…</div>
+        <div class="spacer"></div>
+        <button class="cb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg><span>2 windows</span></button>
+        <button class="cb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg><span>About</span></button>
+        <span class="badge dev" style="height:26px">dev</span>
+      </div>
+    </div></div>
+    <ul class="pts">
+      <li><b>The whole app speaks one language.</b> Rail, panel tabs and toolbar all use icon-over-caption cells. New users never have to hover to find out what a glyph does.</li>
+      <li><b>Costs 12px of height</b> (40 → 52) on a tool where the board is the product. The rail already spent 46px of width for the same reason; you may not want to spend both.</li>
+      <li>Captions under "Rotate ↺ / ↻" show the limit of the idea: some actions do not have a one-word name, and a caption that needs a glyph is not helping.</li>
+      <li>Risk: medium. Layout change only, no behaviour change, but every toolbar test that reads button text needs the same attribute migration the rail got.</li>
+    </ul>
+  </section>
+
+  <!-- ─────────── C ─────────── -->
+  <section>
+    <h2>C <span class="name">Split: the bar is for the app, the board's bar is for the board</span><span class="rec">● recommended</span></h2>
+    <div class="stage"><div class="app">
+      <div class="toolbar">
+        <button class="qb primary" title="Sidebar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 10l-2 2 2 2"/></svg></button>
+        <button class="qb primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v11M8 8l4-4 4 4"/></svg>Open</button>
+        <div class="spacer"></div>
+        <div class="search" style="width:420px">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10" cy="10" r="6"/><path d="M20 20l-5-5"/></svg>&nbsp; Search parts, nets, PDFs, library…
+        </div>
+        <div class="spacer"></div>
+        <button class="qb" title="2-window mode"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg></button>
+        <button class="qb" title="About"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></button>
+        <span class="badge dev">dev</span>
+      </div>
+      <div class="dv-tabs"><div class="dv-tab"><span class="sq"></span>820-00875.brd &nbsp;<span style="opacity:.5">×</span></div></div>
+      <div class="canvas">
+        <div class="ovl">
+          <span class="h"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></span>
+          <div class="oseg">
+            <span class="o on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8l8-4 8 4-8 4z"/></svg>Top</span>
+            <span class="o"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16l8 4 8-4-8-4z"/></svg>Bottom</span>
+          </div>
+          <span class="o" title="Rotate left"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12a7 7 0 1 0 2-5"/><path d="M3 4v4h4"/></svg></span>
+          <span class="o" title="Rotate right"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12a7 7 0 1 1-2-5"/><path d="M21 4v4h-4"/></svg></span>
+          <span class="o" title="More: 180°, mirror, butterfly, traces"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg></span>
+          <span class="osep"></span>
+          <span class="o"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13v-8a2 2 0 0 1 4 0v7M12 12v-2a2 2 0 0 1 4 0v2M16 12a2 2 0 0 1 4 0v3a6 6 0 0 1-12 0v-3"/></svg></span>
+          <span class="o"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg></span>
+          <span class="osep"></span>
+          <span class="o on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 1 4 10.5c-.7.7-1 1.5-1 2.5H9c0-1-.3-1.8-1-2.5A6 6 0 0 1 12 3z"/></svg></span>
+          <span class="o on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0-6 6v11l3-2 3 2 3-2 3 2V9a6 6 0 0 0-6-6z"/><path d="M10 10h.01M14 10h.01"/></svg></span>
+          <span class="t">Parts</span><span class="t">Nets</span>
+        </div>
+      </div>
+    </div></div>
+    <ul class="pts">
+      <li><b>The top bar becomes the app's bar:</b> sidebar, Open, search, window mode, about, version. Six things, stable across tabs, plenty of room.</li>
+      <li><b>Side, rotate, mirror and traces move down into the board's own control bar</b> — the one that is already per-tab, already sits on the board it changes, and since today <b>folds away with one click</b>. Switching tabs no longer leaves a Top/Bottom state in the toolbar that belongs to a different board.</li>
+      <li><b>"Nothing but the board" becomes real:</b> cycle the sidebar out, fold the shade, and only the app bar is left. With A or B the transforms stay on screen whatever you do.</li>
+      <li><b>Search gets the centre and the width it deserves.</b> It is the one control that spans board, PDFs and library.</li>
+      <li>Risk: highest of the three, but contained: the transforms already exist as store actions, the overlay already has a slot registry and a drag-to-arrange Settings editor, so each moved control is a new slot, not new behaviour. Keyboard shortcuts are unchanged. Tests that click the toolbar's Top/Bottom need to click the slot instead.</li>
+    </ul>
+  </section>
+
+  <!-- ─────────── what moves where (C) ─────────── -->
+  <section>
+    <h2>Where each control goes <span class="name">under C</span></h2>
+    <div class="grid2">
+      <table>
+        <tr><th>Control</th><th>Today</th><th>Under C</th></tr>
+        <tr><td>Sidebar cycle</td><td>toolbar</td><td><span class="tag keep">keep</span> toolbar, first</td></tr>
+        <tr><td>Upload / Open</td><td>toolbar, text + icon</td><td><span class="tag keep">keep</span> toolbar, icon + "Open"</td></tr>
+        <tr><td>2-window mode</td><td>toolbar, wide labelled button</td><td><span class="tag move">move</span> toolbar right cluster, icon only</td></tr>
+        <tr><td>Global search</td><td>toolbar, left-of-centre</td><td><span class="tag keep">keep</span> toolbar, centred, wider, placeholder names its scopes</td></tr>
+        <tr><td>Top / Bottom</td><td>toolbar group</td><td><span class="tag move">move</span> overlay bar, first slot, segmented</td></tr>
+        <tr><td>Flip axis ⇅</td><td>between Top and Bottom</td><td><span class="tag move">move</span> overlay "more" menu</td></tr>
+        <tr><td>Butterfly</td><td>toolbar, when no layers</td><td><span class="tag move">move</span> overlay "more" menu</td></tr>
+        <tr><td>Rotate ↺ ↻</td><td>toolbar group</td><td><span class="tag move">move</span> overlay bar, two slots</td></tr>
+        <tr><td>180°, Mirror H, Mirror V</td><td>toolbar group, three buttons</td><td><span class="tag move">move</span> overlay "more" menu <span class="tag new">new</span></td></tr>
+        <tr><td>Traces</td><td>toolbar, when the format has them</td><td><span class="tag move">move</span> overlay "more" menu</td></tr>
+        <tr><td>About ⓘ</td><td>toolbar right</td><td><span class="tag keep">keep</span></td></tr>
+        <tr><td>Version / update badge</td><td>toolbar right</td><td><span class="tag keep">keep</span> (the rail dot already signals updates)</td></tr>
+      </table>
+      <div>
+        <p class="note"><b>Why the overlay bar and not a second toolbar row.</b> The overlay is already the board's control surface: per-tab, on the board, slot-based, user-arrangeable in Settings, and now collapsible. Adding the transforms there is adding slots. A second row would be a fourth permanent horizontal strip.</p>
+        <p class="note"><b>What stays exactly as is.</b> Every store action (<code style="font-family:var(--mono);font-size:12px">boardStore.rotateCW</code>, <code style="font-family:var(--mono);font-size:12px">selectTop</code>, …), every keyboard shortcut, the shift-to-peek gesture on Top/Bottom, the hold-to-peek tooltip text. Only the button's home changes.</p>
+        <p class="note"><b>Sequencing if you want it in steps.</b> A first (one afternoon, no behaviour change), then C's move of Top/Bottom alone (the control people touch most), then the rest of the transforms once the segmented slot has been used for a while.</p>
+        <p class="note"><b>Open question.</b> With C, a PDF tab shows a nearly empty top bar. That is arguably correct — a PDF has its own controls in its panel — but it is worth seeing on a real screen before deciding.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Tokens from src/frontend/src/index.css</span>
+    <span>Toolbar 40px (B: 52px) · overlay bar as shipped in v0.38.1</span>
+    <span>Board canvas is a placeholder</span>
+  </footer>
+</div>

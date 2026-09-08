@@ -1,14 +1,13 @@
 import { useRef, useEffect, useState, useCallback, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { IconBoxMultiple, IconFlipHorizontal, IconLayoutBoardSplit, IconUpload, IconDownload, IconInfoCircle } from '@tabler/icons-react';
+import { IconBoxMultiple, IconLayoutBoardSplit, IconUpload, IconDownload, IconInfoCircle } from '@tabler/icons-react';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { useUpdateStore } from '../hooks/useUpdateStore';
 import { showSidebarTab } from './Sidebar.utils';
 import { SidebarCycleButton } from './SidebarCycleButton';
-import { getAllExtensions, getFileExtension, getFormat } from '../parsers';
+import { getAllExtensions, getFileExtension } from '../parsers';
 import { fileInputRefs } from '../store/file-inputs';
-import { formatShortcut } from '../store/keyboard-shortcuts';
 import { openPdfFiles } from '../store/file-actions';
 import { updateStore, fmtVersion } from '../store/update-store';
 import { ReleaseNotes } from './ReleaseNotes';
@@ -401,7 +400,7 @@ function GlobalSearch() {
       <input
         ref={inputRef}
         type="text"
-        placeholder="Global search..."
+        placeholder="Search parts, nets, PDFs, library"
         className="toolbar-search"
         value={query}
         onChange={handleChange}
@@ -436,19 +435,11 @@ function GlobalSearch() {
 export function Toolbar() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   // pdfInputRef removed — single Open button + unified file picker now.
-  const { showTop, showBottom, butterfly, board, showTraces, activeTabId, flipAxis, rotation } = useBoardStore();
+  const { activeTabId } = useBoardStore();
   const [twoWindow, setTwoWindow] = useState(isTwoWindowMode());
   useEffect(() => onTwoWindowModeChange(() => setTwoWindow(isTwoWindowMode())), []);
 
-  // For files where the label convention is inverted (primarySide='bottom'),
-  // the UI presents the physical CPU side as "Top". The store's showTop flag
-  // still tracks the file's side='top' layer, so swap the active highlight.
-  const uiShowTop    = board?.primarySide === 'bottom' ? showBottom : showTop;
-  const uiShowBottom = board?.primarySide === 'bottom' ? showTop    : showBottom;
   const update = useUpdateStore();
-  const fmt = board ? getFormat(board.format) : undefined;
-  const hasLayers = fmt?.hasLayers ?? false;
-  const hasTraces = fmt?.hasTraces ?? false;
 
   useEffect(() => {
     fileInputRefs.board = fileInputRef.current;
@@ -566,142 +557,44 @@ export function Toolbar() {
         style={{ display: 'none' }}
         data-testid="file-input"
       />
-      {/* ── Files ── */}
-      <div className="toolbar-group">
-        <SidebarCycleButton />
-        {/* Pop-out needs a real second window. The offline single file has
-         *  no popout.html to open, and a tablet's window.open is a new tab
-         *  (iPadOS) or nothing — so the control is hidden where it can only
-         *  fail. Read once at render: the pointer type does not change. */}
-        {!isOfflineBuild() && !COARSE_POINTER && (
+      {/* ── App bar (v0.39): the bar is about the app, the board's own bar is
+          about the board. Sidebar cycle and Open on the left, search in the
+          centre, window mode / about / version on the right. Side, rotate,
+          mirror, butterfly and traces live in the board ribbon now — same
+          store actions, same shortcuts, only the button's home moved. ── */}
+      <SidebarCycleButton />
+      <button
+        onClick={handleFileOpen}
+        className="toolbar-btn toolbar-quiet"
+        data-testid="open-btn"
+        data-tooltip={isElectron() ? 'Open boards or PDFs' : 'Open boards or PDFs from your device'}
+      >
+        <IconUpload size={15} stroke={1.75} />Open
+      </button>
+
+      {/* ── Search, centred ── */}
+      <div className="toolbar-spacer" />
+      <GlobalSearch />
+      <div className="toolbar-spacer" />
+
+      {/* Pop-out needs a real second window. The offline single file has no
+       *  popout.html to open, and a tablet's window.open is a new tab (iPadOS)
+       *  or nothing — so the control is hidden where it can only fail. Read
+       *  once at render: the pointer type does not change. */}
+      {!isOfflineBuild() && !COARSE_POINTER && (
         <button
           onClick={() => toggleTwoWindowMode()}
-          className={`toolbar-btn ${twoWindow ? 'active' : ''}`}
+          className={`toolbar-btn toolbar-quiet toolbar-btn-icon ${twoWindow ? 'active' : ''}`}
           data-testid="two-window-toggle"
           data-tooltip={twoWindow
             ? '2-window mode ON — click to re-dock PDF into main window'
             : '2-window mode — detach PDF viewer into its own window'}
-          style={{ gap: 6 }}
         >
           {twoWindow
-            ? <IconBoxMultiple size={14} stroke={1.75} />
-            : <IconLayoutBoardSplit size={14} stroke={1.75} />}
-          2 window mode
+            ? <IconBoxMultiple size={15} stroke={1.75} />
+            : <IconLayoutBoardSplit size={15} stroke={1.75} />}
         </button>
-        )}
-        {/* In Electron the picker reaches into the local filesystem (truly "Open").
-         *  In a browser the file is read into memory client-side — closer to an
-         *  upload from the user's mental model — so the web build uses an
-         *  IconUpload-prefixed "Upload" label. testid stays `open-btn` to keep
-         *  Playwright tests stable across both modes. */}
-        <button
-          onClick={handleFileOpen}
-          className="toolbar-btn"
-          data-testid="open-btn"
-          data-tooltip={isElectron() ? 'Open boards or PDFs' : 'Upload boards or PDFs from your device'}
-          style={isElectron() ? undefined : { gap: 6 }}
-        >
-          {isElectron() ? 'Open' : (<><IconUpload size={14} stroke={1.75} />Upload</>)}
-        </button>
-      </div>
-
-      {/* ── Side selection ── */}
-      <div className="toolbar-group">
-        <button
-          onClick={(e) => boardStore.selectTop(e.shiftKey)}
-          className={`toolbar-btn ${uiShowTop ? 'active' : ''}`}
-          data-tooltip={`${formatShortcut('flipBoard')}: tap to flip \u00B7 hold to peek \u00B7 Shift both`}
-        >
-          Top
-        </button>
-        {(() => {
-          // Icon reflects the SCREEN flip direction, not the internal board axis.
-          // Under 90°/270° rotation board X↔screen Y, so flipAxis='x' produces a
-          // horizontal screen flip — invert the icon to match what the user sees.
-          const axesSwapped = Math.round(rotation / 90) % 2 === 1;
-          const screenVertical = (flipAxis === 'x') !== axesSwapped;
-          return (
-            <button
-              onClick={() => boardStore.toggleFlipAxis()}
-              className="toolbar-btn toolbar-btn-icon"
-              data-tooltip={`Flip axis: ${screenVertical ? 'Vertical' : 'Horizontal'}`}
-              style={{ fontSize: '0.75em', padding: '0 4px', minWidth: 0 }}
-            >
-              {screenVertical ? '⇅' : '⇄'}
-            </button>
-          );
-        })()}
-        <button
-          onClick={(e) => boardStore.selectBottom(e.shiftKey)}
-          className={`toolbar-btn ${uiShowBottom ? 'active' : ''}`}
-          data-tooltip={`${formatShortcut('flipBoard')}: tap to flip \u00B7 hold to peek \u00B7 Shift both`}
-        >
-          Bottom
-        </button>
-        {!hasLayers && (
-          <button
-            onClick={() => boardStore.toggleButterfly()}
-            className={`toolbar-btn toolbar-btn-icon ${butterfly ? 'active' : ''}`}
-            data-tooltip="Butterfly (side by side)"
-          >
-            <IconFlipHorizontal size={18} />
-          </button>
-        )}
-      </div>
-
-      <div className="toolbar-group">
-        <button
-          onClick={() => boardStore.rotateCCW()}
-          className="toolbar-btn toolbar-btn-icon"
-          data-tooltip="Rotate CCW (90°)"
-        >
-          ↺
-        </button>
-        <button
-          onClick={() => boardStore.rotate180()}
-          className="toolbar-btn toolbar-btn-icon"
-          data-tooltip="Rotate 180°"
-          style={{ fontSize: '0.7em', padding: '0 4px', minWidth: 0, fontWeight: 600 }}
-        >
-          180°
-        </button>
-        <button
-          onClick={() => boardStore.rotateCW()}
-          className="toolbar-btn toolbar-btn-icon"
-          data-tooltip="Rotate CW (90°)"
-        >
-          ↻
-        </button>
-        <button
-          onClick={() => boardStore.flipHorizontal()}
-          className="toolbar-btn toolbar-btn-icon"
-          data-tooltip="Mirror H"
-        >
-          ⇔
-        </button>
-        <button
-          onClick={() => boardStore.flipVertical()}
-          className="toolbar-btn toolbar-btn-icon"
-          data-tooltip="Mirror V"
-        >
-          ⇕
-        </button>
-        {hasTraces && !hasLayers && (
-          <button
-            onClick={() => boardStore.toggleTraces()}
-            className={`toolbar-btn ${showTraces ? 'active' : ''}`}
-            data-tooltip="Toggle PCB traces"
-            data-testid="traces-btn"
-          >
-            Traces
-          </button>
-        )}
-      </div>
-
-      {/* ── Search ── */}
-      <GlobalSearch />
-
-      <div className="toolbar-spacer" />
+      )}
 
       {/* "Save as BVR3" was a permanently-disabled placeholder (export path
           still has a side-inversion bug). Dead chrome trains users to ignore

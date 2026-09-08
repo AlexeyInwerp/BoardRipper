@@ -26,7 +26,7 @@ test.describe('Library panel layout', () => {
     // 0 = History, 1 = Board #, 2 = Folder — all icon cells now; the caption
     // is drawn only under the open tab, so identify by attribute, not text.
     await expect(tabs.nth(1)).toHaveAttribute('data-library-tab', 'metadata');
-    await expect(tabs.nth(2)).toHaveAttribute('title', 'Browse folders');
+    await expect(tabs.nth(2)).toHaveAttribute('data-library-tab', 'folders');
     // The inline DB/Live pill must be gone from the tab row.
     await expect(page.locator('.library-browse-pill')).toHaveCount(0);
   });
@@ -56,7 +56,7 @@ test.describe('Library panel layout', () => {
     await expect(page.locator('.library-source-popup')).toHaveCount(0);
 
     // Clicking the Folders tab drops the source menu open automatically.
-    const folderTab = page.locator('.library-tab[title="Browse folders"]');
+    const folderTab = page.locator('[data-library-tab="folders"]');
     await folderTab.click();
     const popup = page.locator('.library-source-popup');
     await expect(popup).toBeVisible();

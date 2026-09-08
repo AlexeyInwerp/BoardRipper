@@ -38,9 +38,9 @@ test.describe('Comprehensive Board Tests', () => {
     // Check all toolbar buttons are present
     await expect(page.getByTestId('open-btn')).toBeVisible();
     await expect(page.locator('.toolbar-btn', { hasText: 'Open PDF' })).toBeVisible();
-    await expect(page.locator('.toolbar-btn', { hasText: 'Top' })).toBeVisible();
-    await expect(page.locator('.toolbar-btn', { hasText: 'Bottom' })).toBeVisible();
-    await expect(page.locator('.toolbar-btn', { hasText: 'Butterfly' })).toBeVisible();
+    await expect(page.getByTestId('side-top')).toBeVisible();
+    await expect(page.getByTestId('side-bottom')).toBeVisible();
+    await expect(page.getByTestId('butterfly-btn')).toBeVisible();
     await expect(page.locator('.board-netlines-toggle')).toBeVisible();
     await expect(page.locator('.toolbar-btn', { hasText: 'Settings' }).or(page.locator('.toolbar-btn-icon', { hasText: '⚙' }))).toBeVisible();
     await expect(page.getByTestId('search-input')).toBeVisible();
@@ -119,8 +119,8 @@ test.describe('Comprehensive Board Tests', () => {
     await page.goto('/');
     await loadBoard(page, TEST_BVR1);
 
-    const topBtn = page.locator('.toolbar-btn', { hasText: 'Top' });
-    const bottomBtn = page.locator('.toolbar-btn', { hasText: 'Bottom' });
+    const topBtn = page.getByTestId('side-top');
+    const bottomBtn = page.getByTestId('side-bottom');
     await expect(topBtn).toHaveClass(/active/);
     await expect(bottomBtn).not.toHaveClass(/active/);
   });
@@ -129,8 +129,8 @@ test.describe('Comprehensive Board Tests', () => {
     await page.goto('/');
     await loadBoard(page, TEST_BVR1);
 
-    const topBtn = page.locator('.toolbar-btn', { hasText: 'Top' });
-    const bottomBtn = page.locator('.toolbar-btn', { hasText: 'Bottom' });
+    const topBtn = page.getByTestId('side-top');
+    const bottomBtn = page.getByTestId('side-bottom');
 
     await bottomBtn.click();
     await expect(bottomBtn).toHaveClass(/active/);
@@ -146,9 +146,9 @@ test.describe('Comprehensive Board Tests', () => {
     await page.goto('/');
     await loadBoard(page, TEST_BVR1);
 
-    const butterflyBtn = page.locator('.toolbar-btn', { hasText: 'Butterfly' });
-    const topBtn = page.locator('.toolbar-btn', { hasText: 'Top' });
-    const bottomBtn = page.locator('.toolbar-btn', { hasText: 'Bottom' });
+    const butterflyBtn = page.getByTestId('butterfly-btn');
+    const topBtn = page.getByTestId('side-top');
+    const bottomBtn = page.getByTestId('side-bottom');
 
     await butterflyBtn.click();
     await expect(butterflyBtn).toHaveClass(/active/);
@@ -292,8 +292,8 @@ test.describe('Comprehensive Board Tests', () => {
     await page.goto('/');
     await loadBoard(page, TEST_BVR1);
 
-    const cwBtn = page.locator('.toolbar-btn-icon', { hasText: '↻' });
-    const ccwBtn = page.locator('.toolbar-btn-icon', { hasText: '↺' });
+    const cwBtn = page.getByTestId('rotate-cw');
+    const ccwBtn = page.getByTestId('rotate-ccw');
 
     // Rotate CW 4 times (full 360°)
     for (let i = 0; i < 4; i++) {
@@ -315,8 +315,8 @@ test.describe('Comprehensive Board Tests', () => {
     await page.goto('/');
     await loadBoard(page, TEST_BVR1);
 
-    const hBtn = page.locator('.toolbar-btn-icon', { hasText: '⇔' });
-    const vBtn = page.locator('.toolbar-btn-icon', { hasText: '⇕' });
+    const hBtn = { click: async () => { await page.getByTestId('transform-menu').click(); await page.getByTestId('transform-mirror-h').click(); } };
+    const vBtn = { click: async () => { await page.getByTestId('transform-menu').click(); await page.getByTestId('transform-mirror-v').click(); } };
 
     await hBtn.click();
     await page.waitForTimeout(100);
@@ -392,9 +392,9 @@ test.describe('Comprehensive Board Tests', () => {
     await page.goto('/');
     await loadBoard(page, REAL_BVR3, '3075');
 
-    const topBtn = page.locator('.toolbar-btn', { hasText: 'Top' });
-    const bottomBtn = page.locator('.toolbar-btn', { hasText: 'Bottom' });
-    const butterflyBtn = page.locator('.toolbar-btn', { hasText: 'Butterfly' });
+    const topBtn = page.getByTestId('side-top');
+    const bottomBtn = page.getByTestId('side-bottom');
+    const butterflyBtn = page.getByTestId('butterfly-btn');
 
     // Rapid switching
     for (let i = 0; i < 5; i++) {
@@ -439,9 +439,9 @@ test.describe('Comprehensive Board Tests', () => {
     await page.goto('/');
     await loadBoard(page, TEST_BVR1);
 
-    const butterflyBtn = page.locator('.toolbar-btn', { hasText: 'Butterfly' });
-    const cwBtn = page.locator('.toolbar-btn-icon', { hasText: '↻' });
-    const hBtn = page.locator('.toolbar-btn-icon', { hasText: '⇔' });
+    const butterflyBtn = page.getByTestId('butterfly-btn');
+    const cwBtn = page.getByTestId('rotate-cw');
+    const hBtn = { click: async () => { await page.getByTestId('transform-menu').click(); await page.getByTestId('transform-mirror-h').click(); } };
 
     // Enable butterfly, then rotate and mirror
     await butterflyBtn.click();
@@ -568,9 +568,9 @@ test.describe('Comprehensive Board Tests', () => {
     await page.goto('/');
 
     // Click all toolbar buttons without a board loaded
-    const topBtn = page.locator('.toolbar-btn', { hasText: 'Top' });
-    const bottomBtn = page.locator('.toolbar-btn', { hasText: 'Bottom' });
-    const butterflyBtn = page.locator('.toolbar-btn', { hasText: 'Butterfly' });
+    const topBtn = page.getByTestId('side-top');
+    const bottomBtn = page.getByTestId('side-bottom');
+    const butterflyBtn = page.getByTestId('butterfly-btn');
     const netLinesBtn = page.locator('.board-netlines-toggle');
 
     await topBtn.click();

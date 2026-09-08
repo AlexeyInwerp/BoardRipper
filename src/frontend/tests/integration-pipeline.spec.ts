@@ -50,8 +50,8 @@ test.describe('Parser → Store → Renderer Pipeline', () => {
     await loadBoard(page, SAMPLES.brd);
 
     // Verify layer toggle buttons exist (actual selectors from Toolbar.tsx)
-    const topBtn = page.locator('.toolbar-btn', { hasText: 'Top' });
-    const bottomBtn = page.locator('.toolbar-btn', { hasText: 'Bottom' });
+    const topBtn = page.getByTestId('side-top');
+    const bottomBtn = page.getByTestId('side-bottom');
     await expect(topBtn).toBeVisible();
     await expect(bottomBtn).toBeVisible();
 

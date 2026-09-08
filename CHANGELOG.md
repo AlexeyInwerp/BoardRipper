@@ -1,5 +1,89 @@
 # BoardRipper changelog
 
+## Unreleased
+
+### Toolbar and board bar
+
+- **The top bar is about the app; the board's bar is about the board.** Side
+  (Top / Bottom), Butterfly, Rotate left / right, Traces and the rarer
+  transforms (180°, mirror, flip axis, under ⋯) moved from the top bar into
+  the board's own control bar, where they lead the row. They act exactly as
+  before, with the same keyboard shortcuts. The top bar keeps the sidebar
+  button, Open, search, 2-window mode, About and the version. Search sits in
+  the centre and says what it searches.
+- If you had arranged the board bar yourself, the new controls are placed in
+  front of your arrangement, not inside it. Hide any of them with a
+  right-click on the bar.
+- **The board bar can float and stand upright.** Right-click it: Position
+  Left, Centred or Floating (then drag it by its handle to wherever it does
+  not cover the part you are working on), and Orientation Horizontal or
+  Vertical. Both are remembered.
+- The board panel's ☰ button now looks like the rest of the board's controls.
+- **In the vertical bar, Find part and Find net fold into buttons**, a
+  magnifier with a chip or a net inside, so the column stays one button
+  wide. Click one and the field pops out beside the column; Escape or a
+  choice folds it back. The horizontal bar keeps the plain fields.
+- **The suggestion list stays inside the window.** It shrinks to the room
+  under the field, and opens upward when there is more room above.
+
+### XZZ boards
+
+- **Older Apple boards now fold.** In XZZ files from 2008–2015 MacBooks and
+  iMacs the two halves of the board are drawn edge to edge, so the file holds
+  them as a single shape and parts run right up to the seam. BoardRipper read
+  that as one board, so "Folded" and "Show all sides" were two names for the
+  same picture and an edge appeared to run from one half into its mirror
+  image. These files now split at the seam and fold like every other board.
+- **Which way a board folds** is read from the direction each chip's pins run
+  around it. Both halves running the same way means the bottom is mirrored
+  across the seam. Opposite ways means one half was drawn as seen through the
+  board, and the bottom is moved onto the top instead.
+- A file that really is one board with both sides drawn over each other is
+  recognised and left alone.
+- The board panel offers the folding choice only when there is something to
+  fold.
+
+### Fixed
+
+- **The HDR selection outline works in the desktop app and the browser
+  version.** Its light tiles were fetched from a fixed address that only
+  exists on the Docker install, so on the desktop app, the hosted browser
+  version and the offline single file the outline quietly drew nothing.
+- **Butterfly plus any settings change no longer kills the renderer.** With
+  Butterfly on, a scene rebuild destroyed the dim layer that shades the
+  unselected half and re-added the dead object next time, which stopped the
+  render ticker; every button then looked fine but nothing on the board
+  responded. The layer is now detached before the rebuild like its siblings.
+  Moving, folding or re-orienting the board bar also no longer rebuilds the
+  scene at all: those settings are pure layout.
+
+### Sidebar
+
+- **Auto-hide no longer covers the board tabs.** The floating panel starts
+  below the tab strip, so you can switch boards while it is open, and in a
+  split layout it stops above the lower group's tabs as well.
+
+### Board panel
+
+- **The board's control bar folds away.** The small handle at its right end,
+  where the Classic Mac collapse box was, rolls the whole bar up into itself
+  and the board gets the room. Click the handle again to bring it back. The
+  choice is remembered.
+- **Hover a tab to see its name.** Library, Settings and board panel tabs show
+  the tab's name under the icon when you hover, the same way the rail does.
+- **The board bar is editable where it is.** Right-click it to show or hide
+  any button, put the row on the left or in the centre, fold it, or reset it.
+  Settings ▸ Board ▸ Board overlay is now one list with names: an eye to show
+  or hide, arrows to reorder, and a × on separators. New buttons added in
+  later versions land where they belong in the row, not at the end.
+- **Board panel tabs match the rest.** Info, View or Layers, Search,
+  Revisions and Worklist are now the same icon cells as the Library and
+  Settings tabs: icons stay where they are, the open tab's name sits
+  underneath.
+- **The panel transparency slider is gone.** It appeared next to the ☰ when
+  you opened the panel and was not useful. The ☰ now only opens and closes
+  the panel.
+
 ## v0.38.0 — 2026-09-07
 
 ### Sidebar

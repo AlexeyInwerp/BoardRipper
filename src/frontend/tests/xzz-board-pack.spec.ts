@@ -27,6 +27,8 @@ const FILES = {
   xsmax: path.resolve(IPHONE, 'iPhoneXSMAX/Schematic and boardview/iPhoneXSMAX boardview(Diode value).pcb'),
   se: path.resolve(IPHONE, 'iPhoneSE/Schematic and boardview/iPhoneSE boardview.pcb'),
   xQualcomm: path.resolve(IPHONE, 'iPhoneX/Schematic and boardview/iPhoneX Qualcomm PCB layer.pcb'),
+  k90i: path.resolve(XZZ, 'A12xx/A1278_820-2936 K90I/Schematic and boardview/K90I-820-2936_07.pcb'),
+  k22: path.resolve(XZZ, '820-2494 K22.pcb'),
 };
 
 function load(filePath: string): ArrayBuffer {
@@ -162,6 +164,50 @@ test.describe('XZZ board packs', () => {
     const twoSided = board.boards!.filter(b => b.bottom !== undefined);
     expect(twoSided.length).toBeGreaterThanOrEqual(2);
     expect(board.parts.filter(p => p.side === 'bottom').length).toBeGreaterThan(500);
+  });
+
+  test('K90I (A1278): touching halves drawn as one loop are split at the seam and folded', async () => {
+    const f = resolve(FILES.k90i);
+    test.skip(!f, 'K90I-820-2936_07.pcb not present');
+    const { parseXZZ } = await import('../src/parsers/xzz-parser');
+    const board = parseXZZ(load(f!));
+    expect(board.boards).toHaveLength(1);
+    const b = board.boards![0];
+    expect(b.fold?.dim).toBe('y');
+    expect(b.bottom).toBeDefined();
+    const top = board.parts.filter(p => p.side === 'top').length;
+    const bottom = board.parts.filter(p => p.side === 'bottom').length;
+    expect(top).toBeGreaterThan(500);
+    expect(bottom).toBeGreaterThan(500);
+    // The folded board is one half tall: 6634 × ~5012 mil, not 10024.
+    const h = board.bounds.maxY - board.bounds.minY;
+    expect(h).toBeLessThan(5200);
+    expect(h).toBeGreaterThan(4800);
+    // The kept half is one closed loop: the seam edge became its top edge
+    // and nothing is left hanging.
+    const subPaths: Array<{ x: number; y: number }[]> = [[]];
+    for (const p of board.outline) { if (Number.isFinite(p.x)) subPaths[subPaths.length - 1].push(p); else subPaths.push([]); }
+    const loops = subPaths.filter(s => s.length >= 3);
+    expect(loops).toHaveLength(1);
+    const a = loops[0][0], z = loops[0][loops[0].length - 1];
+    expect(Math.hypot(a.x - z.x, a.y - z.y)).toBeLessThan(1);
+    // The CPU (U1000) is on the top side of this board.
+    expect(board.parts.find(p => p.name === 'U1000')?.side).toBe('top');
+  });
+
+  test('K22 (820-2494): a rectangle loop whose halves wind opposite ways folds by translation', async () => {
+    const f = resolve(FILES.k22);
+    test.skip(!f, '820-2494 K22.pcb not present');
+    const { parseXZZ } = await import('../src/parsers/xzz-parser');
+    const board = parseXZZ(load(f!));
+    expect(board.boards).toHaveLength(1);
+    const b = board.boards![0];
+    expect(b.fold?.mode).toBe('translate');
+    expect(b.sideSource).toBe('cpu');
+    expect(board.parts.filter(p => p.side === 'bottom').length).toBeGreaterThan(300);
+    expect(board.parts.find(p => p.name === 'U1400')?.side).toBe('top');
+    const h = board.bounds.maxY - board.bounds.minY;
+    expect(h).toBeLessThan(7200);
   });
 
   test('iPhone X Qualcomm PCB layer: copper decides both boards and agrees with the layout rule', async () => {

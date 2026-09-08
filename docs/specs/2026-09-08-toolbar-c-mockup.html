@@ -1,0 +1,380 @@
+<title>BoardRipper App Bar and Board Bar</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  /* Committed single-theme dark. Interior tokens are BoardRipper's own
+     (src/frontend/src/index.css); every state below is driven by data-*
+     attributes on #app — CSS reads, JS writes. */
+  :root {
+    --bg-primary: #08080c; --bg-secondary: #0f0f18; --bg-tertiary: #0c1424; --canvas-bg: #050508;
+    --text-primary: #e0e0e0; --text-secondary: #a0a0b0; --accent: #4a9eff; --accent-fg: #fff;
+    --border: #1a1a28; --orange: #ffaa00; --green: #44cc44; --red: #cc4444; --danger: #d9534f;
+    --chip-bg: rgba(12,20,36,.82); --surface-hover: rgba(74,158,255,.12); --tooltip-bg: #16202f;
+    --page-bg: #060609; --page-ink: #d8dae2; --page-dim: #7c8298; --page-rule: #191a24; --page-surface: #0b0b11;
+    --app-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+    --sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  body { background: var(--page-bg); color: var(--page-ink); font: 15px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 48px 28px 80px; display: flex; flex-direction: column; gap: 34px; }
+  .eyebrow { font: 11px var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--accent); display: flex; align-items: center; gap: 10px; }
+  .eyebrow::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, var(--page-rule), transparent); }
+  h1 { font-weight: 600; font-size: clamp(28px, 4vw, 40px); letter-spacing: -.02em; line-height: 1.12; text-wrap: balance; margin-top: 12px; }
+  .lede { color: var(--page-dim); max-width: 66ch; margin-top: 12px; font-size: 16px; }
+  .lede b { color: var(--page-ink); font-weight: 500; }
+  h2 { font: 500 11px var(--mono); letter-spacing: .15em; text-transform: uppercase; color: var(--page-dim); padding-bottom: 9px; border-bottom: 1px solid var(--page-rule); margin-bottom: 14px; }
+  p.note { color: var(--page-dim); font-size: 14px; max-width: 70ch; margin-top: 10px; }
+  p.note b, li b { color: var(--page-ink); font-weight: 500; }
+  ul.pts { margin: 8px 0 0 18px; color: var(--page-dim); font-size: 14px; max-width: 72ch; }
+  ul.pts li { margin: 5px 0; }
+  code { font: 12.5px var(--mono); color: #9fc4ee; background: #0c1220; padding: 1px 5px; border-radius: 2px; }
+
+  /* controls */
+  .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; padding: 12px 16px; background: var(--page-surface); border: 1px solid var(--page-rule); border-radius: 3px; position: sticky; top: 0; z-index: 5; }
+  .ctl { display: flex; align-items: center; gap: 8px; }
+  .ctl-l { font: 10px var(--mono); letter-spacing: .13em; text-transform: uppercase; color: var(--page-dim); }
+  .seg { display: inline-flex; border: 1px solid var(--page-rule); border-radius: 2px; overflow: hidden; }
+  .seg button { font: 12px var(--mono); padding: 5px 11px; background: #101017; color: var(--page-dim); border: none; cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--page-rule); }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #04101f; font-weight: 600; }
+
+  /* ── stage / app ── */
+  .stage { border: 1px solid var(--page-rule); border-radius: 3px; overflow-x: auto; box-shadow: 0 24px 60px -30px #000; }
+  .app { font-family: var(--app-font); font-size: 13px; color: var(--text-primary); background: var(--canvas-bg); display: flex; flex-direction: column; height: 420px; min-width: 900px; user-select: none; }
+  .app[data-width="narrow"] { width: 900px; }
+
+  /* app bar */
+  .toolbar { display: flex; align-items: center; height: 40px; background: var(--bg-tertiary); border-bottom: 1px solid var(--border); padding: 0 8px; gap: 4px; flex-shrink: 0; position: relative; }
+  .qb { background: transparent; border: none; color: var(--text-secondary); height: 28px; padding: 0 9px; font: 11.5px var(--app-font); display: inline-flex; align-items: center; gap: 6px; border-radius: 3px; cursor: pointer; }
+  .qb svg { width: 16px; height: 16px; }
+  .qb.primary { color: var(--text-primary); }
+  .qb:hover { background: rgba(255,255,255,.05); color: var(--text-primary); }
+  .spacer { flex: 1; }
+  .search { position: relative; width: min(440px, 40%); }
+  .search-in { background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-secondary); height: 28px; padding: 0 10px; font-size: 12px; display: flex; align-items: center; gap: 7px; border-radius: 3px; }
+  .search-in svg { width: 13px; height: 13px; flex-shrink: 0; }
+  .search-in kbd { margin-left: auto; font: 10px var(--mono); color: var(--text-secondary); background: var(--bg-primary); border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px; opacity: .8; }
+  .app[data-search="focused"] .search-in { border-color: var(--accent); color: var(--text-primary); }
+  .app[data-search="focused"] .search-in .ph { display: none; }
+  .search-in .q { display: none; } .app[data-search="focused"] .search-in .q { display: inline; }
+  .search-in .q::after { content: ""; display: inline-block; width: 1px; height: 13px; background: var(--text-primary); margin-left: 1px; vertical-align: -2px; animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .results { display: none; position: absolute; top: 32px; left: 0; right: 0; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 3px; z-index: 40; box-shadow: 0 12px 30px -10px #000; overflow: hidden; }
+  .app[data-search="focused"] .results { display: block; }
+  .rg { font: 600 9.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-secondary); padding: 6px 10px 3px; border-top: 1px solid var(--border); }
+  .rg:first-child { border-top: none; }
+  .ri { display: flex; align-items: center; gap: 8px; padding: 5px 10px; font-size: 12px; color: var(--text-primary); }
+  .ri:hover { background: var(--surface-hover); }
+  .ri .tag { font: 600 9px var(--mono); letter-spacing: .08em; text-transform: uppercase; padding: 1px 5px; border-radius: 2px; }
+  .tag.board { background: rgba(68,204,68,.18); color: #7fe07f; } .tag.pdf { background: rgba(204,68,68,.18); color: #f08a8a; } .tag.lib { background: rgba(74,158,255,.18); color: #8fc0ff; }
+  .ri .dim { color: var(--text-secondary); margin-left: auto; font-size: 11px; }
+  .badge { background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-secondary); font-size: 10.5px; padding: 0 9px; display: inline-flex; align-items: center; gap: 6px; height: 28px; border-radius: 3px; }
+  .badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--orange); display: none; }
+  .app[data-update="available"] .badge .dot { display: block; }
+  .app[data-update="important"] .badge { border-color: var(--danger); color: #fff; background: rgba(217,83,79,.25); }
+  .app[data-update="important"] .badge .dot { display: block; background: var(--danger); }
+  .app[data-update="dev"] .badge { background: #1e7a3a; color: #fff; border-color: #1e7a3a; font-weight: 600; }
+  .app[data-update="dev"] .badge .v { display: none; } .badge .d { display: none; } .app[data-update="dev"] .badge .d { display: inline; }
+
+  /* rail + panel + dock */
+  .body { flex: 1; display: flex; min-height: 0; }
+  .rail { width: 46px; background: var(--bg-tertiary); border-right: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; padding-top: 6px; gap: 12px; color: var(--text-secondary); flex-shrink: 0; }
+  .rail i { width: 18px; height: 18px; border: 1.75px solid currentColor; border-radius: 4px; display: block; opacity: .7; }
+  .rail i.on { color: var(--accent); opacity: 1; }
+  .dock { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg-primary); }
+  .dv-tabs { height: 32px; background: var(--bg-tertiary); border-bottom: 1px solid var(--border); display: flex; flex-shrink: 0; }
+  .dv-tab { display: inline-flex; align-items: center; gap: 7px; padding: 0 13px; font-size: 12px; color: var(--text-secondary); background: var(--bg-tertiary); border-right: 1px solid var(--border); }
+  .dv-tab.on { background: var(--bg-secondary); color: var(--text-primary); }
+  .dv-tab .sq { width: 10px; height: 10px; border-radius: 1px; }
+  .dv-tab .x { opacity: .5; margin-left: 3px; }
+  .app[data-tab="home"] .dv-tabs { display: none; }
+  .canvas { flex: 1; position: relative; background: var(--canvas-bg); overflow: hidden; }
+  .canvas svg.board { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .app:not([data-tab="board"]) .canvas svg.board, .app:not([data-tab="board"]) .ovl, .app:not([data-tab="board"]) .sb-toggle { display: none; }
+  .pdfpage { display: none; position: absolute; inset: 24px 16% 0; background: #f2f0ea; border-radius: 2px 2px 0 0; box-shadow: 0 0 40px -10px #000; }
+  .app[data-tab="pdf"] .pdfpage { display: block; }
+  .pdfpage::before { content: ""; position: absolute; left: 10%; right: 10%; top: 12%; height: 62%; background: repeating-linear-gradient(0deg, transparent 0 22px, rgba(0,0,0,.08) 22px 23px), linear-gradient(90deg, transparent 49.7%, rgba(0,0,0,.35) 49.7% 50.3%, transparent 50.3%); }
+  .pdfbar { display: none; position: absolute; top: 0; left: 0; right: 0; height: 26px; background: var(--bg-tertiary); border-bottom: 1px solid var(--border); font-size: 11px; color: var(--text-secondary); align-items: center; padding: 0 10px; gap: 14px; }
+  .app[data-tab="pdf"] .pdfbar { display: flex; }
+  .home { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; flex-direction: column; gap: 6px; color: var(--text-secondary); }
+  .app[data-tab="home"] .home { display: flex; }
+  .home b { font: 700 22px ui-monospace, monospace; color: var(--text-primary); letter-spacing: .04em; }
+  .sb-toggle { position: absolute; top: 6px; right: 8px; width: 28px; height: 28px; border: 1px solid var(--border); border-radius: 6px; background: var(--chip-bg); color: var(--text-secondary); display: flex; align-items: center; justify-content: center; font-size: 14px; }
+
+  /* board bar (overlay) */
+  .ovl { position: absolute; top: 6px; left: 8px; display: flex; flex-wrap: wrap; gap: 3px; align-items: center; padding: 3px; background: var(--chip-bg); border: 1px solid rgba(255,255,255,.06); border-radius: 8px; backdrop-filter: blur(4px); max-width: calc(100% - 60px); }
+  .ovl .h { width: 18px; height: 28px; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); opacity: .6; border: none; background: none; cursor: pointer; border-radius: 5px; padding: 0; }
+  .ovl .h:hover { opacity: 1; background: var(--surface-hover); }
+  .ovl .h svg { width: 14px; height: 14px; }
+  .o { height: 28px; min-width: 34px; padding: 0 7px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; color: var(--text-secondary); border-radius: 5px; border: 1px solid transparent; background: none; font: 12px var(--app-font); cursor: pointer; position: relative; }
+  .o svg { width: 16px; height: 16px; }
+  .o:hover { color: var(--text-primary); background: rgba(255,255,255,.08); }
+  .o.on { color: var(--accent); background: var(--surface-hover); border-color: rgba(74,158,255,.3); }
+  .osep { width: 1px; height: 18px; background: rgba(255,255,255,.08); margin: 0 4px; }
+  .oseg { display: inline-flex; border-radius: 6px; overflow: hidden; border: 1px solid rgba(255,255,255,.1); }
+  .oseg .o { border-radius: 0; border: none; min-width: 48px; }
+  .oseg .o + .o { border-left: 1px solid rgba(255,255,255,.1); }
+  .oseg .o.on { background: var(--accent); color: var(--accent-fg); }
+  .app[data-shade="folded"] .ovl > :not(.h) { display: none; }
+  .app[data-shade="folded"] .ovl { gap: 0; }
+  .app[data-width="narrow"] .ovl .o .lbl { display: none; }
+  /* transform menu */
+  .tmenu { display: none; position: absolute; top: 34px; left: 0; min-width: 210px; background: var(--tooltip-bg); border: 1px solid #23324a; border-radius: 4px; padding: 4px; z-index: 50; box-shadow: 0 10px 30px -8px #000; flex-direction: column; gap: 1px; }
+  .app[data-menu="open"] .tmenu { display: flex; }
+  .app[data-menu="open"] #more { color: var(--text-primary); background: rgba(255,255,255,.08); }
+  .tmenu button { background: none; border: none; color: var(--text-primary); font: 11.5px var(--app-font); text-align: left; padding: 6px 9px; border-radius: 3px; display: flex; align-items: center; gap: 9px; cursor: pointer; }
+  .tmenu button svg { width: 14px; height: 14px; color: var(--text-secondary); }
+  .tmenu button:hover { background: var(--accent); color: var(--accent-fg); }
+  .tmenu button:hover svg { color: var(--accent-fg); }
+  .tmenu kbd { margin-left: auto; font: 10px var(--mono); color: var(--text-secondary); }
+  .tmenu button:hover kbd { color: var(--accent-fg); }
+  .tmenu .mh { font: 600 9px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-secondary); padding: 6px 9px 2px; }
+  .tmenu .msep { height: 1px; background: rgba(255,255,255,.08); margin: 3px 4px; }
+  .tmenu .tick { width: 10px; color: var(--accent); font-size: 10px; }
+
+  /* tables */
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th { text-align: left; font: 500 10px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--page-dim); padding: 6px 8px; border-bottom: 1px solid var(--page-rule); }
+  td { padding: 7px 8px; border-bottom: 1px solid #101017; vertical-align: top; color: var(--page-dim); }
+  td:first-child { color: var(--page-ink); }
+  .k { font: 600 9.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; padding: 1px 6px; border-radius: 2px; white-space: nowrap; }
+  .k.keep { color: var(--page-ink); background: #14141d; } .k.move { color: var(--orange); background: #1a1408; } .k.new { color: var(--accent); background: #0c1424; } .k.drop { color: #e07070; background: #1c0e0e; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 28px; }
+  .steps { counter-reset: s; list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .steps li { counter-increment: s; display: grid; grid-template-columns: 28px 1fr; gap: 10px; font-size: 14px; color: var(--page-dim); }
+  .steps li::before { content: counter(s); font: 600 11px var(--mono); color: var(--accent); background: #0c1424; border: 1px solid #16233a; border-radius: 2px; height: 22px; display: flex; align-items: center; justify-content: center; }
+  footer { border-top: 1px solid var(--page-rule); padding-top: 20px; font: 11px var(--mono); color: var(--page-dim); display: flex; flex-wrap: wrap; gap: 8px 22px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">BoardRipper &nbsp;·&nbsp; interface proposal C, worked through</div>
+    <h1>The app bar and the board bar</h1>
+    <p class="lede">
+      One rule: <b>the top bar is about the app, the board's own bar is about the board.</b> Everything below
+      follows from it. Switch the states above the mockup — the app bar should look the same in every one of
+      them; that sameness is the point.
+    </p>
+  </header>
+
+  <div class="controls">
+    <div class="ctl"><span class="ctl-l">Active tab</span><div class="seg" data-k="tab"><button data-v="board" aria-pressed="true">Board</button><button data-v="pdf" aria-pressed="false">PDF</button><button data-v="home" aria-pressed="false">Home</button></div></div>
+    <div class="ctl"><span class="ctl-l">Board bar</span><div class="seg" data-k="shade"><button data-v="open" aria-pressed="true">Open</button><button data-v="folded" aria-pressed="false">Folded</button></div></div>
+    <div class="ctl"><span class="ctl-l">Panel width</span><div class="seg" data-k="width"><button data-v="wide" aria-pressed="true">Wide</button><button data-v="narrow" aria-pressed="false">Narrow</button></div></div>
+    <div class="ctl"><span class="ctl-l">Transform menu</span><div class="seg" data-k="menu"><button data-v="closed" aria-pressed="true">Closed</button><button data-v="open" aria-pressed="false">Open</button></div></div>
+    <div class="ctl"><span class="ctl-l">Search</span><div class="seg" data-k="search"><button data-v="idle" aria-pressed="true">Idle</button><button data-v="focused" aria-pressed="false">Focused</button></div></div>
+    <div class="ctl"><span class="ctl-l">Version chip</span><div class="seg" data-k="update"><button data-v="none" aria-pressed="true">Current</button><button data-v="available" aria-pressed="false">Update</button><button data-v="important" aria-pressed="false">Important</button><button data-v="dev" aria-pressed="false">Dev</button></div></div>
+  </div>
+
+  <!-- ══════════ MOCKUP ══════════ -->
+  <div class="stage"><div class="app" id="app" data-tab="board" data-shade="open" data-width="wide" data-menu="closed" data-search="idle" data-update="none">
+    <!-- APP BAR -->
+    <div class="toolbar">
+      <button class="qb primary" title="Sidebar: icons only → hidden → open"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 10l-2 2 2 2"/></svg></button>
+      <button class="qb primary" title="Open boards or PDFs from your device"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v11M8 8l4-4 4 4"/></svg>Open</button>
+      <div class="spacer"></div>
+      <div class="search">
+        <div class="search-in">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10" cy="10" r="6"/><path d="M20 20l-5-5"/></svg>
+          <span class="ph">Search parts, nets, PDFs, library</span><span class="q">PP3V3</span>
+          <kbd>⌘F</kbd>
+        </div>
+        <div class="results">
+          <div class="rg">This board</div>
+          <div class="ri"><span class="tag board">net</span>PP3V3_S5<span class="dim">41 pins</span></div>
+          <div class="ri"><span class="tag board">net</span>PP3V3_S0<span class="dim">128 pins</span></div>
+          <div class="ri"><span class="tag board">part</span>U7000 · PP3V3 LDO<span class="dim">TPS62130</span></div>
+          <div class="rg">PDFs</div>
+          <div class="ri"><span class="tag pdf">pdf</span>820-00875_schem.pdf<span class="dim">p. 34, 61, 62</span></div>
+          <div class="rg">Library</div>
+          <div class="ri"><span class="tag lib">brd</span>820-00875 A1707 · PP3V3 rework notes<span class="dim">OBD</span></div>
+        </div>
+      </div>
+      <div class="spacer"></div>
+      <button class="qb" title="2-window mode: detach the PDF into its own window"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg></button>
+      <button class="qb" title="About BoardRipper"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></button>
+      <span class="badge"><span class="dot"></span><span class="v">v0.38.1</span><span class="d">dev</span></span>
+    </div>
+
+    <div class="body">
+      <div class="rail"><i class="on"></i><i></i><span style="flex:1"></span><i></i><i></i></div>
+      <div class="dock">
+        <div class="dv-tabs">
+          <div class="dv-tab" id="t-board"><span class="sq" style="background:var(--green)"></span>820-00875.brd<span class="x">×</span></div>
+          <div class="dv-tab" id="t-pdf"><span class="sq" style="background:var(--red)"></span>820-00875_schem.pdf<span class="x">×</span></div>
+        </div>
+        <div class="canvas">
+          <svg class="board" viewBox="0 0 900 300" preserveAspectRatio="xMidYMid meet">
+            <rect x="120" y="30" width="660" height="250" rx="8" fill="none" stroke="#4a9eff" stroke-opacity=".5" stroke-width="1.5"/>
+            <g fill="#fff" fill-opacity=".45"><rect x="360" y="100" width="110" height="90" rx="2"/><rect x="560" y="70" width="70" height="44" rx="2"/><rect x="200" y="190" width="56" height="28" rx="2"/><rect x="620" y="190" width="90" height="42" rx="2"/></g>
+            <rect x="359" y="99" width="112" height="92" rx="2" fill="none" stroke="#ffff44" stroke-width="2"/>
+            <g fill="#88ccff" font-family="monospace" font-size="11" fill-opacity=".85"><text x="370" y="96">U8800</text><text x="563" y="66">U7000</text><text x="203" y="186">Q4310</text><text x="623" y="186">J6100</text></g>
+          </svg>
+          <div class="home"><b>***WELCOME YOU TO BOARDRIPPER***</b><span>Open a board, or pick one from the Library.</span></div>
+          <div class="pdfpage"></div>
+          <div class="pdfbar"><span>◀ 34 / 212 ▶</span><span>fit width</span><span>rotate</span><span>mirror</span><span>single · continuous</span><span style="margin-left:auto">clean mode</span></div>
+          <div class="sb-toggle">☰</div>
+
+          <!-- BOARD BAR -->
+          <div class="ovl" id="ovl">
+
+            <!-- side -->
+            <div class="oseg" title="Side. Click to show · hold to peek at the other side · Shift-click for both (F)">
+              <span class="o on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8l8-4 8 4-8 4z"/><path d="M4 12l8 4 8-4M4 16l8 4 8-4" opacity=".4"/></svg><span class="lbl">Top</span></span>
+              <span class="o"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8l8-4 8 4-8 4z" opacity=".4"/><path d="M4 12l8 4 8-4" opacity=".4"/><path d="M4 16l8 4 8-4"/></svg><span class="lbl">Bottom</span></span>
+            </div>
+            <!-- rotate -->
+            <span class="o" title="Rotate left 90° (Q)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12a7 7 0 1 0 2-5"/><path d="M3 4v4h4"/></svg></span>
+            <span class="o" title="Rotate right 90° (E)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12a7 7 0 1 1-2-5"/><path d="M21 4v4h-4"/></svg></span>
+            <span class="o" id="more" title="More transforms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg>
+              <div class="tmenu" role="menu">
+                <div class="mh">Transform</div>
+                <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12a7 7 0 1 1-7-7"/><path d="M12 2v6l3-3"/></svg>Rotate 180°</button>
+                <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M8 7l-4 5 4 5M16 7l4 5-4 5"/></svg>Mirror horizontally<kbd>⌘↑</kbd></button>
+                <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M7 8l5-4 5 4M7 16l5 4 5-4"/></svg>Mirror vertically</button>
+                <div class="msep"></div>
+                <div class="mh">Side</div>
+                <button><span class="tick">✓</span>Flip axis: vertical</button>
+                <button><span class="tick"></span>Flip axis: horizontal</button>
+                <button><span class="tick"></span>Butterfly · both sides side by side</button>
+                <div class="msep"></div>
+                <button><span class="tick">✓</span>Traces</button>
+              </div>
+            </span>
+            <span class="osep"></span>
+            <!-- existing slots -->
+            <span class="o" title="Follow PDF"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h10M4 17h13"/><path d="M18 14l2 2-2 2"/></svg></span>
+            <span class="o" title="Scroll mode: zoom · click to swap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13v-8a2 2 0 0 1 4 0v7M12 12v-2a2 2 0 0 1 4 0v2M16 12a2 2 0 0 1 4 0v3a6 6 0 0 1-12 0v-3"/></svg></span>
+            <span class="o" title="Fit board"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V6a2 2 0 012-2h2M16 4h2a2 2 0 012 2v2M20 16v2a2 2 0 01-2 2h-2M8 20H6a2 2 0 01-2-2v-2"/><rect x="9" y="9" width="6" height="6"/></svg></span>
+            <span class="osep"></span>
+            <span class="o on" title="Hover info"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 1 4 10.5c-.7.7-1 1.5-1 2.5H9c0-1-.3-1.8-1-2.5A6 6 0 0 1 12 3z"/></svg></span>
+            <span class="o on" title="Spotlight dim"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></span>
+            <span class="o" title="Net lines"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20L20 4M5 5l4 4M15 15l4 4"/></svg></span>
+            <span class="o on" title="Ghost parts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0-6 6v11l3-2 3 2 3-2 3 2V9a6 6 0 0 0-6-6z"/><path d="M10 10h.01M14 10h.01"/></svg></span>
+            <span class="osep"></span>
+            <span class="o"><span class="lbl">Parts</span><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px"><path d="M6 9l6 6 6-6"/></svg></span>
+            <span class="o"><span class="lbl">Nets</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px"><path d="M6 9l6 6 6-6"/></svg></span>
+            <button class="h" id="shade" title="Fold the board controls (the Classic Mac collapse box, at the right end)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="shade-ico"><path d="M15 6l-6 6 6 6"/></svg></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+
+  <!-- ══════════ RULES ══════════ -->
+  <div class="grid2">
+    <section>
+      <h2>The app bar</h2>
+      <ul class="pts">
+        <li><b>Six things, in every state.</b> Sidebar cycle, Open, search, 2-window, About, version. Switch to the PDF or Home state above: the bar does not change. Today it changes shape per tab, which is how you end up with a "Top" button lit while looking at a PDF.</li>
+        <li><b>Search takes the centre</b> at 440px, with its shortcut shown (⌘F, already bound). It is the one control that spans board, PDFs and library, and the focused state shows why: results come back grouped by where they were found, with the same three colours the tab strip already uses for board and PDF.</li>
+        <li><b>2-window mode becomes an icon on the right</b>, next to About. It is a window action used once a session; it was the widest button on the bar.</li>
+        <li><b>Version chip keeps its four states</b> — current, update available (amber dot), important (red), dev — exactly as today. The rail's Settings dot mirrors the update signal, so the chip can stay quiet.</li>
+        <li><b>No group boxes.</b> Three quiet buttons left, three quiet buttons right, the search between. The bar loses its three inset frames and ~2px of visual weight per edge.</li>
+      </ul>
+    </section>
+    <section>
+      <h2>The board bar</h2>
+      <ul class="pts">
+        <li><b>Order is by how often you touch it.</b> <b>Side</b> · rotate left/right · more transforms │ follow-PDF, scroll mode, fit │ hover info, spotlight, net lines, ghosts │ Parts, Nets · shade handle at the right end, where the Classic Mac collapse box was. The first four are new here; everything after the first separator is the bar as it exists today.</li>
+        <li><b>Side is a two-segment control with the words on it.</b> It is the most used control in a repair session and earns its labels. Click to show; <b>hold to peek</b> at the other side; <b>Shift-click for both</b> — all three gestures are what the toolbar's Top/Bottom already does, unchanged, key F unchanged.</li>
+        <li><b>Rotate left and right stay one click.</b> Everything rarer — 180°, mirror H/V, flip axis, butterfly, traces — lives in the <b>⋯ Transform</b> menu (open it above). Mirror keeps its ⌘↑ shortcut; butterfly and traces only appear when the format has them, the same rules the toolbar applies today.</li>
+        <li><b>The shade folds the whole thing</b>, transforms included, rolling up toward the bar's left anchor until only the handle is left. That is what makes "nothing but the board" true under C: cycle the sidebar out, fold the shade, and the app bar is all that is left.</li>
+        <li><b>Narrow panels wrap.</b> Switch Panel width to Narrow: the labels on Side and Parts/Nets drop to icons first, and if the bar is still wider than the panel it wraps to a second row inside the same chip. No logic, no hidden controls. A priority-overflow menu is the upgrade if wrapping ever looks wrong on a real screen.</li>
+        <li><b>It is still the slot bar.</b> Settings ▸ Board overlay can hide or reorder the new slots like any other, so someone who wants Side back on top of everything can drag it there.</li>
+      </ul>
+    </section>
+  </div>
+
+  <!-- ══════════ MOVE TABLE ══════════ -->
+  <section>
+    <h2>Every control, before and after</h2>
+    <table>
+      <tr><th>Control</th><th>Today</th><th>Under C</th><th>Gesture / shortcut</th></tr>
+      <tr><td>Sidebar cycle</td><td>app bar, first</td><td><span class="k keep">keep</span></td><td>unchanged</td></tr>
+      <tr><td>Upload</td><td>app bar, icon + "Upload"</td><td><span class="k keep">keep</span> icon + "Open"</td><td>unchanged</td></tr>
+      <tr><td>Global search</td><td>app bar, left of centre, "Global search…"</td><td><span class="k keep">keep</span> centred, 440px, placeholder names its scopes, ⌘F shown</td><td>⌘F unchanged</td></tr>
+      <tr><td>2-window mode</td><td>app bar, wide labelled button, first group</td><td><span class="k move">move</span> app bar right cluster, icon only</td><td>unchanged</td></tr>
+      <tr><td>About, version chip</td><td>app bar right</td><td><span class="k keep">keep</span></td><td>—</td></tr>
+      <tr><td>Top / Bottom</td><td>app bar group, two text buttons</td><td><span class="k move">move</span> board bar, first slot, segmented with icons + words</td><td>click · hold to peek · Shift both · F — unchanged</td></tr>
+      <tr><td>Flip axis ⇅</td><td>between Top and Bottom</td><td><span class="k move">move</span> ⋯ menu ▸ Side</td><td>—</td></tr>
+      <tr><td>Butterfly</td><td>app bar, when the format has no layers</td><td><span class="k move">move</span> ⋯ menu ▸ Side, same condition</td><td>—</td></tr>
+      <tr><td>Rotate ↺ / ↻</td><td>app bar group, Unicode glyphs</td><td><span class="k move">move</span> board bar, two slots, Tabler icons</td><td>Q / E unchanged</td></tr>
+      <tr><td>180°</td><td>app bar group, text</td><td><span class="k move">move</span> ⋯ menu ▸ Transform</td><td>—</td></tr>
+      <tr><td>Mirror H / V</td><td>app bar group, ⇔ ⇕</td><td><span class="k move">move</span> ⋯ menu ▸ Transform</td><td>⌘↑ unchanged</td></tr>
+      <tr><td>Traces</td><td>app bar, when the format has traces and no layers</td><td><span class="k move">move</span> ⋯ menu, same condition</td><td>—</td></tr>
+      <tr><td>Follow PDF · scroll mode · fit · hover · spotlight · net lines · ghosts · diode values · Parts · Nets</td><td>board bar</td><td><span class="k keep">keep</span> after the first separator, same order</td><td>unchanged</td></tr>
+      <tr><td>Board sidebar ☰</td><td>board panel, top right</td><td><span class="k keep">keep</span></td><td>unchanged</td></tr>
+    </table>
+  </section>
+
+  <!-- ══════════ BUILD PLAN ══════════ -->
+  <div class="grid2">
+    <section>
+      <h2>How it is built</h2>
+      <ol class="steps">
+        <li><span><b>Four new slots</b> in <code>overlay-layout.ts</code>: <code>sideSwitch</code>, <code>rotateCCW</code>, <code>rotateCW</code>, <code>transformMenu</code>, plus a leading separator. Each renderer under <code>components/overlay/slots/</code> calls the store action the toolbar button calls today — <code>selectTop/selectBottom</code> with the same shift and hold handling, <code>rotateCW/CCW/180</code>, <code>flipHorizontal/Vertical</code>, <code>toggleFlipAxis</code>, <code>toggleButterfly</code>, <code>toggleTraces</code>. No new behaviour.</span></li>
+        <li><span><b>Layout migration, the one trap.</b> <code>reconcileOverlayLayout</code> appends slots a saved layout has never seen to the <i>end</i>. For every existing user that would put Side after Nets. Add one rule: when none of the four new ids is present in the saved layout, insert them at the <i>front</i>. New installs get the default order; nobody's own arrangement is otherwise touched.</span></li>
+        <li><span><b>Toolbar.tsx loses three groups</b> (side, transforms, traces) and the labelled 2-window button; gains the centred search layout and the icon 2-window button on the right. About 120 lines out, 30 in.</span></li>
+        <li><span><b>Settings ▸ Board overlay</b> picks the new slots up from the layout automatically; only its label map needs four entries so the drag list names them.</span></li>
+        <li><span><b>Tests.</b> 44 call sites across 8 specs click the toolbar's Top/Bottom/rotate/traces/2-window. The new slot buttons carry the <i>same</i> test ids where one exists (<code>traces-btn</code>, <code>two-window-toggle</code>) and gain <code>side-top</code> / <code>side-bottom</code> / <code>rotate-cw</code> / <code>rotate-ccw</code>; the text-based <code>hasText: 'Top'</code> lookups migrate to those ids, the same way the sidebar tabs did. One new spec covers the slots, the menu, and the migration rule.</span></li>
+        <li><span><b>Keyboard shortcuts, MCP drive-UI tools, and <code>board-store</code> do not change.</b> Both read and write the same store; only the button's home moves.</span></li>
+      </ol>
+    </section>
+    <section>
+      <h2>Decisions taken, and the two still open</h2>
+      <ul class="pts">
+        <li><b>Side keeps its words.</b> Icon-only Top/Bottom was tried in the sketch and was ambiguous with the layer icons on TVW boards. Two words cost 60px and remove a whole class of "which side am I on" mistakes.</li>
+        <li><b>Rotate gets two buttons, not one plus a menu.</b> Repair sessions rotate in both directions constantly; hiding either behind a click is a regression.</li>
+        <li><b>The ⋯ menu groups by what it does to the board</b> (Transform · Side · Traces) rather than by how often it is used. Rare controls need a stable home more than a clever one.</li>
+        <li><b>Open, not Upload.</b> In the browser the file is read into memory, and the old label said so; but the Electron build already says Open, and the distinction was never something a user needed. One word everywhere.</li>
+        <li><b>Open — PDF tab.</b> With the transforms gone, the app bar over a PDF is six quiet controls and a search box. The PDF's own controls sit in its panel header, as today. It reads as intended in the mockup; it wants one look on a real schematic before it is called done.</li>
+        <li><b>Open — the ☰ toggle.</b> The board sidebar's ☰ stays where it is. There is a reasonable case for moving it into the board bar's right end so the whole board has one control surface; it is left alone here because the board sidebar is its own phase-2 item.</li>
+      </ul>
+    </section>
+  </div>
+
+  <footer>
+    <span>Tokens from src/frontend/src/index.css</span>
+    <span>App bar 40px · board bar as shipped in v0.38.1 + four slots</span>
+    <span>Board and PDF page are placeholders</span>
+  </footer>
+</div>
+
+<script>
+(function () {
+  var app = document.getElementById('app');
+  var segs = document.querySelectorAll('.seg[data-k]');
+  function sync() {
+    segs.forEach(function (s) {
+      var k = s.getAttribute('data-k');
+      s.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.v === app.dataset[k])); });
+    });
+    document.getElementById('t-board').classList.toggle('on', app.dataset.tab === 'board');
+    document.getElementById('t-pdf').classList.toggle('on', app.dataset.tab === 'pdf');
+    document.getElementById('shade-ico').innerHTML = app.dataset.shade === 'folded'
+      ? '<path d="M9 6l6 6-6 6"/>' : '<path d="M15 6l-6 6 6 6"/>';
+  }
+  segs.forEach(function (s) {
+    s.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      app.dataset[s.getAttribute('data-k')] = b.dataset.v;
+      if (s.getAttribute('data-k') === 'shade' && b.dataset.v === 'folded') app.dataset.menu = 'closed';
+      sync();
+    });
+  });
+  document.getElementById('shade').addEventListener('click', function () {
+    app.dataset.shade = app.dataset.shade === 'folded' ? 'open' : 'folded';
+    if (app.dataset.shade === 'folded') app.dataset.menu = 'closed';
+    sync();
+  });
+  document.getElementById('more').addEventListener('click', function (e) {
+    if (e.target.closest('.tmenu')) return;
+    app.dataset.menu = app.dataset.menu === 'open' ? 'closed' : 'open'; sync();
+  });
+  document.querySelector('.search-in').addEventListener('click', function () {
+    app.dataset.search = app.dataset.search === 'focused' ? 'idle' : 'focused'; sync();
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { app.dataset.menu = 'closed'; app.dataset.search = 'idle'; sync(); } });
+  sync();
+})();
+</script>

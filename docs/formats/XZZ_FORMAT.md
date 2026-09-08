@@ -143,6 +143,29 @@ parser turns that into `BoardData.boards` in four steps
    `boards[i].fold.axis` (in `rawOutline` coordinates) and `boards[i].shift`
    let the store undo it for the raw-layout view.
 
+**Touching halves (one loop).** The 2008–2015 Apple laptop and iMac exports
+draw the two halves edge to edge, so their loops share vertices along the
+seam and cluster into one loop; parts run right up to the seam, so no gap
+exists either. What gives them away: the loop is its own mirror image about
+the seam (92 of 94 single-loop corpus files, never a real single board), and
+the pin winding of each half is uniform. `splitSymmetricLoop` cuts the loop
+at the symmetric centre line (seam vertices, then the longer side, break a
+tie on square-ish loops), keeps the seam segments with the top half, and
+hands the halves to the pair path. The winding also says how to fold: a
+chip's pins wind counter-clockwise seen from its own side and clockwise seen
+through the board, so halves that wind the *same* way are each drawn face-on
+and the bottom **mirrors** across the seam (K90I / A1278, A1286, A1398,
+A1419 …), while halves that wind *opposite* ways have one half drawn through
+the board in the other's frame and the bottom **translates** onto the top
+(`fold.mode = 'translate'`, `fold.offset`; the 2008–2013 iMac, Mac mini and
+Retina rectangles: 820-2494, 820-2347, 820-2641, 820-3476 …). Which half was
+the reference view is then settled by the file-wide chirality pass. Mixed
+winding within a half means a single board with both sides overlaid, and is
+left alone (A1425 820-3190). On this family the side comes from the CPU rule
+(most-pinned part on top, ≥ 500 pins): there is no copper, the stacking order
+is not consistent (20 of 89 put the CPU in the lower half), and every
+copper-verified Apple board has its CPU on the design's top.
+
 There is **no side field** in the file. The 18 + 30 unknown header bytes of
 the part block decode to `[u32 1][i32 x][i32 y][u32 rot×10⁴][u16 1]` and a
 silkscreen label element (`[u32 style][u32 17][x][y][height][stroke][rot]

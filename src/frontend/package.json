@@ -21,7 +21,9 @@
     "test:lite": "npx playwright test --config playwright.lite.config.ts",
     "test:offline": "npm run build:offline && npx playwright test --config playwright.offline.config.ts",
     "test:unit": "vitest run",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "build:desktop-webapp": "vite build --base ./",
+    "test:electron": "npx playwright test --config playwright.electron.config.ts"
   },
   "dependencies": {
     "@pixi/react": "^8.0.5",

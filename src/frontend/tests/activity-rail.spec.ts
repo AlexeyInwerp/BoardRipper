@@ -399,6 +399,27 @@ test.describe('activity rail', () => {
     await expect(page.getByTestId('rail-badge-debug')).toHaveCount(0);
   });
 
+  test('hovering an inactive icon tab previews its name; the active tab shows its caption instead', async ({ page }) => {
+    await gotoApp(page);
+    await page.click(`${RAIL} ${tab('settings')}`);
+    const input = page.locator('.sidebar [data-settings-tab="input"]');
+    await expect(input).toHaveAttribute('data-title', 'Input');
+    await expect(input).not.toHaveAttribute('title', /.+/);            // one tooltip, not two
+    await input.hover();
+    await page.waitForTimeout(500);                                     // past the 300ms reveal delay
+    const shown = await input.evaluate(el => {
+      const cs = getComputedStyle(el, '::after');
+      return { opacity: cs.opacity, content: cs.content };
+    });
+    expect(shown.opacity).toBe('1');
+    expect(shown.content).toContain('Input');
+    // Active tab: caption drawn, no hover label.
+    await input.click();
+    await expect(page.locator('.sidebar [data-settings-tab="input"] .icon-tab-caption')).toHaveText('Input');
+    const active = await input.evaluate(el => getComputedStyle(el, '::after').content);
+    expect(active === 'none' || active === '').toBeTruthy();
+  });
+
   test('Settings ▸ Sidebar navigation also exposes side and auto-hide (touch has no right-click)', async ({ page }) => {
     await gotoApp(page);
     await page.click(`${RAIL} ${tab('settings')}`);
