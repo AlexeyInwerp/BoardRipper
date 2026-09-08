@@ -47,7 +47,9 @@ test.describe('board panel chrome', () => {
 
     // Persists across a reload (the board has to be reopened; the bar state does not).
     await page.reload();
-    await page.waitForLoadState('networkidle');
+    // Not 'networkidle': with no backend the app keeps retrying, so idle may never come.
+    await page.waitForLoadState('domcontentloaded');
+    await page.getByTestId('file-input').waitFor({ state: 'attached' });
     // The session-restore dialog offers the previous board back; decline and reopen the fixture.
     const restore = page.getByTestId('session-discard');
     if (await restore.count()) await restore.click();
@@ -57,6 +59,27 @@ test.describe('board panel chrome', () => {
     await page.getByTestId('overlay-collapse').click();
     await expect(page.getByTestId('board-overlay-bar')).toHaveAttribute('data-collapsed', 'false');
     await expect(page.getByTestId('board-overlay-bar').getByTitle(/click to swap/)).toHaveCount(1);
+  });
+
+  test('auto-hide overlay starts below the tab strip, and the tab stays clickable with the panel open', async ({ page }) => {
+    await openFixture(page);
+    await page.evaluate(() => (window as unknown as { __sidebar: { setAutoHide: (v: boolean) => void } }).__sidebar.setAutoHide(true));
+    await expect(page.locator('.sidebar')).toBeHidden();
+    await page.click('[data-testid="activity-rail"] [data-sidebar-tab="library"]');
+    const panel = page.locator('.sidebar');
+    await expect(panel).toHaveClass(/sidebar-overlay/);
+    const strip = page.locator('.dv-tabs-and-actions-container').first();
+    const [p, t] = await Promise.all([panel.boundingBox(), strip.boundingBox()]);
+    expect(p && t && p.y >= t.y + t.height - 1).toBeTruthy();                 // below the strip, not over it
+    // The board tab is really reachable: the element under its centre is the tab, not the panel.
+    const tab = page.locator('.dv-tab').first();
+    const tb = (await tab.boundingBox())!;
+    const hit = await page.evaluate(([x, y]) => {
+      const el = document.elementFromPoint(x, y);
+      return el ? !!el.closest('.dv-tab') && !el.closest('.sidebar') : false;
+    }, [tb.x + tb.width / 2, tb.y + tb.height / 2]);
+    expect(hit).toBe(true);
+    await page.evaluate(() => (window as unknown as { __sidebar: { setAutoHide: (v: boolean) => void } }).__sidebar.setAutoHide(false));
   });
 
   test('board sidebar tabs use the icon-tab cell; icons stay put; no opacity slider', async ({ page }) => {

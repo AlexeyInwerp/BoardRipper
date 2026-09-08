@@ -103,6 +103,45 @@ test.describe('board transforms in the ribbon', () => {
     await expect(page.getByTestId('side-top')).toBeVisible();
   });
 
+  test('Find part / Find net are icon triggers; the field opens on click and closes on Escape', async ({ page }) => {
+    await openFixture(page);
+    const bar = page.locator(BAR);
+    await expect(bar.getByTestId('parts-search-btn')).toBeVisible();
+    await expect(bar.getByTestId('parts-filter-input')).toHaveCount(0);       // no field until asked
+    await expect(bar.getByText('Parts', { exact: true })).toHaveCount(0);      // no word on the bar
+    await bar.getByTestId('parts-search-btn').click();
+    const input = bar.getByTestId('parts-filter-input');
+    await expect(input).toBeVisible();
+    await expect(input).toBeFocused();
+    await input.fill('U');
+    await expect(page.locator('.overlay-dropdown-popover')).toBeVisible();
+    await input.press('Escape');
+    await expect(bar.getByTestId('parts-filter-input')).toHaveCount(0);
+    // Nets: same trigger, net glyph, same contract.
+    await bar.getByTestId('nets-search-btn').click();
+    await expect(bar.getByTestId('nets-filter-input')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(bar.getByTestId('nets-filter-input')).toHaveCount(0);
+  });
+
+  test('vertical column is one button wide: no side words, search pops out beside it', async ({ page }) => {
+    await openFixture(page);
+    await page.click(BAR, { button: 'right' });
+    await page.getByTestId('bar-menu-vertical').click();
+    const bar = page.locator(BAR);
+    await expect(bar).toHaveClass(/vertical/);
+    const w = (await bar.boundingBox())!.width;
+    expect(w).toBeLessThan(60);
+    await expect(bar.getByTestId('side-top').getByText('Top')).toBeHidden();
+    await bar.getByTestId('nets-search-btn').click();
+    const field = (await bar.getByTestId('nets-filter-input').boundingBox())!;
+    const barBox = (await bar.boundingBox())!;
+    expect(field.x).toBeGreaterThanOrEqual(barBox.x + barBox.width - 1);      // beside the column, not inside it
+    await page.keyboard.press('Escape');
+    await page.click(BAR, { button: 'right' });
+    await page.getByTestId('board-bar-menu').getByRole('menuitemcheckbox', { name: 'Horizontal', exact: true }).click();
+  });
+
   test('existing users get the transforms at the FRONT of a saved layout, not the end', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');

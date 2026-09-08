@@ -119,6 +119,7 @@ test.describe('Overlay layout reconciliation', () => {
 test.describe('Parts dropdown', () => {
   test('opens, filters, and focuses a part on selection', async ({ page }) => {
     await loadBoard(page);
+    await page.getByTestId('parts-search-btn').click();
     await page.waitForSelector('[data-testid="parts-filter-input"]');
 
     await page.locator('[data-testid="parts-filter-input"]').focus();
@@ -137,6 +138,7 @@ test.describe('Parts dropdown', () => {
 test.describe('Nets dropdown', () => {
   test('NC nets render at end with reduced opacity', async ({ page }) => {
     await loadBoard(page);
+    await page.getByTestId('nets-search-btn').click();
     await page.waitForSelector('[data-testid="nets-filter-input"]');
 
     await page.locator('[data-testid="nets-filter-input"]').focus();
@@ -162,6 +164,7 @@ test.describe('Nets dropdown', () => {
 
   test('selecting a net highlights it', async ({ page }) => {
     await loadBoard(page);
+    await page.getByTestId('nets-search-btn').click();
     await page.waitForSelector('[data-testid="nets-filter-input"]');
 
     await page.locator('[data-testid="nets-filter-input"]').focus();
@@ -176,6 +179,7 @@ test.describe('Nets dropdown', () => {
 test.describe('Selected-name label', () => {
   test('label appears when a part is selected and hides when cleared', async ({ page }) => {
     await loadBoard(page);
+    await page.getByTestId('parts-search-btn').click();
     await page.waitForSelector('[data-testid="parts-filter-input"]');
 
     await expect(page.locator('.board-selection-overlay')).toBeHidden();
@@ -253,7 +257,7 @@ test.describe('Overlay customizer DnD', () => {
 
   test('hiding a slot via store removes it from the live overlay', async ({ page }) => {
     await loadBoard(page);
-    await page.waitForSelector('[data-testid="parts-filter-input"]');
+    await page.waitForSelector('[data-testid="parts-search-btn"]');
 
     await page.evaluate(() => {
       const win = window as Window & { __renderSettings?: { setOverlayLayout: (l: unknown) => void; settings: { overlayLayout: unknown } } };
@@ -263,6 +267,6 @@ test.describe('Overlay customizer DnD', () => {
       ));
     });
 
-    await expect(page.locator('[data-testid="parts-filter-input"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="parts-search-btn"]')).toHaveCount(0);
   });
 });

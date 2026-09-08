@@ -79,10 +79,57 @@ export function Sidebar() {
     return () => document.removeEventListener('pointerdown', onDown, true);
   }, [autoHide, collapsed]);
 
+  // Auto-hide overlay must never cover a tab strip: tabs are navigation, and
+  // a panel you cannot switch boards past is worse than a panel that resizes
+  // the board. The docking area has no single "content top" — every dockview
+  // group has its own strip — so measure: the overlay starts below the
+  // top-most strip that shares its column, and stops above the next strip
+  // below it (a vertical split) if there is one. Re-measured on resize and
+  // whenever dockview adds, removes or re-arranges groups.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [overlayInset, setOverlayInset] = useState({ top: 0, bottom: 0 });
+  useEffect(() => {
+    if (!autoHide || collapsed) return;
+    const host = rootRef.current?.parentElement;                   // .dockview-wrapper
+    const dock = host?.querySelector<HTMLElement>('.dockview-container');
+    if (!host || !dock) return;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const h = host.getBoundingClientRect();
+      const w = rootRef.current?.offsetWidth ?? width;
+      const x0 = isLeft ? h.left : h.right - w;
+      const x1 = isLeft ? h.left + w : h.right;
+      const strips = Array.from(dock.querySelectorAll<HTMLElement>('.dv-tabs-and-actions-container'))
+        .map(el => el.getBoundingClientRect())
+        .filter(r => r.height > 0 && r.right > x0 + 1 && r.left < x1 - 1)   // in the overlay's column
+        .sort((a, b) => a.top - b.top);
+      if (strips.length === 0) { setOverlayInset(v => (v.top === 0 && v.bottom === 0 ? v : { top: 0, bottom: 0 })); return; }
+      const top = Math.max(0, Math.round(strips[0].bottom - h.top));
+      const below = strips.find(r => r.top > strips[0].bottom + 1);
+      const bottom = below ? Math.max(0, Math.round(h.bottom - below.top)) : 0;
+      setOverlayInset(v => (v.top === top && v.bottom === bottom ? v : { top, bottom }));
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
+    measure();
+    const ro = new ResizeObserver(schedule);
+    ro.observe(dock);
+    const mo = new MutationObserver(schedule);
+    mo.observe(dock, { childList: true, subtree: true });
+    window.addEventListener('resize', schedule);
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      ro.disconnect(); mo.disconnect();
+      window.removeEventListener('resize', schedule);
+    };
+  }, [autoHide, collapsed, isLeft, width]);
+
   return (
     <div
+      ref={rootRef}
       className={`sidebar sidebar-${side}${autoHide ? ' sidebar-overlay' : ''}`}
       data-testid="sidebar"
+      data-overlay-top={autoHide ? overlayInset.top : undefined}
       style={{
         width: collapsed ? 0 : width,
         minWidth: collapsed ? 0 : MIN_WIDTH,
@@ -91,6 +138,7 @@ export function Sidebar() {
         display: collapsed ? 'none' : undefined,
         borderRight: isLeft ? '1px solid var(--border)' : 'none',
         borderLeft: isLeft ? 'none' : '1px solid var(--border)',
+        ...(autoHide ? { top: overlayInset.top, bottom: overlayInset.bottom } : null),
       }}
     >
       {!rail && <div className="sidebar-tabs">

@@ -3199,17 +3199,28 @@ body {
    rules, the side switch stacks, the handle sits at the foot. */
 .board-status-indicators.vertical {
   flex-direction: column;
+  flex-wrap: wrap;
   align-items: stretch;
   max-height: calc(100% - 12px);
-  overflow: hidden;
+  overflow: visible;
+}
+/* Column stays one button wide: the side switch shows icons only, and a
+   search field pops out beside the column instead of widening it. */
+.board-status-indicators.vertical .overlay-seg-lbl { display: none; }
+.board-status-indicators.vertical .overlay-seg-btn { min-width: 0; padding: 0; justify-content: center; height: 28px; }
+.board-status-indicators.vertical .overlay-dropdown-wrap.expanded .overlay-filter-input {
+  position: absolute;
+  left: calc(100% + 6px);
+  top: 0;
+  width: 180px;
+  z-index: 5;
+  box-shadow: 0 6px 20px -8px #000;
 }
 .board-status-indicators.vertical .overlay-sep { width: auto; height: 8px; }
 .board-status-indicators.vertical .overlay-seg { flex-direction: column; height: auto; }
-.board-status-indicators.vertical .overlay-seg-btn { min-width: 0; justify-content: flex-start; height: 28px; }
 .board-status-indicators.vertical .overlay-seg-btn + .overlay-seg-btn { border-left: none; border-top: 1px solid rgba(255,255,255,0.1); }
 .board-status-indicators.vertical .overlay-collapse { width: 100%; height: 18px; }
-.board-status-indicators.vertical .board-netlines-toggle,
-.board-status-indicators.vertical .overlay-dropdown-wrap > button { width: 100%; justify-content: center; }
+.board-status-indicators.vertical .board-netlines-toggle { width: 100%; justify-content: center; }
 
 /* Window-shade handle at the bar's RIGHT end (the Classic Mac collapse box).
    Collapsed, the bar is just the handle at its left anchor: same chip, same
@@ -8229,8 +8240,17 @@ body {
 }
 .overlay-dropdown-wrap {
   position: relative;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }
+/* Magnifier with the searched thing inside the lens (chip / net). Tabler's
+   lens is the circle at (10,10) r7 of a 24 box, so at 16px an 8px inner icon
+   sits at ~2.7px from the top-left of the glyph. */
+.overlay-search-ico { position: relative; width: 16px; height: 16px; display: inline-flex; }
+.overlay-search-ico-inner { position: absolute; left: 2.7px; top: 2.7px; }
+/* The field exists only while open; in the row it opens inline. */
+.overlay-dropdown-wrap.expanded .overlay-filter-input { width: 160px; }
 /* Board overlay editor (Settings ▸ Board ▸ Board overlay): one list in
    ribbon order. Row = grip · live chip · name · eye · up · down · (× on
    separators). Hidden rows dim; drag reorders. */

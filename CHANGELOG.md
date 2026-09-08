@@ -19,6 +19,16 @@
   not cover the part you are working on), and Orientation Horizontal or
   Vertical. Both are remembered.
 - The board panel's ☰ button now looks like the rest of the board's controls.
+- **Find part and Find net are buttons now**, a magnifier with a chip or a
+  net inside. Click one and the field opens next to it; Escape or a choice
+  closes it. In the vertical bar the field pops out beside the column, so
+  the column stays one button wide.
+
+### Sidebar
+
+- **Auto-hide no longer covers the board tabs.** The floating panel starts
+  below the tab strip, so you can switch boards while it is open, and in a
+  split layout it stops above the lower group's tabs as well.
 
 ### Board panel
 
