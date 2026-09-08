@@ -26,8 +26,29 @@
 - **The suggestion list stays inside the window.** It shrinks to the room
   under the field, and opens upward when there is more room above.
 
+### XZZ boards
+
+- **Older Apple boards now fold.** In XZZ files from 2008–2015 MacBooks and
+  iMacs the two halves of the board are drawn edge to edge, so the file holds
+  them as a single shape and parts run right up to the seam. BoardRipper read
+  that as one board, so "Folded" and "Show all sides" were two names for the
+  same picture and an edge appeared to run from one half into its mirror
+  image. These files now split at the seam and fold like every other board.
+- **Which way a board folds** is read from the direction each chip's pins run
+  around it. Both halves running the same way means the bottom is mirrored
+  across the seam. Opposite ways means one half was drawn as seen through the
+  board, and the bottom is moved onto the top instead.
+- A file that really is one board with both sides drawn over each other is
+  recognised and left alone.
+- The board panel offers the folding choice only when there is something to
+  fold.
+
 ### Fixed
 
+- **The HDR selection outline works in the desktop app and the browser
+  version.** Its light tiles were fetched from a fixed address that only
+  exists on the Docker install, so on the desktop app, the hosted browser
+  version and the offline single file the outline quietly drew nothing.
 - **Butterfly plus any settings change no longer kills the renderer.** With
   Butterfly on, a scene rebuild destroyed the dim layer that shades the
   unselected half and re-added the dead object next time, which stopped the

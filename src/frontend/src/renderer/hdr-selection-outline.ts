@@ -25,6 +25,18 @@
  *  them composite the layer and flatten it.
  *  See docs/specs/2026-08-04-hdr-focus-glow-design.md. */
 
+/** URL of a baked luminance tile.
+ *
+ *  Must go through Vite's BASE_URL: an absolute `/hdr-line-N.avif` is correct
+ *  only for the NAS build mounted at the root. The desktop app loads the
+ *  bundle from file://, and the lite build is served under /boardripper/web/,
+ *  so there an absolute path points outside the bundle and the tile 404s —
+ *  the outline then silently draws nothing. BASE_URL is './' for both of
+ *  those builds and '/' for the NAS one. */
+export function hdrTileUrl(rung: number): string {
+  return `${import.meta.env.BASE_URL ?? '/'}hdr-line-${rung}.avif`;
+}
+
 /** Number of baked luminance rungs (hdr-line-0.avif .. hdr-line-23.avif),
  *  4000 nits down to 200. Rung 0 is brightest. */
 export const GLOW_RUNGS = 24;
@@ -135,7 +147,7 @@ export class HdrSelectionOutline {
     const placements = layoutPolygonEdges(pts, thickness);
     if (placements.length === 0) { this.hide(); return; }
 
-    const url = `url(/hdr-line-${rung}.avif)`;
+    const url = `url(${hdrTileUrl(rung)})`;
     const rungChanged = rung !== this.shownRung;
 
     for (let i = 0; i < placements.length; i++) {
