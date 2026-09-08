@@ -181,7 +181,7 @@ export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied }: Boa
             className={`library-tab icon-tab ${activeTab === 'info' ? 'active' : ''}`}
             data-board-tab="info"
             onClick={() => pickTab('info')}
-            title="Info"
+            data-title="Info"
             aria-label="Info"
           >
             <IconInfoCircle size={14} />
@@ -191,7 +191,7 @@ export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied }: Boa
             className={`library-tab icon-tab ${activeTab === 'layers' ? 'active' : ''}`}
             data-board-tab="layers"
             onClick={() => pickTab('layers')}
-            title={hasLayers ? 'Layers' : 'View'}
+            data-title={hasLayers ? 'Layers' : 'View'}
             aria-label={hasLayers ? 'Layers' : 'View'}
           >
             {hasLayers ? <IconStack2 size={14} /> : <IconEye size={14} />}
@@ -201,7 +201,7 @@ export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied }: Boa
             className={`library-tab icon-tab ${activeTab === 'search' ? 'active' : ''}`}
             data-board-tab="search"
             onClick={() => pickTab('search')}
-            title="Search"
+            data-title="Search"
             aria-label="Search"
           >
             <IconSearch size={14} />
@@ -213,7 +213,7 @@ export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied }: Boa
               data-board-tab="revisions"
               onClick={() => pickTab('revisions')}
               aria-label="Revisions"
-              title={
+              data-title={
                 hasRevisions
                   ? 'Multiple board revisions detected in this file'
                   : hasBomClusters
@@ -231,7 +231,7 @@ export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied }: Boa
             data-board-tab="worklist"
             onClick={() => pickTab('worklist')}
             aria-label="Worklist"
-            title="Multi-select scratchpad + named worklists (mark/note/export)"
+            data-title="Worklist"
           >
             <IconChecklist size={14} />
             {activeTab === 'worklist' && <span className="icon-tab-caption">Worklist</span>}

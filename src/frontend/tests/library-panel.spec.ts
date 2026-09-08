@@ -17,7 +17,7 @@ test.describe('Library panel header', () => {
   });
 
   test('history tab hides the PDF search toggle', async ({ page }) => {
-    await page.locator('.library-tab[title="Recently opened"]').click();
+    await page.locator('[data-library-tab="history"]').click();
     await expect(page.locator('.library-pdf-search-toggle')).toHaveCount(0);
   });
 
@@ -28,7 +28,7 @@ test.describe('Library panel header', () => {
 
   test('DB/Live pill only appears on the Folders tab', async ({ page }) => {
     // Not on History
-    await page.locator('.library-tab[title="Recently opened"]').click();
+    await page.locator('[data-library-tab="history"]').click();
     await expect(page.locator('.library-browse-pill')).toHaveCount(0);
 
     // Not on Board#
@@ -36,7 +36,7 @@ test.describe('Library panel header', () => {
     await expect(page.locator('.library-browse-pill')).toHaveCount(0);
 
     // Appears on Folders
-    await page.locator('.library-tab[title="Browse folders"]').click();
+    await page.locator('[data-library-tab="folders"]').click();
     await expect(page.locator('.library-browse-pill')).toBeVisible();
 
     // Both options rendered

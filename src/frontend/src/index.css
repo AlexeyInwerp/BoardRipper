@@ -3141,8 +3141,9 @@ body {
   transform: translateX(-50%);
 }
 
-/* Window-shade handle at the bar's left end. Collapsed, the bar is just the
-   handle: same chip, same corner, the board gets the room. */
+/* Window-shade handle at the bar's RIGHT end (the Classic Mac collapse box).
+   Collapsed, the bar is just the handle at its left anchor: same chip, same
+   corner, the board gets the room. */
 .overlay-collapse {
   width: 18px;
   height: 28px;
@@ -8002,6 +8003,35 @@ body {
   white-space: nowrap;
   pointer-events: none;
 }
+/* Hover preview of the tab's name — the same label the activity rail shows,
+   because only the open tab carries a caption. Reads data-title (falls back
+   to nothing for tabs without one). Suppressed on the active tab, whose name
+   is already drawn. Native `title` is NOT set on icon tabs, so there is one
+   tooltip, not two. */
+.icon-tab[data-title]:not(.active)::after {
+  content: attr(data-title);
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--tooltip-bg);
+  border: 1px solid var(--border);
+  color: var(--tooltip-fg);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 3px 8px;
+  border-radius: 2px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s 0.3s;
+  z-index: 10001;
+}
+.icon-tab[data-title]:not(.active):hover::after,
+.icon-tab[data-title]:not(.active):focus-visible::after { opacity: 1; }
+
 .icon-tab .settings-tab-match-badge {
   position: absolute;
   top: 2px;

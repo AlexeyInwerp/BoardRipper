@@ -1022,7 +1022,7 @@ export function LibraryPanel() {
             className={`library-tab icon-tab ${viewMode === 'history' ? 'active' : ''}`}
             data-library-tab="history"
             onClick={() => handleSetViewMode('history')}
-            title="Recently opened"
+            data-title="Recently opened"
             aria-label="Recently opened"
           >
             <IconHistory size={14} />
@@ -1032,7 +1032,7 @@ export function LibraryPanel() {
             className={`library-tab icon-tab ${viewMode === 'metadata' ? 'active' : ''}`}
             data-library-tab="metadata"
             onClick={() => handleSetViewMode('metadata')}
-            title="Board #"
+            data-title="Board #"
             aria-label="Board #"
           >
             <IconHash size={14} />
@@ -1043,7 +1043,7 @@ export function LibraryPanel() {
               className={`library-tab icon-tab ${viewMode === 'folders' ? 'active' : ''}`}
               data-library-tab="folders"
               onClick={() => handleSetViewMode('folders')}
-              title="Browse folders"
+              data-title="Browse folders"
               aria-label="Browse folders"
             >
               <IconFolder size={14} />
@@ -1071,7 +1071,7 @@ export function LibraryPanel() {
                 setPdfMenuOpen(true);
                 armPdfMenuTimeout();
               }}
-              title="PDF text search · Donor boards"
+              data-title="PDF text search · Donor boards"
               aria-label="PDF"
             >
               <IconFileText size={14} />

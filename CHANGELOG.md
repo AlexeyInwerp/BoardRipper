@@ -4,10 +4,12 @@
 
 ### Board panel
 
-- **The board's control bar folds away.** The small handle at its left end
-  rolls the whole bar up into itself, the way a Classic Mac window shade did,
+- **The board's control bar folds away.** The small handle at its right end,
+  where the Classic Mac collapse box was, rolls the whole bar up into itself
   and the board gets the room. Click the handle again to bring it back. The
   choice is remembered.
+- **Hover a tab to see its name.** Library, Settings and board panel tabs show
+  the tab's name under the icon when you hover, the same way the rail does.
 - **Board panel tabs match the rest.** Info, View or Layers, Search,
   Revisions and Worklist are now the same icon cells as the Library and
   Settings tabs: icons stay where they are, the open tab's name sits

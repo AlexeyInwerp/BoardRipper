@@ -234,14 +234,16 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
           ☰
         </button>
       </div>
-      {/* Overlay controls. The handle at the left end rolls the bar up into
-          the edge like a Classic Mac window shade — only the handle stays,
-          the board underneath gets the room. Persisted across tabs and reloads. */}
+      {/* Overlay controls. The handle sits at the RIGHT end, where the Classic
+          Mac collapse box was; clicking it rolls the bar up toward its left
+          anchor until only the handle is left, and the board gets the room.
+          Persisted across tabs and reloads. */}
       <div
         className={`board-status-indicators${renderSettings.overlayPosition === 'center' ? ' center' : ''}${overlayCollapsed ? ' collapsed' : ''}`}
         data-testid="board-overlay-bar"
         data-collapsed={overlayCollapsed ? 'true' : 'false'}
       >
+        {!overlayCollapsed && renderOverlayLayout(renderSettings.overlayLayout, slotCtx)}
         <button
           type="button"
           className="overlay-collapse"
@@ -253,7 +255,6 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
         >
           {overlayCollapsed ? <IconChevronRight size={14} stroke={2} /> : <IconChevronLeft size={14} stroke={2} />}
         </button>
-        {!overlayCollapsed && renderOverlayLayout(renderSettings.overlayLayout, slotCtx)}
       </div>
       <BoardSidebar
         visible={sidebarOpen}

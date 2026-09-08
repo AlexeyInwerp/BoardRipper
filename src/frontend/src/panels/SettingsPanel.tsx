@@ -2581,7 +2581,7 @@ function TabPill({ tab, activeTab, setActiveTab }: {
       type="button"
       className={`library-tab icon-tab settings-tab-iconed ${isActive ? 'active' : ''}${active && count > 0 ? ' settings-tab-has-match' : ''}`}
       onClick={() => setActiveTab(tab)}
-      title={TAB_LABELS[tab]}
+      data-title={TAB_LABELS[tab]}
       aria-label={TAB_LABELS[tab]}
       data-settings-tab={tab}
     >
