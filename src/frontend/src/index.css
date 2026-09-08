@@ -1132,8 +1132,9 @@ body {
   border-radius: 50%;
 }
 
-/* Right-click menu — portaled to body so Dockview transforms can't offset it. */
-.activity-rail-menu {
+/* QuickMenu — the shared right-click menu (rail, board ribbon). Portaled to
+   body so Dockview transforms can't offset it. */
+.quick-menu {
   position: fixed;
   z-index: 10002;
   min-width: 184px;
@@ -1146,7 +1147,7 @@ body {
   flex-direction: column;
   gap: 1px;
 }
-.activity-rail-menu button {
+.quick-menu button {
   background: none;
   border: none;
   color: var(--text-primary);
@@ -1160,19 +1161,29 @@ body {
   align-items: center;
   gap: 8px;
 }
-.activity-rail-menu button:hover,
-.activity-rail-menu button:focus-visible {
+.quick-menu button:hover:not(:disabled),
+.quick-menu button:focus-visible {
   background: var(--accent);
   color: var(--accent-fg);
   outline: none;
 }
-.activity-rail-menu-tick {
+.quick-menu button:disabled { opacity: 0.4; cursor: default; }
+.quick-menu-header {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  padding: 6px 9px 2px;
+}
+.quick-menu-sep { height: 1px; background: var(--border); margin: 3px 4px; }
+.quick-menu-tick {
   width: 10px;
   font-size: 10px;
   color: var(--accent);
   flex-shrink: 0;
 }
-.activity-rail-menu button:hover .activity-rail-menu-tick { color: var(--accent-fg); }
+.quick-menu button:hover .quick-menu-tick { color: var(--accent-fg); }
 
 @media (prefers-reduced-motion: reduce) {
   .activity-rail-item,
@@ -8161,67 +8172,49 @@ body {
   position: relative;
   display: inline-block;
 }
-.overlay-customizer-zone {
+/* Board overlay editor (Settings ▸ Board ▸ Board overlay): one list in
+   ribbon order. Row = grip · live chip · name · eye · up · down · (× on
+   separators). Hidden rows dim; drag reorders. */
+.ovc-list {
   display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 8px;
+  padding: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.ovc-row {
+  display: grid;
+  grid-template-columns: 16px 40px 1fr 24px 24px 24px 24px;
   align-items: center;
   gap: 6px;
-  min-height: 44px;
-  padding: 6px 8px;
-  margin: 4px 0 12px;
-  background: var(--bg-secondary, #1a1a2e);
-  border: 1px dashed var(--border-primary, #555);
-  border-radius: 4px;
-  flex-wrap: wrap;
-}
-/* Hidden zone keeps chips at full opacity (otherwise the dim slot icons
-   are too hard to read) — the dashed border + label already mark it as
-   the off-stage area. */
-.overlay-customizer-zone.hidden-zone {
-  background: var(--bg-tertiary, #14142a);
-  border-style: dotted;
-}
-/* Make the cosmetic separator slot legible inside the customizer.
-   In the live overlay it's a 12px transparent spacer; here we draw a
-   visible vertical bar so users can grab it. */
-.overlay-customizer-chip-wrap .overlay-sep {
-  width: 6px;
-  height: 24px;
-  background: var(--text-muted, #888);
-  opacity: 0.6;
-  border-radius: 2px;
-}
-.overlay-customizer-chip-wrap {
-  position: relative;
+  padding: 3px 4px;
+  border-radius: 3px;
   cursor: grab;
 }
-.overlay-customizer-chip-wrap:active {
-  cursor: grabbing;
+.ovc-row:hover { background: var(--surface-hover); }
+.ovc-row:active { cursor: grabbing; }
+.ovc-row.dragging { opacity: 0.4; }
+.ovc-row.is-hidden .ovc-chip,
+.ovc-row.is-hidden .ovc-label { opacity: 0.4; }
+.ovc-grip { color: var(--text-secondary); opacity: 0.6; display: flex; align-items: center; }
+.ovc-chip { display: flex; align-items: center; justify-content: center; pointer-events: none; width: 40px; overflow: hidden; color: var(--text-secondary); }
+.ovc-chip .overlay-sep { width: 6px; height: 22px; background: var(--text-secondary); opacity: 0.6; border-radius: 2px; }
+.ovc-label { font-size: 12px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ovc-btn {
+  width: 24px; height: 24px;
+  border: 1px solid transparent; border-radius: 3px;
+  background: transparent; color: var(--text-secondary);
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0; cursor: pointer;
 }
-.overlay-customizer-chip-wrap.dragging {
-  opacity: 0.4;
-}
-.overlay-customizer-chip {
-  position: relative;
-  display: inline-block;
-}
-.overlay-customizer-chip-inner {
-  pointer-events: none;
-}
-.overlay-customizer-chip-mask {
-  position: absolute;
-  inset: 0;
-  cursor: grab;
-}
-.overlay-customizer-chip-wrap.dragging .overlay-customizer-chip-mask {
-  cursor: grabbing;
-}
-.overlay-customizer-empty {
-  flex: 1;
-  text-align: center;
-  font-size: 11px;
-  color: var(--text-muted, #888);
-  font-style: italic;
-}
+.ovc-btn:hover:not(:disabled) { color: var(--text-primary); background: rgba(255,255,255,0.06); border-color: var(--border); }
+.ovc-btn:disabled { opacity: 0.25; cursor: default; }
+.ovc-btn[aria-pressed="true"] { color: var(--accent); }
+.ovc-remove:hover:not(:disabled) { color: var(--danger); }
+.ovc-spacer { visibility: hidden; }
 
 /* --- Update-in-progress overlay (full-screen modal during self-update) --- */
 .update-progress-overlay {

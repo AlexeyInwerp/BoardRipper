@@ -1,17 +1,23 @@
 // src/frontend/src/store/overlay-layout.ts
 /**
  * BoardViewer overlay slot model — single source of truth for the slot
- * registry, default order, and persistence reconciliation.
+ * registry, its labels, the default order, the pure edit operations, and
+ * persistence reconciliation.
  *
- * The overlay (the floating row of buttons on the board canvas) is rendered
- * by walking `OverlaySlot[]` and looking each id up in slot-renderers.tsx.
+ * The overlay (the floating row of buttons on the board canvas — "the
+ * ribbon") is rendered by walking `OverlaySlot[]` and looking each id up in
+ * slot-renderers.tsx. It is editable in two places that share this module:
+ * right-click on the ribbon (show/hide, position, fold, reset) and
+ * Settings ▸ Board ▸ Board overlay (order, visibility, separators).
+ *
  * Adding a new slot:
- *   1. add the id to OverlaySlotId
- *   2. add it to KNOWN_SLOT_IDS
- *   3. add it to DEFAULT_OVERLAY_LAYOUT (anywhere, with visible: true)
+ *   1. add the id to NamedSlotId and NAMED_SLOT_IDS
+ *   2. add its label to SLOT_LABELS
+ *   3. add it to DEFAULT_OVERLAY_LAYOUT where it belongs
  *   4. add a renderer entry in slot-renderers.tsx
- * `reconcileOverlayLayout` will append it to existing users' saved layouts
- * automatically on next load.
+ * `reconcileOverlayLayout` places it into existing users' saved layouts at
+ * the position the default gives it (after its nearest default neighbour
+ * that the user still has), not at the end.
  */
 
 /** The fixed-name slots (one button each). Separator slots use the
@@ -31,6 +37,26 @@ const NAMED_SLOT_IDS: ReadonlySet<NamedSlotId> = new Set([
   'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues',
   'partsDropdown', 'netsDropdown',
 ]);
+
+/** Human names, used by the ribbon's right-click menu and the Settings
+ *  editor. Short, noun-first, no trailing state ("Hover info", not
+ *  "Hover info: ON" — the button's own title carries the state). */
+export const SLOT_LABELS: Readonly<Record<NamedSlotId, string>> = {
+  pdfFollow:     'Follow PDF',
+  scrollMode:    'Scroll mode',
+  fitBoard:      'Fit board',
+  hoverInfo:     'Hover info',
+  netDim:        'Spotlight',
+  netLines:      'Net lines',
+  ghosts:        'Ghost parts',
+  diodeValues:   'Diode values',
+  partsDropdown: 'Find part',
+  netsDropdown:  'Find net',
+};
+
+export function slotLabel(id: OverlaySlotId): string {
+  return isSeparatorId(id) ? 'Separator' : SLOT_LABELS[id];
+}
 
 /** True for `sep1`, `sep2`, … — any `sep` followed by a positive integer. */
 export function isSeparatorId(id: string): id is SeparatorSlotId {
@@ -57,9 +83,8 @@ export function nextSeparatorId(layout: ReadonlyArray<OverlaySlot>): SeparatorSl
 }
 
 /**
- * Default order — reproduces today's UI byte-for-byte. The two `sep` slots
- * carry the visual gap between the existing button groups; without them
- * the overlay collapses to a single uninterrupted row.
+ * Default order. The two `sep` slots carry the visual gap between the
+ * button groups; without them the overlay collapses to one uninterrupted row.
  */
 export const DEFAULT_OVERLAY_LAYOUT: ReadonlyArray<Readonly<OverlaySlot>> = [
   { id: 'pdfFollow',     visible: true },
@@ -76,14 +101,54 @@ export const DEFAULT_OVERLAY_LAYOUT: ReadonlyArray<Readonly<OverlaySlot>> = [
   { id: 'netsDropdown',  visible: true },
 ];
 
+// ---- pure edit operations (used by the store; never mutate their input) ----
+
+export function setSlotVisible(layout: ReadonlyArray<OverlaySlot>, id: OverlaySlotId, visible: boolean): OverlaySlot[] {
+  return layout.map(s => (s.id === id ? { id: s.id, visible } : { ...s }));
+}
+
+/** Swap the slot with its neighbour. `delta` −1 moves it up/left, +1 down/right. */
+export function moveSlot(layout: ReadonlyArray<OverlaySlot>, id: OverlaySlotId, delta: -1 | 1): OverlaySlot[] {
+  const out = layout.map(s => ({ ...s }));
+  const i = out.findIndex(s => s.id === id);
+  const j = i + delta;
+  if (i < 0 || j < 0 || j >= out.length) return out;
+  [out[i], out[j]] = [out[j], out[i]];
+  return out;
+}
+
+/** Move `id` so it sits directly before `beforeId` (or at the end when
+ *  `beforeId` is null). Visibility travels with the slot. */
+export function moveSlotBefore(layout: ReadonlyArray<OverlaySlot>, id: OverlaySlotId, beforeId: OverlaySlotId | null): OverlaySlot[] {
+  const moved = layout.find(s => s.id === id);
+  if (!moved || id === beforeId) return layout.map(s => ({ ...s }));
+  const without = layout.filter(s => s.id !== id).map(s => ({ ...s }));
+  if (beforeId === null) return [...without, { ...moved }];
+  const k = without.findIndex(s => s.id === beforeId);
+  if (k < 0) return [...without, { ...moved }];
+  without.splice(k, 0, { ...moved });
+  return without;
+}
+
+/** Remove a slot outright. Only separators are removable from the UI —
+ *  named slots are hidden instead, so they can come back. */
+export function removeSlot(layout: ReadonlyArray<OverlaySlot>, id: OverlaySlotId): OverlaySlot[] {
+  return layout.filter(s => s.id !== id).map(s => ({ ...s }));
+}
+
 /**
  * Reconcile a saved OverlaySlot[] with the current known slot set.
  *
- *  • Keeps saved order
+ *  • Keeps saved order and visibility
  *  • Drops slot ids we no longer recognise (forward-compat after a rename)
- *  • Appends any slot id from DEFAULT_OVERLAY_LAYOUT the user hasn't seen
- *    (covers upgrade paths where new buttons land after the user's layout
- *    was saved).
+ *  • Inserts any DEFAULT_OVERLAY_LAYOUT entry the user hasn't seen at the
+ *    position the default gives it: directly after the *last-placed* of the
+ *    default slots that precede it in DEFAULT_OVERLAY_LAYOUT and that the
+ *    user still has, or at the front if none of them exist. "Last-placed"
+ *    (max index in the user's order), not "nearest in the default", so a
+ *    new slot never lands inside a run the user arranged — it joins after
+ *    it. Appending at the end (the old rule) put every new control after
+ *    the Parts/Nets filters, wrong for anything meant to lead the row.
  *
  * Always returns a fresh array — never mutates the input.
  */
@@ -104,12 +169,16 @@ export function reconcileOverlayLayout(saved: unknown): OverlaySlot[] {
     }
   }
 
-  // Append any DEFAULT_OVERLAY_LAYOUT entries the user hasn't seen yet
-  // (handles upgrade paths after new built-in slots are added). Extra
-  // separators the user has created beyond sep1/sep2 are preserved as-is
-  // by the loop above.
-  for (const def of DEFAULT_OVERLAY_LAYOUT) {
-    if (!seen.has(def.id)) out.push({ id: def.id, visible: def.visible });
+  for (let d = 0; d < DEFAULT_OVERLAY_LAYOUT.length; d++) {
+    const def = DEFAULT_OVERLAY_LAYOUT[d];
+    if (seen.has(def.id)) continue;
+    let insertAt = 0;
+    for (let k = 0; k < d; k++) {
+      const idx = out.findIndex(s => s.id === DEFAULT_OVERLAY_LAYOUT[k].id);
+      if (idx >= 0 && idx + 1 > insertAt) insertAt = idx + 1;
+    }
+    out.splice(insertAt, 0, { id: def.id, visible: def.visible });
+    seen.add(def.id);
   }
 
   return out;

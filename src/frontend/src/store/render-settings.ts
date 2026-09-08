@@ -6,6 +6,7 @@ import {
   reconcileOverlayLayout,
   nextSeparatorId,
 } from './overlay-layout';
+import { setSlotVisible, moveSlot, moveSlotBefore, removeSlot, isSeparatorId, type OverlaySlotId } from './overlay-layout';
 import { naturalCompare } from '../components/overlay/natural-sort';
 
 /** Pad shape override — applies to pin pads within a part type */
@@ -1619,6 +1620,31 @@ class RenderSettingsStore extends Emitter {
 
   setOverlayLayout(layout: OverlaySlot[]) {
     this._global = { ...this._global, overlayLayout: layout.map(s => ({ ...s })) };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  // Ribbon edit operations — thin wrappers over the pure helpers in
+  // overlay-layout.ts, shared by the ribbon's right-click menu and the
+  // Settings editor so both edit the same list the same way.
+  setOverlaySlotVisible(id: OverlaySlotId, visible: boolean) {
+    this.setOverlayLayout(setSlotVisible(this._global.overlayLayout ?? [], id, visible));
+  }
+  moveOverlaySlot(id: OverlaySlotId, delta: -1 | 1) {
+    this.setOverlayLayout(moveSlot(this._global.overlayLayout ?? [], id, delta));
+  }
+  moveOverlaySlotBefore(id: OverlaySlotId, beforeId: OverlaySlotId | null) {
+    this.setOverlayLayout(moveSlotBefore(this._global.overlayLayout ?? [], id, beforeId));
+  }
+  /** Separators only; a named slot is hidden, never removed, so it can come back. */
+  removeOverlaySeparator(id: OverlaySlotId) {
+    if (!isSeparatorId(id)) return;
+    this.setOverlayLayout(removeSlot(this._global.overlayLayout ?? [], id));
+  }
+  /** Layout and row position only — selection behaviour is left alone. */
+  resetOverlayLayout() {
+    this._global = { ...this._global, overlayLayout: DEFAULT_OVERLAY_LAYOUT.map(s => ({ ...s })), overlayPosition: 'left' };
     saveToStorage(this._global);
     this.recomputeEffective();
     this.notify();

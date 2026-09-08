@@ -10,6 +10,11 @@
   choice is remembered.
 - **Hover a tab to see its name.** Library, Settings and board panel tabs show
   the tab's name under the icon when you hover, the same way the rail does.
+- **The board bar is editable where it is.** Right-click it to show or hide
+  any button, put the row on the left or in the centre, fold it, or reset it.
+  Settings ▸ Board ▸ Board overlay is now one list with names: an eye to show
+  or hide, arrows to reorder, and a × on separators. New buttons added in
+  later versions land where they belong in the row, not at the end.
 - **Board panel tabs match the rest.** Info, View or Layers, Search,
   Revisions and Worklist are now the same icon cells as the Library and
   Settings tabs: icons stay where they are, the open tab's name sits

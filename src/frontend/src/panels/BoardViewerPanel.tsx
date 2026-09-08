@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { BoardRenderer } from '../renderer/BoardRenderer';
 import { boardStore } from '../store/board-store';
@@ -13,7 +13,11 @@ import { obdStore, extractBoardNumberFromFilename } from '../store/obd-store';
 import { renderOverlayLayout } from '../components/overlay/slot-renderers';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import { useOverlayCollapsed, toggleOverlayCollapsed } from '../store/overlay-collapse-store';
+import { QuickMenu } from '../components/QuickMenu';
+import { isSeparatorId, slotLabel } from '../store/overlay-layout';
+import { showSidebarTab } from '../components/Sidebar.utils';
 import { useRenderSettings } from '../hooks/useRenderSettings';
+import { renderSettingsStore } from '../store/render-settings';
 import type { SlotCtx } from '../components/overlay/slot-ctx';
 import {
   registerBoardSearchHandler,
@@ -38,6 +42,8 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<'layers' | 'info' | 'search' | 'worklist' | null>(null);
   const overlayCollapsed = useOverlayCollapsed();
+  const [barMenu, setBarMenu] = useState<{ x: number; y: number } | null>(null);
+  const closeBarMenu = useCallback(() => setBarMenu(null), []);
   const prevLayerCountRef = useRef(0);
 
   // Register per-tab handler for toolbar → board search
@@ -242,6 +248,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
         className={`board-status-indicators${renderSettings.overlayPosition === 'center' ? ' center' : ''}${overlayCollapsed ? ' collapsed' : ''}`}
         data-testid="board-overlay-bar"
         data-collapsed={overlayCollapsed ? 'true' : 'false'}
+        onContextMenu={(e) => { e.preventDefault(); setBarMenu({ x: e.clientX, y: e.clientY }); }}
       >
         {!overlayCollapsed && renderOverlayLayout(renderSettings.overlayLayout, slotCtx)}
         <button
@@ -256,6 +263,41 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
           {overlayCollapsed ? <IconChevronRight size={14} stroke={2} /> : <IconChevronLeft size={14} stroke={2} />}
         </button>
       </div>
+      {/* Right-click on the ribbon: edit it where it lives. Show/hide each
+          button, row position, fold, and a jump to the full editor. Same store
+          operations as Settings ▸ Board overlay. */}
+      {barMenu && (
+        <QuickMenu
+          x={barMenu.x}
+          y={barMenu.y}
+          onClose={closeBarMenu}
+          ariaLabel="Board controls"
+          testId="board-bar-menu"
+          items={[
+            { kind: 'header', label: 'On the bar' },
+            ...renderSettings.overlayLayout
+              .filter(sl => !isSeparatorId(sl.id))
+              .map(sl => ({
+                kind: 'check' as const,
+                label: slotLabel(sl.id),
+                checked: sl.visible,
+                testId: `bar-menu-slot-${sl.id}`,
+                onSelect: () => renderSettingsStore.setOverlaySlotVisible(sl.id, !sl.visible),
+              })),
+            { kind: 'sep' },
+            { kind: 'header', label: 'Row' },
+            { kind: 'check', label: 'Left', checked: renderSettings.overlayPosition !== 'center', onSelect: () => renderSettingsStore.setOverlayPosition('left') },
+            { kind: 'check', label: 'Centred', checked: renderSettings.overlayPosition === 'center', onSelect: () => renderSettingsStore.setOverlayPosition('center') },
+            { kind: 'sep' },
+            { label: overlayCollapsed ? 'Unfold controls' : 'Fold controls', onSelect: toggleOverlayCollapsed },
+            { label: 'Customise order and separators…', testId: 'bar-menu-customise', onSelect: () => {
+                showSidebarTab('settings');
+                window.dispatchEvent(new CustomEvent('settings-focus-section', { detail: 'boardOverlay' }));
+              } },
+            { label: 'Reset layout', testId: 'bar-menu-reset', onSelect: () => renderSettingsStore.resetOverlayLayout() },
+          ]}
+        />
+      )}
       <BoardSidebar
         visible={sidebarOpen}
         requestedTab={sidebarTab}

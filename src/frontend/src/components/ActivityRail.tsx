@@ -7,8 +7,7 @@
  * sidebar. The rail itself never hides, so the destinations are always legible.
  * Spec: docs/specs/2026-09-02-activity-rail-design.md.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useCallback, useRef, useState } from 'react';
 import { IconLayoutBottombar } from '@tabler/icons-react';
 import {
   SIDEBAR_GROUPS,
@@ -24,6 +23,7 @@ import {
 } from './Sidebar.utils';
 import { useSidebarState } from '../hooks/useSidebarState';
 import { useRailBadges, type RailBadge } from '../hooks/useRailBadges';
+import { QuickMenu } from './QuickMenu';
 
 interface MenuPos { x: number; y: number }
 
@@ -32,7 +32,6 @@ export function ActivityRail() {
   const badges = useRailBadges();
   const [menu, setMenu] = useState<MenuPos | null>(null);
   const railRef = useRef<HTMLElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
 
   const closeMenu = useCallback(() => setMenu(null), []);
 
@@ -63,34 +62,6 @@ export function ActivityRail() {
     e.preventDefault();
     setMenu({ x: e.clientX, y: e.clientY });
   }, []);
-
-  // Menu dismissal: outside pointerdown, Escape, viewport resize.
-  useEffect(() => {
-    if (!menu) return;
-    const onDown = (e: PointerEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) closeMenu();
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeMenu(); };
-    document.addEventListener('pointerdown', onDown, true);
-    document.addEventListener('keydown', onKey);
-    window.addEventListener('resize', closeMenu);
-    return () => {
-      document.removeEventListener('pointerdown', onDown, true);
-      document.removeEventListener('keydown', onKey);
-      window.removeEventListener('resize', closeMenu);
-    };
-  }, [menu, closeMenu]);
-
-  // Keep the menu inside the viewport once it has a size.
-  useEffect(() => {
-    if (!menu || !menuRef.current) return;
-    const el = menuRef.current;
-    const r = el.getBoundingClientRect();
-    const x = Math.min(menu.x, window.innerWidth - r.width - 4);
-    const y = Math.min(menu.y, window.innerHeight - r.height - 4);
-    el.style.left = `${Math.max(4, x)}px`;
-    el.style.top = `${Math.max(4, y)}px`;
-  }, [menu]);
 
   const renderItem = ({ id, label, icon: Ico }: SidebarTabDef) => {
     const active = id === activeTab;
@@ -161,37 +132,22 @@ export function ActivityRail() {
           <IconLayoutBottombar size={15} stroke={1.75} />
         </button>
       </nav>
-      {menu && createPortal(
-        <div
-          ref={menuRef}
-          className="activity-rail-menu"
-          role="menu"
-          aria-label="Sidebar options"
-          data-testid="activity-rail-menu"
-          style={{ left: menu.x, top: menu.y }}
-        >
-          <button type="button" role="menuitem" onClick={() => { flipSidebarSide(); closeMenu(); }}>
-            <span className="activity-rail-menu-tick" />
-            {side === 'left' ? 'Move sidebar to right' : 'Move sidebar to left'}
-          </button>
-          <button type="button" role="menuitemcheckbox" aria-checked={captions}
-            onClick={() => { setSidebarCaptions(!captions); closeMenu(); }}>
-            <span className="activity-rail-menu-tick">{captions ? '✓' : ''}</span>
-            Show captions
-          </button>
-          <button type="button" role="menuitemcheckbox" aria-checked={autoHide}
-            data-testid="rail-menu-autohide"
-            title="The panel opens over the board instead of pushing it, and hides again when you click into the board"
-            onClick={() => { setSidebarAutoHide(!autoHide); closeMenu(); }}>
-            <span className="activity-rail-menu-tick">{autoHide ? '✓' : ''}</span>
-            Auto-hide sidebar
-          </button>
-          <button type="button" role="menuitem" onClick={() => { toggleSidebar(); closeMenu(); }}>
-            <span className="activity-rail-menu-tick" />
-            {collapsed ? `Show ${TAB_LABELS[activeTab]}` : 'Hide sidebar'}
-          </button>
-        </div>,
-        document.body,
+      {menu && (
+        <QuickMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={closeMenu}
+          ariaLabel="Sidebar options"
+          testId="activity-rail-menu"
+          items={[
+            { label: side === 'left' ? 'Move sidebar to right' : 'Move sidebar to left', onSelect: flipSidebarSide },
+            { kind: 'check', label: 'Show captions', checked: captions, onSelect: () => setSidebarCaptions(!captions) },
+            { kind: 'check', label: 'Auto-hide sidebar', checked: autoHide, testId: 'rail-menu-autohide',
+              hint: 'The panel opens over the board instead of pushing it, and hides again when you click into the board',
+              onSelect: () => setSidebarAutoHide(!autoHide) },
+            { label: collapsed ? `Show ${TAB_LABELS[activeTab]}` : 'Hide sidebar', onSelect: toggleSidebar },
+          ]}
+        />
       )}
     </>
   );

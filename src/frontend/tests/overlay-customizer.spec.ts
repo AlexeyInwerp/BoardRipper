@@ -37,7 +37,7 @@ test.describe('Overlay layout reconciliation', () => {
 
     expect(result.map(s => s.id)).toEqual([
       'pdfFollow', 'scrollMode', 'fitBoard', 'sep1',
-      'hoverInfo', 'netDim', 'netLines', 'ghosts', 'sep2',
+      'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'sep2',
       'partsDropdown', 'netsDropdown',
     ]);
     expect(result.every(s => s.visible)).toBe(true);
@@ -81,11 +81,34 @@ test.describe('Overlay layout reconciliation', () => {
     });
 
     const ids = result.map(s => s.id);
+    // Unseen defaults are placed where the default puts them — after their
+    // nearest earlier default neighbour — not appended at the end. So a
+    // saved [pdfFollow, fitBoard] gains scrollMode BETWEEN them, and the
+    // whole thing comes out in default order.
+    expect(ids).toEqual([
+      'pdfFollow', 'scrollMode', 'fitBoard', 'sep1',
+      'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'sep2',
+      'partsDropdown', 'netsDropdown',
+    ]);
+  });
+
+  test('a new default slot that leads the row is inserted at the front, not the end', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    const result = await page.evaluate(() => {
+      const win = window as Window & {
+        __overlayTest?: { reconcileOverlayLayout: (saved: unknown) => Array<{ id: string; visible: boolean }> };
+      };
+      // A saved layout that predates pdfFollow entirely (the first default).
+      return win.__overlayTest!.reconcileOverlayLayout([
+        { id: 'netsDropdown', visible: true },
+        { id: 'partsDropdown', visible: false },
+      ]);
+    });
+    const ids = result.map(s => s.id);
     expect(ids[0]).toBe('pdfFollow');
-    expect(ids[1]).toBe('fitBoard');
-    expect(ids).toContain('partsDropdown');
-    expect(ids).toContain('netsDropdown');
-    expect(ids).toContain('sep1');
+    expect(ids.indexOf('netsDropdown')).toBeLessThan(ids.indexOf('partsDropdown'));      // user order kept (nets was saved first)
+    expect(result.find(s => s.id === 'partsDropdown')?.visible).toBe(false);             // user visibility kept
   });
 });
 
@@ -214,11 +237,11 @@ test.describe('Overlay customizer DnD', () => {
       const win = window as Window & { __renderSettings?: { settings: { overlayLayout: Array<{ id: string; visible: boolean }> } } };
       return win.__renderSettings!.settings.overlayLayout;
     });
-    expect(layout.length).toBe(11);
+    expect(layout.length).toBe(12);
     expect(layout.every(s => s.visible)).toBe(true);
     expect(layout.map(s => s.id)).toEqual([
       'pdfFollow', 'scrollMode', 'fitBoard', 'sep1',
-      'hoverInfo', 'netDim', 'netLines', 'ghosts', 'sep2',
+      'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'sep2',
       'partsDropdown', 'netsDropdown',
     ]);
   });
