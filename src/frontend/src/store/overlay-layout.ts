@@ -23,8 +23,9 @@
 /** The fixed-name slots (one button each). Separator slots use the
  *  open-ended `sep${number}` ids — see `isSeparatorId` below. */
 export type NamedSlotId =
+  | 'sideSwitch' | 'butterfly' | 'rotateCCW' | 'rotateCW' | 'transformMenu'
   | 'pdfFollow' | 'scrollMode' | 'fitBoard'
-  | 'hoverInfo' | 'netDim' | 'netLines' | 'ghosts' | 'diodeValues'
+  | 'hoverInfo' | 'netDim' | 'netLines' | 'ghosts' | 'diodeValues' | 'traces'
   | 'partsDropdown' | 'netsDropdown';
 
 export type SeparatorSlotId = `sep${number}`;
@@ -33,8 +34,9 @@ export type OverlaySlotId = NamedSlotId | SeparatorSlotId;
 export interface OverlaySlot { id: OverlaySlotId; visible: boolean }
 
 const NAMED_SLOT_IDS: ReadonlySet<NamedSlotId> = new Set([
+  'sideSwitch', 'butterfly', 'rotateCCW', 'rotateCW', 'transformMenu',
   'pdfFollow', 'scrollMode', 'fitBoard',
-  'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues',
+  'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'traces',
   'partsDropdown', 'netsDropdown',
 ]);
 
@@ -42,6 +44,12 @@ const NAMED_SLOT_IDS: ReadonlySet<NamedSlotId> = new Set([
  *  editor. Short, noun-first, no trailing state ("Hover info", not
  *  "Hover info: ON" — the button's own title carries the state). */
 export const SLOT_LABELS: Readonly<Record<NamedSlotId, string>> = {
+  sideSwitch:    'Side',
+  butterfly:     'Butterfly',
+  rotateCCW:     'Rotate left',
+  rotateCW:      'Rotate right',
+  transformMenu: 'More transforms',
+  traces:        'Traces',
   pdfFollow:     'Follow PDF',
   scrollMode:    'Scroll mode',
   fitBoard:      'Fit board',
@@ -87,6 +95,16 @@ export function nextSeparatorId(layout: ReadonlyArray<OverlaySlot>): SeparatorSl
  * button groups; without them the overlay collapses to one uninterrupted row.
  */
 export const DEFAULT_OVERLAY_LAYOUT: ReadonlyArray<Readonly<OverlaySlot>> = [
+  // Board transforms (moved down from the app toolbar in v0.39): the
+  // controls a repair session touches most lead the row. `sep0` is a
+  // default-only id — nextSeparatorId() starts at sep1, so no saved layout
+  // can already own it.
+  { id: 'sideSwitch',    visible: true },
+  { id: 'butterfly',     visible: true },
+  { id: 'rotateCCW',     visible: true },
+  { id: 'rotateCW',      visible: true },
+  { id: 'transformMenu', visible: true },
+  { id: 'sep0',          visible: true },
   { id: 'pdfFollow',     visible: true },
   { id: 'scrollMode',    visible: true },
   { id: 'fitBoard',      visible: true },
@@ -96,6 +114,7 @@ export const DEFAULT_OVERLAY_LAYOUT: ReadonlyArray<Readonly<OverlaySlot>> = [
   { id: 'netLines',      visible: true },
   { id: 'ghosts',        visible: true },
   { id: 'diodeValues',   visible: true },
+  { id: 'traces',        visible: true },
   { id: 'sep2',          visible: true },
   { id: 'partsDropdown', visible: true },
   { id: 'netsDropdown',  visible: true },

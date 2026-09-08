@@ -226,8 +226,8 @@ test.describe('BoardRipper', () => {
     await fileInput.setInputFiles(testFile);
     await expect(page.getByTestId('statusbar')).toContainText('Components');
 
-    const topBtn = page.locator('.toolbar-btn', { hasText: 'Top' });
-    const bottomBtn = page.locator('.toolbar-btn', { hasText: 'Bottom' });
+    const topBtn = page.getByTestId('side-top');
+    const bottomBtn = page.getByTestId('side-bottom');
 
     // After loading: Top active, Bottom inactive
     await expect(topBtn).toHaveClass(/active/);

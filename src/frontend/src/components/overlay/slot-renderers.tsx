@@ -13,6 +13,8 @@ import { DiodeValuesButton } from './slots/DiodeValuesButton';
 import { Separator }        from './slots/Separator';
 import { PartsDropdown }    from './slots/PartsDropdown';
 import { NetsDropdown }     from './slots/NetsDropdown';
+import { SideSwitch }       from './slots/SideSwitch';
+import { ButterflyButton, RotateCcwButton, RotateCwButton, TracesButton, TransformMenuButton } from './slots/TransformButtons';
 
 /**
  * Returns the rendered ReactNode for a given slot id. Any `sep${number}`
@@ -22,6 +24,12 @@ import { NetsDropdown }     from './slots/NetsDropdown';
 export function renderOverlaySlot(id: OverlaySlotId, ctx: SlotCtx): ReactNode {
   if (isSeparatorId(id)) return <Separator />;
   switch (id) {
+    case 'sideSwitch':    return <SideSwitch ctx={ctx} />;
+    case 'butterfly':     return <ButterflyButton ctx={ctx} />;
+    case 'rotateCCW':     return <RotateCcwButton />;
+    case 'rotateCW':      return <RotateCwButton />;
+    case 'transformMenu': return <TransformMenuButton ctx={ctx} />;
+    case 'traces':        return <TracesButton ctx={ctx} />;
     case 'pdfFollow':     return <PdfFollowButton  ctx={ctx} />;
     case 'scrollMode':    return <ScrollModeButton ctx={ctx} />;
     case 'fitBoard':      return <FitBoardButton   ctx={ctx} />;

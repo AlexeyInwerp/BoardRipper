@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Toolbar and board bar
+
+- **The top bar is about the app; the board's bar is about the board.** Side
+  (Top / Bottom), Butterfly, Rotate left / right, Traces and the rarer
+  transforms (180°, mirror, flip axis, under ⋯) moved from the top bar into
+  the board's own control bar, where they lead the row. They act exactly as
+  before, with the same keyboard shortcuts. The top bar keeps the sidebar
+  button, Open, search, 2-window mode, About and the version. Search sits in
+  the centre and says what it searches.
+- If you had arranged the board bar yourself, the new controls are placed in
+  front of your arrangement, not inside it. Hide any of them with a
+  right-click on the bar.
+
 ### Board panel
 
 - **The board's control bar folds away.** The small handle at its right end,

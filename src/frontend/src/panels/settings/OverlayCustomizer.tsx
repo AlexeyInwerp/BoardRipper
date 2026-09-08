@@ -11,7 +11,7 @@
  * its own group below — it is a different question from what is on the bar.
  */
 import { useState, type DragEvent, type ReactNode } from 'react';
-import { IconEye, IconEyeOff, IconArrowUp, IconArrowDown, IconX, IconGripVertical, IconCircuitDiode, IconCpu, IconTopologyStar } from '@tabler/icons-react';
+import { IconEye, IconEyeOff, IconArrowUp, IconArrowDown, IconX, IconGripVertical, IconCircuitDiode, IconCpu, IconTopologyStar, IconStackFront } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import { renderSettingsStore, DEFAULTS } from '../../store/render-settings';
 import { useRenderSettings } from '../../hooks/useRenderSettings';
@@ -31,6 +31,15 @@ const stubCtx: SlotCtx = {
     followPdf: false,
     pdfFileNames: [],
     fileName: '',
+    showTop: true,
+    showBottom: false,
+    butterfly: false,
+    showTraces: true,
+    rotation: 0,
+    flipAxis: 'y',
+    primarySide: 'top',
+    hasLayers: false,
+    hasTraces: true,
   },
   rendererRef: { current: null },
   bareAction: 'pan',
@@ -40,6 +49,7 @@ const stubCtx: SlotCtx = {
    renders nothing without readings, and the two dropdowns render a word that
    does not fit a 40px cell. These get a fixed glyph instead of the live chip. */
 const EDITOR_ICONS: Partial<Record<string, Icon>> = {
+  sideSwitch:    IconStackFront,
   diodeValues:   IconCircuitDiode,
   partsDropdown: IconCpu,
   netsDropdown:  IconTopologyStar,

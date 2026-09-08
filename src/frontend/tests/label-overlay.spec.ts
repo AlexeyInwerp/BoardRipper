@@ -188,13 +188,13 @@ test('overlay on/off visual parity + selection/side/zoom variants', async ({ pag
   await page.screenshot({ path: 'test-results/labels-overlay-selected.png' });
 
   // 4. textFastMode ON, Bottom side.
-  await page.locator('.toolbar-btn', { hasText: 'Bottom' }).click();
+  await page.getByTestId('side-bottom').click();
   await page.waitForTimeout(1_000);
   await page.screenshot({ path: 'test-results/labels-overlay-bottom.png' });
 
   // 5. textFastMode ON, 4 more wheel notches in (deep zoom, pin-net labels).
   // Restore Top so the deep-zoom shot lines up with the earlier top-side view.
-  await page.locator('.toolbar-btn', { hasText: 'Top' }).click();
+  await page.getByTestId('side-top').click();
   await page.waitForTimeout(1_000);
   await zoomAt(page, box, anchors.smallPart.cx, anchors.smallPart.cy, 4);
   await page.waitForTimeout(1_000);

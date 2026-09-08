@@ -16,6 +16,7 @@ import { useOverlayCollapsed, toggleOverlayCollapsed } from '../store/overlay-co
 import { QuickMenu } from '../components/QuickMenu';
 import { isSeparatorId, slotLabel } from '../store/overlay-layout';
 import { showSidebarTab } from '../components/Sidebar.utils';
+import { getFormat } from '../parsers';
 import { useRenderSettings } from '../hooks/useRenderSettings';
 import { renderSettingsStore } from '../store/render-settings';
 import type { SlotCtx } from '../components/overlay/slot-ctx';
@@ -195,6 +196,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
     return () => { disposable.dispose(); visDisposable.dispose(); };
   }, [tabId, props.api]);
 
+  const tabFmt = thisTab?.board ? getFormat(thisTab.board.format) : undefined;
   const slotCtx: SlotCtx = {
     tabId: tabId!,
     thisTab: {
@@ -205,6 +207,15 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
       followPdf,
       pdfFileNames: linkedPdfs,
       fileName: tabFileName,
+      showTop: thisTab?.showTop ?? true,
+      showBottom: thisTab?.showBottom ?? false,
+      butterfly: thisTab?.butterfly ?? false,
+      showTraces: thisTab?.showTraces ?? true,
+      rotation: thisTab?.rotation ?? 0,
+      flipAxis: thisTab?.flipAxis ?? 'y',
+      primarySide: thisTab?.board?.primarySide === 'bottom' ? 'bottom' : 'top',
+      hasLayers: tabFmt?.hasLayers ?? false,
+      hasTraces: tabFmt?.hasTraces ?? false,
     },
     rendererRef,
     bareAction,

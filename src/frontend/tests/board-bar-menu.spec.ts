@@ -80,8 +80,8 @@ test.describe('board ribbon editing', () => {
     await page.getByTestId('bar-menu-reset').click();
     await expect(page.locator(BAR)).not.toHaveClass(/center/);
     const ids = (await layoutIds(page)).map(s => s.id);
-    expect(ids[0]).toBe('pdfFollow');
-    expect(ids.length).toBe(12);
+    expect(ids[0]).toBe('sideSwitch');
+    expect(ids.length).toBe(19);
   });
 
   test('"Customise…" opens Settings on the Board overlay editor', async ({ page }) => {
@@ -113,10 +113,10 @@ test.describe('board ribbon editing', () => {
     await page.getByTestId('overlay-slot-eye-hoverInfo').click();
     await expect(page.locator(BAR).getByTitle(/Hover info/)).toHaveCount(1);
 
-    // Arrows reorder: move scrollMode up above pdfFollow.
-    await page.getByTestId('overlay-slot-up-scrollMode').click();
-    expect((await layoutIds(page)).map(s => s.id).slice(0, 2)).toEqual(['scrollMode', 'pdfFollow']);
-    await expect(page.getByTestId('overlay-slot-up-scrollMode')).toBeDisabled();       // now first
+    // Arrows reorder: move Rotate right up above Rotate left (positions 2,3).
+    await page.getByTestId('overlay-slot-up-rotateCW').click();
+    expect((await layoutIds(page)).map(s => s.id).slice(2, 4)).toEqual(['rotateCW', 'rotateCCW']);
+    await expect(page.getByTestId('overlay-slot-up-sideSwitch')).toBeDisabled();       // first row
 
     // Separators: add one, remove it.
     const before = (await layoutIds(page)).length;
@@ -129,8 +129,8 @@ test.describe('board ribbon editing', () => {
     // Named slots have no remove button.
     await expect(page.getByTestId('overlay-slot-remove-fitBoard')).toHaveCount(0);
 
-    // Reset layout puts scrollMode back and leaves selection behaviour alone.
+    // Reset layout restores the default order and leaves selection behaviour alone.
     await page.getByTestId('overlay-reset-layout-btn').click();
-    expect((await layoutIds(page)).map(s => s.id)[0]).toBe('pdfFollow');
+    expect((await layoutIds(page)).map(s => s.id).slice(0, 4)).toEqual(['sideSwitch', 'butterfly', 'rotateCCW', 'rotateCW']);
   });
 });

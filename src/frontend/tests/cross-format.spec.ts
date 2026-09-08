@@ -193,9 +193,9 @@ test.describe('Cross-Format Renderer Stability', () => {
     await loadBoard(page, BVR3_FILE, '3075');
     await loadBoard(page, BRD_FILE);
 
-    const topBtn = page.locator('.toolbar-btn', { hasText: 'Top' });
-    const bottomBtn = page.locator('.toolbar-btn', { hasText: 'Bottom' });
-    const butterflyBtn = page.locator('.toolbar-btn', { hasText: 'Butterfly' });
+    const topBtn = page.getByTestId('side-top');
+    const bottomBtn = page.getByTestId('side-bottom');
+    const butterflyBtn = page.getByTestId('butterfly-btn');
 
     // Toggle layers on BRD tab
     await bottomBtn.click();
@@ -422,9 +422,9 @@ test.describe('Cross-Format Renderer Stability', () => {
     await loadBoard(page, BVR3_FILE, '3075');
     await loadBoard(page, BRD_FILE);
 
-    const cwBtn = page.locator('.toolbar-btn-icon', { hasText: '↻' });
-    const hBtn = page.locator('.toolbar-btn-icon', { hasText: '⇔' });
-    const vBtn = page.locator('.toolbar-btn-icon', { hasText: '⇕' });
+    const cwBtn = page.getByTestId('rotate-cw');
+    const hBtn = { click: async () => { await page.getByTestId('transform-menu').click(); await page.getByTestId('transform-mirror-h').click(); } };
+    const vBtn = { click: async () => { await page.getByTestId('transform-menu').click(); await page.getByTestId('transform-mirror-v').click(); } };
 
     // Rotate and mirror on BRD tab
     await cwBtn.click();
@@ -584,7 +584,7 @@ test.describe('Cross-Format Renderer Stability', () => {
     const brdTab = page.locator('.dv-tab', { hasText: '820-02935-05.brd' }).first();
 
     // Toggle bottom view on BRD (flipY=true) — this exercises the flipY path
-    const bottomBtn = page.locator('.toolbar-btn', { hasText: 'Bottom' });
+    const bottomBtn = page.getByTestId('side-bottom');
     await bottomBtn.click();
     await page.waitForTimeout(300);
 
@@ -599,7 +599,7 @@ test.describe('Cross-Format Renderer Stability', () => {
     await page.waitForTimeout(300);
 
     // Re-enable top view
-    const topBtn = page.locator('.toolbar-btn', { hasText: 'Top' });
+    const topBtn = page.getByTestId('side-top');
     await topBtn.click();
     await page.waitForTimeout(300);
 

@@ -36,8 +36,9 @@ test.describe('Overlay layout reconciliation', () => {
     });
 
     expect(result.map(s => s.id)).toEqual([
+      'sideSwitch', 'butterfly', 'rotateCCW', 'rotateCW', 'transformMenu', 'sep0',
       'pdfFollow', 'scrollMode', 'fitBoard', 'sep1',
-      'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'sep2',
+      'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'traces', 'sep2',
       'partsDropdown', 'netsDropdown',
     ]);
     expect(result.every(s => s.visible)).toBe(true);
@@ -59,10 +60,12 @@ test.describe('Overlay layout reconciliation', () => {
     });
 
     expect(result.find(s => s.id === 'unknownLegacySlot')).toBeUndefined();
-    expect(result.slice(0, 2)).toEqual([
-      { id: 'fitBoard', visible: false },
-      { id: 'pdfFollow', visible: true },
-    ]);
+    // The user's own order and visibility survive (fitBoard first, hidden),
+    // behind the transform block that every pre-v0.39 layout gains in front.
+    const ids = result.map(s => s.id);
+    expect(ids.slice(0, 6)).toEqual(['sideSwitch', 'butterfly', 'rotateCCW', 'rotateCW', 'transformMenu', 'sep0']);
+    expect(ids.indexOf('fitBoard')).toBeLessThan(ids.indexOf('pdfFollow'));
+    expect(result.find(s => s.id === 'fitBoard')?.visible).toBe(false);
     expect(result.find(s => s.id === 'partsDropdown')?.visible).toBe(true);
   });
 
@@ -86,8 +89,9 @@ test.describe('Overlay layout reconciliation', () => {
     // saved [pdfFollow, fitBoard] gains scrollMode BETWEEN them, and the
     // whole thing comes out in default order.
     expect(ids).toEqual([
+      'sideSwitch', 'butterfly', 'rotateCCW', 'rotateCW', 'transformMenu', 'sep0',
       'pdfFollow', 'scrollMode', 'fitBoard', 'sep1',
-      'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'sep2',
+      'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'traces', 'sep2',
       'partsDropdown', 'netsDropdown',
     ]);
   });
@@ -106,7 +110,7 @@ test.describe('Overlay layout reconciliation', () => {
       ]);
     });
     const ids = result.map(s => s.id);
-    expect(ids[0]).toBe('pdfFollow');
+    expect(ids[0]).toBe('sideSwitch');
     expect(ids.indexOf('netsDropdown')).toBeLessThan(ids.indexOf('partsDropdown'));      // user order kept (nets was saved first)
     expect(result.find(s => s.id === 'partsDropdown')?.visible).toBe(false);             // user visibility kept
   });
@@ -237,11 +241,12 @@ test.describe('Overlay customizer DnD', () => {
       const win = window as Window & { __renderSettings?: { settings: { overlayLayout: Array<{ id: string; visible: boolean }> } } };
       return win.__renderSettings!.settings.overlayLayout;
     });
-    expect(layout.length).toBe(12);
+    expect(layout.length).toBe(19);
     expect(layout.every(s => s.visible)).toBe(true);
     expect(layout.map(s => s.id)).toEqual([
+      'sideSwitch', 'butterfly', 'rotateCCW', 'rotateCW', 'transformMenu', 'sep0',
       'pdfFollow', 'scrollMode', 'fitBoard', 'sep1',
-      'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'sep2',
+      'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'traces', 'sep2',
       'partsDropdown', 'netsDropdown',
     ]);
   });

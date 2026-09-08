@@ -55,7 +55,7 @@ test.describe('Renderer Lifecycle Stability', () => {
       await page.waitForTimeout(300);
 
       // Toggle layer buttons rapidly
-      const topBtn = page.locator('.toolbar-btn', { hasText: 'Top' });
+      const topBtn = page.getByTestId('side-top');
       if (await topBtn.isVisible()) {
         await topBtn.click();
         await topBtn.click();
