@@ -19,10 +19,12 @@
   not cover the part you are working on), and Orientation Horizontal or
   Vertical. Both are remembered.
 - The board panel's ☰ button now looks like the rest of the board's controls.
-- **Find part and Find net are buttons now**, a magnifier with a chip or a
-  net inside. Click one and the field opens next to it; Escape or a choice
-  closes it. In the vertical bar the field pops out beside the column, so
-  the column stays one button wide.
+- **In the vertical bar, Find part and Find net fold into buttons**, a
+  magnifier with a chip or a net inside, so the column stays one button
+  wide. Click one and the field pops out beside the column; Escape or a
+  choice folds it back. The horizontal bar keeps the plain fields.
+- **The suggestion list stays inside the window.** It shrinks to the room
+  under the field, and opens upward when there is more room above.
 
 ### Sidebar
 

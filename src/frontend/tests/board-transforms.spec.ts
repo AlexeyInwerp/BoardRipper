@@ -103,12 +103,18 @@ test.describe('board transforms in the ribbon', () => {
     await expect(page.getByTestId('side-top')).toBeVisible();
   });
 
-  test('Find part / Find net are icon triggers; the field opens on click and closes on Escape', async ({ page }) => {
+  test('Find part / Find net: inline fields in the row, icon triggers only in the column', async ({ page }) => {
     await openFixture(page);
     const bar = page.locator(BAR);
+    // Row: the field is simply there, no button in front of it.
+    await expect(bar.getByTestId('parts-filter-input')).toBeVisible();
+    await expect(bar.getByTestId('nets-filter-input')).toBeVisible();
+    await expect(bar.getByTestId('parts-search-btn')).toHaveCount(0);
+    // Column: the field folds behind the magnifier and opens on click.
+    await page.click(BAR, { button: 'right' });
+    await page.getByTestId('bar-menu-vertical').click();
     await expect(bar.getByTestId('parts-search-btn')).toBeVisible();
     await expect(bar.getByTestId('parts-filter-input')).toHaveCount(0);       // no field until asked
-    await expect(bar.getByText('Parts', { exact: true })).toHaveCount(0);      // no word on the bar
     await bar.getByTestId('parts-search-btn').click();
     const input = bar.getByTestId('parts-filter-input');
     await expect(input).toBeVisible();
@@ -122,6 +128,35 @@ test.describe('board transforms in the ribbon', () => {
     await expect(bar.getByTestId('nets-filter-input')).toBeFocused();
     await page.keyboard.press('Escape');
     await expect(bar.getByTestId('nets-filter-input')).toHaveCount(0);
+    await page.click(BAR, { button: 'right' });
+    await page.getByTestId('board-bar-menu').getByRole('menuitemcheckbox', { name: 'Horizontal', exact: true }).click();
+    await expect(bar.getByTestId('parts-filter-input')).toBeVisible();
+  });
+
+  test('the suggestion list never runs off the bottom of the window', async ({ page }) => {
+    await page.setViewportSize({ width: 1100, height: 420 });
+    await openFixture(page);
+    // Park the ribbon low enough that 300px of list would not fit under it
+    // (through the store: in a window this short the ribbon menu itself is
+    // taller than the viewport).
+    await page.evaluate(() => {
+      const w = window as Window & { __renderSettings?: { setOverlayPosition: (p: string) => void; setOverlayFloatPos: (x: number, y: number) => void } };
+      w.__renderSettings!.setOverlayPosition('floating');
+      w.__renderSettings!.setOverlayFloatPos(40, 260);
+    });
+    await expect(page.locator(BAR)).toHaveAttribute('data-position', 'floating');
+    const input = page.locator(BAR).getByTestId('parts-filter-input');
+    await input.click();
+    const list = page.locator('.overlay-dropdown-popover');
+    await expect(list).toBeVisible();
+    const box = (await list.boundingBox())!;
+    const inputBox = (await input.boundingBox())!;
+    expect(box.y + box.height).toBeLessThanOrEqual(420);
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    // Rows are still usable: the list is either under the field or above it, never over it.
+    expect(box.y >= inputBox.y + inputBox.height || box.y + box.height <= inputBox.y).toBeTruthy();
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => (window as Window & { __renderSettings?: { setOverlayPosition: (p: string) => void } }).__renderSettings!.setOverlayPosition('left'));
   });
 
   test('vertical column is one button wide: no side words, search pops out beside it', async ({ page }) => {

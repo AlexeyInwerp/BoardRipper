@@ -41,7 +41,7 @@ export interface SuggestionListProps {
  */
 export function SuggestionList({ groups, highlight, onHighlight, onSelect, onClose, anchorRef, selectedName }: SuggestionListProps) {
   const listRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; left: number; width: number; maxHeight: number } | null>(null);
 
   const flatRows: DropdownPopoverRow[] = groups.flatMap(g => g.rows);
   const overflow = flatRows.length > MAX_RENDERED_ROWS;
@@ -49,14 +49,24 @@ export function SuggestionList({ groups, highlight, onHighlight, onSelect, onClo
   const safeHighlight = cappedFlat.length === 0 ? 0 : Math.min(highlight, cappedFlat.length - 1);
 
   // Anchor the portalled list under the input, refreshed on scroll/resize so
-  // the list follows if the layout moves while it's open.
+  // the list follows if the layout moves while it's open. The list never
+  // leaves the viewport: its height is capped to the room under the field,
+  // and when there is more room above (a ribbon parked near the bottom, a
+  // short window) it opens upward instead.
   useLayoutEffect(() => {
     const updatePos = () => {
       const r = anchorRef.current?.getBoundingClientRect();
       if (!r) return;
-      const minWidth = 200;
-      const width = Math.max(r.width, minWidth);
-      setPos({ top: r.bottom + 4, left: r.left, width });
+      const GAP = 4, MARGIN = 8, PREFERRED = 300, MIN_BELOW = 160;
+      const width = Math.max(r.width, 200);
+      const left = Math.max(MARGIN, Math.min(r.left, window.innerWidth - width - MARGIN));
+      const below = window.innerHeight - r.bottom - GAP - MARGIN;
+      const above = r.top - GAP - MARGIN;
+      if (below < Math.min(PREFERRED, MIN_BELOW) && above > below) {
+        setPos({ bottom: window.innerHeight - r.top + GAP, left, width, maxHeight: Math.min(PREFERRED, above) });
+      } else {
+        setPos({ top: r.bottom + GAP, left, width, maxHeight: Math.max(80, Math.min(PREFERRED, below)) });
+      }
     };
     updatePos();
     window.addEventListener('scroll', updatePos, true);
@@ -128,7 +138,7 @@ export function SuggestionList({ groups, highlight, onHighlight, onSelect, onClo
     <div
       ref={listRef}
       className="overlay-dropdown-popover"
-      style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width }}
+      style={{ position: 'fixed', top: pos.top, bottom: pos.bottom, left: pos.left, width: pos.width, maxHeight: pos.maxHeight }}
     >
       <div className="overlay-dropdown-list">
         {rendered.length === 0

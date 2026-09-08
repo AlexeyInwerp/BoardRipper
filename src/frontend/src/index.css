@@ -8244,13 +8244,12 @@ body {
   align-items: center;
   gap: 3px;
 }
-/* Magnifier with the searched thing inside the lens (chip / net). Tabler's
-   lens is the circle at (10,10) r7 of a 24 box, so at 16px an 8px inner icon
-   sits at ~2.7px from the top-left of the glyph. */
-.overlay-search-ico { position: relative; width: 16px; height: 16px; display: inline-flex; }
-.overlay-search-ico-inner { position: absolute; left: 2.7px; top: 2.7px; }
-/* The field exists only while open; in the row it opens inline. */
-.overlay-dropdown-wrap.expanded .overlay-filter-input { width: 160px; }
+/* Vertical ribbon only: the magnifier with the searched thing inside the
+   lens (chip / net). Tabler's lens is the circle at (10,10) r7 of a 24 box,
+   so at 20px it is centred at 8.33px with radius 5.83px, and a 10px inner
+   icon centred on it sits at 3.33px from the glyph's top-left. */
+.overlay-search-ico { position: relative; width: 20px; height: 20px; display: inline-flex; }
+.overlay-search-ico-inner { position: absolute; left: 3.33px; top: 3.33px; }
 /* Board overlay editor (Settings ▸ Board ▸ Board overlay): one list in
    ribbon order. Row = grip · live chip · name · eye · up · down · (× on
    separators). Hidden rows dim; drag reorders. */
