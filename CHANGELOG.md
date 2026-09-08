@@ -1,6 +1,6 @@
 # BoardRipper changelog
 
-## Unreleased
+## v0.39.0 — 2026-09-08
 
 ### Toolbar and board bar
 
