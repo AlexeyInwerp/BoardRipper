@@ -14,6 +14,11 @@
 - If you had arranged the board bar yourself, the new controls are placed in
   front of your arrangement, not inside it. Hide any of them with a
   right-click on the bar.
+- **The board bar can float and stand upright.** Right-click it: Position
+  Left, Centred or Floating (then drag it by its handle to wherever it does
+  not cover the part you are working on), and Orientation Horizontal or
+  Vertical. Both are remembered.
+- The board panel's ☰ button now looks like the rest of the board's controls.
 
 ### Board panel
 

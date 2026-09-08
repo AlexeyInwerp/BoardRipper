@@ -132,6 +132,7 @@ export function OverlayCustomizer() {
   const overlayPartsOnSelect = s.overlayPartsOnSelect ?? DEFAULTS.overlayPartsOnSelect;
   const overlayNetsOnSelect  = s.overlayNetsOnSelect  ?? DEFAULTS.overlayNetsOnSelect;
   const overlayPosition      = s.overlayPosition      ?? DEFAULTS.overlayPosition;
+  const overlayOrientation   = s.overlayOrientation   ?? DEFAULTS.overlayOrientation;
   const searchAutoDim        = s.searchAutoDim        ?? DEFAULTS.searchAutoDim;
   const layout: OverlaySlot[] = (s.overlayLayout ?? DEFAULTS.overlayLayout) as OverlaySlot[];
   const hiddenCount = layout.filter(x => !x.visible).length;
@@ -194,12 +195,25 @@ export function OverlayCustomizer() {
           &#x21BA; Reset layout
         </button>
         <span style={{ flex: 1 }} />
-        <span role="radiogroup" aria-label="Overlay row position" style={{ display: 'inline-flex', gap: 10, fontSize: 12 }}>
-          {(['left', 'center'] as const).map(pos => (
-            <label key={pos}>
+      </div>
+      <div className="settings-row" style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12 }}>
+        <span role="radiogroup" aria-label="Overlay position" style={{ display: 'inline-flex', gap: 10, alignItems: 'center' }}>
+          <span className="settings-label" style={{ marginBottom: 0 }}>Position</span>
+          {([['left', 'Left'], ['center', 'Centred'], ['floating', 'Floating']] as const).map(([pos, label]) => (
+            <label key={pos} title={pos === 'floating' ? 'Drag the bar by its handle' : undefined}>
               <input type="radio" name="overlay-position" checked={overlayPosition === pos}
                 onChange={() => safe(() => renderSettingsStore.setOverlayPosition(pos))} />
-              {' '}{pos === 'left' ? 'Left' : 'Centred'}
+              {' '}{label}
+            </label>
+          ))}
+        </span>
+        <span role="radiogroup" aria-label="Overlay orientation" style={{ display: 'inline-flex', gap: 10, alignItems: 'center' }}>
+          <span className="settings-label" style={{ marginBottom: 0 }}>Orientation</span>
+          {([['horizontal', 'Horizontal'], ['vertical', 'Vertical']] as const).map(([o, label]) => (
+            <label key={o}>
+              <input type="radio" name="overlay-orientation" checked={overlayOrientation === o}
+                onChange={() => safe(() => renderSettingsStore.setOverlayOrientation(o))} />
+              {' '}{label}
             </label>
           ))}
         </span>

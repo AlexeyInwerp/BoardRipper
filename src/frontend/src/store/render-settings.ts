@@ -389,7 +389,12 @@ export interface RenderSettings {
   overlayNetsOnSelect: 'highlight' | 'panIfOffscreen' | 'panZoomFit';
   /** Overlay row position. 'left' (default) keeps the row in its
    *  historical position. 'center' centers it horizontally. */
-  overlayPosition: 'left' | 'center';
+  overlayPosition: 'left' | 'center' | 'floating';
+  /** Ribbon runs along the top (row) or down the side (column). */
+  overlayOrientation: 'horizontal' | 'vertical';
+  /** Floating position, px from the board panel's top-left corner. */
+  overlayFloatX: number;
+  overlayFloatY: number;
   /** Auto-enable selection-dim while a search-driven selection (focusPart /
    *  focusNet) is active, even if the user's showNetDim toggle is off. */
   searchAutoDim: boolean;
@@ -682,6 +687,9 @@ export const DEFAULTS: RenderSettings = {
   overlayPartsOnSelect: 'panZoomFit',
   overlayNetsOnSelect: 'panZoomFit',
   overlayPosition: 'left',
+  overlayOrientation: 'horizontal',
+  overlayFloatX: 8,
+  overlayFloatY: 6,
   searchAutoDim: true,
   autoMarkMechanical: true,
 };
@@ -1485,9 +1493,14 @@ function loadFromStorage(): RenderSettings {
         result.overlayNetsOnSelect = netsMode;
       }
 
-      if (parsed.overlayPosition === 'left' || parsed.overlayPosition === 'center') {
+      if (parsed.overlayPosition === 'left' || parsed.overlayPosition === 'center' || parsed.overlayPosition === 'floating') {
         result.overlayPosition = parsed.overlayPosition;
       }
+      if (parsed.overlayOrientation === 'horizontal' || parsed.overlayOrientation === 'vertical') {
+        result.overlayOrientation = parsed.overlayOrientation;
+      }
+      if (typeof parsed.overlayFloatX === 'number' && Number.isFinite(parsed.overlayFloatX)) result.overlayFloatX = parsed.overlayFloatX;
+      if (typeof parsed.overlayFloatY === 'number' && Number.isFinite(parsed.overlayFloatY)) result.overlayFloatY = parsed.overlayFloatY;
 
       if (parsed.pdfRenderMode === 'auto' || parsed.pdfRenderMode === 'standard' || parsed.pdfRenderMode === 'always-tile') {
         result.pdfRenderMode = parsed.pdfRenderMode;
@@ -1644,7 +1657,7 @@ class RenderSettingsStore extends Emitter {
   }
   /** Layout and row position only — selection behaviour is left alone. */
   resetOverlayLayout() {
-    this._global = { ...this._global, overlayLayout: DEFAULT_OVERLAY_LAYOUT.map(s => ({ ...s })), overlayPosition: 'left' };
+    this._global = { ...this._global, overlayLayout: DEFAULT_OVERLAY_LAYOUT.map(s => ({ ...s })), overlayPosition: 'left', overlayOrientation: 'horizontal', overlayFloatX: 8, overlayFloatY: 6 };
     saveToStorage(this._global);
     this.recomputeEffective();
     this.notify();
@@ -1693,8 +1706,24 @@ class RenderSettingsStore extends Emitter {
     this.notify();
   }
 
-  setOverlayPosition(pos: 'left' | 'center') {
+  setOverlayPosition(pos: 'left' | 'center' | 'floating') {
     this._global = { ...this._global, overlayPosition: pos };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  setOverlayOrientation(o: 'horizontal' | 'vertical') {
+    if (this._global.overlayOrientation === o) return;
+    this._global = { ...this._global, overlayOrientation: o };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  /** Floating ribbon position, px from the board panel's top-left. */
+  setOverlayFloatPos(x: number, y: number) {
+    this._global = { ...this._global, overlayFloatX: Math.round(x), overlayFloatY: Math.round(y) };
     saveToStorage(this._global);
     this.recomputeEffective();
     this.notify();
@@ -1715,6 +1744,9 @@ class RenderSettingsStore extends Emitter {
       overlayPartsOnSelect: 'panZoomFit',
       overlayNetsOnSelect: 'panZoomFit',
       overlayPosition: 'left',
+      overlayOrientation: 'horizontal',
+      overlayFloatX: 8,
+      overlayFloatY: 6,
     };
     saveToStorage(this._global);
     this.recomputeEffective();

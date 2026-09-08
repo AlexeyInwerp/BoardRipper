@@ -3135,19 +3135,22 @@ body {
   right: 8px;
   z-index: 20;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 4px;
-}
-
-.board-sidebar-toggle {
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  padding: 3px;
   background: var(--chip-bg);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+}
+/* The board sidebar's toggle is a ribbon button: same size, hover and
+   active treatment as .board-netlines-toggle, in a chip like the ribbon's. */
+.board-sidebar-toggle {
+  width: 34px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
   color: var(--text-secondary);
-  font-size: 14px;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -3155,15 +3158,14 @@ body {
   padding: 0;
   line-height: 1;
 }
-
 .board-sidebar-toggle:hover {
   color: var(--text-primary);
-  background: rgba(26, 26, 46, 0.9);
+  background: rgba(255, 255, 255, 0.08);
 }
-
 .board-sidebar-toggle.active {
   color: var(--accent-text);
-  border-color: var(--accent);
+  background: var(--surface-hover);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 
@@ -3189,6 +3191,25 @@ body {
   left: 50%;
   transform: translateX(-50%);
 }
+/* Floating: left/top come from settings (inline); the shade handle is the grip. */
+.board-status-indicators.floating { transform: none; }
+.board-status-indicators.floating .overlay-collapse { cursor: grab; }
+.board-status-indicators.floating .overlay-collapse:active { cursor: grabbing; }
+/* Vertical: the same chip as a column. Separators turn into horizontal
+   rules, the side switch stacks, the handle sits at the foot. */
+.board-status-indicators.vertical {
+  flex-direction: column;
+  align-items: stretch;
+  max-height: calc(100% - 12px);
+  overflow: hidden;
+}
+.board-status-indicators.vertical .overlay-sep { width: auto; height: 8px; }
+.board-status-indicators.vertical .overlay-seg { flex-direction: column; height: auto; }
+.board-status-indicators.vertical .overlay-seg-btn { min-width: 0; justify-content: flex-start; height: 28px; }
+.board-status-indicators.vertical .overlay-seg-btn + .overlay-seg-btn { border-left: none; border-top: 1px solid rgba(255,255,255,0.1); }
+.board-status-indicators.vertical .overlay-collapse { width: 100%; height: 18px; }
+.board-status-indicators.vertical .board-netlines-toggle,
+.board-status-indicators.vertical .overlay-dropdown-wrap > button { width: 100%; justify-content: center; }
 
 /* Window-shade handle at the bar's RIGHT end (the Classic Mac collapse box).
    Collapsed, the bar is just the handle at its left anchor: same chip, same

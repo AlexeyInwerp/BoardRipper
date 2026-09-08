@@ -11,7 +11,7 @@ import { log } from '../store/log-store';
 import { useBareScrollAction } from '../store/scroll-mode';
 import { obdStore, extractBoardNumberFromFilename } from '../store/obd-store';
 import { renderOverlayLayout } from '../components/overlay/slot-renderers';
-import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
+import { IconChevronLeft, IconChevronRight, IconChevronUp, IconChevronDown, IconLayoutSidebarRight } from '@tabler/icons-react';
 import { useOverlayCollapsed, toggleOverlayCollapsed } from '../store/overlay-collapse-store';
 import { QuickMenu } from '../components/QuickMenu';
 import { isSeparatorId, slotLabel } from '../store/overlay-layout';
@@ -45,6 +45,46 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   const overlayCollapsed = useOverlayCollapsed();
   const [barMenu, setBarMenu] = useState<{ x: number; y: number } | null>(null);
   const closeBarMenu = useCallback(() => setBarMenu(null), []);
+  // Floating ribbon: the shade handle doubles as the drag grip. A press that
+  // moves less than 4px is a click (fold/unfold); more is a drag, committed
+  // to settings on release and clamped to the panel. Move/up are tracked on
+  // window for the life of the drag, so the bar keeps following even when a
+  // clamp lets the pointer slide off the handle.
+  const barRef = useRef<HTMLDivElement>(null);
+  const floatingRef = useRef(renderSettings.overlayPosition === 'floating');
+  floatingRef.current = renderSettings.overlayPosition === 'floating';
+  const floatPosRef = useRef({ x: renderSettings.overlayFloatX, y: renderSettings.overlayFloatY });
+  floatPosRef.current = { x: renderSettings.overlayFloatX, y: renderSettings.overlayFloatY };
+  const onHandlePointerDown = useCallback((e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    if (!floatingRef.current) return;                     // docked: plain click handled by onClick
+    e.preventDefault();
+    const start = { x: e.clientX, y: e.clientY };
+    const origin = floatPosRef.current;
+    let moved = false;
+    const onMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - start.x, dy = ev.clientY - start.y;
+      if (!moved && Math.hypot(dx, dy) < 4) return;
+      moved = true;
+      const host = containerRef.current?.getBoundingClientRect();
+      const bar = barRef.current;
+      if (!host || !bar) return;
+      const x = Math.max(0, Math.min(origin.x + dx, host.width - bar.offsetWidth));
+      const y = Math.max(0, Math.min(origin.y + dy, host.height - bar.offsetHeight));
+      bar.style.left = `${x}px`; bar.style.top = `${y}px`;
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove, true);
+      window.removeEventListener('pointerup', onUp, true);
+      window.removeEventListener('pointercancel', onUp, true);
+      if (!moved) { toggleOverlayCollapsed(); return; }
+      const bar = barRef.current;
+      if (bar) renderSettingsStore.setOverlayFloatPos(parseFloat(bar.style.left) || 0, parseFloat(bar.style.top) || 0);
+    };
+    window.addEventListener('pointermove', onMove, true);
+    window.addEventListener('pointerup', onUp, true);
+    window.addEventListener('pointercancel', onUp, true);
+  }, []);
   const prevLayerCountRef = useRef(0);
 
   // Register per-tab handler for toolbar → board search
@@ -246,9 +286,10 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
         <button
           className={`board-sidebar-toggle ${sidebarOpen ? 'active' : ''}`}
           onClick={() => setSidebarOpen(!sidebarOpen)}
+          aria-pressed={sidebarOpen}
           title={sidebarOpen ? 'Hide board panel (Layers · Info · Search · Worklist)' : 'Show board panel (Layers · Info · Search · Worklist)'}
         >
-          ☰
+          <IconLayoutSidebarRight size={16} />
         </button>
       </div>
       {/* Overlay controls. The handle sits at the RIGHT end, where the Classic
@@ -256,9 +297,13 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
           anchor until only the handle is left, and the board gets the room.
           Persisted across tabs and reloads. */}
       <div
-        className={`board-status-indicators${renderSettings.overlayPosition === 'center' ? ' center' : ''}${overlayCollapsed ? ' collapsed' : ''}`}
+        ref={barRef}
+        className={`board-status-indicators${renderSettings.overlayPosition === 'center' ? ' center' : ''}${renderSettings.overlayPosition === 'floating' ? ' floating' : ''}${renderSettings.overlayOrientation === 'vertical' ? ' vertical' : ''}${overlayCollapsed ? ' collapsed' : ''}`}
+        style={renderSettings.overlayPosition === 'floating' ? { left: renderSettings.overlayFloatX, top: renderSettings.overlayFloatY } : undefined}
         data-testid="board-overlay-bar"
         data-collapsed={overlayCollapsed ? 'true' : 'false'}
+        data-orientation={renderSettings.overlayOrientation}
+        data-position={renderSettings.overlayPosition}
         onContextMenu={(e) => { e.preventDefault(); setBarMenu({ x: e.clientX, y: e.clientY }); }}
       >
         {!overlayCollapsed && renderOverlayLayout(renderSettings.overlayLayout, slotCtx)}
@@ -268,10 +313,15 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
           data-testid="overlay-collapse"
           aria-expanded={!overlayCollapsed}
           aria-label={overlayCollapsed ? 'Show board controls' : 'Hide board controls'}
-          title={overlayCollapsed ? 'Show board controls' : 'Hide board controls'}
-          onClick={toggleOverlayCollapsed}
+          title={renderSettings.overlayPosition === 'floating'
+            ? (overlayCollapsed ? 'Show board controls · drag to move' : 'Hide board controls · drag to move')
+            : (overlayCollapsed ? 'Show board controls' : 'Hide board controls')}
+          onPointerDown={onHandlePointerDown}
+          onClick={renderSettings.overlayPosition === 'floating' ? undefined : toggleOverlayCollapsed}
         >
-          {overlayCollapsed ? <IconChevronRight size={14} stroke={2} /> : <IconChevronLeft size={14} stroke={2} />}
+          {renderSettings.overlayOrientation === 'vertical'
+            ? (overlayCollapsed ? <IconChevronDown size={14} stroke={2} /> : <IconChevronUp size={14} stroke={2} />)
+            : (overlayCollapsed ? <IconChevronRight size={14} stroke={2} /> : <IconChevronLeft size={14} stroke={2} />)}
         </button>
       </div>
       {/* Right-click on the ribbon: edit it where it lives. Show/hide each
@@ -296,9 +346,13 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
                 onSelect: () => renderSettingsStore.setOverlaySlotVisible(sl.id, !sl.visible),
               })),
             { kind: 'sep' },
-            { kind: 'header', label: 'Row' },
-            { kind: 'check', label: 'Left', checked: renderSettings.overlayPosition !== 'center', onSelect: () => renderSettingsStore.setOverlayPosition('left') },
+            { kind: 'header', label: 'Position' },
+            { kind: 'check', label: 'Left', checked: renderSettings.overlayPosition === 'left', onSelect: () => renderSettingsStore.setOverlayPosition('left') },
             { kind: 'check', label: 'Centred', checked: renderSettings.overlayPosition === 'center', onSelect: () => renderSettingsStore.setOverlayPosition('center') },
+            { kind: 'check', label: 'Floating · drag the handle', checked: renderSettings.overlayPosition === 'floating', testId: 'bar-menu-floating', onSelect: () => renderSettingsStore.setOverlayPosition('floating') },
+            { kind: 'header', label: 'Orientation' },
+            { kind: 'check', label: 'Horizontal', checked: renderSettings.overlayOrientation !== 'vertical', onSelect: () => renderSettingsStore.setOverlayOrientation('horizontal') },
+            { kind: 'check', label: 'Vertical', checked: renderSettings.overlayOrientation === 'vertical', testId: 'bar-menu-vertical', onSelect: () => renderSettingsStore.setOverlayOrientation('vertical') },
             { kind: 'sep' },
             { label: overlayCollapsed ? 'Unfold controls' : 'Fold controls', onSelect: toggleOverlayCollapsed },
             { label: 'Customise order and separators…', testId: 'bar-menu-customise', onSelect: () => {

@@ -65,7 +65,7 @@ test.describe('board ribbon editing', () => {
   test('row position, fold and reset from the menu', async ({ page }) => {
     await openFixture(page);
     await page.click(BAR, { button: 'right' });
-    await page.getByTestId('board-bar-menu').getByRole('menuitemcheckbox', { name: 'Centred' }).click();
+    await page.getByTestId('board-bar-menu').getByRole('menuitemcheckbox', { name: 'Centred', exact: true }).click();
     await expect(page.locator(BAR)).toHaveClass(/center/);
 
     await page.click(BAR, { button: 'right' });
@@ -82,6 +82,50 @@ test.describe('board ribbon editing', () => {
     const ids = (await layoutIds(page)).map(s => s.id);
     expect(ids[0]).toBe('sideSwitch');
     expect(ids.length).toBe(19);
+  });
+
+  test('orientation and floating from the menu; the handle drags the floating bar', async ({ page }) => {
+    await openFixture(page);
+    const bar = page.locator(BAR);
+    await page.click(BAR, { button: 'right' });
+    await page.getByTestId('bar-menu-vertical').click();
+    await expect(bar).toHaveAttribute('data-orientation', 'vertical');
+    await expect(bar).toHaveClass(/vertical/);
+    // Column: the side switch stacks (Bottom below Top, same x).
+    const t = (await page.getByTestId('side-top').boundingBox())!;
+    const b = (await page.getByTestId('side-bottom').boundingBox())!;
+    expect(b.y).toBeGreaterThan(t.y);
+    expect(Math.abs(b.x - t.x)).toBeLessThan(2);
+
+    // Drag test in the roomier horizontal orientation.
+    await page.click(BAR, { button: 'right' });
+    await page.getByTestId('board-bar-menu').getByRole('menuitemcheckbox', { name: 'Horizontal', exact: true }).click();
+    await page.click(BAR, { button: 'right' });
+    await page.getByTestId('bar-menu-floating').click();
+    await expect(bar).toHaveAttribute('data-position', 'floating');
+    const before = (await bar.boundingBox())!;
+    const handle = (await page.getByTestId('overlay-collapse').boundingBox())!;
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + 120, handle.y + 90, { steps: 8 });
+    await page.mouse.up();
+    const after = (await bar.boundingBox())!;
+    expect(after.x - before.x).toBeGreaterThan(80);
+    expect(after.y - before.y).toBeGreaterThan(60);
+    await expect(bar).toHaveAttribute('data-collapsed', 'false');          // a drag is not a click
+    const saved = await page.evaluate(() => {
+      const w = window as Window & { __renderSettings?: { settings: { overlayFloatX: number; overlayFloatY: number } } };
+      return w.__renderSettings!.settings;
+    });
+    expect(saved.overlayFloatX).toBeGreaterThan(80);
+    // A press without movement still folds.
+    await page.getByTestId('overlay-collapse').click();
+    await expect(bar).toHaveAttribute('data-collapsed', 'true');
+    // Back to a docked row.
+    await page.click(BAR, { button: 'right' });
+    await page.getByTestId('board-bar-menu').getByRole('menuitemcheckbox', { name: 'Left', exact: true }).click();
+    await expect(bar).toHaveAttribute('data-position', 'left');
+    await expect(bar).toHaveAttribute('data-orientation', 'horizontal');
   });
 
   test('"Customise…" opens Settings on the Board overlay editor', async ({ page }) => {
