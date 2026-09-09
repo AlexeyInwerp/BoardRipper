@@ -765,13 +765,17 @@ function* etchTrackSubclasses(db: AllegroDb): Generator<number> {
  * Lowest ETCH subclass a file actually uses — the subclass of its first etch
  * layer, and therefore the origin to rebase every trace's layer index against.
  *
- * ETCH subclass numbering is not consistent across writers: most files number
- * the stackup 1-based (TOP = 1), but some — Compal LA-P161P (v18.0.0) — number
- * it 0-based (TOP = 0, BOTTOM = 1). Subtracting a fixed 1 collapsed subclasses
- * 0 and 1 onto the same layer index on those files, so top and bottom copper
- * landed in one container and the Layers panel could not separate them.
- * Deriving the base from the file is self-describing and reproduces the old
- * `subclass - 1` exactly on any 1-based file.
+ * ETCH subclass numbering is not consistent across writers, and — measured
+ * across a 24-board v16 corpus plus LA-P161P — **0-based is the norm**: 23 of
+ * 24 number the stackup TOP = 0, and only one small ODD board starts at 1. The
+ * old fixed `subclass - 1` was therefore wrong on nearly every Allegro board,
+ * not on an exotic few: it collapsed subclasses 0 and 1 onto layer index 0
+ * (merging TOP with the second layer) and shifted every layer above them one
+ * name out of step with `layerNames`. On a 2-layer file like LA-P161P that
+ * showed up as top and bottom copper in a single container.
+ *
+ * Deriving the base from the file is self-describing and still reproduces the
+ * old `subclass - 1` exactly on a genuinely 1-based file.
  *
  * Returns 0 for a file with no etch tracks at all.
  */

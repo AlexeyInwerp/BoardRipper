@@ -405,14 +405,30 @@ x23=88  x2B=76  x2D=72  x33=76  x34=36  x3A=16
   must be) and the units byte reads `0x01` = MILS. Both would be garbage if
   the stream were 32 bytes out.
 
-- **ETCH subclass numbering is per-file, not fixed**: a copper track's layer
-  index comes from its `layer.subclass`, but writers disagree on the origin.
-  Most files number the etch stackup **1-based** (TOP = 1), while Compal
-  LA-P161P (v18.0.0) numbers it **0-based** (TOP = 0, BOTTOM = 1). The old
-  fixed rule `subclass > 0 ? subclass - 1 : 0` therefore mapped subclasses 0
-  **and** 1 both onto layer index 0 on that file, merging top and bottom
-  copper into a single trace container — the Layers panel could not separate
-  the sides, and per-layer colour/emphasis was meaningless.
+- **Copper pours are ETCH-class `0x28` shapes**: filled copper — ground/power
+  pours and plane fragments — is a `0x28` shape whose `layer.classCode` is
+  ETCH, its outline reachable through `firstSegmentPtr` exactly like the board
+  outline's. `extractSurfaces` emits them as `BoardData.surfaces`, sharing the
+  renderer path KiCad zones already use. Two filters: `ptr1` is the shape's net
+  link and lands on a `0x04` net assignment on a real pour, but on 181 of
+  LA-P161P's 1283 ETCH shapes it lands on a `0x2B` **footprint definition** —
+  copper templates in footprint-local coordinates (the same trap `extractTraces`
+  guards with `pointsToFootprintDef`), which render as a phantom cluster at the
+  origin if kept; and a shape needs ≥3 points to enclose an area. Counts run 7
+  to 6458 per board across the corpus. `voids` is left unset — `board-scene`
+  refuses to punch voids on perf grounds regardless of what the parser supplies.
+
+- **ETCH subclass numbering is per-file, and 0-based is the norm**: a copper
+  track's layer index comes from its `layer.subclass`, but writers disagree on
+  the origin. Measured across a 24-board v16 corpus plus LA-P161P (v18.0.0):
+  **23 of 24 are 0-based** (TOP = 0); the only 1-based file is a 7-part ODD
+  daughterboard. The old fixed rule `subclass > 0 ? subclass - 1 : 0` was
+  therefore wrong on nearly every Allegro board, not on an exotic few — it
+  mapped subclasses 0 **and** 1 both onto layer index 0, merging TOP with the
+  second copper layer, and shifted every layer above them one name out of step
+  with `layerNames`. On a 2-layer file like LA-P161P it merged top and bottom
+  copper into a single trace container, so the Layers panel could not separate
+  the sides and per-layer colour/emphasis was meaningless.
 
   `etchSubclassBase()` derives the origin from the file: the lowest ETCH
   subclass actually used *is* the first etch layer, so `layerIdx = subclass -
@@ -420,10 +436,14 @@ x23=88  x2B=76  x2D=72  x33=76  x34=36  x3A=16
   behaviour exactly, which is what makes the change safe without re-verifying
   the whole v16/v17 corpus.
 
-  Established on LA-P161P by a routing oracle rather than assumption: of 6928
+  Established by a routing oracle rather than assumption. On LA-P161P: of 6928
   SMD pins that coincide with exactly one trace endpoint, 1469 top-side pins
   all met subclass-0 copper and 5458 bottom-side pins all met subclass-1
-  copper — 6927/6928 agreement, one stray. Unit test:
+  copper — 6927/6928 agreement, one stray. Re-run on the multi-layer corpus
+  after rebasing, top pins land on layer 0 and bottom pins on the last layer
+  100.0% of the time on LA-E331P (8014/8016) and LA-H281P (7506/7507), against
+  real stackup names (`TOP, GND1, IN1, IN2, GND2, IN3, IN4, VCC, IN5, IN6,
+  GND3, BOTTOM`). Unit test:
   `src/frontend/src/parsers/allegro-layers.test.ts`.
 
 - **Layer-name extraction — most-referenced fallback**: in v16/v17 files the
