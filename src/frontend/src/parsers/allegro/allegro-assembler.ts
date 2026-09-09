@@ -13,7 +13,7 @@
  * TypeScript implementation is original code for BoardRipper.
  */
 
-import type { BoardData, Net, Pad, PadShape, Part, Pin, Point, SilkscreenPath, Trace, Via } from '../types';
+import type { BoardData, Net, Pad, PadShape, Part, Pin, Point, SilkscreenPath, Surface, Trace, Via } from '../types';
 import { computeBBox, buildNets } from '../types';
 import { AllegroDb } from './allegro-db';
 import { BoardUnits, FmtVer, LayerClass } from './allegro-types';
@@ -130,7 +130,9 @@ export function assembleBoard(db: AllegroDb): BoardData {
   }
 
   // Extract traces
-  const traces = extractTraces(db, ver, div, netAssignMap);
+  const etchBase = etchSubclassBase(etchTrackSubclasses(db));
+  const traces = extractTraces(db, ver, div, netAssignMap, etchBase);
+  const surfaces = extractSurfaces(db, div, netAssignMap, etchBase);
 
   // Extract vias
   const vias = extractVias(db, div, netAssignMap);
@@ -159,7 +161,7 @@ export function assembleBoard(db: AllegroDb): BoardData {
     `${parts.reduce((n, p) => n + p.pins.length, 0)} pins, ` +
     `${traces.length} traces, ${vias.length} vias, ` +
     `${outline.length} outline pts, ${silkscreen.length} silkscreen paths, ` +
-    `${pads.length} pads, ${layerNames.length} layers`
+    `${pads.length} pads, ${surfaces.length} surfaces, ${layerNames.length} layers`
   );
 
   // Components the file defines but never places: a BLK_0x07 with no
@@ -201,6 +203,7 @@ export function assembleBoard(db: AllegroDb): BoardData {
     vias: vias.length > 0 ? vias : undefined,
     silkscreen: silkscreen.length > 0 ? silkscreen : undefined,
     pads: pads.length > 0 ? pads : undefined,
+    surfaces: surfaces.length > 0 ? surfaces : undefined,
     layerNames: layerNames.length > 0 ? layerNames : undefined,
     primarySide: primarySide === 'bottom' ? 'bottom' : undefined,
     // Surface a truncated block-stream parse (see AllegroDb.parseWarning) as a
@@ -788,10 +791,9 @@ function extractTraces(
   _ver: FmtVer,
   div: number,
   netAssignMap: Map<number, string>,
+  subclassBase: number,
 ): Trace[] {
   const traces: Trace[] = [];
-
-  const subclassBase = etchSubclassBase(etchTrackSubclasses(db));
 
   for (const blk of db.blocks.values()) {
     if (blk.blockType !== 0x05) continue;
@@ -1187,6 +1189,53 @@ function extractVias(
 }
 
 // ── Board outline ─────────────────────────────────────────────────────────────
+
+// ── Copper pours (ETCH-class shapes) ─────────────────────────────────────────
+
+/**
+ * Filled copper areas — ground/power pours and plane fragments.
+ *
+ * A pour is a BLK_0x28 shape on the ETCH class, its outline reachable through
+ * `firstSegmentPtr` exactly like the board outline's. Without these the board
+ * renders as bare traces: LA-P161P alone carries 1102 of them across its two
+ * copper layers, which is most of the copper on the board by area.
+ *
+ * Two filters matter. `ptr1` is the shape's net link: on a real pour it lands
+ * on a BLK_0x04 net assignment, but on 181 of LA-P161P's ETCH shapes it lands
+ * on a BLK_0x2B footprint *definition* instead — those are copper templates in
+ * footprint-local coordinates, the same trap `extractTraces` already guards
+ * against, and drawing them paints a phantom cluster at the origin. And a
+ * shape needs at least 3 points to enclose an area.
+ *
+ * `voids` is deliberately left unset: BLK_0x28 carries `firstKeepoutPtr`, but
+ * `board-scene` refuses to punch voids on perf grounds regardless.
+ */
+function extractSurfaces(
+  db: AllegroDb,
+  div: number,
+  netAssignMap: Map<number, string>,
+  subclassBase: number,
+): Surface[] {
+  const out: Surface[] = [];
+
+  for (const blk of db.blocks.values()) {
+    if (blk.blockType !== 0x28) continue;
+    const shape = blk as Blk0x28Shape;
+    if (shape.layer.classCode !== LayerClass.ETCH) continue;
+    if (pointsToFootprintDef(db, shape.ptr1)) continue;
+
+    const polygon = walkSegmentChain(db, shape.firstSegmentPtr, div);
+    if (polygon.length < 3) continue;
+
+    out.push({
+      polygon,
+      net: netAssignMap.get(shape.ptr1) ?? '',
+      layer: etchLayerIndex(shape.layer.subclass, subclassBase),
+    });
+  }
+
+  return out;
+}
 
 function extractOutline(db: AllegroDb, _ver: FmtVer, div: number): Point[] {
   // Flat scan over all 0x28 blocks rather than walking LL_Shapes only.
