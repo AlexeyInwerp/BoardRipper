@@ -683,6 +683,44 @@ function extractPins(
 
 // ── Traces ────────────────────────────────────────────────────────────────────
 
+/**
+ * The ETCH subclasses used by a file's copper tracks.
+ *
+ * Split out from `extractTraces` so the rebasing rule below is unit-testable.
+ */
+function* etchTrackSubclasses(db: AllegroDb): Generator<number> {
+  for (const blk of db.blocks.values()) {
+    if (blk.blockType !== 0x05) continue;
+    const t = blk as Blk0x05Track;
+    if (t.layer.classCode === LayerClass.ETCH) yield t.layer.subclass;
+  }
+}
+
+/**
+ * Lowest ETCH subclass a file actually uses — the subclass of its first etch
+ * layer, and therefore the origin to rebase every trace's layer index against.
+ *
+ * ETCH subclass numbering is not consistent across writers: most files number
+ * the stackup 1-based (TOP = 1), but some — Compal LA-P161P (v18.0.0) — number
+ * it 0-based (TOP = 0, BOTTOM = 1). Subtracting a fixed 1 collapsed subclasses
+ * 0 and 1 onto the same layer index on those files, so top and bottom copper
+ * landed in one container and the Layers panel could not separate them.
+ * Deriving the base from the file is self-describing and reproduces the old
+ * `subclass - 1` exactly on any 1-based file.
+ *
+ * Returns 0 for a file with no etch tracks at all.
+ */
+export function etchSubclassBase(subclasses: Iterable<number>): number {
+  let base = Infinity;
+  for (const s of subclasses) if (s < base) base = s;
+  return Number.isFinite(base) ? base : 0;
+}
+
+/** Rebase one ETCH subclass onto a 0-based layer index. */
+export function etchLayerIndex(subclass: number, base: number): number {
+  return Math.max(0, subclass - base);
+}
+
 function extractTraces(
   db: AllegroDb,
   _ver: FmtVer,
@@ -690,6 +728,8 @@ function extractTraces(
   netAssignMap: Map<number, string>,
 ): Trace[] {
   const traces: Trace[] = [];
+
+  const subclassBase = etchSubclassBase(etchTrackSubclasses(db));
 
   for (const blk of db.blocks.values()) {
     if (blk.blockType !== 0x05) continue;
@@ -706,8 +746,8 @@ function extractTraces(
     // Resolve net name via netAssignment → net assign map
     const net = netAssignMap.get(track.netAssignment) ?? '';
 
-    // Resolve layer index from subclass (0-based ETCH layer)
-    const layerIdx = track.layer.subclass > 0 ? track.layer.subclass - 1 : 0;
+    // Resolve layer index from subclass, rebased to 0 (see etchSubclassBase)
+    const layerIdx = etchLayerIndex(track.layer.subclass, subclassBase);
 
     // Walk segment chain: firstSegPtr → 0x15/16/17 segments + 0x01 arcs
     let segKey = track.firstSegPtr;

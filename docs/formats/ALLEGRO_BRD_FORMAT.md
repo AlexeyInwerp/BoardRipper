@@ -51,8 +51,8 @@ Version 18.0 is the most significant header layout change.
 | `0x00140400`   | V_172   | 17.2            |
 | `0x00140900`   | V_174   | 17.4            |
 | `0x00141500`   | V_175   | 17.5            |
-| `0x00150000`   | V_180   | 18.0            |
-| `0x00150200`   | V_180   | 18.0.2 (Dell XPS LA-E331P) — see V18.0.2 layout note |
+| `0x00150000`   | V_180   | 18.0 (Compal LA-P161P) — baseline header layout |
+| `0x00150200`   | V_180   | 18.0.2 (Dell XPS LA-E331P) — see V18 layout note |
 
 Additional check: bytes 8–11 as u32 LE == 1 distinguishes Allegro BRD from the
 obfuscated Apple/Mac BRD format (which shares the same file extension).
@@ -382,15 +382,49 @@ x23=88  x2B=76  x2D=72  x33=76  x34=36  x3A=16
   bitmask — bit 0 alone is the side bit; bit 1 in v18 is some unidentified
   flag that's always set on the bottom side.
 
-- **v18.0.2 header layout (LA-E331P)**: between the existing V_180 header
-  fields and the Allegro version string, this sub-version inserts **4
-  additional linked-list pairs** (32 bytes), so the version string sits at
-  file offset `0x144` instead of the V_180 baseline `0x124`. Each pair has
-  an increasing head value (e.g. `0x7d..0x80`) with `tail = 0`; treated as
-  opaque alignment-only data — the parser reads them into `LL_V18_7..10`
-  to keep the stream aligned. The position assertion was widened to `0x144`
-  for V_180. v18.0.0 is not in the corpus to validate against; if a file
-  shows up missing these 4 pairs we'll branch by sub-magic.
+- **v18 header layout — 4 optional linked-list pairs**: between the existing
+  V_180 header fields and the Allegro version string, *some* v18 files insert
+  **4 additional linked-list pairs** (32 bytes), so the version string sits at
+  file offset `0x144` instead of the V_180 baseline `0x124`. Each pair has an
+  increasing head value (e.g. `0x7d..0x80`) with `tail = 0`; treated as opaque
+  alignment-only data — the parser reads them into `LL_V18_7..10` to keep the
+  stream aligned.
+
+  **Presence is probed, not keyed off the sub-magic.** v18.0.2 (Dell XPS
+  LA-E331P, `0x00150200`) has the pairs; v18.0.0 (Compal LA-P161P,
+  `0x00150000`) does not. With only two sub-versions in the corpus, neither
+  magic is a trustworthy proxy for a layout choice, so `looksLikeVersionString`
+  checks the bytes instead: the version string is 60 bytes of ASCII, so its
+  first 4 bytes are all printable, whereas an LL pair in that slot starts with
+  a small u32 head (`7d 00 00 00`) whose 2nd and 3rd bytes are NUL. The
+  position assertion accepts `0x124` or `0x144` for V_180.
+
+  Confirming the LA-P161P alignment without a second sample of its layout:
+  at the baseline offsets, `m_MaxKey` reads `0x1025f7` against an
+  `m_ObjectCount` of `0x10233c` (max key just above the object count, as it
+  must be) and the units byte reads `0x01` = MILS. Both would be garbage if
+  the stream were 32 bytes out.
+
+- **ETCH subclass numbering is per-file, not fixed**: a copper track's layer
+  index comes from its `layer.subclass`, but writers disagree on the origin.
+  Most files number the etch stackup **1-based** (TOP = 1), while Compal
+  LA-P161P (v18.0.0) numbers it **0-based** (TOP = 0, BOTTOM = 1). The old
+  fixed rule `subclass > 0 ? subclass - 1 : 0` therefore mapped subclasses 0
+  **and** 1 both onto layer index 0 on that file, merging top and bottom
+  copper into a single trace container — the Layers panel could not separate
+  the sides, and per-layer colour/emphasis was meaningless.
+
+  `etchSubclassBase()` derives the origin from the file: the lowest ETCH
+  subclass actually used *is* the first etch layer, so `layerIdx = subclass -
+  base`. On any 1-based file the base is 1 and this reproduces the old
+  behaviour exactly, which is what makes the change safe without re-verifying
+  the whole v16/v17 corpus.
+
+  Established on LA-P161P by a routing oracle rather than assumption: of 6928
+  SMD pins that coincide with exactly one trace endpoint, 1469 top-side pins
+  all met subclass-0 copper and 5458 bottom-side pins all met subclass-1
+  copper — 6927/6928 agreement, one stray. Unit test:
+  `src/frontend/src/parsers/allegro-layers.test.ts`.
 
 - **Layer-name extraction — most-referenced fallback**: in v16/v17 files the
   ETCH layer list lives at `header.layerMap[LayerClass.ETCH]` (slot 6). v18
@@ -399,6 +433,20 @@ x23=88  x2B=76  x2D=72  x33=76  x34=36  x3A=16
   the ETCH list is the single `0x2A` block referenced by the *most* layer-map
   slots (Y0D 11×, Z8IA 10×, LA-H271P 9×, LA-E331P 8×). Try slot 6 first to
   preserve older behaviour, fall back to "most-referenced" when it's empty.
+
+  **Known limit — the most-referenced block is not always the stackup.** On
+  LA-P161P slot 6 resolves to a 2-entry list `["TOP","BOTTOM"]` that is also
+  the most-referenced block (11 slots), while the *design* stackup — 12 etch
+  layers plus mask/paste/silk pseudo-layers — sits in a different `0x2A` block
+  at slot 4 (`["GND1","GND2","GND3","PASTEMASK_BOTTOM",…,"IN4","IN3","IN2",
+  "IN1","VCC","TOP","GND4"]`, 18 entries). This costs nothing on that file:
+  its copper is outer-layer only (ETCH subclasses 0 and 1 are the only ones
+  any track, shape or keepout uses — the 0x28/0x14 blocks on subclasses up to
+  27 are all `classCode 1` BOARD_GEOMETRY drawing layers, not etch), so
+  `["TOP","BOTTOM"]` names exactly the layers that carry data and surfacing
+  the full stackup would only add ten permanently empty layers. Worth knowing
+  before trusting `layerNames` as a stackup description on a file that *does*
+  carry inner routing.
 
 - **Per-component silkscreen / assembly outlines**: each
   `Blk0x2DFootprintInst` has a `graphicPtr` field that walks a chain of

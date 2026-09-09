@@ -82,6 +82,26 @@ function readLL(stream: AllegroStream, ver: FmtVer): LinkedList {
 // ── Header parser ─────────────────────────────────────────────────────────────
 
 /**
+ * Does the stream sit on the 60-byte ASCII Allegro version string?
+ *
+ * Used to detect whether a v18 file carries the optional 4 extra linked-list
+ * pairs before the string. Checks the first 4 bytes are printable ASCII — an
+ * LL pair in this slot begins with a small u32 (`7d 00 00 00`), so its 2nd
+ * and 3rd bytes are NUL and can never pass.
+ */
+export function looksLikeVersionString(stream: AllegroStream): boolean {
+  const at = stream.position;
+  if (at + 4 > stream.size) return false;
+  for (let i = 0; i < 4; i++) {
+    stream.seek(at + i);
+    const b = stream.peekU8();
+    if (b < 0x20 || b > 0x7e) { stream.seek(at); return false; }
+  }
+  stream.seek(at);
+  return true;
+}
+
+/**
  * Parse the Allegro BRD file header.
  *
  * Reads all header fields in exact KiCad field order, including version-conditional
@@ -205,17 +225,24 @@ export function parseHeader(stream: AllegroStream): FileHeader {
     x35End_V18    = stream.u32();
   }
 
-  // v18.0.2 tail: 4 extra LL pairs between x35End and the version string.
-  // Discovered on Dell XPS LA-E331P (magic 0x00150200): the version string
-  // sits at file offset 0x144 instead of 0x124. Each pair carries an
-  // increasing head value (e.g. 0x7d..0x80) with tail = 0; treated as
-  // opaque alignment-only data for now.
+  // v18 tail: SOME v18 sub-versions insert 4 extra LL pairs between x35End
+  // and the version string, so the string sits at file offset 0x144 instead
+  // of the v18 baseline 0x124. Each pair carries an increasing head value
+  // (e.g. 0x7d..0x80) with tail = 0; treated as opaque alignment-only data.
+  //
+  // Presence is *probed*, not keyed off the sub-magic: v18.0.2 (Dell XPS
+  // LA-E331P, magic 0x00150200) has the pairs, v18.0.0 (Compal LA-P161P,
+  // magic 0x00150000) does not, and neither sub-magic is a reliable proxy
+  // for a layout choice we've only seen two samples of. The version string
+  // is 60 bytes of ASCII, so its first 4 bytes are all printable; an LL pair
+  // in that slot starts with a small u32 head (bytes `7d 00 00 00`) whose
+  // upper bytes are NUL. That tells the two layouts apart unambiguously.
   let LL_V18_7:  LinkedList | undefined;
   let LL_V18_8:  LinkedList | undefined;
   let LL_V18_9:  LinkedList | undefined;
   let LL_V18_10: LinkedList | undefined;
 
-  if (ver >= FmtVer.V_180) {
+  if (ver >= FmtVer.V_180 && !looksLikeVersionString(stream)) {
     LL_V18_7  = readLL(stream, ver);
     LL_V18_8  = readLL(stream, ver);
     LL_V18_9  = readLL(stream, ver);
@@ -223,12 +250,12 @@ export function parseHeader(stream: AllegroStream): FileHeader {
   }
 
   // Position assertion (matches KiCad's wxASSERT)
-  const expectedOffset = ver < FmtVer.V_180 ? 0xF8 : 0x144;
-  const actualOffset   = stream.position - headerStartPos;
-  if (actualOffset !== expectedOffset) {
+  const actualOffset = stream.position - headerStartPos;
+  const validOffsets = ver < FmtVer.V_180 ? [0xF8] : [0x124, 0x144];
+  if (!validOffsets.includes(actualOffset)) {
     throw new Error(
       `Allegro header position mismatch at Allegro version string: ` +
-      `expected offset 0x${expectedOffset.toString(16)}, ` +
+      `expected offset ${validOffsets.map((o) => `0x${o.toString(16)}`).join(' or ')}, ` +
       `got 0x${actualOffset.toString(16)}`
     );
   }
