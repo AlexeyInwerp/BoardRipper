@@ -1,5 +1,21 @@
 # BoardRipper changelog
 
+## v0.39.1 — 2026-09-09
+
+### Allegro boards
+
+- **Some Allegro 18 boards would not open.** They stopped with an "Unknown
+  Allegro board units byte" message. The file's version line sits in one of
+  two places depending on which Allegro 18 wrote it, and BoardRipper only
+  looked in one of them. It now finds the line in either place, so these
+  boards open. Seen on Compal LA-P161P.
+- **Top and bottom copper are now on separate layers.** On boards that number
+  their copper layers from zero, both sides landed on the same layer, so the
+  Layers panel could not tell them apart and every trace was drawn in one
+  colour. Each side now gets its own layer, with its own colour, and can be
+  turned on and off on its own. Which side is which was checked against where
+  the traces actually meet their pins.
+
 ## v0.39.0 — 2026-09-08
 
 ### Toolbar and board bar
