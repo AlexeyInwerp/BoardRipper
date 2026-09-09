@@ -162,6 +162,28 @@ export function assembleBoard(db: AllegroDb): BoardData {
     `${pads.length} pads, ${layerNames.length} layers`
   );
 
+  // Components the file defines but never places: a BLK_0x07 with no
+  // fpInstPtr, whose pads carry a real net per pin but coords of (0,0,0,0),
+  // no padstack and no footprint definition for their package. They are
+  // genuinely un-drawable — there is no XY anywhere in the file — but they
+  // are *not* noise: on Compal LA-P161P the 67 of them include the BQ24800
+  // charger (PUB1), the GPU VRM controller (PUV1), every board-edge connector
+  // and every mounting hole, each with a complete pin→net table. Dropping
+  // them silently is what makes a search for "PUB1" return nothing at all, so
+  // name them in a load-time note until unplaced parts have a home of their
+  // own in BoardData.
+  const unplaced = collectUnplacedRefdes(db);
+  const notes: string[] = [];
+  if (db.parseWarning) notes.push(db.parseWarning);
+  if (unplaced.length > 0) {
+    const shown = unplaced.slice(0, 12).join(', ');
+    notes.push(
+      `${unplaced.length} component${unplaced.length === 1 ? '' : 's'} in this file ` +
+      `have a netlist but no position, so they cannot be drawn or searched: ` +
+      `${shown}${unplaced.length > 12 ? `, +${unplaced.length - 12} more` : ''}.`,
+    );
+  }
+
   // For v15, the per-pin connectivity isn't yet decoded so buildNets(parts)
   // would produce an empty map. Use BLK_0x1B records directly to surface
   // the net-name list in the Net List panel.
@@ -183,8 +205,48 @@ export function assembleBoard(db: AllegroDb): BoardData {
     primarySide: primarySide === 'bottom' ? 'bottom' : undefined,
     // Surface a truncated block-stream parse (see AllegroDb.parseWarning) as a
     // load-time note so an incomplete board is flagged, not silent.
-    parserNotes: db.parseWarning ? [db.parseWarning] : undefined,
+    parserNotes: notes.length > 0 ? notes : undefined,
   };
+}
+
+/**
+ * Refdes of every component the file defines but never places.
+ *
+ * A placed component is a BLK_0x07 whose `fpInstPtr` reaches a BLK_0x2D
+ * footprint instance; that instance is the only thing carrying an XY. The
+ * unplaced ones still own a pad chain (via `nextInCompInst`) with a real net
+ * per pin, but every pad has zero coords and no padstack, and no footprint
+ * definition exists for their package — so there is no geometry to recover,
+ * only a name worth reporting.
+ */
+function collectUnplacedRefdes(db: AllegroDb): string[] {
+  const out: Array<{ name: string; pins: number }> = [];
+  for (const blk of db.blocks.values()) {
+    if (blk.blockType !== 0x07) continue;
+    const inst = blk as Blk0x07ComponentInst;
+    const fp = inst.fpInstPtr ? db.getBlock(inst.fpInstPtr) : null;
+    if (fp && fp.blockType === 0x2D) continue;
+    const name = db.getString(inst.refDesStrPtr);
+    if (!name) continue;
+
+    // Pad chain hangs off the component instance itself here (nextInCompInst),
+    // not off a footprint instance's nextInFp — there is no footprint.
+    let pins = 0;
+    let key = inst.firstPadPtr;
+    const seen = new Set<number>();
+    for (let i = 0; i < 100_000 && key !== 0 && !seen.has(key); i++) {
+      seen.add(key);
+      const pad = db.getBlock(key);
+      if (!pad) break;
+      if (pad.blockType === 0x32) pins++;
+      key = (pad as Blk0x32PlacedPad).nextInCompInst ?? 0;
+    }
+    out.push({ name, pins });
+  }
+  // Pin count descending: an unplaced charger IC or DIMM socket matters more
+  // to whoever reads the note than the twenty unplaced mounting holes.
+  out.sort((a, b) => b.pins - a.pins || a.name.localeCompare(b.name));
+  return out.map((c) => c.name);
 }
 
 function fmtVerLabel(v: FmtVer): string | undefined {
