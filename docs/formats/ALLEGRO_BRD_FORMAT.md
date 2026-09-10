@@ -445,6 +445,24 @@ x23=88  x2B=76  x2D=72  x33=76  x34=36  x3A=16
   layer the recovered pads sit on — the only side evidence a footprint-less
   component leaves.
 
+  **Filling gaps in an edge**: pads come back only where copper happened to
+  reach, so an edge returns with holes — PUB1's top row had 16, 19, 20, 21 and
+  was missing 17 and 18. A footprint's pads are evenly spaced, so a pin whose
+  number falls *between* two located pins of the same collinear run is fully
+  determined by that run's pitch. `fillRunGaps` does exactly that, and only
+  that: it requires ≥3 located pads sharing an edge, every one of them sitting
+  where the run's pitch predicts (≤3 mils), and plain-integer pin numbers — a
+  BGA designator like `M7` carries no ordering along an edge.
+
+  It **never extrapolates past a run's ends**, because that walks around the
+  corner: one step past PUB1's pin 21 would put pin 22 further along the top
+  row when it actually belongs to the right-hand column. Filling corners needs
+  a model of where the package's sides are, which this pass does not have.
+
+  Interpolated pads are as accurate as traced ones — leave-one-out gives 63/64
+  within 1 mil, against 1552/1579 for traced. On LA-P161P it adds 102 pads:
+  JSSD1 and JSSD2 go from 8 pads to 39 each, PUB1 from 19 to 21 (17 and 18).
+
   On LA-P161P this recovers 23 of 67 and declines all 22 mounting holes. PUB1
   lands at (2701, −5609) spanning 154×154 mils (a WQFN28 4×4 is 157×157), and
   its recovered pin numbers run 1–7 along the bottom edge, 8–13 up the left,

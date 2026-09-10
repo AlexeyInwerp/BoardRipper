@@ -827,7 +827,7 @@ function recoverUnplacedParts(
     }
     if (pinNets.length === 0) continue;
 
-    const guess = inferPlacement(pinNets, idx);
+    const guess = inferPlacement(pinNets, idx, pinNames);
     if (!guess) continue;
 
     // Side follows the copper the recovered pads sit on: outer-layer routing
@@ -861,7 +861,12 @@ function recoverUnplacedParts(
       placementInferred: true,
       meta: {
         package: db.getString((db.getBlock(inst.next) as { compDeviceType?: number } | null)?.compDeviceType ?? 0) ?? undefined,
-        note: `Position recovered from routing — ${guess.resolved} of ${pinNets.length} pads located. Not stored in the file.`,
+        note:
+          `Position recovered from routing — ${guess.resolved} of ${pinNets.length} pads located` +
+          (guess.interpolated > 0
+            ? ` (${guess.resolved - guess.interpolated} from trace ends, ${guess.interpolated} filled in from the pad pitch)`
+            : '') +
+          `. Not stored in the file.`,
       },
     });
   }

@@ -100,3 +100,91 @@ describe('inferPlacement', () => {
     expect(res.bounds.maxX).toBeLessThan(1200);
   });
 });
+
+/**
+ * Gap filling along an edge. A footprint's pads are evenly spaced, so a pin
+ * whose number falls between two located pins of the same run is determined by
+ * that run's pitch — the case that left PUB1 missing pins 17 and 18 from an
+ * otherwise complete top row.
+ */
+describe('edge gap filling', () => {
+  /** One row of pads at 16 mil pitch, all but `absent` reachable by copper. */
+  function row(pins: number[], absent: number[]) {
+    const nets = pins.map((n) => `N${n}`);
+    const traces: Trace[] = [];
+    const vias = new Set<string>();
+    pins.forEach((n, i) => {
+      if (absent.includes(n)) return;
+      traces.push(seg(`N${n}`, 1000 + i * 16, 2000, 1000 + i * 16, 1950));
+      vias.add(pointKey({ x: 1000 + i * 16, y: 1950 }));
+    });
+    return { nets, numbers: pins.map(String), idx: buildDanglingIndex(traces, vias) };
+  }
+
+  it('fills a hole in the middle of a row at the row pitch', () => {
+    const r = row([1, 2, 3, 4, 5, 6, 7], [4]);
+    const res = inferPlacement(r.nets, r.idx, r.numbers)!;
+    expect(res.pinPositions[3]).toEqual({ x: 1048, y: 2000 });   // pin 4
+    expect(res.interpolated).toBe(1);
+  });
+
+  it('fills several holes at once', () => {
+    const r = row([1, 2, 3, 4, 5, 6, 7], [3, 5]);
+    const res = inferPlacement(r.nets, r.idx, r.numbers)!;
+    expect(res.pinPositions[2]).toEqual({ x: 1032, y: 2000 });
+    expect(res.pinPositions[4]).toEqual({ x: 1064, y: 2000 });
+    expect(res.interpolated).toBe(2);
+  });
+
+  it('never extrapolates past the ends of a run — that walks around the corner', () => {
+    const r = row([1, 2, 3, 4, 5, 6, 7], [1, 7]);
+    const res = inferPlacement(r.nets, r.idx, r.numbers)!;
+    expect(res.pinPositions[0]).toBeNull();
+    expect(res.pinPositions[6]).toBeNull();
+    expect(res.interpolated).toBe(0);
+  });
+
+  it('does nothing without pin numbers to order the run by', () => {
+    const r = row([1, 2, 3, 4, 5, 6, 7], [4]);
+    const res = inferPlacement(r.nets, r.idx)!;
+    expect(res.pinPositions[3]).toBeNull();
+    expect(res.interpolated).toBe(0);
+  });
+
+  it('leaves non-numeric designators alone (a BGA row carries no pitch)', () => {
+    const r = row([1, 2, 3, 4, 5, 6, 7], [4]);
+    const bga = r.numbers.map((n) => `M${n}`);
+    const res = inferPlacement(r.nets, r.idx, bga)!;
+    expect(res.interpolated).toBe(0);
+  });
+
+  it('refuses a run whose located pads do not share one pitch', () => {
+    // Pin 5 sits 8 mils off the row's grid — close enough to stay in the
+    // cluster, far enough that 1..6 is not one evenly-spaced edge. Nothing may
+    // be read off a run like that, so the pin-4 gap stays empty.
+    const nets = [1, 2, 3, 4, 5, 6].map((n) => `N${n}`);
+    const traces: Trace[] = []; const vias = new Set<string>();
+    [0, 16, 32, 48, 72, 80].forEach((dx, i) => {
+      if (i === 3) return;                     // pin 4 absent, the gap to fill
+      traces.push(seg(`N${i + 1}`, 1000 + dx, 2000, 1000 + dx, 1950));
+      vias.add(pointKey({ x: 1000 + dx, y: 1950 }));
+    });
+    const res = inferPlacement(nets, buildDanglingIndex(traces, vias), ['1','2','3','4','5','6']);
+    expect(res?.interpolated ?? 0).toBe(0);
+  });
+
+  it('a pad far outside the cluster is dropped, and the rest still fills', () => {
+    // The same row with pin 5 abandoned 900 mils away: clustering discards it,
+    // and the remaining 1,2,3,6 are a consistent edge, so 4 and 5 fill in.
+    const nets = [1, 2, 3, 4, 5, 6].map((n) => `N${n}`);
+    const traces: Trace[] = []; const vias = new Set<string>();
+    [0, 16, 32, 48, 999, 80].forEach((dx, i) => {
+      if (i === 3) return;
+      traces.push(seg(`N${i + 1}`, 1000 + dx, 2000, 1000 + dx, 1950));
+      vias.add(pointKey({ x: 1000 + dx, y: 1950 }));
+    });
+    const res = inferPlacement(nets, buildDanglingIndex(traces, vias), ['1','2','3','4','5','6'])!;
+    expect(res.pinPositions[3]).toEqual({ x: 1048, y: 2000 });
+    expect(res.pinPositions[4]).toEqual({ x: 1064, y: 2000 });
+  });
+});
