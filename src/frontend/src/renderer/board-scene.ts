@@ -340,7 +340,7 @@ export interface BorderRect {
  * Trace a closed ring as a dashed outline. PixiJS v8 Graphics has no dash
  * support, so the dashes are emitted as individual move/line pairs.
  */
-function strokeDashedRing(gfx: Graphics, ring: Array<[number, number]>, dash: number): void {
+export function strokeDashedRing(gfx: Graphics, ring: Array<[number, number]>, dash: number): void {
   for (let i = 0; i < ring.length; i++) {
     const [x1, y1] = ring[i];
     const [x2, y2] = ring[(i + 1) % ring.length];

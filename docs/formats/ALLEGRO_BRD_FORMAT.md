@@ -405,6 +405,53 @@ x23=88  x2B=76  x2D=72  x33=76  x34=36  x3A=16
   must be) and the units byte reads `0x01` = MILS. Both would be garbage if
   the stream were 32 bytes out.
 
+- **Unplaced components, and recovering them from routing**: some files ship
+  components that are fully defined and never placed — the `0x07` component
+  instance has `fpInstPtr = 0`, its pads hang off the instance itself via
+  `nextInCompInst`, and every one of those pads has `coords = [0,0,0,0]`,
+  `padPtr = 0`, `parentFp = 0`. The pad records are the same 84 bytes with the
+  same layout as a placed part's; the zeros are in the file. There is also no
+  `0x2B` footprint definition for their package. LA-P161P has **67**: the
+  BQ24800 charger (PUB1), the GPU VRM controller, both SO-DIMM sockets, every
+  board-edge connector, every mounting hole. Cadence's own free viewer shows
+  the same gap, so this is the file, not a decode error. They were unplaced in
+  Allegro with their routing left behind.
+
+  Their **netlist is intact** — each pad carries a real net through the normal
+  `0x04 → 0x1B` chain, and pin numbers resolve through `0x32 → 0x08`. PUB1's
+  29 pins read as a textbook BQ24800 pinout.
+
+  `allegro-infer-placement.ts` recovers a position from the copper. A trace
+  that ended on a now-absent pad ends on nothing: an endpoint used by exactly
+  one segment, sitting on no pad **and no via**. Those loose ends are clustered
+  per component (seeded only from nets with few loose ends board-wide, grown at
+  120 mils so a connector's pad row is followed), and each pin claims one.
+
+  Three rules, each set by leave-one-out measurement against *placed* parts
+  (hide one, ask the algorithm to find it, compare):
+
+  | Rule | Why |
+  |---|---|
+  | Claim a pin only when **exactly one** loose end of its net is near the cluster | Picking the nearest of several looks like more coverage; it moved per-pin p90 from 164 mils to >1000 |
+  | Treat **vias** as terminations, not ghosts | Took per-pin accuracy from 82% to **98% exact** (1552/1579 within 1 mil) |
+  | Decline parts with **fewer than 5 pins** | The 2–4 pin bucket returned a median error over 1100 mils; 21+ pin parts returned exact |
+
+  **What is claimed is the pads, not the package body.** Only a biased subset
+  of pins resolves, so the centre of that subset estimates the package centre
+  poorly (median 134 mils out). `Part.bounds` is the extent of the recovered
+  pads and nothing more. Recovered parts carry `Part.placementInferred` and are
+  drawn with a dashed amber outline (`BOARD_COLORS.partBoundsInferred`) so they
+  can never be read as the file's own placement. Side comes from the copper
+  layer the recovered pads sit on — the only side evidence a footprint-less
+  component leaves.
+
+  On LA-P161P this recovers 23 of 67 and declines all 22 mounting holes. PUB1
+  lands at (2701, −5609) spanning 154×154 mils (a WQFN28 4×4 is 157×157), and
+  its recovered pin numbers run 1–7 along the bottom edge, 8–13 up the left,
+  16/19/20 across the top — counter-clockwise QFN order, from copper alone.
+  Unit tests: `parsers/allegro-infer-placement.test.ts`,
+  `renderer/dashed-ring.test.ts`.
+
 - **Copper pours are ETCH-class `0x28` shapes**: filled copper — ground/power
   pours and plane fragments — is a `0x28` shape whose `layer.classCode` is
   ETCH, its outline reachable through `firstSegmentPtr` exactly like the board
