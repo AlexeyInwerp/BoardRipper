@@ -94,7 +94,15 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 //     was ever read and the board died on "contains no parts or pins" (canary:
 //     XPS 15 9530 Compal HD055 LA-L663P). Those files never cached — they threw
 //     — but a mixed-ending file could have cached a partial board, so re-parse.
-const PARSER_VERSION = 92;
+// 93: Allegro — every change from the v0.39.1/v0.39.2 round invalidates a
+//     cached board, and v0.39.1 shipped WITHOUT this bump, so any install that
+//     had already opened an Allegro board kept serving the pre-fix parse and
+//     never saw the fix at all. Covers: the ETCH subclass rebasing (top and
+//     bottom copper were merged onto one layer index, and every layer above
+//     them sat one name out of step); copper pours, which were not read at all;
+//     and components recovered from dangling routing, which add parts that
+//     simply are not present in an older cached BoardData.
+const PARSER_VERSION = 93;
 
 interface CachedBoard {
   key: string;
