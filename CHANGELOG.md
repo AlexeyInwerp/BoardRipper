@@ -1,5 +1,33 @@
 # BoardRipper changelog
 
+## v0.39.2 — 2026-09-10
+
+### Allegro boards
+
+- **The layer fix from 0.39.1 now actually reaches your boards.** BoardRipper
+  keeps a parsed copy of every board it has opened, and it was handing back
+  the old copy instead of reading the file again. So if you had already opened
+  an Allegro board, nothing changed for you in 0.39.1 and there was no sign
+  anything was wrong. Boards are re-read once after this update.
+- **Copper fills are drawn.** The filled copper areas — ground and power
+  planes — were never read, so Allegro boards showed bare traces over an empty
+  board. Turn them on with "Copper fills" in the Layers panel.
+- **Components that the file leaves unplaced are now found.** Some Allegro
+  files describe a part in full — its name, its type, every pin and net — but
+  never say where it sits. On one Lenovo board that is 67 parts, among them the
+  battery charger, the graphics power controller, both memory sockets and every
+  edge connector. Cadence's own viewer does not show them either, so on a board
+  like that the parts you most want to probe were the ones nothing could point
+  at.
+
+  BoardRipper now finds them by following their own copper: a track that ran to
+  a missing pad still stops where that pad was. 23 of the 67 come back this
+  way, each pad within a thousandth of an inch of where it belongs. They are
+  drawn with a dashed amber outline, because their position is worked out, not
+  read from the file, and you should always be able to tell the difference.
+  Parts with too little copper to go on — mounting holes, mostly — are left
+  out rather than guessed at.
+
 ## v0.39.1 — 2026-09-09
 
 ### Allegro boards
