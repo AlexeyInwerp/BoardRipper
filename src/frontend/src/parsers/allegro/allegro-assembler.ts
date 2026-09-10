@@ -16,6 +16,7 @@
 import type { BoardData, Net, Pad, PadShape, Part, Pin, Point, SilkscreenPath, Surface, Trace, Via } from '../types';
 import { computeBBox, buildNets } from '../types';
 import { AllegroDb } from './allegro-db';
+import { buildDanglingIndex, inferPlacement, pointKey } from './allegro-infer-placement';
 import { BoardUnits, FmtVer, LayerClass } from './allegro-types';
 import type {
   Blk0x04NetAssign,
@@ -103,6 +104,7 @@ export function assembleBoard(db: AllegroDb): BoardData {
 
   // Build net assignment map first — needed by pins, traces, vias
   const netAssignMap = buildNetAssignMap(db);
+  const layerNamesEarly = (() => { let c: string[] | null = null; return () => (c ??= extractLayerNames(db)); })();
 
   // Extract components + pins
   const { parts, allPinPositions } = extractComponents(db, ver, div, netAssignMap);
@@ -137,6 +139,12 @@ export function assembleBoard(db: AllegroDb): BoardData {
   // Extract vias
   const vias = extractVias(db, div, netAssignMap);
 
+  // Recover components the file defines but never places, from the routing
+  // they left behind. See allegro-infer-placement.ts. Appended after the real
+  // parts so existing part indices are untouched.
+  const recovered = recoverUnplacedParts(db, ver, netAssignMap, parts, traces, vias, layerNamesEarly());
+  parts.push(...recovered);
+
   // Extract board outline
   const outline = extractOutline(db, ver, div);
 
@@ -147,7 +155,7 @@ export function assembleBoard(db: AllegroDb): BoardData {
   const pads = extractPads(db, div, netAssignMap);
 
   // Extract layer names
-  const layerNames = extractLayerNames(db);
+  const layerNames = layerNamesEarly();
 
   // Compute bounds from all geometry
   const allPoints: Point[] = [];
@@ -178,11 +186,16 @@ export function assembleBoard(db: AllegroDb): BoardData {
   const notes: string[] = [];
   if (db.parseWarning) notes.push(db.parseWarning);
   if (unplaced.length > 0) {
-    const shown = unplaced.slice(0, 12).join(', ');
+    const stillLost = unplaced.length - recovered.length;
     notes.push(
-      `${unplaced.length} component${unplaced.length === 1 ? '' : 's'} in this file ` +
-      `have a netlist but no position, so they cannot be drawn or searched: ` +
-      `${shown}${unplaced.length > 12 ? `, +${unplaced.length - 12} more` : ''}.`,
+      `${unplaced.length} component${unplaced.length === 1 ? '' : 's'} have a netlist but no stored position in this file. ` +
+      (recovered.length > 0
+        ? `${recovered.length} were located from the routing that ends on their pads and are drawn with a dashed amber outline — ` +
+          `their pads are recovered, not read, and only some pads of each resolve. `
+        : '') +
+      (stillLost > 0
+        ? `${stillLost} could not be located (mounting holes and parts with too little routing).`
+        : ''),
     );
   }
 
@@ -744,6 +757,116 @@ function extractPins(
   }
 
   return { pins, hasThru };
+}
+
+// ── Recovering unplaced components ───────────────────────────────────────────
+
+/**
+ * Build parts for components the file defines but never places, positioning
+ * their pads from the dangling routing they left behind.
+ *
+ * What is claimed here is the **pads**, not the package body. Measured
+ * leave-one-out against placed parts on LA-P161P, a claimed pad lands on the
+ * true pad 98% of the time (1552/1579 within 1 mil), but only a biased subset
+ * of a part's pins can be claimed at all, so the centre of that subset is a
+ * poor estimate of the package centre (median 134 mils out). So a recovered
+ * part is exactly the pads we are sure of — its `bounds` is their extent, not
+ * a footprint — and it is flagged `placementInferred` so nothing downstream
+ * presents it as the file's own data.
+ */
+function recoverUnplacedParts(
+  db: AllegroDb,
+  ver: FmtVer,
+  netAssignMap: Map<number, string>,
+  placed: Part[],
+  traces: Trace[],
+  vias: Via[],
+  layerNames: string[],
+): Part[] {
+  if (traces.length === 0) return [];
+
+  // A trace may legitimately end on a pad that exists, or on a via.
+  const terminators = new Set<string>();
+  for (const p of placed) for (const q of p.pins) terminators.add(pointKey(q.position));
+  for (const v of vias) terminators.add(pointKey(v.position));
+
+  const idx = buildDanglingIndex(traces, terminators);
+  const lastLayer = Math.max(0, layerNames.length - 1);
+  const out: Part[] = [];
+
+  for (const blk of db.blocks.values()) {
+    if (blk.blockType !== 0x07) continue;
+    const inst = blk as Blk0x07ComponentInst;
+    const fp = inst.fpInstPtr ? db.getBlock(inst.fpInstPtr) : null;
+    if (fp && fp.blockType === 0x2D) continue;              // placed already
+    const name = db.getString(inst.refDesStrPtr);
+    if (!name) continue;
+
+    // Pads hang off the component instance itself when there is no footprint.
+    const pinNames: string[] = [];
+    const pinNets: string[] = [];
+    let key = inst.firstPadPtr;
+    const seen = new Set<number>();
+    for (let i = 0; i < 100_000 && key !== 0 && !seen.has(key); i++) {
+      seen.add(key);
+      const pad = db.getBlock(key);
+      if (!pad) break;
+      if (pad.blockType === 0x32) {
+        const pp = pad as Blk0x32PlacedPad;
+        // Same chain the placed-pin path walks: 0x32 → 0x08 PIN_NUMBER → string.
+        let num = '';
+        const numBlk = db.getBlockAs<Blk0x08PinNumber>(pp.ptrPinNumber, 0x08);
+        if (numBlk) {
+          const strKey = ver >= FmtVer.V_172 ? numBlk.strPtr : numBlk.strPtr16x;
+          if (strKey) num = db.getString(strKey);
+        }
+        pinNames.push(num || String(pinNames.length + 1));
+        pinNets.push(netAssignMap.get(pp.netPtr) ?? '');
+      }
+      key = (pad as Blk0x32PlacedPad).nextInCompInst ?? 0;
+    }
+    if (pinNets.length === 0) continue;
+
+    const guess = inferPlacement(pinNets, idx);
+    if (!guess) continue;
+
+    // Side follows the copper the recovered pads sit on: outer-layer routing
+    // is the only side evidence a footprint-less component leaves.
+    let top = 0, bottom = 0;
+    const pins: Pin[] = [];
+    guess.pinPositions.forEach((pos, i) => {
+      if (!pos) return;
+      const layer = idx.layerAt.get(pointKey(pos)) ?? 0;
+      if (layer === lastLayer && lastLayer !== 0) bottom++; else top++;
+      pins.push({
+        name: pinNames[i],
+        number: pinNames[i],
+        position: pos,
+        radius: 8,
+        side: layer === lastLayer && lastLayer !== 0 ? 'bottom' : 'top',
+        net: pinNets[i],
+      });
+    });
+    if (pins.length === 0) continue;
+    const side: 'top' | 'bottom' = bottom > top ? 'bottom' : 'top';
+    for (const q of pins) q.side = side;
+
+    out.push({
+      name,
+      side,
+      type: 'unknown',
+      origin: guess.origin,
+      pins,
+      bounds: guess.bounds,
+      placementInferred: true,
+      meta: {
+        package: db.getString((db.getBlock(inst.next) as { compDeviceType?: number } | null)?.compDeviceType ?? 0) ?? undefined,
+        note: `Position recovered from routing — ${guess.resolved} of ${pinNets.length} pads located. Not stored in the file.`,
+      },
+    });
+  }
+
+  return out;
 }
 
 // ── Traces ────────────────────────────────────────────────────────────────────

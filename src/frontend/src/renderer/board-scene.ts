@@ -64,6 +64,10 @@ export const BOARD_COLORS = {
   // Palette entries below are not theme slots in v1 — they remain static.
   partBoundsTop:     0x336633,
   partBoundsBottom:  0x663333,
+  /** Parts whose position was inferred from routing rather than read from the
+   *  file (`Part.placementInferred`). Amber and dashed so it can never be
+   *  mistaken for real placement data. */
+  partBoundsInferred: 0xB8860B,
   partSelected:      0xffaa00,
   pin1:              0xcc2222,
 };
@@ -332,7 +336,30 @@ export interface BorderRect {
 }
 
 /** Batched border Graphics per layer — rebuilt on zoom, 2 draw calls instead of 3K */
+/**
+ * Trace a closed ring as a dashed outline. PixiJS v8 Graphics has no dash
+ * support, so the dashes are emitted as individual move/line pairs.
+ */
+function strokeDashedRing(gfx: Graphics, ring: Array<[number, number]>, dash: number): void {
+  for (let i = 0; i < ring.length; i++) {
+    const [x1, y1] = ring[i];
+    const [x2, y2] = ring[(i + 1) % ring.length];
+    const len = Math.hypot(x2 - x1, y2 - y1);
+    if (len === 0) continue;
+    const steps = Math.max(1, Math.floor(len / (dash * 2)));
+    const ux = (x2 - x1) / len, uy = (y2 - y1) / len;
+    for (let d = 0; d < steps; d++) {
+      const a = (d * len) / steps;
+      const b = Math.min(a + dash, len);
+      gfx.moveTo(x1 + ux * a, y1 + uy * a);
+      gfx.lineTo(x1 + ux * b, y1 + uy * b);
+    }
+  }
+}
+
 export interface BorderBatch {
+  /** Draw the ring as dashes rather than a solid outline. */
+  dashed?: boolean;
   gfx: Graphics;
   rects: BorderRect[];
   color: number;
@@ -679,7 +706,14 @@ export function updateBorderWidths(batches: BorderBatch[], configuredWidth: numb
     batch.lastWidth = effectiveWidth;
     batch.gfx.clear();
     for (const r of batch.rects) {
-      if (r.poly) {
+      // Same three cases as the initial flush in buildBoardScene — a dashed
+      // batch must stay dashed across every zoom-time rebuild.
+      if (batch.dashed) {
+        const ring: Array<[number, number]> = r.poly ?? [
+          [r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h],
+        ];
+        strokeDashedRing(batch.gfx, ring, Math.max(4, Math.min(r.w, r.h) / 6));
+      } else if (r.poly) {
         batch.gfx.moveTo(r.poly[0][0], r.poly[0][1]);
         for (let i = 1; i < r.poly.length; i++) batch.gfx.lineTo(r.poly[i][0], r.poly[i][1]);
         batch.gfx.closePath();
@@ -812,6 +846,11 @@ export function buildBoardScene(
   // Batched border Graphics — one per (layer, color), rebuilt on zoom
   const topBorderBatch: BorderBatch    = { gfx: new Graphics(), rects: [], color: BOARD_COLORS.partBoundsTop,    alpha: s.partBorderAlpha, lastWidth: s.partBorderWidth };
   const bottomBorderBatch: BorderBatch = { gfx: new Graphics(), rects: [], color: BOARD_COLORS.partBoundsBottom, alpha: s.partBorderAlpha, lastWidth: s.partBorderWidth };
+  // Inferred-placement parts get their own batches so they can be stroked in a
+  // different colour and dashed. Kept per side so they still sort with the
+  // side they belong to.
+  const topInferredBatch: BorderBatch    = { gfx: new Graphics(), rects: [], color: BOARD_COLORS.partBoundsInferred, alpha: 1, lastWidth: s.partBorderWidth, dashed: true };
+  const bottomInferredBatch: BorderBatch = { gfx: new Graphics(), rects: [], color: BOARD_COLORS.partBoundsInferred, alpha: 1, lastWidth: s.partBorderWidth, dashed: true };
 
   // Skip event system traversal for all board objects — events are handled
   // manually via viewport hit-testing, so PixiJS doesn't need to walk the tree.
@@ -1798,7 +1837,10 @@ export function buildBoardScene(
       // border outline on a DIMM-shadow or shield frame is still visually
       // dominant. Pins (drawn above as small circles) keep the part findable.
       if (!skipFill) {
-        (isBottom ? bottomBorderBatch : topBorderBatch).rects.push(borderRect);
+        const batch = part.placementInferred
+          ? (isBottom ? bottomInferredBatch : topInferredBatch)
+          : (isBottom ? bottomBorderBatch : topBorderBatch);
+        batch.rects.push(borderRect);
       }
 
       if (s.showComponentColors && override?.color && !skipFill) {
@@ -1968,10 +2010,18 @@ export function buildBoardScene(
 
   // Flush batched border Graphics — initial draw, will be rebuilt on zoom
   const borderBatches: BorderBatch[] = [];
-  for (const [batch, layer] of [[topBorderBatch, topOutlineLayer], [bottomBorderBatch, bottomOutlineLayer]] as [BorderBatch, Container][]) {
+  for (const [batch, layer] of [
+    [topBorderBatch, topOutlineLayer], [bottomBorderBatch, bottomOutlineLayer],
+    [topInferredBatch, topOutlineLayer], [bottomInferredBatch, bottomOutlineLayer],
+  ] as [BorderBatch, Container][]) {
     if (batch.rects.length === 0) continue;
     for (const r of batch.rects) {
-      if (r.poly) {
+      const ring: Array<[number, number]> = r.poly ?? [
+        [r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h],
+      ];
+      if (batch.dashed) {
+        strokeDashedRing(batch.gfx, ring, Math.max(4, Math.min(r.w, r.h) / 6));
+      } else if (r.poly) {
         batch.gfx.moveTo(r.poly[0][0], r.poly[0][1]);
         for (let i = 1; i < r.poly.length; i++) batch.gfx.lineTo(r.poly[i][0], r.poly[i][1]);
         batch.gfx.closePath();

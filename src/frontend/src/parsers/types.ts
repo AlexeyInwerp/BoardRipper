@@ -123,6 +123,13 @@ export interface Part {
    *  build time when `renderSettings.autoMarkMechanical` is on; users can
    *  also force this via right-click. Never set by parsers. */
   mechanical?: boolean;
+  /** This part's position was **inferred**, not read from the file — the
+   *  source defines the component but never places it, and its pads were
+   *  recovered from the routing that terminates on them. Only some pads
+   *  resolve, so `bounds` is the extent of those pads and NOT the package
+   *  body. Consumers must mark it visibly as inferred. Set by the Allegro
+   *  parser; see `allegro/allegro-infer-placement.ts`. */
+  placementInferred?: boolean;
   /** Optional source-format metadata surfaced in the Component Info panel.
    *  Parsers populate whatever fields the format provides; consumers must
    *  treat every field as optional. Currently filled by TVW (Teboview);
@@ -131,6 +138,9 @@ export interface Part {
 }
 
 export interface PartMeta {
+  /** Free-text note about how this part's data was obtained, shown in the
+   *  Component Info panel. Used for inferred placement. */
+  note?: string;
   /** BOM value, e.g. "100K", "10uF", "FCN-235P-G/0" */
   value?: string;
   /** Package / footprint name, e.g. "CHIP0603R", "QFN32" */
