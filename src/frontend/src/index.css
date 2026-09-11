@@ -8742,3 +8742,127 @@ body {
 .library-worklist-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .library-worklist-board { color: var(--text-secondary); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
 .library-worklist-counts { flex: none; color: var(--text-secondary); font-size: 10px; }
+
+/* ── Part comparison (Tools ▸ Part comparison) ──────────────────────────── */
+.part-compare { display: flex; flex-direction: column; min-height: 0; gap: 6px; }
+
+.part-compare-pickers {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 6px;
+  align-items: end;
+}
+.part-compare[data-wide='true'] .part-compare-pickers { gap: 10px; }
+.part-compare-side { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.part-compare-side-label {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+.part-compare-board,
+.part-compare-input {
+  width: 100%; min-width: 0; box-sizing: border-box;
+  font-size: 11px; padding: 3px 5px;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: 3px;
+}
+.part-compare-input:disabled { opacity: 0.5; }
+.part-compare-swap {
+  align-self: center;
+  background: none; border: 1px solid var(--border); border-radius: 3px;
+  color: var(--text-secondary); cursor: pointer;
+  font-size: 13px; line-height: 1; padding: 4px 6px;
+}
+.part-compare-swap:hover { background: var(--surface-hover); color: var(--text); }
+
+.part-compare-lookup { position: relative; }
+.part-compare-pincount {
+  display: block; font-size: 10px; color: var(--text-secondary); margin-top: 2px;
+}
+.part-compare-pincount.missing { color: var(--warn, #d08770); }
+.part-compare-suggest {
+  position: absolute; z-index: 20; left: 0; right: 0; top: 100%;
+  max-height: 200px; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 3px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+.part-compare-suggest-row { padding: 3px 6px; font-size: 11px; cursor: pointer; }
+.part-compare-suggest-row:hover { background: var(--surface-hover); }
+
+.part-compare-summary {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 6px; border: 1px solid var(--border); border-radius: 3px;
+  background: var(--surface);
+}
+.part-compare-headline { font-size: 12px; }
+.part-compare-bits, .part-compare-align { font-size: 10px; color: var(--text-secondary); }
+.part-compare-evidence { opacity: 0.8; }
+.part-compare-warn {
+  font-size: 10px; line-height: 1.35;
+  color: var(--warn, #d08770);
+  border-left: 2px solid currentColor; padding-left: 6px;
+}
+.part-compare-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.part-compare-check { display: flex; align-items: center; gap: 4px; font-size: 10px; }
+.part-compare-mode, .part-compare-copy {
+  font-size: 10px; padding: 2px 5px;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: 3px;
+}
+.part-compare-copy { cursor: pointer; margin-left: auto; }
+.part-compare-copy:hover { background: var(--surface-hover); }
+
+.part-compare-rows { overflow-y: auto; min-height: 0; }
+.part-compare-empty, .part-compare-note {
+  font-size: 11px; color: var(--text-secondary); padding: 8px 2px; line-height: 1.4;
+}
+
+.part-compare-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 4px; font-size: 11px; cursor: pointer;
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.15));
+}
+.part-compare-row:hover { background: var(--surface-hover); }
+.part-compare-row .pc-pin {
+  flex: 0 0 auto; min-width: 26px;
+  color: var(--text-secondary); font-variant-numeric: tabular-nums;
+}
+.part-compare-row .pc-stack { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.part-compare-row .pc-line {
+  display: flex; align-items: baseline; gap: 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.part-compare-row .pc-tag {
+  flex: 0 0 auto; font-size: 9px; opacity: 0.55; width: 9px;
+}
+.part-compare-row .pc-net {
+  flex: 1 1 0; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.part-compare-row .pc-diode {
+  margin-left: auto; padding-left: 6px;
+  font-size: 10px; color: var(--text-secondary); font-variant-numeric: tabular-nums;
+}
+.part-compare-row.diode-differs .pc-diode { color: var(--warn, #d08770); }
+
+.part-compare-badge {
+  flex: 0 0 auto; width: 14px; text-align: center;
+  font-size: 11px; color: var(--text-secondary);
+}
+/* Status colouring. `same`, `nc` and `bulk` stay neutral on purpose — only the
+   rows a tech has to look at are tinted, or the list reads as all-alarm. */
+.part-compare-row.s-differs { border-left-color: var(--error, #bf616a); }
+.part-compare-row.s-only-a,
+.part-compare-row.s-only-b { border-left-color: var(--error, #bf616a); }
+.part-compare-row.s-renamed,
+.part-compare-row.s-similar { border-left-color: var(--warn, #d08770); }
+.part-compare-badge.s-differs,
+.part-compare-badge.s-only-a,
+.part-compare-badge.s-only-b { color: var(--error, #bf616a); }
+.part-compare-badge.s-renamed,
+.part-compare-badge.s-similar { color: var(--warn, #d08770); }
+.part-compare-row.s-nc { opacity: 0.55; }
+
+/* Wide layout: one line per pin, both sides in their own column. */
+.part-compare[data-wide='true'] .part-compare-row .pc-net { flex: 1 1 0; }
+.part-compare[data-wide='true'] .part-compare-row .pc-pin { min-width: 34px; }

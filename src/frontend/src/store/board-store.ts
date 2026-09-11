@@ -1368,7 +1368,13 @@ class BoardStore extends Emitter {
    *  otherwise returns an empty Set.  Centralises the "should we populate
    *  adjacency?" decision so every call-site stays a one-liner. */
   private _resolveAdjacentNets(netName: string | null): Set<string> {
-    const tab = this.activeTab;
+    return this._adjacentNetsFor(this.activeTab, netName);
+  }
+
+  /** Tab-scoped form of the above. Split out because `selectPinInTab` can
+   *  target a background tab, where resolving against the *active* tab's board
+   *  would compute the chain from the wrong netlist. */
+  private _adjacentNetsFor(tab: BoardTab | null, netName: string | null): Set<string> {
     if (!tab?.board || !netName) return new Set<string>();
     if (tab.netLineMode !== 'chain-adjacent') return new Set<string>();
     return computeAdjacentNets(tab.board, netName, renderSettingsStore.settings.hierarchyDepth, this._hierarchyBridgePred());
@@ -2200,6 +2206,56 @@ class BoardStore extends Emitter {
     const req = this._focusRequest;
     this._focusRequest = null;
     return req;
+  }
+
+  /**
+   * Select a pin on a board tab that is not necessarily the active one.
+   *
+   * The cross-board compare tool points at two boards at once: one of them is
+   * on screen and the other is a tab away, and clicking a row has to land on
+   * the right pin in both. `focusPart` only ever touches the active tab, and
+   * `updateActiveTab` is private by design, so this is the one tab-scoped
+   * selection entry point.
+   *
+   * Side flip and focus request mirror `focusPart` — but the focus request is
+   * only issued for the active tab, since the renderer consuming it belongs to
+   * whichever board is on screen; a request left for a background tab would
+   * fire whenever the user next switched to it, long after it meant anything.
+   *
+   * Returns true when the part was found.
+   */
+  selectPinInTab(tabId: number, partName: string, pinIndex: number | null): boolean {
+    const tab = this._tabs.find(t => t.id === tabId);
+    if (!tab?.board) return false;
+    const upper = partName.trim().toUpperCase();
+    const idx = tab.board.parts.findIndex(p => p.name.trim().toUpperCase() === upper);
+    if (idx < 0) return false;
+
+    const part = viewPart(tab, idx) ?? tab.board.parts[idx];
+    if (!tab.butterfly) {
+      if (part.side === 'top' && !tab.showTop) {
+        Object.assign(tab, { showTop: true, showBottom: false });
+      } else if (part.side === 'bottom' && !tab.showBottom) {
+        Object.assign(tab, { showTop: false, showBottom: true });
+      }
+    }
+
+    const net = pinIndex != null ? part.pins[pinIndex]?.net ?? null : null;
+    Object.assign(tab, {
+      selection: {
+        partIndex: idx,
+        pinIndex,
+        highlightedNet: net || null,
+        adjacentNets: this._adjacentNetsFor(tab, net),
+      },
+      searchSelectionActive: true,
+    });
+    if (tab.id === this._activeTabId) {
+      this._clearPreviewPulse();
+      this._focusRequest = { partIndex: idx, bounds: part.bounds };
+    }
+    this.notify();
+    return true;
   }
 
   focusPart(name: string) {

@@ -238,9 +238,11 @@ function medianPitch(pins: Pin[]): number {
  */
 class PointGrid {
   private readonly cell: number;
+  private readonly pts: Point[];
   private readonly buckets = new Map<string, number[]>();
 
-  constructor(private readonly pts: Point[], cell: number) {
+  constructor(pts: Point[], cell: number) {
+    this.pts = pts;
     this.cell = cell > 0 ? cell : 1;
     for (let i = 0; i < pts.length; i++) {
       const k = this.key(pts[i]);

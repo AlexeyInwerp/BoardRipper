@@ -9,6 +9,7 @@ import { renderSettingsStore } from '../store/render-settings';
 import { ensurePdfPanel } from '../store/dockview-api';
 import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
 import { showSidebarTab } from './Sidebar.utils';
+import { openPartCompare } from '../panels/tools/part-compare-open';
 import { worklistStore } from '../store/worklist-store';
 import { fileInputRefs } from '../store/file-inputs';
 import { findInBoardTab, countInBoardTab, findInPdf } from '../store/cross-target-search';
@@ -721,6 +722,67 @@ export function ContextMenu() {
           <div className="context-menu-separator" />
           <div className="context-menu-group-header">{label}</div>
           {rows}
+        </React.Fragment>,
+      );
+    }
+
+    // ── Compare pins ──────────────────────────────────────────────────────
+    // Shortcut into Tools ▸ Part comparison. Rows that name a board carrying
+    // the same refdes fill both sides in; the last row fills only this side so
+    // the user can compare against a differently named component.
+    if (componentName.trim() && activeTab && otherBoardTabs.length > 0) {
+      const upper = componentName.trim().toUpperCase();
+      const here = activeTab.board?.parts.find(p => p.name.trim().toUpperCase() === upper);
+      const rows = otherBoardTabs.map(tab => {
+        const there = tab.board?.parts.find(p => p.name.trim().toUpperCase() === upper);
+        const label = shortBoardName(tab.fileName);
+        if (!there) {
+          return (
+            <div
+              key={`cmp:${tab.id}`}
+              className="context-menu-item disabled"
+              title={`${tab.fileName} has no ${componentName}`}
+            >
+              {label} — no {componentName}
+            </div>
+          );
+        }
+        return (
+          <div
+            key={`cmp:${tab.id}`}
+            className="context-menu-item"
+            data-testid="compare-pins-entry"
+            title={`Compare ${componentName} pin by pin against ${tab.fileName}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              openPartCompare(
+                { tabId: activeTab.id, partName: componentName },
+                { tabId: tab.id, partName: componentName },
+              );
+              contextMenuStore.hide();
+            }}
+          >
+            {label} — {componentName} · {here?.pins.length ?? '?'} ↔ {there.pins.length} pins
+          </div>
+        );
+      });
+      sections.push(
+        <React.Fragment key="compare-pins">
+          <div className="context-menu-separator" />
+          <div className="context-menu-group-header">Compare pins</div>
+          {rows}
+          <div
+            className="context-menu-item"
+            data-testid="compare-pins-open"
+            title="Open Part comparison with this component on one side"
+            onClick={(e) => {
+              e.stopPropagation();
+              openPartCompare({ tabId: activeTab.id, partName: componentName }, null);
+              contextMenuStore.hide();
+            }}
+          >
+            Compare &apos;{componentName}&apos; with…
+          </div>
         </React.Fragment>,
       );
     }

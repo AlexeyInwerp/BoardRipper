@@ -1,12 +1,13 @@
-import { useState } from 'react';
 import { useDatabank } from '../hooks/useDatabank';
 import { ensureDatabaseEditorPanel } from '../store/dockview-api';
 import { ResistorColorTool } from './tools/ResistorColorTool';
 import { SmdResistorTool } from './tools/SmdResistorTool';
 import { CapacitorTool } from './tools/CapacitorTool';
 import { WorklistsTool } from './tools/WorklistsTool';
-
-type ToolId = 'resistor' | 'smd' | 'capacitor' | 'worklists';
+import { PartCompareTool } from './tools/PartCompareTool';
+// Which tool is open lives outside this component so the board right-click can
+// navigate straight to Part comparison. See `tools/tools-nav.ts`.
+import { setActiveTool, useActiveTool, type ToolId } from './tools/tools-nav';
 
 const CALCULATORS: { id: ToolId; name: string; hint: string }[] = [
   { id: 'resistor', name: 'Resistor color-band', hint: '4 / 5 / 6-band to ohms' },
@@ -20,10 +21,11 @@ const TOOL_TITLES: Record<ToolId, string> = {
   smd: 'SMD resistor code',
   capacitor: 'Capacitor converter',
   worklists: 'Worklists',
+  partcompare: 'Part comparison',
 };
 
 export function ToolsPanel() {
-  const [activeTool, setActiveTool] = useState<ToolId | null>(null);
+  const activeTool = useActiveTool();
   const { backendAvailable } = useDatabank();
 
   if (activeTool) {
@@ -41,6 +43,7 @@ export function ToolsPanel() {
           {activeTool === 'smd' && <SmdResistorTool />}
           {activeTool === 'capacitor' && <CapacitorTool />}
           {activeTool === 'worklists' && <WorklistsTool />}
+          {activeTool === 'partcompare' && <PartCompareTool />}
         </div>
       </div>
     );
@@ -64,6 +67,16 @@ export function ToolsPanel() {
       ))}
 
       <div className="tools-group-label">Workbench</div>
+      <button
+        className="tools-entry"
+        data-testid="tools-entry-partcompare"
+        onClick={() => setActiveTool('partcompare')}
+      >
+        <span className="tools-entry-text">
+          Part comparison
+          <small>one component&apos;s pinout across two open boards</small>
+        </span>
+      </button>
       <button
         className="tools-entry"
         data-testid="tools-entry-worklists"
