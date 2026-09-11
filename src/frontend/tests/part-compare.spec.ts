@@ -138,6 +138,15 @@ test.describe('part comparison', () => {
   test('the board right-click fills both sides in', async ({ page }) => {
     await openBoards(page, variant('menu-a', s => s), variant('menu-b', s => s));
 
+    // `__contextMenuStore` is exposed only under `import.meta.env.DEV`, so this
+    // test cannot run against a production bundle (BASE_URL pointed at the dev
+    // container). Skip rather than fail — the other three cases do exercise the
+    // shipped build.
+    const hasHook = await page.evaluate(
+      () => '__contextMenuStore' in (window as unknown as Record<string, unknown>),
+    );
+    test.skip(!hasHook, 'context-menu store is a DEV-only global');
+
     // Drive the context-menu store directly: placing a real right-click on a
     // specific 0.1 mm captouch pad would be testing hit-testing, not this.
     await page.evaluate((refdes) => {
