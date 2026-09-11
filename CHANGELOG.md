@@ -1,5 +1,59 @@
 # BoardRipper changelog
 
+## v0.40.0 — 2026-09-11
+
+### Comparing a component across two boards
+
+- **Tools ▸ Part comparison** puts one component's pinout next to another, pin
+  by pin. Pick a board and a component on each side. The two sides do not have
+  to carry the same name — a chip can sit at U1700 on one board and U6800 on
+  another, and comparing those is the interesting case once you leave one board
+  family.
+- **Right-click a component on the board** for the short way in. "Compare pins"
+  lists the other open boards that carry the same name and fills both sides in
+  with one click. "Compare with…" fills in only this side, for when the other
+  board calls the part something else.
+- **A different net name is not always a difference.** Two dumps of one board
+  often disagree only about naming — one carries PPBUS_G3H where the other
+  carries N$21004. When the names differ, BoardRipper looks at which components
+  each net actually touches. The same components means the net was renamed, and
+  the row says so instead of reading as a fault. Rows where the wiring itself
+  differs are marked separately, so a board full of renames does not bury the
+  one pin that changed.
+- **Diode readings sit side by side** on boards that carry them, with a mark on
+  any pin where the two readings drift apart. A pin that agrees on its net but
+  disagrees on its reading is usually the one you were looking for.
+- **Pins are matched up before they are compared.** Most boardview formats
+  number pins in the order they happen to appear in the file rather than by the
+  pin on the package, so two files of the same board can number the same pads
+  differently. BoardRipper tries the pad names, the numbers, the file order and
+  the pad positions, and keeps whichever best explains the nets and the copper.
+  It shows which one it used and how well it fit, and you can pick one yourself.
+- **It says when it is not sure.** Most packages look the same rotated or
+  mirrored. When the net names give no clue which way round the part sits, the
+  pairing is a guess, and the tool says so rather than presenting it as fact.
+  It also warns when the two footprints are too different in size to be the
+  same package.
+- "Only differences" hides the rows that agree, and Copy puts the visible rows
+  on the clipboard. Widen the sidebar and the two sides get their own columns.
+
+### Maintainers
+
+- The comparison itself is a pure module, `store/part-compare.ts` — no React,
+  no stores — so it can back an MCP tool later without a browser. The tool
+  reads the raw parse, never the derived view: `deriveBoardView` filters parts
+  and rebuilds `nets`, which would let a view filter shrink a topology
+  fingerprint and turn a rename into a difference.
+- `ToolsPanel`'s open tool moved out of local state into
+  `panels/tools/tools-nav.ts` so the right-click can navigate to a tool.
+- `boardStore.selectPinInTab()` selects on a board tab that is not the active
+  one. `_resolveAdjacentNets` was split into a tab-scoped `_adjacentNetsFor` —
+  the old form resolved the chain against the active tab's netlist, which was
+  unreachable before and wrong for a background tab.
+- Tests locate the tool by `data-testid="part-compare"` and its rows by
+  `compare-row` + `data-status`.
+- Design and decisions: `docs/specs/2026-09-11-part-pin-comparison-design.md`.
+
 ## v0.39.2 — 2026-09-10
 
 ### Allegro boards
