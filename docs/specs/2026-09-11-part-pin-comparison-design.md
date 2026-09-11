@@ -1,7 +1,7 @@
 # Part pin comparison — design
 
 **Date:** 2026-09-11
-**Status:** proposed
+**Status:** implemented (phase 1)
 **Scope:** compare one component's pinout across two open boards, pin by pin, with
 the differences called out.
 
@@ -112,12 +112,30 @@ interface Alignment {
 }
 ```
 
-Four strategies, each producing an `Alignment`; `auto` runs all of them and
-keeps the highest `score`, breaking ties in the order **name > number >
-geometry > order** (prefer a semantic key over a positional one). The chosen
-mode and its score are always shown in the summary strip, and the user can pin
-a mode with the selector — an automatic choice the user cannot see or override
-is exactly how this kind of feature earns mistrust.
+Four strategies, each producing an `Alignment`. The chosen mode and its score
+are always shown in the summary strip, and the user can pin a mode with the
+selector — an automatic choice the user cannot see or override is exactly how
+this kind of feature earns mistrust.
+
+> **Revised during implementation.** The draft ranked strategies by their own
+> `score` (matched / max pins). That is not a quality measure: `number`
+> alignment matches 100 % of pins whenever the two parts have the same pin
+> count, which says the files have the same pad count, not that the pairing is
+> right — so it beat geometry on every shuffled delivery. Ranking now scores
+> **every** candidate pairing, however it was produced, by the same two
+> independent kinds of evidence:
+>
+> * **net agreement** — do paired pins carry the same net name?
+> * **geometric agreement** — do paired pins sit in the same place under one
+>   rigid transform?
+>
+> Coverage is a gate (within a 5 % band counts as tied, so one unmatched pad
+> does not cost geometry a comparison it otherwise explains completely), then
+> net agreement, then geometric agreement, then the preference order
+> **name > number > geometry > order**. Net agreement leads because it is the
+> stronger claim; geometric agreement decides the case the feature exists for —
+> a delivery where every net has been renamed and only the copper is
+> comparable.
 
 1. **`name`** — key `pin.name.trim().toUpperCase()`. Eligible only when both
    parts have non-empty names on ≥ 50 % of pins **and** the names are unique
@@ -153,6 +171,13 @@ proximity:
 * **Matching**: mutual nearest neighbour over a uniform grid — a pin pairs only
   if each is the other's nearest within tolerance. Greedy one-directional
   matching collapses two pins onto one on dense BGAs; mutual-best does not.
+* **Symmetry is the hard part, and it was missed in the draft.** Most packages
+  are geometrically symmetric — a two-row SOIC pad field maps onto itself under
+  180° and under a mirror, a square BGA under all four rotations. Match count
+  alone therefore cannot orient the package, and taking the first transform
+  that ties would pair pin 1 with pin 40 without saying so. Transforms are
+  ranked by (pins matched, then net agreement); when the top two still tie, the
+  alignment is flagged `ambiguous` and the UI says the pairing is a guess.
 * **Cost**: 9 transforms × grid lookup over ≤ ~1200 pins. Milliseconds, computed
   once per comparison, memoised on `(tabId, partName, tabId, partName, mode)`.
 
@@ -213,8 +238,10 @@ worrying about the amber rows.
 When either board carries `board.diodeReference` or has an OBD match, the row
 shows both readings via the existing `formatDiode`
 (`store/diode-readings.ts:21`). A pair where both sides have a `value` reading
-and differ by more than **50 mV or 15 %**, whichever is larger, is flagged amber
-independently of the net status — a matching net with a diverging diode reading
+and differ by more than **50 mV or 10 %**, whichever is larger, is flagged amber
+independently of the net status (the draft said 15 %, at which the relative term
+swallows the absolute floor for every ordinary junction reading — 0.43 V vs
+0.50 V went unflagged) — a matching net with a diverging diode reading
 is precisely what a tech is hunting for.
 
 ---
@@ -269,12 +296,18 @@ following `Sidebar.utils.ts`'s pattern of state-outside-the-component. Then
 | `src/frontend/src/panels/tools/tools-nav.ts` | **new** — lifted `activeTool` |
 | `src/frontend/src/panels/ToolsPanel.tsx` | entry + `ToolId` + `TOOL_TITLES`; read nav from module |
 | `src/frontend/src/components/ContextMenu.tsx` | `Compare pins` group |
-| `src/frontend/src/store/board-store.ts` | `selectPinInTab()` — additive |
+| `src/frontend/src/store/board-store.ts` | `selectPinInTab()` — additive; `_resolveAdjacentNets` split into a tab-scoped `_adjacentNetsFor` |
+| `src/frontend/src/panels/tools/part-compare-open.ts` | **new** — the one deep link (store + tool nav + sidebar tab) |
 | `src/frontend/src/index.css` | `.part-compare-*` |
 | `src/frontend/tests/part-compare.spec.ts` | **new** — Playwright |
 
 Nothing existing changes behaviour: the board store gains one method, the tools
 panel's local state moves out unchanged, the context menu gains one group.
+
+One latent bug fell out of it. `_resolveAdjacentNets` resolved the chain
+against **the active tab's** board; `selectPinInTab` can target a background
+tab, where that would have walked the wrong netlist. It is now split into a
+tab-scoped `_adjacentNetsFor`, with the active-tab form delegating to it.
 
 ---
 
@@ -301,12 +334,19 @@ panel's local state moves out unchanged, the context menu gains one group.
    (`boardStore` dedups by filename, so the copy is required), compare the same
    part: every row `same`, zero differences. Anything else is a bug in the
    kernel, and this catches it without a hand-authored expectation table.
-2. **Seeded difference** — a plain-text fixture (`samples/kicad/starfish.kicad_pcb`
-   is editable, unlike the obfuscated Apple formats) with exactly one net name
-   changed → exactly one `differs` row, and `only differences` shows exactly
-   that row.
-3. **Right-click path** — the menu group appears, click opens Tools ▸ Part
+2. **Renamed net** — `samples/kicad/tomu-fpga.kicad_pcb` (plain text, unlike the
+   obfuscated Apple formats) with one net renamed globally → **zero**
+   differences and one `renamed` row. This is the fingerprint path end to end
+   on real data.
+3. **Seeded difference** — the same fixture with two pads' nets swapped inside
+   the subject footprint → exactly two `differs` rows, and `only differences`
+   shows exactly those two.
+4. **Right-click path** — the menu group appears, click opens Tools ▸ Part
    comparison with both sides filled.
+
+Fixtures are generated in the test from one checked-in sample by a named edit,
+so the expected answer is a property of the edit rather than a number someone
+once observed. Subject: `SW2`, a 4-pad captouch footprint on `/TOUCH_1../TOUCH_4`.
 
 ---
 
@@ -324,6 +364,9 @@ panel's local state moves out unchanged, the context menu gains one group.
 
 ## 9. Known risks
 
+* **A symmetric package with fully renamed nets is genuinely ambiguous** — there
+  is no evidence left to orient it. Reported as such rather than guessed
+  silently, but the user has to pin a mode.
 * **Geometric alignment on non-cardinal placement** is not handled. The score
   readout makes that visible rather than silent, and the user can fall back to
   `number`/`order`.

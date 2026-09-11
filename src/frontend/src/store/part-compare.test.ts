@@ -153,7 +153,8 @@ describe('geometric alignment', () => {
     const r = (rot * Math.PI) / 180;
     const cx = 75, cy = 50;
     let entries = layout.map(([x, y], i) => {
-      let lx = x - cx, ly = y - cy;
+      let lx = x - cx;
+      const ly = y - cy;
       if (mirror) lx = -lx;
       return { net: nets[i], x: lx * Math.cos(r) - ly * Math.sin(r) + dx, y: lx * Math.sin(r) + ly * Math.cos(r) + dy };
     });
