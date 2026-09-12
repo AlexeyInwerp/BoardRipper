@@ -1044,16 +1044,17 @@ body {
    so it sits in the bar's own row — the control is where the thing is. When
    the bar is hidden the cell stays put at the rail's foot. Lit (accent) while
    the bar is showing, dim when hidden — the icon itself doesn't change. */
-/* Small foot switches (auto-hide, status bar): shorter than a destination,
-   quiet until they are on, separated from the destinations by a rule. */
+/* Auto-hide switch at the rail's foot. Two modes, one weight: it carries its
+   state in the icon (pinned / unpinned), never in colour — an accent here
+   would mean "lit = the panel hides", the opposite of what lit means on every
+   other rail control. */
 .activity-rail-item.activity-rail-foot {
   height: 30px;
   margin-top: 0;
   border-top: 1px solid var(--border);
   color: var(--text-secondary);
-  opacity: 0.55;
+  opacity: 0.7;
 }
-.activity-rail-item.activity-rail-foot.on { color: var(--accent); opacity: 0.9; }
 .activity-rail-item.activity-rail-foot:hover { opacity: 1; }
 
 .activity-rail-item.activity-rail-status {

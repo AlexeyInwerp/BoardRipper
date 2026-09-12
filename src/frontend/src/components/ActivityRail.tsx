@@ -119,11 +119,13 @@ export function ActivityRail() {
         {/* Auto-hide switch — a pin, because that is what the mode is about:
             pinned, the panel sits in the layout; unpinned, it floats over the
             board and leaves when you click into it. It was reachable only from
-            the right-click menu, which is not where anyone finds a mode. Lit
-            while auto-hide is on, like the status toggle below it. */}
+            the right-click menu, which is not where anyone finds a mode.
+            Deliberately NOT accent-lit: everywhere else in the rail lit means
+            "this is showing", and here it would have meant the panel is the
+            one that goes away. The two icons carry the state instead. */}
         <button
           type="button"
-          className={`activity-rail-item activity-rail-foot${autoHide ? ' on' : ''}`}
+          className="activity-rail-item activity-rail-foot" 
           aria-label={autoHide ? 'Keep the panel pinned open' : 'Auto-hide the panel'}
           aria-pressed={autoHide}
           data-title={autoHide ? 'Keep panel open' : 'Auto-hide panel'}
