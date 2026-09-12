@@ -418,6 +418,9 @@ export class BoardRenderer {
    *  advance so a following double-click (PDF lookup) can cancel it. */
   private pendingCycleAdvance: ReturnType<typeof setTimeout> | null = null;
   /** Same-spot tolerance for cycling, in screen pixels (converted to world). */
+  /** Pointer travel past which a gesture is a drag, not a click. Matches
+   *  pixi-viewport's own `threshold` so the two agree about what a click is. */
+  private static readonly CLICK_DRAG_TOLERANCE_PX = 5;
   private static readonly CYCLE_TOLERANCE_PX = 6;
   /** Guard window: a same-spot repeat click's advance waits this long so a
    *  double-click can cancel it. Longer than the browser's dblclick dispatch,
@@ -425,6 +428,19 @@ export class BoardRenderer {
   private static readonly CYCLE_DBL_GUARD_MS = 250;
   /** Bound pointerdown handler that captures shift state. */
   private boundShiftCapture: ((e: PointerEvent) => void) | null = null;
+  /** Bound window-capture pointermove tracker — see `pointerTravelPx`. */
+  private boundPointerTravel: ((e: PointerEvent) => void) | null = null;
+  /** How far the pointer has moved from where the current gesture started, in
+   *  CSS px (Chebyshev-ish |dx|+|dy|). Reset on every pointerdown.
+   *
+   *  pixi-viewport suppresses its own `clicked` after 5 px of movement, but
+   *  only when its InputManager actually *sees* the pointermoves — and the
+   *  drag-to-zoom loop stops them at window capture so the board does not pan
+   *  while it zooms. So the viewport believes a shift-drag was a click and
+   *  emits one. This is the renderer's own record of the gesture, taken from
+   *  a listener installed at init and therefore ahead of any per-gesture
+   *  handler that might swallow the events. */
+  private pointerTravelPx = 0;
   private resizeObserver: ResizeObserver | null = null;
   private containerEl: HTMLDivElement;
   /** Canvas2D "Text fast mode" label overlay — lazily created by
@@ -505,6 +521,19 @@ export class BoardRenderer {
    *  pixi-viewport's InputManager never sees the pointermoves (drag-zoom
    *  stopPropagation's them), so it still emits 'clicked' on pointerup. */
   private dragZoomConsumedClick = false;
+  /** True from the moment a drag-to-zoom gesture passes its movement threshold
+   *  until the pointer is released.
+   *
+   *  The latch above is not enough on its own, because the stray click does not
+   *  arrive at pointerup: committing the gesture calls `setPointerCapture` on
+   *  `containerEl`, which retargets every later pointer event from the canvas
+   *  to its parent div. PixiJS listens on the canvas, so it stops seeing the
+   *  pointer, decides it left, and emits `pointerupoutside` — pixi-viewport's
+   *  InputManager takes that as the end of a gesture it believes never moved
+   *  and fires `clicked` **in the middle of the drag**, after one move. At that
+   *  instant almost no travel has accumulated, so no distance test can catch
+   *  it; the only reliable signal is that a zoom gesture is under way. */
+  private dragZoomActive = false;
   /** If a drag-zoom gesture is active, holds its cleanup function so dispose()
    *  can force-remove the per-gesture window listeners. */
   private activeDragZoomCleanup: (() => void) | null = null;
@@ -1625,9 +1654,26 @@ export class BoardRenderer {
       if (e.button === 0) {
         this.lastPointerShift = e.shiftKey;
         this.lastPointerClient = { x: e.clientX, y: e.clientY };
+        this.pointerTravelPx = 0;
+        // A new gesture starts clean. The drag-zoom latch is set from a
+        // pointerup handler that can run *after* pixi emits 'clicked', in
+        // which case it would otherwise sit armed and swallow the next real
+        // click instead of the drag it was meant for.
+        this.dragZoomConsumedClick = false;
       }
     };
     this.containerEl.addEventListener('pointerdown', this.boundShiftCapture, { capture: true });
+
+    // Window + capture, installed once here: per-gesture move handlers (the
+    // drag-to-zoom loop) are added on pointerdown and therefore always later
+    // in the list, so this sees every move even when they stop propagation.
+    this.boundPointerTravel = (e: PointerEvent) => {
+      const down = this.lastPointerClient;
+      if (!down) return;
+      const d = Math.abs(e.clientX - down.x) + Math.abs(e.clientY - down.y);
+      if (d > this.pointerTravelPx) this.pointerTravelPx = d;
+    };
+    window.addEventListener('pointermove', this.boundPointerTravel, { capture: true });
 
     this.viewport.on('clicked', (e: ViewportClickEvent) => {
       this.handleClick(e.world);
@@ -3679,6 +3725,7 @@ export class BoardRenderer {
           const dy = ev.clientY - startY;
           if (Math.abs(dx) + Math.abs(dy) < DRAG_THRESHOLD) return;
           committed = true;
+          this.dragZoomActive = true;
           try { (this.containerEl as Element).setPointerCapture?.(pointerId); } catch { /* ignore */ }
           lastY = ev.clientY;
         }
@@ -3698,6 +3745,7 @@ export class BoardRenderer {
       };
 
       const forceCleanup = () => {
+        this.dragZoomActive = false;
         window.removeEventListener('pointermove', onMove, true);
         window.removeEventListener('pointerup', cleanup, true);
         window.removeEventListener('pointercancel', cleanup, true);
@@ -6090,6 +6138,19 @@ export class BoardRenderer {
       this.dragZoomConsumedClick = false;
       return;
     }
+    // A gesture that moved is a drag, whatever pixi-viewport thinks it saw.
+    // Shift+drag is drag-to-zoom, and without this it also lands here as a
+    // shift+click and adds the part under the cursor to the worklist.
+    // `dragZoomActive` covers the click pixi emits *during* the drag; the
+    // travel test covers one emitted at release, for gestures whose moves were
+    // hidden from pixi by some other handler.
+    if (this.dragZoomActive ||
+        this.pointerTravelPx > BoardRenderer.CLICK_DRAG_TOLERANCE_PX) {
+      this.lastPointerShift = false;
+      this.clickCycle = null;
+      this.clearPendingCycleAdvance();
+      return;
+    }
     // Resize Mode intercepts the click: classify the element under the cursor
     // and open its resize popup instead of selecting. Pan/zoom are unaffected
     // (pixi-viewport only emits 'clicked' when the pointer didn't drag).
@@ -6588,6 +6649,10 @@ export class BoardRenderer {
     this.unsubscribeViewCommands?.();
     this.unsubscribeSelectionSet?.();
     this.unsubscribeWorklist?.();
+    if (this.boundPointerTravel) {
+      window.removeEventListener('pointermove', this.boundPointerTravel, true);
+      this.boundPointerTravel = null;
+    }
     if (this.boundShiftCapture) {
       this.containerEl.removeEventListener('pointerdown', this.boundShiftCapture, true);
       this.boundShiftCapture = null;

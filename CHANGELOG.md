@@ -46,8 +46,24 @@
 - "Only differences" hides the rows that agree, and Copy puts the visible rows
   on the clipboard. Widen the sidebar and the two sides get their own columns.
 
+### Fixed
+
+- **Shift+drag no longer adds a component to the worklist.** Shift+drag zooms
+  the board, but it was also landing as a shift+click on whatever sat under the
+  cursor, so zooming quietly filled the worklist with parts you never picked.
+  Shift+click still adds and removes as before.
+
 ### Maintainers
 
+- Shift+drag: committing a drag-to-zoom calls `setPointerCapture` on the
+  container, which retargets pointer events away from the canvas. PixiJS
+  listens on the canvas, so it decides the pointer left and emits
+  `pointerupoutside`; pixi-viewport reads that as the end of a gesture it
+  believes never moved and fires `clicked` **during** the drag, one move in.
+  The release-time latch that was supposed to swallow it therefore ran too
+  late — and stayed armed, eating the *next* real click. Fixed with an
+  in-gesture flag, a pointer-travel test for clicks emitted at release, and by
+  clearing the latch on pointerdown. Regression: `tests/shift-drag-worklist.spec.ts`.
 - The comparison itself is a pure module, `store/part-compare.ts` — no React,
   no stores — so it can back an MCP tool later without a browser. The tool
   reads the raw parse, never the derived view: `deriveBoardView` filters parts
