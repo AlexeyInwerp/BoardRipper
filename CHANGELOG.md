@@ -1,6 +1,6 @@
 # BoardRipper changelog
 
-## v0.40.0 — 2026-09-11
+## v0.40.0 — 2026-09-12
 
 ### Comparing a component across two boards
 
