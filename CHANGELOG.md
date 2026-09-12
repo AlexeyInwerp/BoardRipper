@@ -46,6 +46,18 @@
 - "Only differences" hides the rows that agree, and Copy puts the visible rows
   on the clipboard. Widen the sidebar and the two sides get their own columns.
 
+### Top bar
+
+- **The sidebar button lines up with the icon column below it.** It sat a few
+  pixels off its own grid, which was small but hard to unsee. It now shares
+  the column's width and icon size, so the two read as one edge.
+- **The two-window button says 2-Window.** It was an icon whose meaning you
+  had to hover to learn.
+- **When an update is waiting, the version badge alternates** between the new
+  version and the word Update, so it reads as something to do rather than a
+  number that changed. The badge keeps its width while it swaps, and with
+  reduced motion it simply says Update.
+
 ### Sidebar
 
 - **Auto-hide has a switch you can see.** It sits at the foot of the icon

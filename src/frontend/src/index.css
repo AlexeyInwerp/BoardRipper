@@ -282,6 +282,36 @@ body {
   gap: 6px;
   border-radius: 3px;
 }
+/* The toolbar's first cell sits on the activity rail's grid: its left edge at
+   the window edge (cancelling the toolbar's 8px padding) and its width the
+   rail's CONTENT width — the rail is 46px including a 1px right border, so 45
+   here puts this icon's centre exactly on the rail's icon column below. */
+.toolbar-btn.toolbar-railcell {
+  width: 45px;
+  margin-left: -8px;
+  margin-right: 2px;
+  padding: 4px 0;
+  justify-content: center;
+}
+
+/* Update badge: the version and the word swap places so an available update
+   reads as a thing to do, not just a number. One grid cell, so the badge does
+   not change width as they alternate. */
+.update-badge-swap { display: inline-grid; }
+.update-badge-swap > span { grid-area: 1 / 1; }
+.update-badge-swap .swap-version { animation: badge-swap-version 6s ease-in-out infinite; }
+.update-badge-swap .swap-word { animation: badge-swap-word 6s ease-in-out infinite; }
+@keyframes badge-swap-version {
+  0%, 42% { opacity: 1; } 50%, 92% { opacity: 0; } 100% { opacity: 1; }
+}
+@keyframes badge-swap-word {
+  0%, 42% { opacity: 0; } 50%, 92% { opacity: 1; } 100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .update-badge-swap .swap-version { animation: none; opacity: 0; }
+  .update-badge-swap .swap-word { animation: none; opacity: 1; }
+}
+
 .toolbar-btn.toolbar-quiet:hover:not(:disabled) { background: rgba(255,255,255,0.06); color: var(--text-primary); }
 .toolbar-btn.toolbar-quiet.active { background: var(--accent); color: var(--accent-fg); }
 

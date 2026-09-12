@@ -162,7 +162,22 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
         }}
         title={updating ? 'Updating — see Debug tab' : unverified ? 'Update available — manual install required (signature not verifiable by this build)' : state.has_update ? (isImportant ? `Important update: ${fmtVersion(state.latest_version)}` : `Update available: ${fmtVersion(state.latest_version)}`) : `${fmtVersion(state.current_version)} — click to check`}
       >
-        {updating ? 'Updating…' : state.has_update ? fmtVersion(state.latest_version) : fmtVersion(state.current_version)}
+        {updating
+          ? 'Updating…'
+          : state.has_update
+            // Alternates between the version on offer and the word for what to
+            // do about it. Both sit in one grid cell so the badge keeps a
+            // steady width; with reduced motion the word wins, since that is
+            // the actionable half and the version is in the tooltip.
+            ? (
+              // aria-hidden: the two halves would read as one run-together
+              // string. The button's title already says it in a sentence.
+              <span className="update-badge-swap" aria-hidden="true">
+                <span className="swap-version">{fmtVersion(state.latest_version)}</span>
+                <span className="swap-word">Update</span>
+              </span>
+            )
+            : fmtVersion(state.current_version)}
       </button>
 
       {open && (
@@ -584,7 +599,7 @@ export function Toolbar() {
       {!isOfflineBuild() && !COARSE_POINTER && (
         <button
           onClick={() => toggleTwoWindowMode()}
-          className={`toolbar-btn toolbar-quiet toolbar-btn-icon ${twoWindow ? 'active' : ''}`}
+          className={`toolbar-btn toolbar-quiet ${twoWindow ? 'active' : ''}`}
           data-testid="two-window-toggle"
           data-tooltip={twoWindow
             ? '2-window mode ON — click to re-dock PDF into main window'
@@ -593,6 +608,7 @@ export function Toolbar() {
           {twoWindow
             ? <IconBoxMultiple size={15} stroke={1.75} />
             : <IconLayoutBoardSplit size={15} stroke={1.75} />}
+          <span>2-Window</span>
         </button>
       )}
 
