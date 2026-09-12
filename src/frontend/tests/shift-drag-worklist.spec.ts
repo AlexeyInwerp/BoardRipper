@@ -38,10 +38,19 @@ async function selectedPart(page: Page): Promise<number | null> {
       .__boardStore.selection.partIndex);
 }
 
-/** Load the board and centre `SUBJECT`, returning the canvas centre point. */
+/** Load the board and centre `SUBJECT`, returning the canvas centre point.
+ *
+ *  Both the setup and the assertions go through `__boardStore` /
+ *  `__worklistStore`, which exist only under `import.meta.env.DEV` — so this
+ *  spec cannot run against a production bundle. It skips there rather than
+ *  reporting seven failures that say nothing about the fix. */
 async function load(page: Page): Promise<{ x: number; y: number }> {
   await page.goto('/');
   await expect(page.getByTestId('toolbar')).toBeVisible({ timeout: 15000 });
+  const devHooks = await page.evaluate(
+    () => '__boardStore' in (window as unknown as Record<string, unknown>),
+  );
+  test.skip(!devHooks, 'board/worklist stores are DEV-only globals');
   await page.getByTestId('file-input').setInputFiles(BOARD);
   await expect(page.getByTestId('statusbar')).toContainText('Components', { timeout: 20000 });
   await page.waitForTimeout(1500);
