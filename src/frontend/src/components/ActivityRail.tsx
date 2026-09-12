@@ -5,6 +5,13 @@
  *
  * Gesture: click a destination to show it; click the active one to hide the
  * sidebar. The rail itself never hides, so the destinations are always legible.
+ *
+ * Hover labels are always `Name · something`, never a bare instruction. On a
+ * destination the tail is the action ("click to hide"), because the name makes
+ * the subject obvious. On the two foot SWITCHES the tail is the current value
+ * ("on" / "off"): a mode you cannot see has no visible state to contradict, so
+ * an action label there ("Keep panel open") reads as a claim about how things
+ * already are — the exact inverse of the truth.
  * Spec: docs/specs/2026-09-02-activity-rail-design.md.
  */
 import { useCallback, useRef, useState } from 'react';
@@ -126,9 +133,9 @@ export function ActivityRail() {
         <button
           type="button"
           className="activity-rail-item activity-rail-foot" 
-          aria-label={autoHide ? 'Keep the panel pinned open' : 'Auto-hide the panel'}
+          aria-label="Auto-hide panel"
           aria-pressed={autoHide}
-          data-title={autoHide ? 'Keep panel open' : 'Auto-hide panel'}
+          data-title={`Auto-hide · ${autoHide ? 'on' : 'off'}`}
           data-testid="rail-autohide-toggle"
           onClick={() => { setSidebarAutoHide(!autoHide); closeMenu(); }}
         >
@@ -141,9 +148,9 @@ export function ActivityRail() {
         <button
           type="button"
           className={`activity-rail-item activity-rail-status${statusHidden ? '' : ' on'}`}
-          aria-label={statusHidden ? 'Show status bar' : 'Hide status bar'}
+          aria-label="Status bar"
           aria-pressed={!statusHidden}
-          data-title={statusHidden ? 'Show status bar' : 'Hide status bar'}
+          data-title={`Status bar · ${statusHidden ? 'off' : 'on'}`}
           data-testid="rail-status-toggle"
           onClick={() => { toggleStatusBar(); closeMenu(); }}
         >

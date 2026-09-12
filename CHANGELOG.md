@@ -66,6 +66,9 @@
   when you click into it. It was only in the right-click menu before, which is
   not where anyone looks for a mode. The menu item and the setting still work
   and show the same state.
+- **The two switches at the foot of the column now say what they are set to**,
+  not what a click would do. Hovering used to show the opposite of the current
+  setting, which read like a description of how things already were.
 
 ### Fixed
 

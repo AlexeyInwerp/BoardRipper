@@ -481,11 +481,17 @@ test.describe('activity rail', () => {
     const pin = page.getByTestId('rail-autohide-toggle');
     await expect(pin).toBeVisible();
     await expect(pin).toHaveAttribute('aria-pressed', 'false');
+    await expect(pin).toHaveAttribute('data-title', 'Auto-hide · off');
 
     // Turning it on from the rail puts the panel in overlay mode.
     await pin.click();
     await expect(pin).toHaveAttribute('aria-pressed', 'true');
     await expect(await page.evaluate(() => (window as unknown as { __sidebar: { autoHide: () => boolean } }).__sidebar.autoHide())).toBe(true);
+
+    // The hover label states the mode's value; it must never read as the
+    // opposite of what is set, which is what an action label did here.
+    await expect(pin).toHaveAttribute('data-title', 'Auto-hide · on');
+    await expect(page.getByTestId('rail-status-toggle')).toHaveAttribute('data-title', /^Status bar · (on|off)$/);
 
     // The right-click menu shows the same state, and switching it there
     // switches the button — one mode, two controls.
