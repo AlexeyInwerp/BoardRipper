@@ -474,4 +474,26 @@ test.describe('activity rail', () => {
     await page.click('.sidebar-toggle.collapsed');
     await expect(page.locator('.sidebar')).toBeVisible();
   });
+
+  test('the auto-hide switch is on the rail, toggles the mode, and agrees with the menu', async ({ page }) => {
+    await gotoApp(page);
+    const rail = page.getByTestId('activity-rail');
+    const pin = page.getByTestId('rail-autohide-toggle');
+    await expect(pin).toBeVisible();
+    await expect(pin).toHaveAttribute('aria-pressed', 'false');
+
+    // Turning it on from the rail puts the panel in overlay mode.
+    await pin.click();
+    await expect(pin).toHaveAttribute('aria-pressed', 'true');
+    await expect(await page.evaluate(() => (window as unknown as { __sidebar: { autoHide: () => boolean } }).__sidebar.autoHide())).toBe(true);
+
+    // The right-click menu shows the same state, and switching it there
+    // switches the button — one mode, two controls.
+    await rail.click({ button: 'right' });
+    const item = page.getByTestId('rail-menu-autohide');
+    await expect(item).toHaveAttribute('aria-checked', 'true');
+    await item.click();
+    await expect(pin).toHaveAttribute('aria-pressed', 'false');
+    await expect(await page.evaluate(() => (window as unknown as { __sidebar: { autoHide: () => boolean } }).__sidebar.autoHide())).toBe(false);
+  });
 });

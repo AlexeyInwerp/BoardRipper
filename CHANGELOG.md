@@ -46,6 +46,15 @@
 - "Only differences" hides the rows that agree, and Copy puts the visible rows
   on the clipboard. Widen the sidebar and the two sides get their own columns.
 
+### Sidebar
+
+- **Auto-hide has a switch you can see.** It sits at the foot of the icon
+  column as a pin, above the status bar button: pinned means the panel stays
+  in the layout, unpinned means it floats over the board and leaves when you
+  click into it. It was only in the right-click menu before, which is not
+  where anyone looks for a mode. The menu item and the setting still work and
+  show the same state.
+
 ### Fixed
 
 - **Shift+drag no longer adds a component to the worklist.** Shift+drag zooms

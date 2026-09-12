@@ -8,7 +8,7 @@
  * Spec: docs/specs/2026-09-02-activity-rail-design.md.
  */
 import { useCallback, useRef, useState } from 'react';
-import { IconLayoutBottombar } from '@tabler/icons-react';
+import { IconLayoutBottombar, IconPin, IconPinnedOff } from '@tabler/icons-react';
 import {
   SIDEBAR_GROUPS,
   TAB_LABELS,
@@ -116,6 +116,22 @@ export function ActivityRail() {
         {SIDEBAR_GROUPS.top.map(renderItem)}
         <div className="activity-rail-spacer" />
         {SIDEBAR_GROUPS.bottom.map(renderItem)}
+        {/* Auto-hide switch — a pin, because that is what the mode is about:
+            pinned, the panel sits in the layout; unpinned, it floats over the
+            board and leaves when you click into it. It was reachable only from
+            the right-click menu, which is not where anyone finds a mode. Lit
+            while auto-hide is on, like the status toggle below it. */}
+        <button
+          type="button"
+          className={`activity-rail-item activity-rail-foot${autoHide ? ' on' : ''}`}
+          aria-label={autoHide ? 'Keep the panel pinned open' : 'Auto-hide the panel'}
+          aria-pressed={autoHide}
+          data-title={autoHide ? 'Keep panel open' : 'Auto-hide panel'}
+          data-testid="rail-autohide-toggle"
+          onClick={() => { setSidebarAutoHide(!autoHide); closeMenu(); }}
+        >
+          {autoHide ? <IconPinnedOff size={15} stroke={1.75} /> : <IconPin size={15} stroke={1.75} />}
+        </button>
         {/* Status bar toggle — small, at the very foot, lit while the bar is
             showing. The glyph is a window with a bottom bar: the thing it
             toggles. (Hiding the PANEL needs no button of its own: clicking the
