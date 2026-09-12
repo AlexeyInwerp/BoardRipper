@@ -77,6 +77,26 @@ class PartCompareStore extends Emitter {
     this.notify();
   }
 
+  /**
+   * With exactly two boards open and neither side chosen, there is only one
+   * comparison the user can mean — so make it for them.
+   *
+   * Guarded on **both** sides being empty, so clearing one side to re-pick it
+   * does not get overruled on the next render. Only the boards are filled;
+   * the components stay blank, because which chip to compare is the actual
+   * question and guessing at it would be noise.
+   */
+  autoFillBoards(tabIds: readonly number[]) {
+    if (tabIds.length !== 2) return;
+    if (this._state.a || this._state.b) return;
+    this._state = {
+      ...this._state,
+      a: { tabId: tabIds[0], partName: '' },
+      b: { tabId: tabIds[1], partName: '' },
+    };
+    this.notify();
+  }
+
   /** Drop references to tabs that are no longer open. */
   pruneClosedTabs(liveTabIds: ReadonlySet<number>) {
     const next: Partial<PartCompareState> = {};

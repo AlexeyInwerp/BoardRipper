@@ -8855,12 +8855,26 @@ body {
 .part-compare-row.s-only-a,
 .part-compare-row.s-only-b { border-left-color: var(--error, #bf616a); }
 .part-compare-row.s-renamed,
-.part-compare-row.s-similar { border-left-color: var(--warn, #d08770); }
+.part-compare-row.s-similar,
+.part-compare-row.s-partial { border-left-color: var(--warn, #d08770); }
 .part-compare-badge.s-differs,
 .part-compare-badge.s-only-a,
 .part-compare-badge.s-only-b { color: var(--error, #bf616a); }
 .part-compare-badge.s-renamed,
-.part-compare-badge.s-similar { color: var(--warn, #d08770); }
+.part-compare-badge.s-similar,
+.part-compare-badge.s-partial { color: var(--warn, #d08770); }
+
+/* The run the two net names share. Marked rather than the differing text, so
+   the eye lands on what is left over — usually the character or two that
+   actually changed. Tinted background, not a colour change, so it survives
+   the row's own status colour. */
+.pc-net-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pc-net-text .pc-shared {
+  background: color-mix(in srgb, var(--accent, #5e81ac) 28%, transparent);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.pc-net-text.pc-absent { color: var(--text-secondary); }
 .part-compare-row.s-nc { opacity: 0.55; }
 
 /* Wide layout: one line per pin, both sides in their own column. */

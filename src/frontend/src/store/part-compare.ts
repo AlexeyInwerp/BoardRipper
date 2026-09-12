@@ -71,6 +71,11 @@ export type PinDiffStatus =
   | 'renamed'
   /** Names differ, neighbour sets overlap at or above SIMILAR_JACCARD. */
   | 'similar'
+  /** Names are not equal but share a substantial run of text, and the
+   *  topology did not already settle it. Two deliveries very often spell one
+   *  rail slightly differently — `PPBUS_G3H` against `PPBUS_G3H_R` — and that
+   *  is a naming difference, not a wiring one. */
+  | 'partial'
   /** Both sides are ground/power-class rails of comparable size. */
   | 'bulk'
   /** Names and topology both differ — a real wiring difference. */
@@ -96,6 +101,16 @@ export interface PinDiffSide {
   diode?: DiodeReading;
 }
 
+/** A shared run of text between two net names, in each side's own offsets. */
+export interface NameMatch {
+  aStart: number;
+  bStart: number;
+  length: number;
+  /** `length / max(|a|, |b|)` — 1 when one name contains the other entirely
+   *  and they are the same length. */
+  ratio: number;
+}
+
 export interface PinDiffRow {
   /** Stable within one result — safe as a React key. */
   key: string;
@@ -104,6 +119,12 @@ export interface PinDiffRow {
   status: PinDiffStatus;
   /** Jaccard overlap of the two neighbour sets; set for 'similar' and 'differs'. */
   similarity?: number;
+  /** The longest run of text the two net names share, as offsets into each
+   *  side's `rawNet`. Present on every row whose names differ and overlap at
+   *  all — the UI marks it in both cells, which is what turns "these two
+   *  strings are nearly the same" into something the eye can check in one
+   *  pass. Absent when the names share nothing. */
+  nameMatch?: NameMatch;
   /** Both sides carry a real reading and they diverge past the threshold. */
   diodeDiffers: boolean;
 }
@@ -145,6 +166,11 @@ const BULK_PIN_LIMIT = 120;
 const BULK_SIZE_TOLERANCE = 0.2;
 /** Neighbour-set overlap at or above this reads as "similar", below as "differs". */
 const SIMILAR_JACCARD = 0.6;
+/** Floors for reading two names as one net spelled differently. Both matter:
+ *  without the run length `PP3V3_S5` and `PP1V8_S0` would pair on a shared
+ *  `PP`, and without the ratio `GND` would pair with `PP_GND_SENSE`. */
+const PARTIAL_NAME_MIN_RUN = 3;
+const PARTIAL_NAME_RATIO = 0.5;
 /** Diode readings diverging by more than max(this, DIODE_REL × larger) are
  *  flagged. The floor governs ordinary junction readings (0.3–0.7 V, where
  *  board-to-board spread is a few tens of mV); the relative term only takes
@@ -640,6 +666,84 @@ function jaccard(x: Set<string>, y: Set<string>): number {
   return inter / (x.size + y.size - inter);
 }
 
+/** Net names longer than this are truncated before the O(n·m) scan. Nothing
+ *  real comes close; the cap only stops a pathological file costing seconds. */
+const NAME_SCAN_CAP = 128;
+
+/**
+ * Longest run of text two net names share, case-insensitively.
+ *
+ * Offsets come back in the **original** strings, so the caller can mark the
+ * run without re-deriving anything. That is why the comparison lowercases per
+ * character instead of uppercasing both strings first: `'ß'.toUpperCase()` is
+ * two characters, which would slide every offset after it.
+ *
+ * Contiguous, not a subsequence. A subsequence LCS would call `PP3V3_S5` and
+ * `PP1V8_S0` a 6-character match by picking letters out of the middle; a
+ * contiguous run says 2, which is the honest answer.
+ */
+export function longestCommonRun(a: string, b: string): NameMatch | null {
+  const x = a.slice(0, NAME_SCAN_CAP);
+  const y = b.slice(0, NAME_SCAN_CAP);
+  if (x.length === 0 || y.length === 0) return null;
+
+  // Rolling two-row DP: prev[j] = run length ending at x[i-1], y[j-1].
+  let prev = new Array<number>(y.length + 1).fill(0);
+  let cur = new Array<number>(y.length + 1).fill(0);
+  let best = 0, bestAEnd = 0, bestBEnd = 0;
+
+  for (let i = 1; i <= x.length; i++) {
+    const xc = x[i - 1].toLowerCase();
+    for (let j = 1; j <= y.length; j++) {
+      if (xc === y[j - 1].toLowerCase()) {
+        const run = prev[j - 1] + 1;
+        cur[j] = run;
+        if (run > best) { best = run; bestAEnd = i; bestBEnd = j; }
+      } else {
+        cur[j] = 0;
+      }
+    }
+    const swap = prev; prev = cur; cur = swap;
+    cur.fill(0);
+  }
+
+  if (best === 0) return null;
+  return {
+    aStart: bestAEnd - best,
+    bStart: bestBEnd - best,
+    length: best,
+    ratio: best / Math.max(a.length, b.length),
+  };
+}
+
+/** Letters and digits only — `PPBUS_G3H` and `PPBUS-G3H` collapse to one. */
+function alnumOnly(s: string): string {
+  return s.replace(/[^0-9a-z]/gi, '').toLowerCase();
+}
+
+/**
+ * True when two net names read as one net spelled differently.
+ *
+ * The rule is **containment**, not a similarity score, and that distinction is
+ * the whole point. A score cannot tell `PPBUS_G3H` / `PPBUS_G3H_R` — one name
+ * decorated — from `STUB_A` / `STUB_B` or `SMC_RST_L` / `SMC_RST_R`, where a
+ * single character is *substituted* and the two are sibling nets that must
+ * never be folded together. Both score about the same; only one has the
+ * shorter name inside the longer one.
+ *
+ * The second door is separator-only variation (`PPBUS_G3H` vs `PPBUS-G3H`),
+ * which containment misses because the difference sits mid-string.
+ */
+function isPartialName(m: NameMatch | null, a: string, b: string): m is NameMatch {
+  if (alnumOnly(a) === alnumOnly(b) && alnumOnly(a).length >= PARTIAL_NAME_MIN_RUN) {
+    return m !== null;
+  }
+  if (m === null) return false;
+  if (m.length < PARTIAL_NAME_MIN_RUN || m.ratio < PARTIAL_NAME_RATIO) return false;
+  // The shared run has to be one of the names in full.
+  return m.length === Math.min(a.length, b.length);
+}
+
 /** Both sides carry a real reading and they diverge past the threshold. */
 export function diodeDiverges(a: DiodeReading | undefined, b: DiodeReading | undefined): boolean {
   if (!a || !b) return false;
@@ -658,7 +762,7 @@ export interface CompareSubject {
 }
 
 const EMPTY_COUNTS = (): Record<PinDiffStatus, number> => ({
-  same: 0, renamed: 0, similar: 0, bulk: 0, differs: 0,
+  same: 0, renamed: 0, similar: 0, partial: 0, bulk: 0, differs: 0,
   'only-a': 0, 'only-b': 0, nc: 0,
 });
 
@@ -667,7 +771,7 @@ function sideOf(pin: Pin, index: number): PinDiffSide {
     pinIndex: index,
     label: pinLabel(pin),
     net: normalizeNet(pin.net),
-    rawNet: pin.net ?? '',
+    rawNet: (pin.net ?? '').trim(),
     diode: pin.diode,
   };
 }
@@ -698,6 +802,7 @@ export function comparePart(
 
     let status: PinDiffStatus;
     let similarity: number | undefined;
+    let nameMatch: NameMatch | null = null;
 
     if (!a) {
       status = 'only-b';
@@ -711,22 +816,30 @@ export function comparePart(
       // One side connected, the other not — always a real difference.
       status = 'differs';
     } else {
+      // Two independent kinds of evidence that these are one net: what the net
+      // touches, and what it is called. Topology is the stronger claim and is
+      // consulted first; the shared name run is computed either way, because
+      // the UI marks it on every row whose names differ.
+      nameMatch = longestCommonRun(a.rawNet, b.rawNet);
       const fa = fingerprint(A.board, a.rawNet, refA, isBulkNet, fpCacheA);
       const fb = fingerprint(B.board, b.rawNet, refB, isBulkNet, fpCacheB);
+
       if (fa.bulk || fb.bulk) {
         const span = Math.max(fa.pins, fb.pins) || 1;
         status = (fa.bulk && fb.bulk && Math.abs(fa.pins - fb.pins) / span <= BULK_SIZE_TOLERANCE)
           ? 'bulk'
           : 'differs';
       } else if (fa.refs.size === 0 && fb.refs.size === 0) {
-        // Two stubs that touch nothing but the subject part. No evidence of
-        // sameness — equal empty sets must not read as a rename.
-        status = 'differs';
+        // Two stubs that touch nothing but the subject part. Equal empty sets
+        // are not evidence of sameness, so topology abstains here and the name
+        // is all there is to go on.
         similarity = 0;
+        status = isPartialName(nameMatch, a.rawNet, b.rawNet) ? 'partial' : 'differs';
       } else {
         similarity = jaccard(fa.refs, fb.refs);
         if (similarity === 1) status = 'renamed';
         else if (similarity >= SIMILAR_JACCARD) status = 'similar';
+        else if (isPartialName(nameMatch, a.rawNet, b.rawNet)) status = 'partial';
         else status = 'differs';
       }
     }
@@ -735,6 +848,7 @@ export function comparePart(
     return {
       key: `${pair.a ?? 'x'}:${pair.b ?? 'x'}:${i}`,
       a, b, status, similarity,
+      ...(nameMatch ? { nameMatch } : {}),
       diodeDiffers: diodeDiverges(a?.diode, b?.diode),
     };
   });
@@ -759,7 +873,7 @@ export function comparePart(
 // ── Serialisation ─────────────────────────────────────────────────────────
 
 const STATUS_SYMBOL: Record<PinDiffStatus, string> = {
-  same: '=', renamed: '~', similar: '~', bulk: '≈',
+  same: '=', renamed: '~', similar: '~', partial: '≈', bulk: '≡',
   differs: '≠', 'only-a': '◁', 'only-b': '▷', nc: '·',
 };
 

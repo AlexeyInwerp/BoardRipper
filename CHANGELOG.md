@@ -20,6 +20,12 @@
   the row says so instead of reading as a fault. Rows where the wiring itself
   differs are marked separately, so a board full of renames does not bury the
   one pin that changed.
+- **Names that nearly match are shown as a partial match**, with the text the
+  two share marked in both. PPBUS_G3H against PPBUS_G3H_R is one rail written
+  two ways, and marking what they share leaves your eye on the bit that
+  differs. This only applies where one name contains the other, or where they
+  differ only in punctuation — SMC_RST_L and SMC_RST_R are two different nets,
+  not one, and are still shown as a difference.
 - **Diode readings sit side by side** on boards that carry them, with a mark on
   any pin where the two readings drift apart. A pin that agrees on its net but
   disagrees on its reading is usually the one you were looking for.
@@ -34,6 +40,9 @@
   pairing is a guess, and the tool says so rather than presenting it as fact.
   It also warns when the two footprints are too different in size to be the
   same package.
+- **With two boards open the pickers fill themselves in**, since there is only
+  one comparison you can mean. The components stay blank — which chip to look
+  at is the actual question.
 - "Only differences" hides the rows that agree, and Copy puts the visible rows
   on the clipboard. Widen the sidebar and the two sides get their own columns.
 

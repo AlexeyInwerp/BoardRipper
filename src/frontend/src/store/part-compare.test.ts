@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { BoardData, DiodeReading, Net, Part, Pin } from '../parsers/types';
-import { comparePart, normalizeNet, diodeDiverges, buildAlignment } from './part-compare';
+import { comparePart, normalizeNet, diodeDiverges, buildAlignment, longestCommonRun } from './part-compare';
 
 // ── Fixture builders ──────────────────────────────────────────────────────
 //
@@ -279,6 +279,105 @@ describe('net classification', () => {
     const res = comparePart(A, { board: mkBoard([b]), part: b }, { mode: 'number' });
     expect(res.counts['only-a']).toBe(2);
     expect(res.differences).toBe(2);
+  });
+});
+
+// ── Partial name matching ─────────────────────────────────────────────────
+
+describe('longestCommonRun', () => {
+  it('finds the shared run and reports offsets into each original string', () => {
+    const m = longestCommonRun('PPBUS_G3H', 'X_PPBUS_G3H')!;
+    expect(m.length).toBe(9);
+    expect(m.aStart).toBe(0);
+    expect(m.bStart).toBe(2);
+    expect(m.ratio).toBeCloseTo(9 / 11);
+  });
+
+  it('is contiguous, not a subsequence', () => {
+    // A subsequence LCS would score 6 here by picking letters out of the
+    // middle. These are two different rails and must not look alike.
+    const m = longestCommonRun('PP3V3_S5', 'PP1V8_S0')!;
+    expect(m.length).toBe(2);
+  });
+
+  it('ignores case but keeps offsets in the original casing', () => {
+    const m = longestCommonRun('ppbus_g3h', 'PPBUS_G3H')!;
+    expect(m.length).toBe(9);
+    expect(m.aStart).toBe(0);
+  });
+
+  it('returns null when nothing is shared', () => {
+    expect(longestCommonRun('ABC', 'XYZ')).toBeNull();
+    expect(longestCommonRun('', 'ABC')).toBeNull();
+  });
+});
+
+describe('partial name match', () => {
+  it('reads a suffixed name as partial, not as a difference', () => {
+    // Different wiring on the B side, so topology abstains — the name is all
+    // the evidence there is, and it says these are one rail spelled two ways.
+    const A = simpleBoard(['PPBUS_G3H', 'P2', 'P3', 'P4']);
+    const B = simpleBoard(['PPBUS_G3H_R', 'P2', 'P3', 'P4'], '_B');
+    const res = comparePart(A, B);
+    expect(res.rows[0].status).toBe('partial');
+    expect(res.rows[0].nameMatch?.length).toBe(9);
+    expect(res.differences).toBe(0);   // the other three rows carry equal names
+  });
+
+  it('does not pair two rails that merely start alike', () => {
+    const A = simpleBoard(['PP3V3_S5', 'P2', 'P3', 'P4']);
+    const B = simpleBoard(['PP1V8_S0', 'P2', 'P3', 'P4'], '_B');
+    expect(comparePart(A, B).rows[0].status).toBe('differs');
+  });
+
+  it('does not fold sibling nets that differ by one substituted character', () => {
+    // The case a similarity score gets wrong: these score as high as a real
+    // decoration, but neither name contains the other, and SMC_RST_L is not
+    // SMC_RST_R.
+    for (const [x, y] of [['SMC_RST_L', 'SMC_RST_R'], ['STUB_A', 'STUB_B']]) {
+      const A = simpleBoard([x, 'P2', 'P3', 'P4']);
+      const B = simpleBoard([y, 'P2', 'P3', 'P4'], '_B');
+      expect(comparePart(A, B).rows[0].status).toBe('differs');
+    }
+  });
+
+  it('reads a separator-only difference as partial', () => {
+    const A = simpleBoard(['PPBUS_G3H', 'P2', 'P3', 'P4']);
+    const B = simpleBoard(['PPBUS-G3H', 'P2', 'P3', 'P4'], '_B');
+    expect(comparePart(A, B).rows[0].status).toBe('partial');
+  });
+
+  it('does not pair a short name contained in a much longer one', () => {
+    const A = simpleBoard(['GND', 'P2', 'P3', 'P4']);
+    const B = simpleBoard(['PP_GND_SENSE', 'P2', 'P3', 'P4'], '_B');
+    expect(comparePart(A, B).rows[0].status).toBe('differs');
+  });
+
+  it('lets topology win when it has something to say', () => {
+    // Identical neighbours — `renamed` is the stronger claim and outranks the
+    // name check, but the shared run is still reported for the highlight.
+    const A = simpleBoard(['PPBUS_G3H', 'P2', 'P3', 'P4']);
+    const B = simpleBoard(['PPBUS_G3H_R', 'P2', 'P3', 'P4']);
+    const row = comparePart(A, B).rows[0];
+    expect(row.status).toBe('renamed');
+    expect(row.nameMatch?.length).toBe(9);
+  });
+
+  it('rescues two stubs that topology cannot judge', () => {
+    const a = mkPart('U1', [{ net: 'TP_SPI_CLK', x: 0, y: 0 }]);
+    const b = mkPart('U1', [{ net: 'TP_SPI_CLK_1', x: 0, y: 0 }]);
+    const res = comparePart({ board: mkBoard([a]), part: a }, { board: mkBoard([b]), part: b });
+    expect(res.rows[0].status).toBe('partial');
+    expect(res.differences).toBe(0);
+  });
+
+  it('offsets index the trimmed name the UI shows', () => {
+    const a = mkPart('U1', [{ net: '  PPBUS_G3H  ', x: 0, y: 0 }]);
+    const b = mkPart('U1', [{ net: 'PPBUS_G3H_R', x: 0, y: 0 }]);
+    const row = comparePart({ board: mkBoard([a]), part: a }, { board: mkBoard([b]), part: b }).rows[0];
+    const m = row.nameMatch!;
+    expect(row.a!.rawNet.slice(m.aStart, m.aStart + m.length)).toBe('PPBUS_G3H');
+    expect(row.b!.rawNet.slice(m.bStart, m.bStart + m.length)).toBe('PPBUS_G3H');
   });
 });
 

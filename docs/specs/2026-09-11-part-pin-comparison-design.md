@@ -192,6 +192,7 @@ For each aligned pair, the status is one of:
 | `same` | net names equal after normalisation | `=` neutral |
 | `renamed` | names differ, **neighbour sets identical** | `~` amber |
 | `similar` | names differ, Jaccard ≥ 0.6 | `~` amber + score |
+| `partial` | names differ, but one **contains** the other (or they differ only in punctuation) | `≈` amber |
 | `bulk` | both sides are ground/power-class nets | `≈` neutral |
 | `differs` | names and topology both differ | `≠` red |
 | `only-a` / `only-b` | pin exists on one side only | `◁` / `▷` red |
@@ -222,6 +223,41 @@ the cheap pre-check: if a net has more than `BULK_LIMIT` (40) member parts, or
 Two rails compare as `bulk` when their member counts are within ±20 % of each
 other, `differs` otherwise. Fingerprinting a 3000-pin GND would be both
 expensive and uninformative.
+
+### Partial name match
+
+A second, independent kind of evidence that two nets are one net: what they are
+*called*. Consulted only after topology has had its say, so a `renamed` never
+gets downgraded.
+
+The rule is **containment**, not a similarity score, and that distinction is the
+whole of it. A score cannot separate
+
+* `PPBUS_G3H` / `PPBUS_G3H_R` — one name decorated, one net; from
+* `SMC_RST_L` / `SMC_RST_R`, `STUB_A` / `STUB_B` — one character *substituted*,
+  two sibling nets that must never be folded together.
+
+Both score about the same. Only the first has the shorter name inside the longer
+one. So `partial` requires the shared run to be one of the names in full, at
+least 3 characters, and at least half the longer name (which is what stops `GND`
+pairing with `PP_GND_SENSE`). A second door covers separator-only variation
+(`PPBUS_G3H` vs `PPBUS-G3H`), which containment misses because the difference
+sits mid-string: equal after stripping non-alphanumerics.
+
+`partial` is amber and does **not** count as a difference.
+
+`longestCommonRun` returns the shared run as offsets into each side's own
+string, so the UI can mark it without re-deriving anything — which is why it
+compares case-insensitively per character rather than uppercasing both first
+(`'ß'.toUpperCase()` is two characters and would slide every later offset).
+The run is **contiguous**, not a subsequence: a subsequence LCS would call
+`PP3V3_S5` and `PP1V8_S0` a 6-character match by picking letters out of the
+middle.
+
+The UI marks the run the two names **share**, not the part that differs — on
+`PPBUS_G3H` / `PPBUS_G3H_R` that leaves the eye on the unmarked tail, which is
+the character or two that actually changed. `nameMatch` is attached to every row
+whose names differ and overlap at all, `differs` rows included.
 
 ### Summary line
 
@@ -257,6 +293,11 @@ is precisely what a tech is hunting for.
 * **`→A` / `→B` buttons** per row — `switchTab` + focus, to jump.
 * **`☑ only differences`** — hides `same` and `nc` rows.
 * **`⇄`** — swap the two sides.
+* **Auto-fill** — with exactly two boards open and neither side chosen, both
+  board pickers fill themselves in; there is only one comparison on offer.
+  Guarded on *both* sides being empty, so clearing one side to re-pick it is not
+  overruled on the next render. Components stay blank — which chip to compare is
+  the real question, and guessing would be noise.
 * **`[Copy]`** — TSV of the visible rows to the clipboard, following
   `store/worklist-clipboard.ts`.
 

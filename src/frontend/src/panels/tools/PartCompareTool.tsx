@@ -23,8 +23,8 @@ import {
 } from '../../store/part-compare-store';
 import {
   comparePart, compareToText, statusSymbol,
-  type AlignMode, type CompareResult, type PinDiffRow, type PinDiffStatus,
-  type ResolvedAlignMode,
+  type AlignMode, type CompareResult, type NameMatch, type PinDiffRow,
+  type PinDiffStatus, type ResolvedAlignMode,
 } from '../../store/part-compare';
 
 /** Sidebar width at which the two sides get their own columns. */
@@ -38,6 +38,7 @@ const STATUS_TITLE: Record<PinDiffStatus, string> = {
   same: 'Same net name',
   renamed: 'Different name, identical neighbours — a rename, not a rewiring',
   similar: 'Different name, mostly the same neighbours',
+  partial: 'The two names share most of their text — the same net spelled differently',
   bulk: 'Both sides are ground/power rails of comparable size',
   differs: 'Different net, and the neighbours differ too',
   'only-a': 'This pin exists only on board A',
@@ -56,6 +57,29 @@ const MODE_LABEL: Record<AlignMode, string> = {
 function shortName(fileName: string): string {
   const base = fileName.replace(/\.[^.]+$/, '');
   return base.length > 28 ? `${base.slice(0, 27)}…` : base;
+}
+
+/**
+ * A net name with the run it shares with the other side marked.
+ *
+ * Marking the *shared* text rather than the differing text is deliberate: on a
+ * pair like `PPBUS_G3H` / `PPBUS_G3H_R` the eye lands on the unmarked tail,
+ * which is exactly the character or two that actually differ.
+ */
+function NetName({ text, match, side }: { text: string; match?: NameMatch; side: 'a' | 'b' }) {
+  if (!text) return <span className="pc-net-text">n/c</span>;
+  const start = side === 'a' ? match?.aStart : match?.bStart;
+  const len = match?.length ?? 0;
+  if (start == null || len <= 0 || start + len > text.length) {
+    return <span className="pc-net-text">{text}</span>;
+  }
+  return (
+    <span className="pc-net-text">
+      {text.slice(0, start)}
+      <span className="pc-shared">{text.slice(start, start + len)}</span>
+      {text.slice(start + len)}
+    </span>
+  );
 }
 
 // ── Component lookup ──────────────────────────────────────────────────────
@@ -186,6 +210,17 @@ export function PartCompareTool() {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  // Exactly two boards open and nothing picked yet — there is only one
+  // comparison on offer, so the pickers start filled in. In an effect rather
+  // than at render time because it writes to a store other components read.
+  const loadedIds = useMemo(
+    () => tabs.filter(t => t.board !== null).map(t => t.id),
+    [tabs],
+  );
+  useEffect(() => {
+    partCompareStore.autoFillBoards(loadedIds);
+  }, [loadedIds]);
 
   const sideA = useMemo(() => resolveSide(state.a, tabs), [state.a, tabs]);
   const sideB = useMemo(() => resolveSide(state.b, tabs), [state.b, tabs]);
@@ -328,6 +363,7 @@ function Summary({
   if (counts['only-b']) bits.push(`${counts['only-b']} only in B`);
   if (counts.renamed) bits.push(`${counts.renamed} renamed`);
   if (counts.similar) bits.push(`${counts.similar} similar`);
+  if (counts.partial) bits.push(`${counts.partial} partial`);
 
   return (
     <div className="part-compare-summary">
@@ -409,8 +445,11 @@ function Row({
   onPick: (r: PinDiffRow) => void;
   onJump: (which: 'a' | 'b', r: PinDiffRow) => void;
 }) {
-  const netText = (s: PinDiffRow['a']) =>
-    s == null ? '—' : (s.rawNet.trim() || 'n/c');
+  const net = (which: 'a' | 'b') => {
+    const s = which === 'a' ? row.a : row.b;
+    if (s == null) return <span className="pc-net-text pc-absent">—</span>;
+    return <NetName text={s.rawNet} match={row.nameMatch} side={which} />;
+  };
 
   const badge = (
     <span
@@ -435,9 +474,9 @@ function Row({
       {wide ? (
         <>
           <span className="pc-pin">{row.a?.label ?? ''}</span>
-          <span className="pc-net" onDoubleClick={() => onJump('a', row)}>{netText(row.a)}</span>
+          <span className="pc-net" onDoubleClick={() => onJump('a', row)}>{net('a')}</span>
           {badge}
-          <span className="pc-net" onDoubleClick={() => onJump('b', row)}>{netText(row.b)}</span>
+          <span className="pc-net" onDoubleClick={() => onJump('b', row)}>{net('b')}</span>
           <span className="pc-pin">{row.b?.label ?? ''}</span>
           {withDiode && (
             <span className="pc-diode">{diode(row.a)}{diode(row.a) || diode(row.b) ? ' / ' : ''}{diode(row.b)}</span>
@@ -448,11 +487,11 @@ function Row({
           <span className="pc-pin">{row.a?.label ?? row.b?.label ?? ''}</span>
           <span className="pc-stack">
             <span className="pc-line" onDoubleClick={() => onJump('a', row)}>
-              <span className="pc-tag">A</span>{netText(row.a)}
+              <span className="pc-tag">A</span>{net('a')}
               {withDiode && diode(row.a) && <span className="pc-diode">{diode(row.a)}</span>}
             </span>
             <span className="pc-line" onDoubleClick={() => onJump('b', row)}>
-              <span className="pc-tag">B</span>{netText(row.b)}
+              <span className="pc-tag">B</span>{net('b')}
               {withDiode && diode(row.b) && <span className="pc-diode">{diode(row.b)}</span>}
             </span>
           </span>

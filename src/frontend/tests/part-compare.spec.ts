@@ -62,6 +62,17 @@ function swapPads(s: string): string {
   return s.replace(m[0], patched);
 }
 
+/** Decorate SW2's pad-2 net so only that pad changes — the old name is
+ *  contained in the new one, but the net it now names touches nothing else, so
+ *  topology abstains and the name is the only evidence left. */
+function suffixPadNet(s: string): string {
+  const m = s.match(SW2_BLOCK);
+  if (!m) throw new Error('fixture drift: SW2 footprint block not found');
+  const patched = m[0].replace('(net 21 "/TOUCH_2")', '(net 900 "/TOUCH_2_ALT")');
+  if (patched === m[0]) throw new Error('fixture drift: SW2 pad 2 net not found');
+  return s.replace(m[0], patched);
+}
+
 async function openBoards(page: Page, a: string, b: string) {
   await page.goto('/');
   await expect(page.getByTestId('toolbar')).toBeVisible({ timeout: 15000 });
@@ -133,6 +144,45 @@ test.describe('part comparison', () => {
     // The filter leaves exactly the two rows that disagree.
     await page.getByTestId('compare-only-diffs').check();
     await expect(page.getByTestId('compare-row')).toHaveCount(2);
+  });
+
+  test('a decorated net name reads as partial, with the shared text marked', async ({ page }) => {
+    await openBoards(page, variant('partial-a', s => s), variant('partial-b', suffixPadNet));
+    await compareSubject(page);
+
+    const row = page.locator('[data-testid="compare-row"][data-status="partial"]');
+    await expect(row).toHaveCount(1);
+    await expect(page.getByTestId('compare-headline')).toContainText('1 partial');
+    // Not counted against the board — a different spelling is not a fault.
+    await expect(page.getByTestId('compare-difference-count')).toHaveText('0');
+
+    // Both sides mark the run they share, which is what makes the leftover
+    // "_ALT" the thing your eye lands on. (The KiCad parser drops the leading
+    // "/" of a hierarchical net name, so the displayed name has no slash.)
+    const marks = row.locator('.pc-shared');
+    await expect(marks).toHaveCount(2);
+    await expect(marks.first()).toHaveText('TOUCH_2');
+    await expect(marks.last()).toHaveText('TOUCH_2');
+    await expect(row).toContainText('TOUCH_2_ALT');
+  });
+
+  test('with exactly two boards open the pickers fill themselves in', async ({ page }) => {
+    await openBoards(page, variant('auto-a', s => s), variant('auto-b', s => s));
+
+    await page.locator('[data-sidebar-tab="tools"]').first().click();
+    await page.getByTestId('tools-entry-partcompare').click();
+    await expect(page.getByTestId('part-compare')).toBeVisible();
+
+    // Neither select was touched, and neither is on the placeholder.
+    const a = page.getByTestId('compare-board-a');
+    const b = page.getByTestId('compare-board-b');
+    await expect(a).not.toHaveValue('');
+    await expect(b).not.toHaveValue('');
+    expect(await a.inputValue()).not.toBe(await b.inputValue());
+
+    // The components stay blank — which chip to compare is the real question.
+    await expect(page.getByTestId('compare-part-a')).toHaveValue('');
+    await expect(page.getByTestId('compare-part-a')).toBeEnabled();
   });
 
   test('the board right-click fills both sides in', async ({ page }) => {
