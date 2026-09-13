@@ -504,6 +504,7 @@ export class BoardRenderer {
   private tooltipEl: HTMLDivElement | null = null;
   private tooltipNetSpan: HTMLSpanElement | null = null;
   private tooltipDetailSpan: HTMLSpanElement | null = null;
+  private tooltipCompareSpan: HTMLSpanElement | null = null;  // cross-board compare line
   private tooltipMetaSpan: HTMLSpanElement | null = null;   // value / package (TVW + parsers that fill PartMeta)
   private tooltipObdSpan: HTMLSpanElement | null = null;  // OBD diode/V/Ω line (separate pipeline)
   private tooltipWorklistSpan: HTMLSpanElement | null = null;  // worklist mark/note for the hovered part
@@ -1751,6 +1752,11 @@ export class BoardRenderer {
     this.tooltipNetSpan.className = 'pnt-net';
     this.tooltipDetailSpan = document.createElement('span');
     this.tooltipDetailSpan.className = 'pnt-detail';
+    // Compare line — only ever filled while "Highlight on board" is on, so the
+    // tooltip is unchanged for everyone not running a comparison.
+    this.tooltipCompareSpan = document.createElement('span');
+    this.tooltipCompareSpan.className = 'pnt-compare';
+    this.tooltipCompareSpan.style.display = 'none';
     this.tooltipMetaSpan = document.createElement('span');
     this.tooltipMetaSpan.className = 'pnt-meta';
     this.tooltipMetaSpan.style.display = 'none';
@@ -1773,7 +1779,7 @@ export class BoardRenderer {
     this.tooltipWorklistNetSpan = document.createElement('span');
     this.tooltipWorklistNetSpan.className = 'pnt-worklist-net';
     this.tooltipWorklistNetSpan.style.display = 'none';
-    this.tooltipEl.append(this.tooltipNetSpan, this.tooltipDetailSpan, this.tooltipWorklistSpan, this.tooltipMetaSpan, this.tooltipWorklistNetSpan, this.tooltipObdSpan);
+    this.tooltipEl.append(this.tooltipNetSpan, this.tooltipDetailSpan, this.tooltipCompareSpan, this.tooltipWorklistSpan, this.tooltipMetaSpan, this.tooltipWorklistNetSpan, this.tooltipObdSpan);
     this.containerEl.appendChild(this.tooltipEl);
     this.tooltipCanvas = this.app.renderer.canvas as HTMLCanvasElement;
     // Coalesce to one handleHover() per animation frame — pointermove can fire
@@ -5934,6 +5940,7 @@ export class BoardRenderer {
           net: pin.net ?? '',
           part: part.name,
           pin: pinId,
+          pinIndex: hit.pinIndex,
           value: part.meta?.value,
           packageName: part.meta?.package,
           diode: diodeStr,
@@ -5978,7 +5985,7 @@ export class BoardRenderer {
     }
   }
 
-  private showTooltip(x: number, y: number, info: { net: string; part: string; pin?: string; value?: string; packageName?: string; diode?: string }) {
+  private showTooltip(x: number, y: number, info: { net: string; part: string; pin?: string; pinIndex?: number; value?: string; packageName?: string; diode?: string }) {
     const el = this.tooltipEl;
     if (!el) return;
 
@@ -5990,6 +5997,15 @@ export class BoardRenderer {
     }
     if (this.tooltipDetailSpan) {
       this.tooltipDetailSpan.textContent = info.pin ? `${info.part} · pin ${info.pin}` : info.part;
+    }
+    // Cross-board compare line. Without it the board highlight only says
+    // "this pin is different" and leaves you to go and find what it differs
+    // to — which is the question the mark raises.
+    if (this.tooltipCompareSpan) {
+      const line = this.formatCompareForPin(info.part, info.pinIndex);
+      this.tooltipCompareSpan.textContent = line ?? '';
+      this.tooltipCompareSpan.style.display = line ? '' : 'none';
+      this.tooltipCompareSpan.dataset.status = line ? (this.lastCompareTooltipStatus ?? '') : '';
     }
     // Meta line: value / package from PartMeta (TVW + any parser that fills it).
     // Hidden when both fields are empty so non-TVW boards keep the compact tooltip.
@@ -6035,6 +6051,52 @@ export class BoardRenderer {
     const th0 = el.offsetHeight;
     this.tooltipSize = { w: tw0, h: th0 };
     this.repositionTooltip(x, y);
+  }
+
+  /** Status of the line `formatCompareForPin` last produced, so the tooltip can
+   *  colour it without the formatter returning a tuple. */
+  private lastCompareTooltipStatus: string | null = null;
+
+  /**
+   * The compare line for a hovered pin, or null when no comparison is painted
+   * on this board or this is not the compared part.
+   *
+   * Reads the same projection the overlay draws from, so the colour under the
+   * cursor and the words in the tooltip can never disagree.
+   */
+  private formatCompareForPin(partName: string, pinIndex: number | undefined): string | null {
+    this.lastCompareTooltipStatus = null;
+    if (pinIndex == null) return null;
+    const tabId = this.tabId ?? boardStore.activeTabId;
+    if (tabId == null) return null;
+    const hl = partCompareStore.highlightFor(tabId);
+    if (!hl || hl.partName.trim().toUpperCase() !== partName.trim().toUpperCase()) return null;
+    const info = hl.pins.get(pinIndex);
+    if (!info) {
+      // The pin exists on this board but the alignment never paired it.
+      return `↔ ${hl.otherBoard}: not matched`;
+    }
+    this.lastCompareTooltipStatus = info.status;
+    const where = hl.otherBoard || 'other board';
+    switch (info.status) {
+      case 'only-a':
+      case 'only-b':
+        return `↔ ${where}: no such pin`;
+      case 'nc':
+        return `↔ ${where}: unconnected on both`;
+      case 'same':
+        return `↔ ${where}: same net`;
+      case 'bulk':
+        return `↔ ${where}: ${info.otherNet || 'n/c'} — both a rail`;
+      case 'renamed':
+        return `↔ ${where}: ${info.otherNet || 'n/c'} — renamed, same connections`;
+      case 'similar':
+        return `↔ ${where}: ${info.otherNet || 'n/c'} — mostly the same connections`;
+      case 'partial':
+        return `↔ ${where}: ${info.otherNet || 'n/c'} — same name, spelled differently`;
+      default:
+        return `↔ ${where}: ${info.otherNet || 'n/c'} — different net`;
+    }
   }
 
   /** Position the tooltip using the cached size — no layout reads. */
@@ -6495,8 +6557,8 @@ export class BoardRenderer {
     // One stroke call per colour, not per pin: a Graphics flushes its path on
     // every `stroke()`, so per-pin stroking on a big BGA is hundreds of draws.
     const byColor = new Map<number, Array<() => void>>();
-    for (const [pinIndex, status] of hl.pinStatus) {
-      const color = BoardRenderer.compareMarkColor(status);
+    for (const [pinIndex, info] of hl.pins) {
+      const color = BoardRenderer.compareMarkColor(info.status);
       if (color == null) continue;
       const pin = part.pins[pinIndex];
       if (!pin) continue;

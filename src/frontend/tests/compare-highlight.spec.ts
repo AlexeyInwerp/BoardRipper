@@ -48,6 +48,45 @@ function twoKinds(s: string): string {
   return s.replace(m[0], patched);
 }
 
+/**
+ * Hover a specific pin of the compared part.
+ *
+ * The pointer is driven to the pin's real screen position rather than swept
+ * across the canvas: SW2's captouch pads are 0.1 mm, far too small to find by
+ * scanning. `viewport.toScreen` returns DPR-scaled device pixels, so the
+ * result is divided back to the CSS pixels Playwright's mouse speaks.
+ */
+async function hoverPin(page: Page, pinIndex: number): Promise<string | null> {
+  const box = (await page.locator('canvas').first().boundingBox())!;
+  const pt = await page.evaluate(({ name, idx }) => {
+    const w = window as unknown as {
+      __boardStore: { board: { parts: Array<{ name: string; pins: Array<{ position: { x: number; y: number } }> }> } };
+      __boardRenderer: { viewport: { toScreen(x: number, y: number): { x: number; y: number } } };
+    };
+    const part = w.__boardStore.board.parts.find(p => p.name === name);
+    const pin = part?.pins[idx];
+    if (!pin) return null;
+    const sp = w.__boardRenderer.viewport.toScreen(pin.position.x, pin.position.y);
+    const dpr = window.devicePixelRatio || 1;
+    return { x: sp.x / dpr, y: sp.y / dpr };
+  }, { name: SUBJECT, idx: pinIndex });
+  if (!pt) return null;
+
+  await page.mouse.move(box.x + pt.x, box.y + pt.y);
+  await page.waitForTimeout(200);
+  if (!(await page.locator('.pin-net-tooltip').isVisible().catch(() => false))) return null;
+  const line = page.locator('.pin-net-tooltip .pnt-compare');
+  if (!(await line.isVisible().catch(() => false))) return '';
+  return (await line.textContent()) ?? '';
+}
+
+/** Zoom to the compared part so its pins are on screen and far apart. */
+async function focusSubject(page: Page) {
+  await page.evaluate((n) => (window as unknown as
+    { __boardStore: { focusPart(x: string): void } }).__boardStore.focusPart(n), SUBJECT);
+  await page.waitForTimeout(1000);
+}
+
 async function marks(page: Page) {
   return page.evaluate(() =>
     (window as unknown as { __boardRenderer?: { lastCompareMarks?: unknown } })
@@ -97,6 +136,36 @@ test.describe('compare highlight', () => {
     await toggle.click();
     await expect(toggle).toHaveAttribute('aria-pressed', 'false');
     await expect.poll(() => marks(page)).toBeNull();
+  });
+
+  test('the hover tooltip says what the pin differs to', async ({ page }) => {
+    await openCompared(page);
+    await page.getByTestId('compare-highlight').click();
+    await expect.poll(() => marks(page)).not.toBeNull();
+    await focusSubject(page);
+
+    // The board on screen is the second one opened — the edited side. So the
+    // line names what the *unedited* board has, which is the whole point: a
+    // mark that only says "different" sends you hunting for the other value.
+    // Pad 0 was rewired to TOUCH_3 here, so the other board still shows TOUCH_1.
+    const differs = await hoverPin(page, 0);
+    expect(differs, 'no tooltip on the rewired pad').toBeTruthy();
+    expect(differs).toContain('hl-a');
+    expect(differs).toContain('TOUCH_1');
+    expect(differs).toContain('different net');
+
+    // Pad 1 is TOUCH_2_ALT here and TOUCH_2 there — a spelling difference.
+    const partial = await hoverPin(page, 1);
+    expect(partial).toContain('TOUCH_2');
+    expect(partial).toContain('spelled differently');
+  });
+
+  test('the compare line is absent while the highlight is off', async ({ page }) => {
+    await openCompared(page);
+    await focusSubject(page);
+    const found = await hoverPin(page, 0);
+    // A tooltip still appears (net + part) — but with no compare line in it.
+    expect(found, 'compare line showed without the toggle').toBe('');
   });
 
   test('repaints when the other board becomes active', async ({ page }) => {

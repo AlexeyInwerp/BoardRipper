@@ -24,6 +24,30 @@ export interface CompareSideRef {
   partName: string;
 }
 
+/** One pin of the compared part, as the board overlay and tooltip need it. */
+export interface CompareHighlightPin {
+  status: PinDiffStatus;
+  /** The other board's net on the matching pin; '' when unconnected or absent. */
+  otherNet: string;
+  /** The other board's pin label, or null when that side has no such pin. */
+  otherPin: string | null;
+}
+
+export interface CompareHighlight {
+  partName: string;
+  otherPart: string;
+  /** Other board's filename without extension — the tooltip says where the
+   *  comparison value came from, since two boards look alike on the canvas. */
+  otherBoard: string;
+  pins: Map<number, CompareHighlightPin>;
+}
+
+/** Filename without its extension, trimmed for a one-line tooltip. */
+function shortBoardLabel(fileName: string): string {
+  const base = fileName.replace(/\.[^.]+$/, '');
+  return base.length > 24 ? `${base.slice(0, 23)}…` : base;
+}
+
 export interface PartCompareState {
   a: CompareSideRef | null;
   b: CompareSideRef | null;
@@ -108,14 +132,16 @@ class PartCompareStore extends Emitter {
   }
 
   /**
-   * What to paint on `tabId`, or null when the board highlight is off, this
-   * tab is neither side, or there is nothing to compare.
+   * What to paint on `tabId`, and what to say about a pin when it is hovered —
+   * or null when the board highlight is off, this tab is neither side, or
+   * there is nothing to compare.
    *
-   * Returns the part's refdes plus the status of each of *its* pins, keyed by
-   * pin index on that side — so the renderer never has to know which side of
-   * the comparison it is looking at.
+   * Everything is keyed by pin index **on that side**, so the renderer never
+   * has to know which half of the comparison it is looking at. Each entry
+   * carries the other board's net as well as the status: a red pin that does
+   * not say what it differs *to* only raises a question.
    */
-  highlightFor(tabId: number): { partName: string; pinStatus: Map<number, PinDiffStatus> } | null {
+  highlightFor(tabId: number): CompareHighlight | null {
     const { a, b, highlight } = this._state;
     if (!highlight) return null;
     const which: 'a' | 'b' | null =
@@ -124,14 +150,26 @@ class PartCompareStore extends Emitter {
     const result = this.result;
     if (!result) return null;
 
-    const pinStatus = new Map<number, PinDiffStatus>();
+    const otherRef = which === 'a' ? b : a;
+    const otherSide = resolveSide(otherRef, boardStore.tabs);
+    const pins = new Map<number, CompareHighlightPin>();
     for (const row of result.rows) {
-      const side = which === 'a' ? row.a : row.b;
-      if (!side) continue;
-      pinStatus.set(side.pinIndex, row.status);
+      const mine = which === 'a' ? row.a : row.b;
+      const theirs = which === 'a' ? row.b : row.a;
+      if (!mine) continue;
+      pins.set(mine.pinIndex, {
+        status: row.status,
+        otherNet: theirs?.rawNet ?? '',
+        otherPin: theirs?.label ?? null,
+      });
     }
     const ref = which === 'a' ? a : b;
-    return { partName: ref!.partName, pinStatus };
+    return {
+      partName: ref!.partName,
+      otherPart: otherRef?.partName ?? '',
+      otherBoard: shortBoardLabel(otherSide?.tab.fileName ?? ''),
+      pins,
+    };
   }
 
   /**
