@@ -6078,6 +6078,10 @@ export class BoardRenderer {
     }
     this.lastCompareTooltipStatus = info.status;
     const where = hl.otherBoard || 'other board';
+    const net = info.otherNet || 'n/c';
+    // The kernel's own words when the names decided the row — "unused on one
+    // board", "same PP3V8_AON prefix" — are more use than a generic label.
+    if (info.reason) return `↔ ${where}: ${net} — ${info.reason}`;
     switch (info.status) {
       case 'only-a':
       case 'only-b':
@@ -6087,15 +6091,13 @@ export class BoardRenderer {
       case 'same':
         return `↔ ${where}: same net`;
       case 'bulk':
-        return `↔ ${where}: ${info.otherNet || 'n/c'} — both a rail`;
+        return `↔ ${where}: ${net} — both a rail`;
       case 'renamed':
-        return `↔ ${where}: ${info.otherNet || 'n/c'} — renamed, same connections`;
+        return `↔ ${where}: ${net} — renamed, same connections`;
       case 'similar':
-        return `↔ ${where}: ${info.otherNet || 'n/c'} — mostly the same connections`;
-      case 'partial':
-        return `↔ ${where}: ${info.otherNet || 'n/c'} — same name, spelled differently`;
+        return `↔ ${where}: ${net} — mostly the same connections`;
       default:
-        return `↔ ${where}: ${info.otherNet || 'n/c'} — different net`;
+        return `↔ ${where}: ${net} — different net`;
     }
   }
 

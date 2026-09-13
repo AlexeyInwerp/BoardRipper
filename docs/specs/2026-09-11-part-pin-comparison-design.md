@@ -259,6 +259,44 @@ The UI marks the run the two names **share**, not the part that differs — on
 the character or two that actually changed. `nameMatch` is attached to every row
 whose names differ and overlap at all, `differs` rows included.
 
+### State markers and rails (refined 2026-09-13)
+
+Measured against a real pair — the PMU of 820-02016 (M1 Air) against 820-02020
+(M1 Pro). That comparison exposes the case the topology fingerprint cannot
+help with at all: **two different boards**, where refdes differ by design, so
+almost no neighbour set matches and the names are the only evidence there is.
+
+Three rules, in order, after topology has abstained:
+
+1. **State markers are not identity.** A leading `NC` / `RSVD` / `TPT` / `TP` /
+   `DNU` / `NU` / `RESERVED` is stripped before two names are compared, so
+   `NC_GPU_TRIGGER1_L` and `RSVD_GPU_TRIGGER1_L` are one signal, as are
+   `NC_MPMU_NAND0_RESET_L` and `TPT_MPMU_NAND0_RESET_L`. Only a *leading*
+   token counts — `PP3V8_NC_SENSE` is not a marked net.
+2. **Two no-connects are not a difference.** `NC`, `RSVD`, `DNU`, `NU`,
+   `RESERVED` mean the pin is unused, so `NC_FAN_PWR_EN` against
+   `NC_MPMU_GPIO26` is `nc`, not red — and a blank net pairs with a named
+   no-connect. `TP`/`TPT` are deliberately **not** in this set: a test point is
+   connected; it labels identity, not state.
+3. **A rail extends its prefix.** Two names sharing ≥2 leading tokens covering
+   ≥40 % of the shorter, **with tails of different length**, read as the same
+   rail: `PP3V8_AON_VDDMAIN` against `PP3V8_AON_MPMU_ISNS_VIN`, which was ~50
+   rows of one real comparison. The differing-tail condition is what keeps this
+   from undoing the containment work: `SMC_RST_L` / `SMC_RST_R` and
+   `PP1V8_S0_A` / `PP1V8_S0_B` share two leading tokens too, but *substitute*
+   at one position, which is how sibling nets look. It is reported as "same
+   `PP3V8_AON` prefix", never as "the same net" — on two boards those may be
+   opposite ends of a sense resistor.
+
+What deliberately stays red: `VSS_ANA_MPMU` against `PP1V5_VLDOINT_MPMU`
+(ground against a rail), `IPD_PWR_EN` against `MPMU_GPIO6` (a function against
+a bare GPIO — a real design difference), and `P3V8AON_IMEAS` against
+`P3V8AON_HS_ISENSE`, where one shared token is not enough to claim anything.
+
+The rule that fired is carried on the row as `nameReason` and shown in both the
+row title and the board tooltip — an amber pin that does not say *why* is only
+marginally better than a red one that does not say what it differs to.
+
 ### Summary line
 
 The header states the shape of the result, not just a count:

@@ -125,6 +125,11 @@ export interface PinDiffRow {
    *  strings are nearly the same" into something the eye can check in one
    *  pass. Absent when the names share nothing. */
   nameMatch?: NameMatch;
+  /** Why this row reads the way it does, when the *names* decided it —
+   *  "unused on one board", "same PP3V8_AON prefix". Empty when topology
+   *  settled it, or when the names matched outright. Shown in the row title
+   *  and in the board tooltip. */
+  nameReason?: string;
   /** Both sides carry a real reading and they diverge past the threshold. */
   diodeDiffers: boolean;
 }
@@ -666,6 +671,95 @@ function jaccard(x: Set<string>, y: Set<string>): number {
   return inter / (x.size + y.size - inter);
 }
 
+/**
+ * Tokens that label a net's *state* rather than its identity, stripped before
+ * two names are compared. Measured against a real pair (M1 Air 820-02016
+ * against M1 Pro 820-02020, both PMUs): `NC_GPU_TRIGGER1_L` and
+ * `RSVD_GPU_TRIGGER1_L` are one signal, as are `NC_MPMU_NAND0_RESET_L` and
+ * `TPT_MPMU_NAND0_RESET_L`. Only a *leading* token counts — `PP3V8_NC_SENSE`
+ * is not a marked net.
+ */
+const IDENTITY_MARKERS = new Set(['NC', 'RSVD', 'TPT', 'TP', 'DNU', 'NU', 'RESERVED', 'NOTUSED']);
+/** The subset of those that mean the pin is unused. `TP`/`TPT` are test
+ *  points — a test point is connected, so they label identity but not state. */
+const NO_CONNECT_MARKERS = new Set(['NC', 'RSVD', 'DNU', 'NU', 'RESERVED', 'NOTUSED']);
+/** Leading tokens two names must share, and the share of the shorter name they
+ *  must cover, to read as the same rail. Two is the floor that matters:
+ *  at one, `MPMU_GPIO6` and `MPMU_GPIO10` — genuinely different pins — would
+ *  pair, and so would `BUCK14_LX0` and `BUCK14_LX1`. */
+const PREFIX_MIN_RUN = 2;
+const PREFIX_MIN_SHARE = 0.4;
+
+/** Split a net name into its identifier tokens, uppercased. */
+function tokenize(name: string): string[] {
+  return name.toUpperCase().split(/[^0-9A-Z]+/).filter(Boolean);
+}
+
+/** Drop leading state markers, never the last token (`NC` alone is a name). */
+function stripMarkers(tokens: string[]): string[] {
+  let i = 0;
+  while (i < tokens.length - 1 && IDENTITY_MARKERS.has(tokens[i])) i++;
+  return tokens.slice(i);
+}
+
+/** True when a name declares the pin unused. */
+export function isNoConnectName(name: string): boolean {
+  const t = tokenize(name);
+  return t.length > 1 && NO_CONNECT_MARKERS.has(t[0]);
+}
+
+/**
+ * How two differing net names are related, and why — in words the UI can show.
+ *
+ * Runs only after the topology check has abstained, so it never downgrades a
+ * rename. The reasons are deliberately modest: a shared rail prefix is
+ * reported as a shared *prefix*, not as "the same net", because on two
+ * different boards `PP3V8_AON_VDDMAIN` and `PP3V8_AON_MPMU_ISNS_VIN` may well
+ * be opposite ends of a sense resistor.
+ */
+/** Unused on this side: blank, the literal NC, or a named no-connect. */
+function isUnused(side: PinDiffSide): boolean {
+  return side.net === '' || isNoConnectName(side.rawNet);
+}
+
+/** Do the two names carry the same signal once state markers are stripped? */
+function sameStrippedSignal(a: string, b: string): boolean {
+  const sa = stripMarkers(tokenize(a)), sb = stripMarkers(tokenize(b));
+  return sa.length > 0 && sa.length === sb.length && sa.every((t, i) => t === sb[i]);
+}
+
+export function relateNames(a: string, b: string): { partial: boolean; reason: string } {
+  const ta = tokenize(a), tb = tokenize(b);
+  const sa = stripMarkers(ta), sb = stripMarkers(tb);
+  const aNC = isNoConnectName(a), bNC = isNoConnectName(b);
+
+  if (sa.length === sb.length && sa.every((t, i) => t === sb[i])) {
+    if (aNC !== bNC) return { partial: true, reason: 'unused on one board' };
+    return { partial: true, reason: 'same signal, marked differently' };
+  }
+  if (alnumOnly(a) === alnumOnly(b) && alnumOnly(a).length >= PARTIAL_NAME_MIN_RUN) {
+    return { partial: true, reason: 'punctuation only' };
+  }
+  const m = longestCommonRun(a, b);
+  if (m && m.length >= PARTIAL_NAME_MIN_RUN && m.ratio >= PARTIAL_NAME_RATIO &&
+      m.length === Math.min(a.length, b.length)) {
+    return { partial: true, reason: 'one name contains the other' };
+  }
+  let run = 0;
+  const lim = Math.min(sa.length, sb.length);
+  while (run < lim && sa[run] === sb[run]) run++;
+  // The tails must be of *different* length. A shared prefix with equal-length
+  // tails is a substitution at one position — `SMC_RST_L` against
+  // `SMC_RST_R`, `PP1V8_S0_A` against `PP1V8_S0_B` — and those are sibling
+  // nets that must never fold together. A rail instead *extends* its prefix:
+  // `PP3V8_AON_VDDMAIN` against `PP3V8_AON_MPMU_ISNS_VIN`.
+  const extends_ = (sa.length - run) !== (sb.length - run);
+  if (run >= PREFIX_MIN_RUN && run / lim >= PREFIX_MIN_SHARE && extends_) {
+    return { partial: true, reason: `same ${sa.slice(0, run).join('_')} prefix` };
+  }
+  return { partial: false, reason: '' };
+}
+
 /** Net names longer than this are truncated before the O(n·m) scan. Nothing
  *  real comes close; the cap only stops a pathological file costing seconds. */
 const NAME_SCAN_CAP = 128;
@@ -719,29 +813,6 @@ export function longestCommonRun(a: string, b: string): NameMatch | null {
 /** Letters and digits only — `PPBUS_G3H` and `PPBUS-G3H` collapse to one. */
 function alnumOnly(s: string): string {
   return s.replace(/[^0-9a-z]/gi, '').toLowerCase();
-}
-
-/**
- * True when two net names read as one net spelled differently.
- *
- * The rule is **containment**, not a similarity score, and that distinction is
- * the whole point. A score cannot tell `PPBUS_G3H` / `PPBUS_G3H_R` — one name
- * decorated — from `STUB_A` / `STUB_B` or `SMC_RST_L` / `SMC_RST_R`, where a
- * single character is *substituted* and the two are sibling nets that must
- * never be folded together. Both score about the same; only one has the
- * shorter name inside the longer one.
- *
- * The second door is separator-only variation (`PPBUS_G3H` vs `PPBUS-G3H`),
- * which containment misses because the difference sits mid-string.
- */
-function isPartialName(m: NameMatch | null, a: string, b: string): m is NameMatch {
-  if (alnumOnly(a) === alnumOnly(b) && alnumOnly(a).length >= PARTIAL_NAME_MIN_RUN) {
-    return m !== null;
-  }
-  if (m === null) return false;
-  if (m.length < PARTIAL_NAME_MIN_RUN || m.ratio < PARTIAL_NAME_RATIO) return false;
-  // The shared run has to be one of the names in full.
-  return m.length === Math.min(a.length, b.length);
 }
 
 /** Both sides carry a real reading and they diverge past the threshold. */
@@ -803,6 +874,7 @@ export function comparePart(
     let status: PinDiffStatus;
     let similarity: number | undefined;
     let nameMatch: NameMatch | null = null;
+    let nameReason = '';
 
     if (!a) {
       status = 'only-b';
@@ -812,6 +884,15 @@ export function comparePart(
       status = 'nc';
     } else if (a.net === b.net) {
       status = 'same';
+    } else if (isUnused(a) && isUnused(b)) {
+      // Neither board uses this pin. That covers a blank net, the literal
+      // `NC`, and a *named* no-connect like `NC_MPMU_GPIO24` against
+      // `NC_UWB_PWR_EN` — two different strings that both say "unused", which
+      // read as a red difference before.
+      status = 'nc';
+      nameReason = sameStrippedSignal(a.rawNet, b.rawNet)
+        ? 'same signal, unused on both'
+        : 'unused on both';
     } else if (a.net === '' || b.net === '') {
       // One side connected, the other not — always a real difference.
       status = 'differs';
@@ -834,13 +915,18 @@ export function comparePart(
         // are not evidence of sameness, so topology abstains here and the name
         // is all there is to go on.
         similarity = 0;
-        status = isPartialName(nameMatch, a.rawNet, b.rawNet) ? 'partial' : 'differs';
+        const rel = relateNames(a.rawNet, b.rawNet);
+        status = rel.partial ? 'partial' : 'differs';
+        nameReason = rel.reason;
       } else {
         similarity = jaccard(fa.refs, fb.refs);
-        if (similarity === 1) status = 'renamed';
-        else if (similarity >= SIMILAR_JACCARD) status = 'similar';
-        else if (isPartialName(nameMatch, a.rawNet, b.rawNet)) status = 'partial';
-        else status = 'differs';
+        if (similarity === 1) { status = 'renamed'; }
+        else if (similarity >= SIMILAR_JACCARD) { status = 'similar'; }
+        else {
+          const rel = relateNames(a.rawNet, b.rawNet);
+          status = rel.partial ? 'partial' : 'differs';
+          nameReason = rel.reason;
+        }
       }
     }
 
@@ -849,6 +935,7 @@ export function comparePart(
       key: `${pair.a ?? 'x'}:${pair.b ?? 'x'}:${i}`,
       a, b, status, similarity,
       ...(nameMatch ? { nameMatch } : {}),
+      ...(nameReason ? { nameReason } : {}),
       diodeDiffers: diodeDiverges(a?.diode, b?.diode),
     };
   });

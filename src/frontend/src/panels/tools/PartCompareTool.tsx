@@ -461,7 +461,7 @@ function Row({
   const badge = (
     <span
       className={`part-compare-badge s-${row.status}`}
-      title={STATUS_TITLE[row.status] + (row.similarity != null
+      title={(row.nameReason || STATUS_TITLE[row.status]) + (row.similarity != null
         ? ` (${Math.round(row.similarity * 100)}% shared neighbours)` : '')}
       data-status={row.status}
     >

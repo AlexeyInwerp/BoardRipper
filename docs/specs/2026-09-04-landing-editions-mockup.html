@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>BoardRipper Editions Header</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  /* Verbatim from landing/index.html. */
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  html { font-size: 16px; }
+  body { margin: 0; background: #fff; color: #000; font-family: Verdana, Geneva, sans-serif; font-size: 14px; line-height: 1.55; }
+  main { max-width: 720px; margin: 0 auto; padding: 28px clamp(14px, 4vw, 32px) 60px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h3 { font-size: 14px; margin: 14px 0 4px; font-weight: bold; }
+  a { color: #0000ee; } a:visited { color: #551a8b; }
+  nav { margin: 8px 0 22px; font-size: 13px; line-height: 1.9; }
+  nav a { margin: 0 2px; }
+  hr.stars { border: none; text-align: center; color: #888; margin: 24px 0; letter-spacing: 6px; height: 1em; }
+  hr.stars::before { content: "* * *"; }
+  table { border-collapse: collapse; margin: 8px 0; max-width: 100%; }
+  table td { padding: 2px 18px 2px 0; vertical-align: top; font-size: 13px; }
+  .small { color: #666; font-size: 12px; }
+  .tagline { color: #555; font-size: 12px; margin: 0 0 0; }
+  .callout { border: 1px solid #888; background: #f9f9f9; padding: 12px 14px; margin: 12px 0; }
+  .callout p { margin: 0 0 8px; } .callout p:last-child { margin-bottom: 0; }
+  ul { padding-left: 22px; margin: 6px 0 10px; } li { margin: 2px 0; }
+  @media (max-width: 480px) { main { padding: 20px 14px 50px; } nav { font-size: 12px; } table td { padding: 2px 10px 2px 0; font-size: 12px; } }
+
+  /* mockup scaffolding */
+  .variant { border-top: 3px solid #ddd; padding-top: 10px; margin-top: 40px; }
+  .variant-label { font: 11px/1.4 'Courier New', monospace; color: #888; margin: 0 0 14px; text-transform: uppercase; letter-spacing: .08em; }
+
+  /* ── 1. Two columns, one rule ───────────────────────────────────────── */
+  .ed-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 28px; margin: 18px 0 6px; }
+  .ed-cols > div + div { border-left: 1px solid #888; padding-left: 28px; }
+  .ed-cols .ed-kicker { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #666; margin: 0 0 2px; }
+  .ed-cols .ed-title { font-size: 15px; font-weight: bold; margin: 0 0 4px; }
+  .ed-cols p { margin: 0 0 6px; font-size: 13px; }
+  .ed-cols .ed-links { font-size: 13px; line-height: 1.9; }
+  @media (max-width: 480px) { .ed-cols { grid-template-columns: 1fr; gap: 14px; } .ed-cols > div + div { border-left: 0; padding-left: 0; border-top: 1px solid #888; padding-top: 12px; } }
+
+  /* ── 2. Two callout boxes ───────────────────────────────────────────── */
+  .ed-boxes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0 6px; }
+  .ed-boxes .callout { margin: 0; }
+  .ed-boxes .callout.lite { border-left: 5px solid #000; }
+  .ed-boxes h3 { margin: 0 0 6px; }
+  .ed-boxes p { font-size: 13px; }
+  .ed-boxes .go { font-weight: bold; }
+  @media (max-width: 480px) { .ed-boxes { grid-template-columns: 1fr; } }
+
+  /* ── 3. Spec table ──────────────────────────────────────────────────── */
+  .ed-table { width: 100%; margin: 16px 0 6px; }
+  .ed-table th { text-align: left; font-size: 13px; padding: 4px 18px 6px 0; border-bottom: 1px solid #000; }
+  .ed-table th .small { display: block; font-weight: normal; }
+  .ed-table td { padding: 5px 18px 5px 0; border-bottom: 1px solid #ddd; width: 42%; }
+  .ed-table td:first-child { color: #666; width: 16%; font-size: 12px; }
+  .ed-table tr:last-child td { border-bottom: 0; }
+  .ed-table td.go a { font-weight: bold; }
+
+  /* ── 4. Two lines in the menu idiom ─────────────────────────────────── */
+  .ed-lines { margin: 16px 0 4px; font-size: 13px; line-height: 1.9; }
+  .ed-lines b { display: inline-block; min-width: 9.5em; }
+  .ed-lines .small { margin-left: 2px; }
+  @media (max-width: 480px) { .ed-lines b { display: block; min-width: 0; } .ed-lines p { margin: 0 0 8px; } }
+</style></head><body><main>
+
+<section class="variant"><p class="variant-label">1 · two columns, one rule</p>
+<header>
+  <h1>BoardRipper</h1>
+  <p class="tagline">Web-based PCB boardview viewer for board-level repair. Free, AGPL-3.0.</p>
+  <p class="tagline" style="margin-top:4px"><span class="small">Latest release: <b>v0.37.2</b> &mdash; released 2026-09-04</span></p>
+  <div class="ed-cols">
+    <div>
+      <p class="ed-kicker">Full version</p>
+      <p class="ed-title">Docker &middot; Desktop</p>
+      <p>Self-hosted on a NAS or a workstation. Scans your boards folder into a shared library, board database, PDF full-text search, self-updating.</p>
+      <p class="ed-links">[<a href="#docker">Docker setup</a>] &middot; [<a href="#download">Desktop app</a>] <span class="small">macOS / Windows</span></p>
+    </div>
+    <div>
+      <p class="ed-kicker">Lite version</p>
+      <p class="ed-title">Web &middot; HTML</p>
+      <p>The same viewer, running in your browser. No server, no install, nothing is uploaded. Works on a tablet.</p>
+      <p class="ed-links">[<a href="#"><b>Open in browser</b></a>] &middot; [<a href="#">Offline HTML</a>] <span class="small">one 7&nbsp;MB file</span></p>
+    </div>
+  </div>
+  <hr class="stars">
+  <nav>[<a href="#what">What is this?</a>] | [<a href="#runson">Runs on</a>] | [<a href="#features">Features</a>] | [<a href="#formats">Formats</a>] | [<a href="#docker">Docker setup</a>] | [<a href="#download">Download</a>] | [<a href="#feedback">Feedback</a>] | [<a href="#support">Support the project</a>] | [<a href="#credits">Credits</a>] | [<a href="#">Source on GitHub</a>] | [<a href="#">Discord</a>] | [<a href="#">Changelog</a>] | [<a href="#">Donate</a>]</nav>
+</header>
+</section>
+
+<section class="variant"><p class="variant-label">2 · two callout boxes</p>
+<header>
+  <h1>BoardRipper</h1>
+  <p class="tagline">Web-based PCB boardview viewer for board-level repair. Free, AGPL-3.0.</p>
+  <p class="tagline" style="margin-top:4px"><span class="small">Latest release: <b>v0.37.2</b> &mdash; released 2026-09-04</span></p>
+  <div class="ed-boxes">
+    <div class="callout">
+      <h3>Full version &mdash; Docker / Desktop</h3>
+      <p>Self-hosted. Shared library from your boards folder, board database, PDF full-text search, self-update.</p>
+      <p class="go"><a href="#docker">Docker setup</a> &middot; <a href="#download">Desktop app</a></p>
+    </div>
+    <div class="callout lite">
+      <h3>Lite version &mdash; Web / HTML</h3>
+      <p>The same viewer in your browser. No server, no install, nothing is uploaded. Tablet-friendly.</p>
+      <p class="go"><a href="#">Open in browser</a> &middot; <a href="#">Offline HTML</a> <span class="small">(7&nbsp;MB)</span></p>
+    </div>
+  </div>
+  <nav>[<a href="#what">What is this?</a>] | [<a href="#runson">Runs on</a>] | [<a href="#features">Features</a>] | [<a href="#formats">Formats</a>] | [<a href="#docker">Docker setup</a>] | [<a href="#download">Download</a>] | [<a href="#feedback">Feedback</a>] | [<a href="#support">Support the project</a>] | [<a href="#credits">Credits</a>] | [<a href="#">Source on GitHub</a>] | [<a href="#">Discord</a>] | [<a href="#">Changelog</a>] | [<a href="#">Donate</a>]</nav>
+</header>
+</section>
+
+<section class="variant"><p class="variant-label">3 · spec table</p>
+<header>
+  <h1>BoardRipper</h1>
+  <p class="tagline">Web-based PCB boardview viewer for board-level repair. Free, AGPL-3.0.</p>
+  <p class="tagline" style="margin-top:4px"><span class="small">Latest release: <b>v0.37.2</b> &mdash; released 2026-09-04</span></p>
+  <table class="ed-table">
+    <tr><th></th><th>Full version <span class="small">Docker / Desktop</span></th><th>Lite version <span class="small">Web / HTML</span></th></tr>
+    <tr><td>Runs</td><td>on your NAS or workstation, self-hosted</td><td>in your browser &mdash; no server, nothing uploaded</td></tr>
+    <tr><td>Library</td><td>scans your boards folder; board database; PDF full-text search</td><td>open your own files; PDFs side by side</td></tr>
+    <tr><td>Install</td><td>Docker image (~25&nbsp;MB) or desktop app for macOS / Windows</td><td>none &mdash; or one 7&nbsp;MB offline HTML file</td></tr>
+    <tr><td>Get it</td><td class="go"><a href="#docker">Docker setup</a> &middot; <a href="#download">Desktop app</a></td><td class="go"><a href="#">Open in browser</a> &middot; <a href="#">Offline HTML</a></td></tr>
+  </table>
+  <nav>[<a href="#what">What is this?</a>] | [<a href="#runson">Runs on</a>] | [<a href="#features">Features</a>] | [<a href="#formats">Formats</a>] | [<a href="#docker">Docker setup</a>] | [<a href="#download">Download</a>] | [<a href="#feedback">Feedback</a>] | [<a href="#support">Support the project</a>] | [<a href="#credits">Credits</a>] | [<a href="#">Source on GitHub</a>] | [<a href="#">Discord</a>] | [<a href="#">Changelog</a>] | [<a href="#">Donate</a>]</nav>
+</header>
+</section>
+
+<section class="variant"><p class="variant-label">4 · two lines, menu idiom</p>
+<header>
+  <h1>BoardRipper</h1>
+  <p class="tagline">Web-based PCB boardview viewer for board-level repair. Free, AGPL-3.0.</p>
+  <p class="tagline" style="margin-top:4px"><span class="small">Latest release: <b>v0.37.2</b> &mdash; released 2026-09-04</span></p>
+  <div class="ed-lines">
+    <p><b>Full version</b> Docker / Desktop &mdash; [<a href="#docker">Docker setup</a>] | [<a href="#download">Desktop app</a>] <span class="small">self-hosted; shared library, board database, PDF search</span></p>
+    <p><b>Lite version</b> Web / HTML &mdash; [<a href="#"><b>Open in browser</b></a>] | [<a href="#">Offline HTML</a>] <span class="small">no install, nothing uploaded; 7&nbsp;MB single file</span></p>
+  </div>
+  <hr class="stars">
+  <nav>[<a href="#what">What is this?</a>] | [<a href="#runson">Runs on</a>] | [<a href="#features">Features</a>] | [<a href="#formats">Formats</a>] | [<a href="#docker">Docker setup</a>] | [<a href="#download">Download</a>] | [<a href="#feedback">Feedback</a>] | [<a href="#support">Support the project</a>] | [<a href="#credits">Credits</a>] | [<a href="#">Source on GitHub</a>] | [<a href="#">Discord</a>] | [<a href="#">Changelog</a>] | [<a href="#">Donate</a>]</nav>
+</header>
+</section>
+
+</main></body></html>

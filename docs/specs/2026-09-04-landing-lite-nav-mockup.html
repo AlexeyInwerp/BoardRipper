@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Landing — lite link in the top menu: 4 variants</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  /* Verbatim from landing/index.html so the variants render in the real page's clothes. */
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  html { font-size: 16px; }
+  body { margin: 0; background: #fff; color: #000; font-family: Verdana, Geneva, sans-serif; font-size: 14px; line-height: 1.55; }
+  main { max-width: 720px; margin: 0 auto; padding: 28px clamp(14px, 4vw, 32px) 60px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  a { color: #0000ee; } a:visited { color: #551a8b; }
+  nav { margin: 8px 0 22px; font-size: 13px; line-height: 1.9; }
+  nav a { margin: 0 2px; }
+  .small { color: #666; font-size: 12px; }
+  .tagline { color: #555; font-size: 12px; margin: 0 0 0; }
+  .badge { border: 1px solid #888; border-left: 5px solid #5865f2; background: #f7f8ff; padding: 8px 12px; margin: 14px 0; }
+  .badge p { margin: 0; }
+  @media (max-width: 480px) { main { padding: 20px 14px 50px; } nav { font-size: 12px; } }
+
+  /* mockup scaffolding only */
+  .variant { border-top: 3px solid #ddd; padding-top: 10px; margin-top: 34px; }
+  .variant-label { font: 11px/1.4 'Courier New', monospace; color: #888; margin: 0 0 14px; text-transform: uppercase; letter-spacing: .08em; }
+
+  /* ── A. First bracket, bold ─────────────────────────────────────────── */
+  .v-a nav a.lite { font-weight: bold; }
+
+  /* ── B. Action line above the menu ──────────────────────────────────── */
+  .v-b .action { margin: 12px 0 2px; font-size: 14px; }
+  .v-b .action a.lite { font-weight: bold; }
+  .v-b .action .small { margin-left: 4px; }
+
+  /* ── C. Outlined bracket ────────────────────────────────────────────── */
+  .v-c nav a.lite { border: 1px solid #000; padding: 1px 6px; margin: 0 4px 0 0; font-weight: bold; text-decoration: none; }
+  .v-c nav a.lite:hover { background: #000; color: #fff; }
+
+  /* ── D. Two-button row ──────────────────────────────────────────────── */
+  .v-d .buttons { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 14px 0 6px; }
+  .v-d .btn { display: inline-block; background: #000; color: #fff; text-decoration: none; padding: 7px 14px; font-size: 14px; font-weight: bold; }
+  .v-d .btn:visited { color: #fff; }
+  .v-d .btn:hover { background: #333; }
+</style></head><body><main>
+
+<section class="variant v-a"><p class="variant-label">A · first bracket, bold</p>
+<header>
+  <h1>BoardRipper</h1>
+  <p class="tagline">Web-based PCB boardview viewer for board-level repair. Free, AGPL-3.0.</p>
+  <p class="tagline" style="margin-top:4px"><span class="small">Latest release: <b>v0.37.2</b> &mdash; released 2026-09-04</span></p>
+  <nav>
+    [<a class="lite" href="#">Open in browser &mdash; no install</a>] |
+    [<a href="#what">What is this?</a>] |
+    [<a href="#runson">Runs on</a>] |
+    [<a href="#features">Features</a>] |
+    [<a href="#formats">Formats</a>] |
+    [<a href="#docker">Docker setup</a>] |
+    [<a href="#download">Download</a>] |
+    [<a href="#feedback">Feedback</a>] |
+    [<a href="#support">Support the project</a>] |
+    [<a href="#credits">Credits</a>] |
+    [<a href="#">Source on GitHub</a>] |
+    [<a href="#">Discord</a>] |
+    [<a href="#">Changelog</a>] |
+    [<a href="#">Donate</a>]
+  </nav>
+</header>
+</section>
+
+<section class="variant v-b"><p class="variant-label">B · action line above the menu</p>
+<header>
+  <h1>BoardRipper</h1>
+  <p class="tagline">Web-based PCB boardview viewer for board-level repair. Free, AGPL-3.0.</p>
+  <p class="tagline" style="margin-top:4px"><span class="small">Latest release: <b>v0.37.2</b> &mdash; released 2026-09-04</span></p>
+  <p class="action">&rarr; <a class="lite" href="#">Open BoardRipper in your browser</a> <span class="small">no install, nothing is uploaded &middot; or <a href="#">download the offline HTML</a> (7&nbsp;MB)</span></p>
+  <nav>
+    [<a href="#what">What is this?</a>] |
+    [<a href="#runson">Runs on</a>] |
+    [<a href="#features">Features</a>] |
+    [<a href="#formats">Formats</a>] |
+    [<a href="#docker">Docker setup</a>] |
+    [<a href="#download">Download</a>] |
+    [<a href="#feedback">Feedback</a>] |
+    [<a href="#support">Support the project</a>] |
+    [<a href="#credits">Credits</a>] |
+    [<a href="#">Source on GitHub</a>] |
+    [<a href="#">Discord</a>] |
+    [<a href="#">Changelog</a>] |
+    [<a href="#">Donate</a>]
+  </nav>
+</header>
+</section>
+
+<section class="variant v-c"><p class="variant-label">C · outlined bracket</p>
+<header>
+  <h1>BoardRipper</h1>
+  <p class="tagline">Web-based PCB boardview viewer for board-level repair. Free, AGPL-3.0.</p>
+  <p class="tagline" style="margin-top:4px"><span class="small">Latest release: <b>v0.37.2</b> &mdash; released 2026-09-04</span></p>
+  <nav>
+    <a class="lite" href="#">Open in browser</a> |
+    [<a href="#what">What is this?</a>] |
+    [<a href="#runson">Runs on</a>] |
+    [<a href="#features">Features</a>] |
+    [<a href="#formats">Formats</a>] |
+    [<a href="#docker">Docker setup</a>] |
+    [<a href="#download">Download</a>] |
+    [<a href="#feedback">Feedback</a>] |
+    [<a href="#support">Support the project</a>] |
+    [<a href="#credits">Credits</a>] |
+    [<a href="#">Source on GitHub</a>] |
+    [<a href="#">Discord</a>] |
+    [<a href="#">Changelog</a>] |
+    [<a href="#">Donate</a>]
+  </nav>
+</header>
+</section>
+
+<section class="variant v-d"><p class="variant-label">D · two-button row</p>
+<header>
+  <h1>BoardRipper</h1>
+  <p class="tagline">Web-based PCB boardview viewer for board-level repair. Free, AGPL-3.0.</p>
+  <p class="tagline" style="margin-top:4px"><span class="small">Latest release: <b>v0.37.2</b> &mdash; released 2026-09-04</span></p>
+  <div class="buttons">
+    <a class="btn" href="#">Open in browser</a>
+    <span class="small">no install &middot; nothing is uploaded &middot; <a href="#">offline HTML</a> (7&nbsp;MB) &middot; <a href="#docker">Docker</a></span>
+  </div>
+  <nav>
+    [<a href="#what">What is this?</a>] |
+    [<a href="#runson">Runs on</a>] |
+    [<a href="#features">Features</a>] |
+    [<a href="#formats">Formats</a>] |
+    [<a href="#docker">Docker setup</a>] |
+    [<a href="#download">Download</a>] |
+    [<a href="#feedback">Feedback</a>] |
+    [<a href="#support">Support the project</a>] |
+    [<a href="#credits">Credits</a>] |
+    [<a href="#">Source on GitHub</a>] |
+    [<a href="#">Discord</a>] |
+    [<a href="#">Changelog</a>] |
+    [<a href="#">Donate</a>]
+  </nav>
+</header>
+</section>
+
+</main></body></html>

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { BoardData, DiodeReading, Net, Part, Pin } from '../parsers/types';
-import { comparePart, normalizeNet, diodeDiverges, buildAlignment, longestCommonRun } from './part-compare';
+import { comparePart, normalizeNet, diodeDiverges, buildAlignment, longestCommonRun, relateNames, isNoConnectName } from './part-compare';
 
 // ── Fixture builders ──────────────────────────────────────────────────────
 //
@@ -378,6 +378,114 @@ describe('partial name match', () => {
     const m = row.nameMatch!;
     expect(row.a!.rawNet.slice(m.aStart, m.aStart + m.length)).toBe('PPBUS_G3H');
     expect(row.b!.rawNet.slice(m.bStart, m.bStart + m.length)).toBe('PPBUS_G3H');
+  });
+});
+
+// ── Real corpus: M1 Air PMU vs M1 Pro PMU ─────────────────────────────────
+//
+// Every pair below is taken verbatim from comparing the PMU of 820-02016
+// (MacBook Air M1) against 820-02020 (MacBook Pro M1) — two different boards
+// carrying the same chip, which is the case where the topology fingerprint is
+// least help, because refdes differ between designs and so almost nothing
+// matches. The names are all the evidence there is, which makes this list the
+// specification for the name rules.
+
+describe('name relations on the M1 PMU corpus', () => {
+  const partial: Array<[string, string, string]> = [
+    // A rail that extends its own prefix. ~50 rows of the real comparison.
+    ['PP3V8_AON_VDDMAIN', 'PP3V8_AON_MPMU_ISNS_VIN', 'same PP3V8_AON prefix'],
+    // One name decorated.
+    ['BUCK14_LX0', 'BUCK14_LX', 'one name contains the other'],
+    ['BUCK14_FB', 'BUCK14_FB_MPMU', 'one name contains the other'],
+    ['PMU_RESET_1V8', 'UPC_PMU_RESET_1V8', 'one name contains the other'],
+    ['P3V3S2_PWR_EN_MPMU', 'P3V3S2_PWR_EN', 'one name contains the other'],
+    // The pin is used on one board and declared unused on the other.
+    ['MPMU_TDEV4', 'NC_MPMU_TDEV4', 'unused on one board'],
+    ['MPMU_TDEV5', 'NC_MPMU_TDEV5', 'unused on one board'],
+    ['MPMU_XIN', 'NC_MPMU_XIN', 'unused on one board'],
+    ['NC_MPMU_BUTTONO1', 'MPMU_BUTTONO1', 'unused on one board'],
+    // One signal under two state markers — neither is "connected".
+    ['NC_MPMU_NAND0_RESET_L', 'TPT_MPMU_NAND0_RESET_L', 'unused on one board'],
+  ];
+  for (const [a, b, reason] of partial) {
+    it(`${a} ↔ ${b} — ${reason}`, () => {
+      const rel = relateNames(a, b);
+      expect(rel.partial).toBe(true);
+      expect(rel.reason).toBe(reason);
+    });
+  }
+
+  // Genuinely different nets on the same chip. These must stay red: a tech
+  // scanning for problems cannot have them softened.
+  const differ: Array<[string, string]> = [
+    ['NC_MPMU_TDEV1', 'P3V8AONVR_THMSNS'],
+    ['NC_MPMU_TDEV2', 'SOC_THMSNS1'],
+    ['NC_MPMU_AMUX_B3', 'MPMU_HS_ISENSE'],
+    ['NC_MPMU_TDEV6', 'WLANBT_THMSNS'],
+    ['VSS_ANA_MPMU', 'PP1V5_VLDOINT_MPMU'],   // ground against a 1V5 rail
+    ['IPD_PWR_EN', 'MPMU_GPIO6'],             // a function against a bare GPIO
+    ['LCD_PWR_EN', 'MPMU_GPIO10'],
+    ['IPD_WAKE_L', 'MPMU_GPIO14'],
+    ['P5VS2_PWR_EN', 'MPMU_GPIO20'],
+    ['IPD_OCP_FLT', 'NC_MPMU_GPIO22'],        // used here, unused there
+    ['P3V8AON_IMEAS', 'P3V8AON_HS_ISENSE'],   // one shared token is not enough
+  ];
+  for (const [a, b] of differ) {
+    it(`${a} ↔ ${b} stays a difference`, () => {
+      expect(relateNames(a, b).partial).toBe(false);
+    });
+  }
+
+  it('still refuses sibling nets that substitute one token', () => {
+    // The prefix rule must not undo the containment work: these share two
+    // leading tokens but swap the last, which is how sibling nets look.
+    for (const [a, b] of [['SMC_RST_L', 'SMC_RST_R'], ['PP1V8_S0_A', 'PP1V8_S0_B']]) {
+      expect(relateNames(a, b).partial).toBe(false);
+    }
+    // And a rail that merely shares one token is not a match either.
+    expect(relateNames('MPMU_GPIO6', 'MPMU_GPIO10').partial).toBe(false);
+    expect(relateNames('BUCK14_LX0', 'BUCK14_LX1').partial).toBe(false);
+  });
+});
+
+describe('named no-connects', () => {
+  it('reads a leading state marker, and only a leading one', () => {
+    expect(isNoConnectName('NC_MPMU_GPIO24')).toBe(true);
+    expect(isNoConnectName('RSVD_GPU_TRIGGER1_L')).toBe(true);
+    expect(isNoConnectName('PP3V8_NC_SENSE')).toBe(false);
+    // A test point is connected — it labels identity, not state.
+    expect(isNoConnectName('TPT_MPMU_NAND0_RESET_L')).toBe(false);
+  });
+
+  it('two differently-named no-connects are not a difference', () => {
+    const A = simpleBoard(['NC_FAN_PWR_EN', 'P2', 'P3', 'P4']);
+    const B = simpleBoard(['NC_MPMU_GPIO26', 'P2', 'P3', 'P4'], '_B');
+    const res = comparePart(A, B);
+    expect(res.rows[0].status).toBe('nc');
+    expect(res.rows[0].nameReason).toBe('unused on both');
+    expect(res.differences).toBe(0);
+  });
+
+  it('says so when both no-connects carry the same signal', () => {
+    const A = simpleBoard(['NC_GPU_TRIGGER1_L', 'P2', 'P3', 'P4']);
+    const B = simpleBoard(['RSVD_GPU_TRIGGER1_L', 'P2', 'P3', 'P4'], '_B');
+    const row = comparePart(A, B).rows[0];
+    expect(row.status).toBe('nc');
+    expect(row.nameReason).toBe('same signal, unused on both');
+  });
+
+  it('pairs a blank net with a named no-connect', () => {
+    const a = mkPart('U1', [{ net: '', x: 0, y: 0 }]);
+    const b = mkPart('U1', [{ net: 'NC_MPMU_GPIO24', x: 0, y: 0 }]);
+    const res = comparePart({ board: mkBoard([a]), part: a }, { board: mkBoard([b]), part: b });
+    expect(res.rows[0].status).toBe('nc');
+    expect(res.differences).toBe(0);
+  });
+
+  it('keeps used-against-unused a difference', () => {
+    const A = simpleBoard(['IPD_OCP_FLT', 'P2', 'P3', 'P4']);
+    const B = simpleBoard(['NC_MPMU_GPIO22', 'P2', 'P3', 'P4'], '_B');
+    expect(comparePart(A, B).rows[0].status).toBe('differs');
   });
 });
 

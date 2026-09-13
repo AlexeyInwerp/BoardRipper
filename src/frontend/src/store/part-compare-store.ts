@@ -27,6 +27,8 @@ export interface CompareSideRef {
 /** One pin of the compared part, as the board overlay and tooltip need it. */
 export interface CompareHighlightPin {
   status: PinDiffStatus;
+  /** Why the row reads as it does, when the names decided it. */
+  reason: string;
   /** The other board's net on the matching pin; '' when unconnected or absent. */
   otherNet: string;
   /** The other board's pin label, or null when that side has no such pin. */
@@ -159,6 +161,7 @@ class PartCompareStore extends Emitter {
       if (!mine) continue;
       pins.set(mine.pinIndex, {
         status: row.status,
+        reason: row.nameReason ?? '',
         otherNet: theirs?.rawNet ?? '',
         otherPin: theirs?.label ?? null,
       });

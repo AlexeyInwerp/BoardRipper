@@ -154,10 +154,12 @@ test.describe('compare highlight', () => {
     expect(differs).toContain('TOUCH_1');
     expect(differs).toContain('different net');
 
-    // Pad 1 is TOUCH_2_ALT here and TOUCH_2 there — a spelling difference.
+    // Pad 1 is TOUCH_2_ALT here and TOUCH_2 there. The line gives the rule
+    // that decided it, not a generic label — that is what makes an amber pin
+    // actionable rather than just "not red".
     const partial = await hoverPin(page, 1);
     expect(partial).toContain('TOUCH_2');
-    expect(partial).toContain('spelled differently');
+    expect(partial).toContain('one name contains the other');
   });
 
   test('the compare line is absent while the highlight is off', async ({ page }) => {
