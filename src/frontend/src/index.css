@@ -8854,6 +8854,20 @@ body {
 .part-compare-copy { cursor: pointer; margin-left: auto; }
 .part-compare-copy:hover { background: var(--surface-hover); }
 
+/* Board-highlight toggle. Carries its state in the glyph as well as the
+   colour, so it reads the same way the rail's foot switches do. */
+.part-compare-hl {
+  font-size: 10px; padding: 2px 6px; cursor: pointer;
+  background: var(--surface); color: var(--text-secondary);
+  border: 1px solid var(--border); border-radius: 3px;
+}
+.part-compare-hl:hover { background: var(--surface-hover); color: var(--text); }
+.part-compare-hl.on {
+  color: var(--text);
+  border-color: var(--accent, #5e81ac);
+  background: color-mix(in srgb, var(--accent, #5e81ac) 18%, transparent);
+}
+
 .part-compare-rows { overflow-y: auto; min-height: 0; }
 .part-compare-empty, .part-compare-note {
   font-size: 11px; color: var(--text-secondary); padding: 8px 2px; line-height: 1.4;

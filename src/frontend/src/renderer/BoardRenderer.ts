@@ -26,6 +26,8 @@ import { contextMenuStore } from '../store/context-menu-store';
 import { resizeModeStore } from '../store/resize-mode-store';
 import { viewCommands, type PanDirection, type ZoomDirection } from '../store/view-commands';
 import { selectionSetStore } from '../store/selection-set-store';
+import { partCompareStore } from '../store/part-compare-store';
+import type { PinDiffStatus } from '../store/part-compare';
 import { worklistStore, MARK_COLOR_HEX, MEAS_KINDS, type NetMeasurement } from '../store/worklist-store';
 import { PART_MARK_SVG, NET_MARK_SVG, WATER_SVG, SURGE_SVG, MEAS_SVG, MEAS_LETTER, escapeHtml } from './worklist-tooltip-icons';
 import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
@@ -55,6 +57,13 @@ const COLORS = BOARD_COLORS;
  *  boards doesn't thrash rebuilds; short enough to reclaim within a minute of
  *  leaving a board. resume() rebuilds via the tested reinitApp() path. */
 const DEEP_PAUSE_DELAY_MS = 45_000;
+
+/** Compare highlight: the standing outline around the part under comparison,
+ *  and the two pin marks — red where the boards disagree, amber where the net
+ *  is the same one named differently. */
+const COMPARE_OUTLINE_COLOR = 0xffffff;
+const COMPARE_DIFFER_COLOR = 0xff3b30;
+const COMPARE_PARTIAL_COLOR = 0xffcc00;
 
 /** Glow colour for "highlight connections" — nets shared between ≥2 parts in
  *  the cyan selection set. Cyan to tie the glow to the cyan selection outline. */
@@ -394,6 +403,10 @@ export class BoardRenderer {
   private unsubscribeTheme: (() => void) | null = null;
   private unsubscribeViewCommands: (() => void) | null = null;
   private unsubscribeSelectionSet: (() => void) | null = null;
+  private unsubscribePartCompare: (() => void) | null = null;
+  /** DEV-only record of the last compare highlight drawn — see the probe in
+   *  `drawCompareHighlight`. Never read by production code. */
+  lastCompareMarks: { part: string; differ: number; partial: number } | null = null;
   private unsubscribeWorklist: (() => void) | null = null;
   private unsubscribeObd: (() => void) | null = null;
   /** Outline-only highlight overlay for the ephemeral multi-select set AND the
@@ -1845,6 +1858,10 @@ export class BoardRenderer {
     this.unsubscribeTheme = themeStore.subscribe(() => this.onThemeUpdate());
     this.unsubscribeObd = obdStore.subscribe(() => this.onObdUpdate());
     this.unsubscribeSelectionSet = selectionSetStore.subscribe(() => {
+      this.redrawMultiHighlight();
+      this.needsRender = true;
+    });
+    this.unsubscribePartCompare = partCompareStore.subscribe(() => {
       this.redrawMultiHighlight();
       this.needsRender = true;
     });
@@ -6411,6 +6428,114 @@ export class BoardRenderer {
     for (const idx of sel.ordered) {
       drawOutline(idx, 0x00e5ff, 1.0);
     }
+
+    this.drawCompareHighlight(gfx, width, drawOutline);
+  }
+
+  /** Colour of a compared pin, or null for the statuses not worth marking. */
+  private static compareMarkColor(status: PinDiffStatus): number | null {
+    switch (status) {
+      // A real disagreement between the two boards.
+      case 'differs': case 'only-a': case 'only-b':
+        return COMPARE_DIFFER_COLOR;
+      // The same net under another name, or nearly so.
+      case 'renamed': case 'similar': case 'partial':
+        return COMPARE_PARTIAL_COLOR;
+      // `same`, `bulk` and `nc` are deliberately unmarked. On a 400-pin BGA
+      // where 390 pins agree, painting those would bury the ten that do not —
+      // the standing outline already says which part is under comparison.
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Paint the active comparison onto the board: a standing outline around the
+   * compared part, and a mark on each pin that is not a plain match.
+   *
+   * Drawn into `multiHighlightGfx` rather than a layer of its own — it is the
+   * same kind of thing as the cyan multi-select (a persistent, store-driven
+   * overlay), it already lives in `invalidateAllScenes`'s detach list, and a
+   * new Graphics is exactly the shape of bug that took out the halo sprite and
+   * `butterflyDimGfx`.
+   *
+   * Pin marks reuse the net-highlight's shape resolution so a mark traces the
+   * pin as drawn — pad outline when pads are shown, the pin sprite otherwise,
+   * clamped to the same per-part radius.
+   */
+  private drawCompareHighlight(
+    gfx: Graphics,
+    width: number,
+    drawOutline: (idx: number, color: number, alpha: number) => void,
+  ): void {
+    const tabId = this.tabId ?? boardStore.activeTabId;
+    if (tabId == null) return;
+    const hl = partCompareStore.highlightFor(tabId);
+    if (!hl) {
+      if (import.meta.env.DEV) this.lastCompareMarks = null;
+      return;
+    }
+
+    const board = this.board;
+    if (!board) return;
+    const partIndex = this.buildRefdesIndex().get(hl.partName);
+    if (partIndex == null) return;
+    const part = board.parts[partIndex];
+    if (!part || !this.isPartVisible(part)) return;
+
+    drawOutline(partIndex, COMPARE_OUTLINE_COLOR, 1.0);
+
+    const s = renderSettingsStore.settings;
+    const storedPads = part.pins.length === 2
+      ? this.activeScene?.twoPinPadPolys.get(partIndex)
+      : null;
+    const clamp = this.activeScene?.pinRadiusClamp.get(partIndex) ?? Infinity;
+    const grow = s.netHighlightGrow;
+
+    // One stroke call per colour, not per pin: a Graphics flushes its path on
+    // every `stroke()`, so per-pin stroking on a big BGA is hundreds of draws.
+    const byColor = new Map<number, Array<() => void>>();
+    for (const [pinIndex, status] of hl.pinStatus) {
+      const color = BoardRenderer.compareMarkColor(status);
+      if (color == null) continue;
+      const pin = part.pins[pinIndex];
+      if (!pin) continue;
+      let arr = byColor.get(color);
+      if (!arr) { arr = []; byColor.set(color, arr); }
+      if (boardStore.showPads && storedPads && storedPads[pinIndex]) {
+        const poly = storedPads[pinIndex];
+        arr.push(() => drawPoly(gfx, poly));
+      } else if (boardStore.showPads && pin.padBounds) {
+        const padGeom: PadGeometry = {
+          bounds: pin.padBounds,
+          shape: pin.padShape,
+          width: pin.padWidth,
+          height: pin.padHeight,
+          angleDeg: pin.padAngleDeg,
+          cornerRadius: pin.padCornerRadius,
+          polygon: pin.padPolygon,
+        };
+        arr.push(() => drawPadShape(gfx, padGeom, grow));
+      } else {
+        const r = Math.min(computePinRadius(s, pin.radius), clamp);
+        arr.push(() => drawPinShape(gfx, pin, r, grow));
+      }
+    }
+    for (const [color, fns] of byColor) {
+      for (const fn of fns) fn();
+      gfx.stroke({ color, alpha: 1, width: width * 1.2 });
+    }
+
+    if (import.meta.env.DEV) {
+      // What actually reached the canvas, for `tests/compare-highlight.spec.ts`.
+      // Counting marks is the closest an E2E can get to "the right pins are
+      // red" without pixel comparison.
+      this.lastCompareMarks = {
+        part: hl.partName,
+        differ: byColor.get(COMPARE_DIFFER_COLOR)?.length ?? 0,
+        partial: byColor.get(COMPARE_PARTIAL_COLOR)?.length ?? 0,
+      };
+    }
   }
 
   /** Double-click on a component → force-search it in the linked PDF (overwrites user search). */
@@ -6648,6 +6773,7 @@ export class BoardRenderer {
     this.unsubscribeObd?.();
     this.unsubscribeViewCommands?.();
     this.unsubscribeSelectionSet?.();
+    this.unsubscribePartCompare?.();
     this.unsubscribeWorklist?.();
     if (this.boundPointerTravel) {
       window.removeEventListener('pointermove', this.boundPointerTravel, true);

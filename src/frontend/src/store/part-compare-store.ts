@@ -13,8 +13,9 @@
 
 import { Emitter } from './emitter';
 import { boardStore, type BoardTab } from './board-store';
+import { renderSettingsStore, isGroundNet } from './render-settings';
 import { createStoreHook } from '../hooks/createStoreHook';
-import type { AlignMode } from './part-compare';
+import { comparePart, type AlignMode, type CompareResult, type PinDiffStatus } from './part-compare';
 
 export interface CompareSideRef {
   tabId: number;
@@ -28,10 +29,21 @@ export interface PartCompareState {
   b: CompareSideRef | null;
   mode: AlignMode;
   onlyDiffs: boolean;
+  /** Paint the comparison onto the board: a standing outline around the
+   *  compared part plus a mark on every pin that is not a plain match.
+   *  Off by default — it is a second, persistent highlight competing with the
+   *  selection, so it only appears when asked for. */
+  highlight: boolean;
 }
 
 class PartCompareStore extends Emitter {
-  private _state: PartCompareState = { a: null, b: null, mode: 'auto', onlyDiffs: false };
+  private _state: PartCompareState = {
+    a: null, b: null, mode: 'auto', onlyDiffs: false, highlight: false,
+  };
+  /** Memoised `comparePart` output. Keyed by everything that can change it,
+   *  board identity included — `deriveBoardView` and a reload both produce a
+   *  fresh `BoardData`, so an identity check is a correct invalidation. */
+  private _cache: { key: string; boardA: object; boardB: object; result: CompareResult } | null = null;
 
   get state(): PartCompareState { return this._state; }
 
@@ -63,6 +75,64 @@ class PartCompareStore extends Emitter {
 
   setMode(mode: AlignMode) { this.patch({ mode }); }
   setOnlyDiffs(onlyDiffs: boolean) { this.patch({ onlyDiffs }); }
+  setHighlight(highlight: boolean) { this.patch({ highlight }); }
+  toggleHighlight() { this.patch({ highlight: !this._state.highlight }); }
+
+  /**
+   * The current comparison, or null when either side is unresolved.
+   *
+   * Lives on the store rather than in the tool's `useMemo` because the
+   * renderer needs the same answer to paint the board, and recomputing it
+   * per frame is not an option. The kernel is pure, so caching it here costs
+   * nothing and removes the duplicate computation.
+   */
+  get result(): CompareResult | null {
+    const { a, b, mode } = this._state;
+    const sa = resolveSide(a, boardStore.tabs);
+    const sb = resolveSide(b, boardStore.tabs);
+    if (!sa?.part || !sb?.part) { this._cache = null; return null; }
+
+    const key = `${a!.tabId}|${sa.part.name}|${b!.tabId}|${sb.part.name}|${mode}`;
+    const hit = this._cache;
+    if (hit && hit.key === key && hit.boardA === sa.board && hit.boardB === sb.board) {
+      return hit.result;
+    }
+    const settings = renderSettingsStore.settings;
+    const result = comparePart(
+      { board: sa.board, part: sa.part },
+      { board: sb.board, part: sb.part },
+      { mode, isBulkNet: n => isGroundNet(settings, n) },
+    );
+    this._cache = { key, boardA: sa.board, boardB: sb.board, result };
+    return result;
+  }
+
+  /**
+   * What to paint on `tabId`, or null when the board highlight is off, this
+   * tab is neither side, or there is nothing to compare.
+   *
+   * Returns the part's refdes plus the status of each of *its* pins, keyed by
+   * pin index on that side — so the renderer never has to know which side of
+   * the comparison it is looking at.
+   */
+  highlightFor(tabId: number): { partName: string; pinStatus: Map<number, PinDiffStatus> } | null {
+    const { a, b, highlight } = this._state;
+    if (!highlight) return null;
+    const which: 'a' | 'b' | null =
+      a?.tabId === tabId ? 'a' : b?.tabId === tabId ? 'b' : null;
+    if (!which) return null;
+    const result = this.result;
+    if (!result) return null;
+
+    const pinStatus = new Map<number, PinDiffStatus>();
+    for (const row of result.rows) {
+      const side = which === 'a' ? row.a : row.b;
+      if (!side) continue;
+      pinStatus.set(side.pinIndex, row.status);
+    }
+    const ref = which === 'a' ? a : b;
+    return { partName: ref!.partName, pinStatus };
+  }
 
   /**
    * Seed both sides at once — the right-click entry point.
@@ -73,7 +143,9 @@ class PartCompareStore extends Emitter {
    * mis-align the new one.
    */
   open(a: CompareSideRef, b: CompareSideRef | null) {
-    this._state = { a, b, mode: 'auto', onlyDiffs: this._state.onlyDiffs };
+    this._state = {
+      ...this._state, a, b, mode: 'auto',
+    };
     this.notify();
   }
 

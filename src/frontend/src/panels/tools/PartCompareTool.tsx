@@ -15,14 +15,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { boardStore } from '../../store/board-store';
 import { useBoardStore } from '../../hooks/useBoardStore';
-import { renderSettingsStore, isGroundNet } from '../../store/render-settings';
 import { formatDiode } from '../../store/diode-readings';
 import { log } from '../../store/log-store';
 import {
   partCompareStore, usePartCompare, resolveSide,
 } from '../../store/part-compare-store';
 import {
-  comparePart, compareToText, statusSymbol,
+  compareToText, statusSymbol,
   type AlignMode, type CompareResult, type NameMatch, type PinDiffRow,
   type PinDiffStatus, type ResolvedAlignMode,
 } from '../../store/part-compare';
@@ -225,15 +224,13 @@ export function PartCompareTool() {
   const sideA = useMemo(() => resolveSide(state.a, tabs), [state.a, tabs]);
   const sideB = useMemo(() => resolveSide(state.b, tabs), [state.b, tabs]);
 
-  const result = useMemo(() => {
-    if (!sideA?.part || !sideB?.part) return null;
-    const settings = renderSettingsStore.settings;
-    return comparePart(
-      { board: sideA.board, part: sideA.part },
-      { board: sideB.board, part: sideB.part },
-      { mode: state.mode, isBulkNet: n => isGroundNet(settings, n) },
-    );
-  }, [sideA, sideB, state.mode]);
+  // Read the comparison straight off the store, which memoises it — the
+  // renderer needs the same answer to paint the board, and computing it in two
+  // places would let the two drift apart. No `useMemo` here: the store's own
+  // cache is the memo, and wrapping it would need `state.mode` as a dependency
+  // the callback does not mention, which is a lie the linter rightly objects to.
+
+  const result = sideA?.part && sideB?.part ? partCompareStore.result : null;
 
   const visibleRows: PinDiffRow[] = useMemo(() => {
     if (!result) return [];
@@ -426,6 +423,16 @@ function Summary({
             );
           })}
         </select>
+        <button
+          className={`part-compare-hl${state.highlight ? ' on' : ''}`}
+          data-testid="compare-highlight"
+          aria-pressed={state.highlight}
+          onClick={() => partCompareStore.toggleHighlight()}
+          title={'Outline this component on the board and mark every pin that is not a plain match — '
+               + 'red where the boards disagree, amber where the net is the same one named differently.'}
+        >
+          {state.highlight ? '◉' : '○'} Highlight on board
+        </button>
         <button className="part-compare-copy" data-testid="compare-copy" onClick={onCopy}>
           Copy {visible}
         </button>
