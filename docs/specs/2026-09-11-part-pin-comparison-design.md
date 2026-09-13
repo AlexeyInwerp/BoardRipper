@@ -273,11 +273,22 @@ Three rules, in order, after topology has abstained:
    `NC_GPU_TRIGGER1_L` and `RSVD_GPU_TRIGGER1_L` are one signal, as are
    `NC_MPMU_NAND0_RESET_L` and `TPT_MPMU_NAND0_RESET_L`. Only a *leading*
    token counts — `PP3V8_NC_SENSE` is not a marked net.
-2. **Two no-connects are not a difference.** `NC`, `RSVD`, `DNU`, `NU`,
-   `RESERVED` mean the pin is unused, so `NC_FAN_PWR_EN` against
-   `NC_MPMU_GPIO26` is `nc`, not red — and a blank net pairs with a named
-   no-connect. `TP`/`TPT` are deliberately **not** in this set: a test point is
-   connected; it labels identity, not state.
+2. **Two no-connects, handled by how much they actually agree.** `NC`, `RSVD`,
+   `DNU`, `NU`, `RESERVED` mean the pin is unused. `TP`/`TPT` are deliberately
+   **not** in that set: a test point is connected; it labels identity, not
+   state. How far "both unused" goes depends on whether the names agree about
+   *what* the pin is:
+   * same signal under two markers (`NC_GPU_TRIGGER1_L` /
+     `RSVD_GPU_TRIGGER1_L`), or a blank net against a named no-connect — `nc`,
+     nothing disagrees.
+   * **different signals** (`NC_FAN_PWR_EN` / `NC_MPMU_GPIO26`) — `partial`,
+     not `nc`. That both are unused is safe to say; that the two boards mean
+     the same by the pin is not, and it may have been repurposed between
+     models. A first cut called these `nc` and was rejected on review: it reads
+     as "no difference", which is a claim the names do not support. `partial`
+     is exactly the "related, decide for yourself" bucket — amber, not counted
+     as a difference, and kept by the "only differences" filter, which hides
+     only `same` and `nc`.
 3. **A rail extends its prefix.** Two names sharing ≥2 leading tokens covering
    ≥40 % of the shorter, **with tails of different length**, read as the same
    rail: `PP3V8_AON_VDDMAIN` against `PP3V8_AON_MPMU_ISNS_VIN`, which was ~50

@@ -457,13 +457,27 @@ describe('named no-connects', () => {
     expect(isNoConnectName('TPT_MPMU_NAND0_RESET_L')).toBe(false);
   });
 
-  it('two differently-named no-connects are not a difference', () => {
+  it('does not claim two differently-named no-connects are the same thing', () => {
+    // Both boards say the pin is unused — that much is safe. That they mean
+    // the same by it is not: FAN_PWR_EN against MPMU_GPIO26 may be a pin
+    // repurposed between models, so it gets its own status rather than being
+    // folded into "no difference".
     const A = simpleBoard(['NC_FAN_PWR_EN', 'P2', 'P3', 'P4']);
     const B = simpleBoard(['NC_MPMU_GPIO26', 'P2', 'P3', 'P4'], '_B');
     const res = comparePart(A, B);
-    expect(res.rows[0].status).toBe('nc');
-    expect(res.rows[0].nameReason).toBe('unused on both');
+    expect(res.rows[0].status).toBe('partial');
+    expect(res.rows[0].nameReason).toBe('unused on both, but named differently');
+    // Not a wiring difference…
     expect(res.differences).toBe(0);
+    // …but amber and kept by the "only differences" filter, which hides only
+    // `same` and `nc` — so it is never silently swallowed.
+    expect(res.counts.partial).toBe(1);
+  });
+
+  it('same for the second real pair from the M1 corpus', () => {
+    const A = simpleBoard(['NC_MPMU_GPIO24', 'P2', 'P3', 'P4']);
+    const B = simpleBoard(['NC_UWB_PWR_EN', 'P2', 'P3', 'P4'], '_B');
+    expect(comparePart(A, B).rows[0].status).toBe('partial');
   });
 
   it('says so when both no-connects carry the same signal', () => {
@@ -475,6 +489,8 @@ describe('named no-connects', () => {
   });
 
   it('pairs a blank net with a named no-connect', () => {
+    // A blank net makes no competing claim about the pin's purpose, so there
+    // is nothing for the named side to disagree with.
     const a = mkPart('U1', [{ net: '', x: 0, y: 0 }]);
     const b = mkPart('U1', [{ net: 'NC_MPMU_GPIO24', x: 0, y: 0 }]);
     const res = comparePart({ board: mkBoard([a]), part: a }, { board: mkBoard([b]), part: b });

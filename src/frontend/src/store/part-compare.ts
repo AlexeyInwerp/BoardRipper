@@ -83,7 +83,9 @@ export type PinDiffStatus =
   /** The pin exists only in A / only in B. */
   | 'only-a'
   | 'only-b'
-  /** Both sides unconnected. Not counted as a difference. */
+  /** Both sides unconnected, and nothing contradicts that they are the same
+   *  thing: two blank nets, a blank against a named no-connect, or two
+   *  no-connects carrying the same signal. Not counted as a difference. */
   | 'nc';
 
 /** Statuses the user is meant to read as "these boards disagree here". */
@@ -885,14 +887,26 @@ export function comparePart(
     } else if (a.net === b.net) {
       status = 'same';
     } else if (isUnused(a) && isUnused(b)) {
-      // Neither board uses this pin. That covers a blank net, the literal
-      // `NC`, and a *named* no-connect like `NC_MPMU_GPIO24` against
-      // `NC_UWB_PWR_EN` — two different strings that both say "unused", which
-      // read as a red difference before.
-      status = 'nc';
-      nameReason = sameStrippedSignal(a.rawNet, b.rawNet)
-        ? 'same signal, unused on both'
-        : 'unused on both';
+      // Neither board uses this pin. How far that goes depends on whether the
+      // two names agree about *what* the pin is.
+      if (sameStrippedSignal(a.rawNet, b.rawNet)) {
+        // One signal under two state markers — `NC_GPU_TRIGGER1_L` against
+        // `RSVD_GPU_TRIGGER1_L`. Nothing disagrees, so nothing to report.
+        status = 'nc';
+        nameReason = 'same signal, unused on both';
+      } else if (a.net === '' || b.net === '') {
+        // A blank net makes no competing claim about the pin's purpose.
+        status = 'nc';
+        nameReason = 'unused on both';
+      } else {
+        // Both say unused, but of *different* signals — `NC_FAN_PWR_EN`
+        // against `NC_MPMU_GPIO26`. Both being unused is safe to say; that the
+        // two boards mean the same by the pin is not, and the pin may well
+        // have been repurposed between models. That uncertainty is precisely
+        // what `partial` is for — it must not be dismissed as no difference.
+        status = 'partial';
+        nameReason = 'unused on both, but named differently';
+      }
     } else if (a.net === '' || b.net === '') {
       // One side connected, the other not — always a real difference.
       status = 'differs';
