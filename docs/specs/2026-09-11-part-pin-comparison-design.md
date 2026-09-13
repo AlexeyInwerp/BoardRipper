@@ -217,6 +217,15 @@ fingerprint(board, netName) =
 Built from `board.nets.get(name).pinIndices → board.parts[partIndex].name`
 (`parsers/types.ts:164`). Memoised per `(board, netName)`.
 
+**The size rule only ever confirms a match, never denies one.** Two rails
+within ±20 % of each other are `bulk`; when the sizes disagree the branch falls
+through to the name rules like every other place topology abstains. It used to
+return `differs` outright, which meant no rail could ever be a partial match —
+`PP3V8_AON_VDDMAIN` against `PP3V8_AON_MPMU_ISNS_VIN` stayed red across ~50
+rows of a real comparison even after the prefix rule existed, because the name
+rules were never reached. Across two *different* boards a rail's fanout differs
+by design, so its size is not evidence either way.
+
 **Bulk nets are excluded before the set is ever built.** `pinIndices.length` is
 the cheap pre-check: if a net has more than `BULK_LIMIT` (40) member parts, or
 `isGroundNet(settings, name)` says so (`render-settings.ts:519`), it is a rail.

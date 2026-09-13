@@ -527,11 +527,33 @@ describe('rails', () => {
     expect(res.differences).toBe(0);
   });
 
-  it('calls rails of very different size a difference', () => {
+  it('falls back to the names when the sizes do not match', () => {
+    // Size stops being evidence here — across two different boards a rail's
+    // fanout differs by design — so `GND` against `AGND` is decided by the
+    // names, and one contains the other. This asserted `differs` while the
+    // bulk branch short-circuited; the size rule now only ever *confirms* a
+    // match, never denies one.
     const A = railBoard('GND', 200);
     const B = railBoard('AGND', 500);
-    const res = comparePart(A, B);
-    expect(res.rows[0].status).toBe('differs');
+    expect(comparePart(A, B).rows[0].status).toBe('partial');
+  });
+
+  it('lets the names speak when two rails are not the same size', () => {
+    // The real case: PP3V8_AON_VDDMAIN against PP3V8_AON_MPMU_ISNS_VIN on two
+    // different boards. Both are rails, their fanout differs by design, and
+    // the bulk branch used to return `differs` without ever looking at the
+    // names — some 50 red rows of one comparison.
+    const A = railBoard('PP3V8_AON_VDDMAIN', 200);
+    const B = railBoard('PP3V8_AON_MPMU_ISNS_VIN', 600);
+    const row = comparePart(A, B).rows[0];
+    expect(row.status).toBe('partial');
+    expect(row.nameReason).toBe('same PP3V8_AON prefix');
+  });
+
+  it('still calls two unrelated rails a difference', () => {
+    const A = railBoard('VSS_ANA_MPMU', 200);
+    const B = railBoard('PP1V5_VLDOINT_MPMU', 600);
+    expect(comparePart(A, B).rows[0].status).toBe('differs');
   });
 
   it('honours the injected ground classifier below the pin threshold', () => {

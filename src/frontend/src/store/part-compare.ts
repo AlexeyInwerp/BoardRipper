@@ -922,9 +922,20 @@ export function comparePart(
 
       if (fa.bulk || fb.bulk) {
         const span = Math.max(fa.pins, fb.pins) || 1;
-        status = (fa.bulk && fb.bulk && Math.abs(fa.pins - fb.pins) / span <= BULK_SIZE_TOLERANCE)
-          ? 'bulk'
-          : 'differs';
+        if (fa.bulk && fb.bulk && Math.abs(fa.pins - fb.pins) / span <= BULK_SIZE_TOLERANCE) {
+          status = 'bulk';
+        } else {
+          // Two rails of very different size, or a rail against an ordinary
+          // net. Topology has nothing to say — across two *different* boards a
+          // rail's fanout differs by design — so the names decide, exactly as
+          // they do everywhere else topology abstains. Without this the branch
+          // returned `differs` outright and no rail could ever be a partial
+          // match: `PP3V8_AON_VDDMAIN` against `PP3V8_AON_MPMU_ISNS_VIN` was
+          // ~50 red rows of one real comparison.
+          const rel = relateNames(a.rawNet, b.rawNet);
+          status = rel.partial ? 'partial' : 'differs';
+          nameReason = rel.reason;
+        }
       } else if (fa.refs.size === 0 && fb.refs.size === 0) {
         // Two stubs that touch nothing but the subject part. Equal empty sets
         // are not evidence of sameness, so topology abstains here and the name
