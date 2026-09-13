@@ -739,13 +739,14 @@ export function relateNames(a: string, b: string): { partial: boolean; reason: s
     if (aNC !== bNC) return { partial: true, reason: 'unused on one board' };
     return { partial: true, reason: 'same signal, marked differently' };
   }
+  // No reason for the next two: you can see it in the two names side by side.
   if (alnumOnly(a) === alnumOnly(b) && alnumOnly(a).length >= PARTIAL_NAME_MIN_RUN) {
-    return { partial: true, reason: 'punctuation only' };
+    return { partial: true, reason: '' };
   }
   const m = longestCommonRun(a, b);
   if (m && m.length >= PARTIAL_NAME_MIN_RUN && m.ratio >= PARTIAL_NAME_RATIO &&
       m.length === Math.min(a.length, b.length)) {
-    return { partial: true, reason: 'one name contains the other' };
+    return { partial: true, reason: '' };
   }
   let run = 0;
   const lim = Math.min(sa.length, sb.length);

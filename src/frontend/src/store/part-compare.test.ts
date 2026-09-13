@@ -395,10 +395,12 @@ describe('name relations on the M1 PMU corpus', () => {
     // A rail that extends its own prefix. ~50 rows of the real comparison.
     ['PP3V8_AON_VDDMAIN', 'PP3V8_AON_MPMU_ISNS_VIN', 'same PP3V8_AON prefix'],
     // One name decorated.
-    ['BUCK14_LX0', 'BUCK14_LX', 'one name contains the other'],
-    ['BUCK14_FB', 'BUCK14_FB_MPMU', 'one name contains the other'],
-    ['PMU_RESET_1V8', 'UPC_PMU_RESET_1V8', 'one name contains the other'],
-    ['P3V3S2_PWR_EN_MPMU', 'P3V3S2_PWR_EN', 'one name contains the other'],
+    // No reason on these four: one name plainly contains the other, which the
+    // two strings show without being told.
+    ['BUCK14_LX0', 'BUCK14_LX', ''],
+    ['BUCK14_FB', 'BUCK14_FB_MPMU', ''],
+    ['PMU_RESET_1V8', 'UPC_PMU_RESET_1V8', ''],
+    ['P3V3S2_PWR_EN_MPMU', 'P3V3S2_PWR_EN', ''],
     // The pin is used on one board and declared unused on the other.
     ['MPMU_TDEV4', 'NC_MPMU_TDEV4', 'unused on one board'],
     ['MPMU_TDEV5', 'NC_MPMU_TDEV5', 'unused on one board'],
@@ -408,7 +410,7 @@ describe('name relations on the M1 PMU corpus', () => {
     ['NC_MPMU_NAND0_RESET_L', 'TPT_MPMU_NAND0_RESET_L', 'unused on one board'],
   ];
   for (const [a, b, reason] of partial) {
-    it(`${a} ↔ ${b} — ${reason}`, () => {
+    it(`${a} ↔ ${b}${reason ? ` — ${reason}` : ''}`, () => {
       const rel = relateNames(a, b);
       expect(rel.partial).toBe(true);
       expect(rel.reason).toBe(reason);

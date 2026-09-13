@@ -152,14 +152,14 @@ test.describe('compare highlight', () => {
     expect(differs, 'no tooltip on the rewired pad').toBeTruthy();
     expect(differs).toContain('hl-a');
     expect(differs).toContain('TOUCH_1');
-    expect(differs).toContain('different net');
+    // The other board's net is the whole answer. No "— different net" tacked
+    // on: the mark's colour already says that, and the name says the rest.
+    expect(differs).toBe('↔ hl-a: TOUCH_1');
 
-    // Pad 1 is TOUCH_2_ALT here and TOUCH_2 there. The line gives the rule
-    // that decided it, not a generic label — that is what makes an amber pin
-    // actionable rather than just "not red".
+    // Pad 1 is TOUCH_2_ALT here and TOUCH_2 there — one name contains the
+    // other, which the two strings show without a note.
     const partial = await hoverPin(page, 1);
-    expect(partial).toContain('TOUCH_2');
-    expect(partial).toContain('one name contains the other');
+    expect(partial).toBe('↔ hl-a: TOUCH_2');
   });
 
   test('the compare line is absent while the highlight is off', async ({ page }) => {

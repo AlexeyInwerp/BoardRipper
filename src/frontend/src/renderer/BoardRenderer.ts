@@ -65,6 +65,14 @@ const COMPARE_OUTLINE_COLOR = 0xffffff;
 const COMPARE_DIFFER_COLOR = 0xff3b30;
 const COMPARE_PARTIAL_COLOR = 0xffcc00;
 
+/** Notes for the statuses topology settled, where the two names alone say
+ *  nothing about why. Everything else carries its own reason or needs none. */
+const STATUS_NOTE: Partial<Record<PinDiffStatus, string>> = {
+  renamed: 'renamed, same connections',
+  similar: 'mostly the same connections',
+  bulk: 'both a rail',
+};
+
 /** Glow colour for "highlight connections" — nets shared between ≥2 parts in
  *  the cyan selection set. Cyan to tie the glow to the cyan selection outline. */
 const SHARED_NET_GLOW = 0x00e5ff;
@@ -6079,25 +6087,18 @@ export class BoardRenderer {
     this.lastCompareTooltipStatus = info.status;
     const where = hl.otherBoard || 'other board';
     const net = info.otherNet || 'n/c';
-    // The kernel's own words when the names decided the row — "unused on one
-    // board", "same PP3V8_AON prefix" — are more use than a generic label.
-    if (info.reason) return `↔ ${where}: ${net} — ${info.reason}`;
     switch (info.status) {
       case 'only-a':
-      case 'only-b':
-        return `↔ ${where}: no such pin`;
-      case 'nc':
-        return `↔ ${where}: unconnected on both`;
-      case 'same':
-        return `↔ ${where}: same net`;
-      case 'bulk':
-        return `↔ ${where}: ${net} — both a rail`;
-      case 'renamed':
-        return `↔ ${where}: ${net} — renamed, same connections`;
-      case 'similar':
-        return `↔ ${where}: ${net} — mostly the same connections`;
-      default:
-        return `↔ ${where}: ${net} — different net`;
+      case 'only-b': return `↔ ${where}: no such pin`;
+      case 'nc':     return `↔ ${where}: ${info.reason || 'unconnected on both'}`;
+      case 'same':   return `↔ ${where}: same net`;
+      default: {
+        // The other board's net is the answer. A note is added only where the
+        // two names alone do not show why the row reads as it does — never to
+        // restate the colour.
+        const note = info.reason || STATUS_NOTE[info.status] || '';
+        return `↔ ${where}: ${net}${note ? ` — ${note}` : ''}`;
+      }
     }
   }
 
