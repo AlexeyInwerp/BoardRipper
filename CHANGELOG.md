@@ -10,6 +10,10 @@
   that size; the selected pin, the pin under the pointer (on any part) and the
   part name keep the full size. The fraction is adjustable — Settings ▸ Zoom
   Level of Detail ▸ *Other Pins of Selected Part*, also in Interactive mode.
+- **Pin and net names on ICs appear later.** The "Pin Labels" floor (Settings ▸
+  Zoom Level of Detail) defaults to 8 px instead of 3 — at 3 the names showed
+  at half zoom, unreadable and covering the whole chip. An install that never
+  touched the value gets the new one; a changed value is left alone.
 
 ## v0.41.0 — 2026-09-14
 

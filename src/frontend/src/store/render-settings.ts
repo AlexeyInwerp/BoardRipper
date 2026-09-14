@@ -630,7 +630,7 @@ export const DEFAULTS: RenderSettings = {
   cap60Fps: false,
   showPerfOverlay: false,
 
-  circleLabelMinScreenPx: 3,
+  circleLabelMinScreenPx: 8,   // was 3 — pin/net names covered the whole chip long before they were readable
   twoPinLabelMinScreenPx: 6,
   pinNetLabelBg: true,
   twoPinNetLabelBg: true,
@@ -1291,6 +1291,10 @@ const WHEEL_DETECTION_MIGRATED_KEY = 'boardripper-wheel-detection-migrated-v1';
  *  experimental window gets flipped ON exactly once; the user stays free to
  *  turn it back off afterwards — the marker prevents re-forcing. */
 const TEXT_FAST_GRADUATED_KEY = 'boardripper-textfastmode-graduated-v1';
+/** One-time bump of an untouched `circleLabelMinScreenPx` 3 → 8 (2026-09-14):
+ *  stored settings override DEFAULTS, so a changed default alone never reaches
+ *  an existing install. Only a value still at the old default is touched. */
+const PIN_LABEL_FLOOR_BUMPED_KEY = 'boardripper-pinlabel-floor-8';
 let pendingTextFastGraduationNotice = false;
 /** True exactly once, on the first boot where the graduation migration ran
  *  against a pre-existing installation — drives the one-time "text rendering
@@ -1359,6 +1363,15 @@ function loadFromStorage(): RenderSettings {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
           }
           pendingTextFastGraduationNotice = true;
+        }
+      } catch { /* ignore quota/private-mode errors */ }
+      try {
+        if (!localStorage.getItem(PIN_LABEL_FLOOR_BUMPED_KEY)) {
+          localStorage.setItem(PIN_LABEL_FLOOR_BUMPED_KEY, '1');
+          if (parsed.circleLabelMinScreenPx === 3) {
+            parsed.circleLabelMinScreenPx = DEFAULTS.circleLabelMinScreenPx;
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+          }
         }
       } catch { /* ignore quota/private-mode errors */ }
       const result: RenderSettings = { ...structuredClone(DEFAULTS), ...parsed };
