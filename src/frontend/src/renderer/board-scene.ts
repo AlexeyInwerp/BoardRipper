@@ -1596,7 +1596,7 @@ export function buildBoardScene(
         if (pinFontSize >= s.labelHideThreshold) {
           if (!(labelModel && pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
             x: pinX, y: pinY, text: numStr, fontSize: pinFontSize,
-            color: BOARD_COLORS.labelPin, kind: isTwoPinPart ? 'twoPinNet' : 'circleNum', partIndex: pi,
+            color: BOARD_COLORS.labelPin, kind: isTwoPinPart ? 'twoPinNet' : 'circleNum', partIndex: pi, pinIndex: pni,
             anchorX: 0.5, anchorY: numAnchorY,  // mirrors pinLabel.anchor.set(0.5, numAnchorY) incl. BGA alternating
             bg: false,
           }))) {
@@ -1696,7 +1696,7 @@ export function buildBoardScene(
           // never allocated on the default (off) path.
           if (!(labelModel && pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
             x: nx, y: ny, text: pin.net, fontSize: netFontSize,
-            color: BOARD_COLORS.labelNet, kind: isTwoPinPart ? 'twoPinNet' : 'circleNet', partIndex: pi,
+            color: BOARD_COLORS.labelNet, kind: isTwoPinPart ? 'twoPinNet' : 'circleNet', partIndex: pi, pinIndex: pni,
             anchorX, anchorY,  // mirrors netLabel.anchor.set(anchorX, anchorY) — same locals, incl. 2-pin/BGA parity
             bg: isTwoPinPart ? s.twoPinNetLabelBg : s.pinNetLabelBg,  // same condition the wrapper Graphics is created under
           }))) {
@@ -2289,7 +2289,8 @@ export function buildBoardScene(
       const isBottom = part.side === 'bottom';
       const layer = isBottom ? bottomLabelLayer : topLabelLayer;
       const track = isBottom ? bottomDiodeLabels : topDiodeLabels;
-      for (const pin of part.pins) {
+      for (let dpni = 0; dpni < part.pins.length; dpni++) {
+        const pin = part.pins[dpni];
         const r = diodeResolver(pin);
         if (!r || r.kind === 'none') continue;
         const text = r.kind === 'open'
@@ -2317,7 +2318,7 @@ export function buildBoardScene(
         const anchorY = diodeOnly ? 0.5 : 1.1;
         if (!(labelModel && pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
           x: pin.position.x, y: ly, text,
-          fontSize, color, kind: 'diode', partIndex: dpi,
+          fontSize, color, kind: 'diode', partIndex: dpi, pinIndex: dpni,
           anchorX: 0.5, anchorY,       // mirrors label.anchor.set below
           bg: diodeOnly,               // dark plate: colour must read over any pin fill
         }))) {

@@ -156,6 +156,10 @@ export interface RenderSettings {
    *  fast mode). Selected labels appear when fontSize*zoom ≥ minPx*relax, so
    *  lower = they stay visible when zoomed out further. 1 = no relax. */
   selectedLabelLodRelax: number;
+  /** Fraction of `selectedLabelMinPx` applied to the selected part's pin
+   *  labels that are NOT the selected or hovered pin (Text fast mode). The
+   *  part name and the pin being pointed at get the full floor. */
+  selectedLabelOtherScale: number;
   /** Draw board text on a Canvas2D overlay instead of scene BitmapText.
    */
   textFastMode: boolean;
@@ -589,6 +593,7 @@ export const DEFAULTS: RenderSettings = {
   labelZoomHide: 0,
   selectedLabelMinPx: 11,
   selectedLabelLodRelax: 0.75,
+  selectedLabelOtherScale: 0.8,
   textFastMode: true,
 
   selectionWidth: 2,

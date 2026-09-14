@@ -533,6 +533,9 @@ export class BoardRenderer {
   private tooltipSize: { w: number; h: number } | null = null;
   /** Net name currently under the pointer (for ambient dim hover highlight) */
   private hoverNet: string | null = null;
+  /** Pin under the pointer, for the label overlay's hover size bump. */
+  private hoverPartIndex: number | null = null;
+  private hoverPinIndex: number | null = null;
   /** Bound wheel wake-up handler for cleanup */
   private boundWheelWake: ((e: WheelEvent) => void) | null = null;
   /** Bound shift+wheel handler — intercepts before pixi-viewport to implement scroll bindings */
@@ -2227,6 +2230,9 @@ export class BoardRenderer {
       width: this.containerEl.clientWidth, height: this.containerEl.clientHeight,
       showTop: boardStore.showTop, showBottom: boardStore.showBottom,
       selectedPartIndex: boardStore.selection.partIndex,
+      selectedPinIndex: boardStore.selection.pinIndex,
+      hoverPartIndex: this.hoverPartIndex,
+      hoverPinIndex: this.hoverPinIndex,
       dimActive,
       litParts: dimActive ? litParts : null,
     }, {
@@ -2236,6 +2242,7 @@ export class BoardRenderer {
       labelZoomHide: s.labelZoomHide,
       selectedLabelMinPx: s.selectedLabelMinPx,
       selectedLabelLodRelax: s.selectedLabelLodRelax ?? 0.75,
+      selectedLabelOtherScale: s.selectedLabelOtherScale ?? 0.8,
     });
   }
 
@@ -3849,7 +3856,7 @@ export class BoardRenderer {
         // a change needs an overlay repaint, NOT a scene rebuild. Rebuilding on
         // this needlessly redraws all geometry (and can hit the vertex ceiling
         // under an elevated pinSizeScale).
-        'selectedLabelMinPx', 'selectedLabelLodRelax',
+        'selectedLabelMinPx', 'selectedLabelLodRelax', 'selectedLabelOtherScale',
         // Board-ribbon layout: pure DOM (which chips, where the bar sits, how
         // it is oriented). Nothing in the scene reads these, so a drag of the
         // floating bar must not rebuild — every rebuild is a chance to leave a
@@ -5941,6 +5948,7 @@ export class BoardRenderer {
           return;
         }
         this.hoverKey = key;
+        this.setHoverPin(hit.partIndex, hit.pinIndex);
         const pinId = pin.number || String(hit.pinIndex + 1);
         const diodeStr = pin.diode && pin.diode.kind !== 'none'
           ? `Diode ${formatDiode(pin.diode)}` : undefined;
@@ -5966,6 +5974,7 @@ export class BoardRenderer {
         return;
       }
       this.hoverKey = key;
+      this.setHoverPin(null, null);
       const t = this.board.traces![traceHit.traceIndex];
       const layerName = t.layer != null && this.board.layerNames?.[t.layer]
         ? this.board.layerNames[t.layer] : '';
@@ -5977,8 +5986,23 @@ export class BoardRenderer {
       return;
     }
     this.hoverKey = null;
+    this.setHoverPin(null, null);
     this.hideTooltip();
     this.setHoverNet(null);
+  }
+
+  /** Track the hovered pin and repaint the label overlay when it changes, so
+   *  the pin under the pointer gets the full label size (same bump as the
+   *  selected pin). One overlay repaint per pin change, not per move. */
+  private setHoverPin(partIndex: number | null, pinIndex: number | null) {
+    if (partIndex === this.hoverPartIndex && pinIndex === this.hoverPinIndex) return;
+    this.hoverPartIndex = partIndex;
+    this.hoverPinIndex = pinIndex;
+    if (renderSettingsStore.settings.textFastMode) {
+      this.overlayDirty = true;
+      this.overlayContentDirty = true;
+      this.needsRender = true;
+    }
   }
 
   /** Update hover net and redraw selection overlay if ambient dim needs it */

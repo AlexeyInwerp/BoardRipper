@@ -19,6 +19,11 @@ export interface LabelRecord {
   color: number;                 // 0xRRGGBB
   kind: LabelKind;
   partIndex: number;             // -1 for labels with no owning part (via labels excluded from v1)
+  /** Index into `part.pins` for pin-attached labels (pin number, net name,
+   *  diode reading); absent for part names. Lets the overlay single out the
+   *  selected and the hovered pin's labels for the full size bump while the
+   *  rest of a selected part's labels stay at `selectedLabelOtherScale`. */
+  pinIndex?: number;
   /** Anchor fractions matching PixiJS `BitmapText.anchor` exactly: the point of
    *  the text's bounding box that sits AT (x, y). 0/0 = top-left, 0.5/0.5 =
    *  centered, 1/1 = bottom-right. The Task 6 overlay compensates at draw time

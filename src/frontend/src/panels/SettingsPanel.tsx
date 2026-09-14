@@ -2317,6 +2317,8 @@ export function SettingsPanel() {
           title="Hard minimum zoom level to show ANY text. 0 = disabled. All labels vanish below this zoom level." />
         <Slider label="Selected Part Labels" value={draft.selectedLabelMinPx} min={0} max={30} step={1} field="selectedLabelMinPx" onUpdate={updateGlobal}
           title="The selected part's labels never render smaller than this many screen pixels — they stay readable while you unzoom (Text fast mode). 0 = scale naturally with zoom." />
+        <Slider label="Other Pins of Selected Part" value={draft.selectedLabelOtherScale ?? 0.8} min={0.3} max={1} step={0.05} field="selectedLabelOtherScale" onUpdate={updateGlobal}
+          title="Fraction of the size above for the selected part's pin labels that are not the selected or hovered pin. The pin you point at, the selected pin and the part name keep the full size; the rest stay smaller so a dense part's labels don't overlap." />
       </CollapsibleSection>
       )}
 

@@ -15,6 +15,11 @@ export interface OverlayViewState {
   width: number; height: number;
   showTop: boolean; showBottom: boolean;
   selectedPartIndex: number | null;
+  /** Selected pin within the selected part (board-store selection.pinIndex). */
+  selectedPinIndex?: number | null;
+  /** Pin under the pointer, on any part — its labels get the full floor too. */
+  hoverPartIndex?: number | null;
+  hoverPinIndex?: number | null;
   dimActive: boolean;
   litParts: ReadonlySet<number> | null;
 }
@@ -31,6 +36,11 @@ export interface OverlayThresholds {
   /** LoD relax multiplier for the selected part's labels (see render-settings
    *  `selectedLabelLodRelax`). Lower = selected labels appear at lower zoom. */
   selectedLabelLodRelax: number;
+  /** Fraction of `selectedLabelMinPx` the selected part's OTHER pin labels get
+   *  (default 0.8). Only the selected pin and the hovered pin — and the part
+   *  name — get the full floor; every pin of a dense part at 11 px overlapped
+   *  its neighbours. */
+  selectedLabelOtherScale?: number;
 }
 
 const OFFSCREEN_MARGIN = 40;      // px — keep labels whose center is just off-edge
@@ -62,6 +72,17 @@ function minPxFor(kind: LabelRecord['kind'], th: OverlayThresholds): number {
     case 'twoPinNet': return th.twoPinLabelMinScreenPx;
     default: return th.labelMinScreenPx;
   }
+}
+
+/** Screen-px floor for a label drawn in the selected pass. The part name and
+ *  the focused pin (selected or hovered) get the full `selectedLabelMinPx`;
+ *  every other label of the selected part gets `selectedLabelOtherScale` of
+ *  it, so a dense part's pin names stop overlapping while the one you point
+ *  at is still the big one. 0 when the floor is off. */
+export function selectedFloorPx(kind: LabelRecord['kind'], isFocusPin: boolean, th: OverlayThresholds): number {
+  if (th.selectedLabelMinPx <= 0) return 0;
+  const full = isFocusPin || kind === 'part';
+  return th.selectedLabelMinPx * (full ? 1 : (th.selectedLabelOtherScale ?? 0.8));
 }
 
 export function selectVisibleLabels(
@@ -165,12 +186,18 @@ export class LabelOverlay {
         let lastFontPx = -1;
         for (const r of vis) {
           const isSel = view.selectedPartIndex !== null && r.partIndex === view.selectedPartIndex;
-          const isLit = !view.dimActive || isSel || (view.litParts?.has(r.partIndex) ?? false);
-          const want = pass === 'selected' ? isSel : pass === 'lit' ? (isLit && !isSel) : !isLit;
+          // The pin being pointed at: the selected pin, or the hovered pin on
+          // any part. Its labels take the full floor and paint on top.
+          const isFocusPin = r.pinIndex !== undefined && r.pinIndex >= 0 && (
+            (isSel && r.pinIndex === view.selectedPinIndex) ||
+            (r.partIndex === view.hoverPartIndex && r.pinIndex === view.hoverPinIndex));
+          const onTop = isSel || isFocusPin;
+          const isLit = !view.dimActive || onTop || (view.litParts?.has(r.partIndex) ?? false);
+          const want = pass === 'selected' ? onTop : pass === 'lit' ? (isLit && !onTop) : !isLit;
           if (!want) continue;
           visible += 1;
           let px = r.fontSize * view.scale;
-          if (isSel && th.selectedLabelMinPx > 0) px = Math.max(px, th.selectedLabelMinPx);
+          if (onTop) px = Math.max(px, selectedFloorPx(r.kind, isFocusPin, th));
           const fontPx = Math.round(px * 4) / 4;          // quantize to limit ctx.font churn
           if (fontPx !== lastFontPx) { ctx.font = `${fontPx}px monospace`; lastFontPx = fontPx; }
           const sx0 = m.a * r.x + m.c * r.y + m.tx;

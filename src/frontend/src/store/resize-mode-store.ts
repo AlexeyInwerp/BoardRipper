@@ -41,6 +41,7 @@ export const CONTROLS: Record<string, ResizeControlDef> = {
   partBorderWidth: { key: 'partBorderWidth', label: 'Part outline',    unit: 'px', min: 0.1, max: 10, step: 0.1, hint: 'Stroke thickness of part outlines.' },
   boardFillAlpha:  { key: 'boardFillAlpha',  label: 'Board opacity',   unit: '',   min: 0,   max: 1,  step: 0.05, hint: 'Opacity of the board fill (0 = transparent).' },
   selectedLabelMinPx: { key: 'selectedLabelMinPx', label: 'Selected label floor', unit: 'px', min: 0, max: 30, step: 1, hint: 'Min on-screen size for a selected part’s labels.' },
+  selectedLabelOtherScale: { key: 'selectedLabelOtherScale', label: 'Other pins of selected part', unit: '×', min: 0.3, max: 1, step: 0.05, hint: 'Fraction of the floor for the selected part’s pins that are not the selected or hovered pin.' },
   selectedLabelLodRelax: { key: 'selectedLabelLodRelax', label: 'Selected label LOD', unit: '×', min: 0.1, max: 1, step: 0.05, hint: 'Lower = selected labels stay visible when zoomed out further.' },
   netLineWidth: { key: 'netLineWidth', label: 'Net line width',   unit: 'px', min: 0.5, max: 5, step: 0.5, hint: 'Thickness of the highlighted-net connection lines.' },
   netLineAlpha: { key: 'netLineAlpha', label: 'Net line opacity', unit: '',   min: 0,   max: 1, step: 0.05, hint: 'Opacity of the net connection lines.' },
@@ -51,8 +52,8 @@ export const CONTROLS: Record<string, ResizeControlDef> = {
 
 /** Group → the ordered list of control keys it shows. */
 export const GROUPS: Record<ResizeGroup, (keyof RenderSettings)[]> = {
-  pin:     ['pinSizeScale', 'pinNumberScale', 'netLabelScale', 'diodeValueScale', 'netHighlightGrow', 'netHighlightAlpha', 'selectedLabelMinPx', 'selectedLabelLodRelax'],
-  part:    ['partLabelScale', 'partBorderWidth', 'netHighlightGrow', 'netHighlightAlpha', 'selectedLabelMinPx', 'selectedLabelLodRelax'],
+  pin:     ['pinSizeScale', 'pinNumberScale', 'netLabelScale', 'diodeValueScale', 'netHighlightGrow', 'netHighlightAlpha', 'selectedLabelMinPx', 'selectedLabelOtherScale', 'selectedLabelLodRelax'],
+  part:    ['partLabelScale', 'partBorderWidth', 'netHighlightGrow', 'netHighlightAlpha', 'selectedLabelMinPx', 'selectedLabelOtherScale', 'selectedLabelLodRelax'],
   netline: ['netLineWidth', 'netLineColor', 'netLineAlpha'],
   board:   ['boardFillAlpha'],
 };

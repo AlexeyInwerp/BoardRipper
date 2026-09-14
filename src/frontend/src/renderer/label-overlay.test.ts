@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { selectVisibleLabels, type OverlayViewState, type OverlayThresholds } from './label-overlay';
+import { selectedFloorPx, selectVisibleLabels, type OverlayViewState, type OverlayThresholds } from './label-overlay';
 import type { LabelRecord } from './label-model';
 
 const ident = { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 };
@@ -47,5 +47,27 @@ describe('selectVisibleLabels', () => {
   it('labelZoomHide hides everything below the zoom floor', () => {
     const out = selectVisibleLabels([rec(400, 300, 100)], ident, view(0.5), { ...th, labelZoomHide: 1 });
     expect(out).toHaveLength(0);
+  });
+});
+
+
+describe('selectedFloorPx', () => {
+  const th = {
+    labelMinScreenPx: 6, circleLabelMinScreenPx: 6, twoPinLabelMinScreenPx: 6, labelZoomHide: 0,
+    selectedLabelMinPx: 10, selectedLabelLodRelax: 0.75, selectedLabelOtherScale: 0.8,
+  };
+  it('gives the focused pin and the part name the full floor', () => {
+    expect(selectedFloorPx('pinNet', true, th)).toBe(10);
+    expect(selectedFloorPx('circleNet', true, th)).toBe(10);
+    expect(selectedFloorPx('part', false, th)).toBe(10);
+  });
+  it('gives the selected part\'s other pin labels the reduced floor', () => {
+    expect(selectedFloorPx('pinNet', false, th)).toBeCloseTo(8);
+    expect(selectedFloorPx('circleNum', false, th)).toBeCloseTo(8);
+    expect(selectedFloorPx('diode', false, th)).toBeCloseTo(8);
+  });
+  it('defaults the other-pin scale to 0.8 and honours 0 = no floor', () => {
+    expect(selectedFloorPx('pinNet', false, { ...th, selectedLabelOtherScale: undefined })).toBeCloseTo(8);
+    expect(selectedFloorPx('pinNet', true, { ...th, selectedLabelMinPx: 0 })).toBe(0);
   });
 });

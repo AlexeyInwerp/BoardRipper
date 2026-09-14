@@ -1,5 +1,16 @@
 # BoardRipper changelog
 
+## Unreleased
+
+### Selected part's pin labels no longer overlap
+
+- **Only the pin you point at is big.** Selecting a part used to enlarge every
+  one of its pin labels to the "Selected Part Labels" size, and on a dense part
+  they overlapped each other. The selected part's pin labels now sit at 0.8 of
+  that size; the selected pin, the pin under the pointer (on any part) and the
+  part name keep the full size. The fraction is adjustable — Settings ▸ Zoom
+  Level of Detail ▸ *Other Pins of Selected Part*, also in Interactive mode.
+
 ## v0.41.0 — 2026-09-14
 
 ### A fresh install that shows something
