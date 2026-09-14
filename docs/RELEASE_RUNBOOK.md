@@ -186,6 +186,13 @@ one no other test covers.
 
 ## Per-release flow
 
+**What a version number decides (rule since 2026-09-14):** a **minor** version
+(`v0.40.0`, `v0.41.0`, …) is a full release — Docker image, signed manifest,
+lite web build **and** the desktop apps — so run it with `--desktop`. A
+**patch** version (`v0.41.1`, …) is Docker + lite web only, run with
+`--no-desktop`; desktop users pick the next minor up. Desktop builds need
+`node@22` on PATH (see below).
+
 ```bash
 cd ~/Desktop/Boardviewer
 git pull
@@ -227,9 +234,9 @@ The script's final summary prints the GHCR image, manifest URL, GitHub release U
 - `--via-tailscale [NODE]` — route the run through a Tailscale exit node (default `rd-nas`). See *FTP: credentials, bans, and the Tailscale route*.
 
 ```
-./scripts/release.sh v0.X.Y                       # docker-only, prompt for desktop
-./scripts/release.sh v0.X.Y --desktop             # docker + desktop, no prompt
-./scripts/release.sh v0.X.Y --no-desktop          # docker only, no prompt
+./scripts/release.sh v0.X.0 --desktop             # MINOR version: docker + desktop + lite web
+./scripts/release.sh v0.X.Y --no-desktop          # PATCH version: docker + lite web only
+./scripts/release.sh v0.X.Y                       # prompts for desktop — prefer one of the two above
 ./scripts/release.sh v0.X.Y --desktop-only        # desktop + GH release only, no counter/FTP/Docker
 ./scripts/release.sh v0.X.Y --skip-update-test    # bypass the sanity gate (avoid)
 ./scripts/release.sh v0.X.Y --no-push             # local commit/tag only, no remote push or GH release
