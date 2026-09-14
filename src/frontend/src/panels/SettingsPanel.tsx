@@ -2324,6 +2324,8 @@ export function SettingsPanel() {
           <label className="settings-label">Fit pin labels to pitch</label>
           <input type="checkbox" checked={draft.labelFitToPitch ?? true} onChange={e => updateGlobal({ labelFitToPitch: e.target.checked })} />
         </div>
+        <Slider label="Label Fade-In" value={draft.labelFadeRange ?? 0.5} min={0} max={1.5} step={0.05} field="labelFadeRange" onUpdate={updateGlobal}
+          title="Labels fade in as they grow past their appear-floor instead of popping in at full strength — fully opaque at floor × (1 + this). 0 = instant. Like the part-name fade, but at the small end." />
         <Slider label="Other Pins of Selected Part" value={draft.selectedLabelOtherScale ?? 0.8} min={0.3} max={1} step={0.05} field="selectedLabelOtherScale" onUpdate={updateGlobal}
           title="Fraction of the size above for the selected part's pin labels that are not the selected or hovered pin. The pin you point at, the selected pin and the part name keep the full size; the rest stay smaller so a dense part's labels don't overlap." />
       </CollapsibleSection>

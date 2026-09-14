@@ -272,6 +272,10 @@ export interface RenderSettings {
    *  that would have to go below its appear-floor to fit is hidden. The pin
    *  under the pointer / selected pin is exempt (Text fast mode). */
   labelFitToPitch: boolean;
+  /** Labels fade in over `floor × (1 + labelFadeRange)` screen px instead of
+   *  popping in at full strength at their appear-floor (Text fast mode).
+   *  0 = instant. */
+  labelFadeRange: number;
   /**
    * Min screen pixels threshold for Group B labels (net names on 2-pin parts).
    * 0 = always visible when part labels are visible.
@@ -642,7 +646,8 @@ export const DEFAULTS: RenderSettings = {
 
   circleLabelMinScreenPx: 8,
   pinNumberMinScreenPx: 5,
-  labelFitToPitch: true,   // was 3 — pin/net names covered the whole chip long before they were readable
+  labelFitToPitch: true,
+  labelFadeRange: 0.5,   // was 3 — pin/net names covered the whole chip long before they were readable
   twoPinLabelMinScreenPx: 6,
   pinNetLabelBg: true,
   twoPinNetLabelBg: true,

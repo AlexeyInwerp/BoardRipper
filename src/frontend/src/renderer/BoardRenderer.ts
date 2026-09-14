@@ -2245,6 +2245,7 @@ export class BoardRenderer {
       selectedLabelLodRelax: s.selectedLabelLodRelax ?? 0.75,
       selectedLabelOtherScale: s.selectedLabelOtherScale ?? 0.8,
       fitToPitch: s.labelFitToPitch ?? true,
+      fadeRange: s.labelFadeRange ?? 0.5,
     });
   }
 
@@ -3858,7 +3859,7 @@ export class BoardRenderer {
         // a change needs an overlay repaint, NOT a scene rebuild. Rebuilding on
         // this needlessly redraws all geometry (and can hit the vertex ceiling
         // under an elevated pinSizeScale).
-        'selectedLabelMinPx', 'selectedLabelLodRelax', 'selectedLabelOtherScale', 'labelFitToPitch',
+        'selectedLabelMinPx', 'selectedLabelLodRelax', 'selectedLabelOtherScale', 'labelFitToPitch', 'labelFadeRange',
         // Board-ribbon layout: pure DOM (which chips, where the bar sits, how
         // it is oriented). Nothing in the scene reads these, so a drag of the
         // floating bar must not rebuild — every rebuild is a chance to leave a

@@ -50,6 +50,11 @@ export interface OverlayThresholds {
    *  its pin centres (`labelFitToPitch`, default on). Labels that would have
    *  to shrink below their appear-floor to fit are hidden instead. */
   fitToPitch?: boolean;
+  /** Fade-in width as a fraction of the appear-floor: a label is faint at its
+   *  floor and fully opaque at `floor × (1 + fadeRange)`. 0 = hard pop, the
+   *  old behaviour. Default 0.5. The pointed-at pin and the selected part's
+   *  name are exempt — they are the things being looked at. */
+  fadeRange?: number;
 }
 
 const OFFSCREEN_MARGIN = 40;      // px — keep labels whose center is just off-edge
@@ -73,6 +78,16 @@ function smoothstep(a: number, b: number, x: number): number {
 }
 function partNameFade(onScreenPx: number): number {
   return 1 - smoothstep(PART_FADE_START, PART_FADE_END, onScreenPx) * (1 - PART_FADE_MIN);
+}
+
+/** Alpha for a label emerging past its appear-floor: FADE_IN_MIN at the floor,
+ *  1 at `floor × (1 + range)`, smoothstepped — the small-end counterpart of
+ *  partNameFade, so labels swell into view while zooming instead of popping
+ *  in at full strength on one zoom step. range 0 (or no floor) = 1. */
+const FADE_IN_MIN = 0.18;
+export function labelFadeAlpha(px: number, floorPx: number, range: number): number {
+  if (range <= 0 || floorPx <= 0) return 1;
+  return FADE_IN_MIN + (1 - FADE_IN_MIN) * smoothstep(floorPx, floorPx * (1 + range), px);
 }
 
 function minPxFor(kind: LabelRecord['kind'], th: OverlayThresholds): number {
@@ -238,6 +253,7 @@ export class LabelOverlay {
           visible += 1;
           let px = r.fontSize * view.scale;
           if (onTop) px = Math.max(px, selectedFloorPx(r.kind, isFocusPin, th));
+          const floorPx = minPxFor(r.kind, th) * (isSel ? th.selectedLabelLodRelax : 1);
           // Fit to pitch — every pin label except the one being pointed at,
           // which is one label drawn on top and may cover its neighbours.
           if (th.fitToPitch !== false && !isFocusPin && r.pitch) {
@@ -245,7 +261,7 @@ export class LabelOverlay {
             if (px > cap) {
               px = cap;
               // Below the appear-floor it is noise, not a label: hide, don't shrink.
-              if (px < minPxFor(r.kind, th) * (isSel ? th.selectedLabelLodRelax : 1)) continue;
+              if (px < floorPx) continue;
             }
           }
           const fontPx = Math.round(px * 4) / 4;          // quantize to limit ctx.font churn
@@ -265,6 +281,9 @@ export class LabelOverlay {
           // you are comparing against the meter must not be translucent.
           let alpha = pass === 'dim' && r.kind !== 'diode' ? DIM_ALPHA : 1;
           if (r.kind === 'part') alpha *= partNameFade(r.fontSize * view.scale);
+          // Fade in past the appear-floor; the focus pin and the selected
+          // part's name are what the user is looking at and stay solid.
+          if (!isFocusPin && !(isSel && r.kind === 'part')) alpha *= labelFadeAlpha(px, floorPx, th.fadeRange ?? 0.5);
           ctx.globalAlpha = alpha;
           if (r.bg) {                                     // backing rect (replaces the Graphics wrappers — two-pin AND circle-net)
             const tw = textW + fontPx * 0.6;

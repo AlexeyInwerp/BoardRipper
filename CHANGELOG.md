@@ -18,6 +18,15 @@
   pin and cannot overlap, so it now has its own, lower appear-floor ("Pin
   Numbers", 5 px) and is drawn centred in the pin until the net name shows —
   then it moves aside to make room, on the same zoom step the name appears.
+- **Pin labels fit the pitch.** On a multi-pin part every pin number and net
+  name is capped at the size that fits between the part's pin centres, so a
+  selected BGA's labels cannot overlap; a label that would have to go below its
+  appear-floor to fit is hidden. The pin you point at is exempt. Settings ▸
+  Zoom Level of Detail ▸ *Fit pin labels to pitch*.
+- **Labels fade in.** Instead of popping in at full strength on one zoom step,
+  labels swell into view past their appear-floor — the same mechanism as the
+  part-name fade, at the small end. *Label Fade-In* in the same section; 0
+  restores the pop.
 
 ## v0.41.0 — 2026-09-14
 

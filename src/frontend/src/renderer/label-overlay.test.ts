@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { selectedFloorPx, pinNumberPlacement, pitchCapPx, selectVisibleLabels, type OverlayViewState, type OverlayThresholds } from './label-overlay';
+import { selectedFloorPx, pinNumberPlacement, pitchCapPx, labelFadeAlpha, selectVisibleLabels, type OverlayViewState, type OverlayThresholds } from './label-overlay';
 import type { LabelRecord } from './label-model';
 
 const ident = { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 };
@@ -115,5 +115,20 @@ describe('pitchCapPx', () => {
   it('scales with zoom and never exceeds the height budget', () => {
     expect(pitchCapPx({ ...base, text: 'A1' }, 2)).toBeCloseTo((32 * 0.9) / (3 * 0.6)); // short text: width rule, 3-char minimum
     expect(pitchCapPx({ ...base, text: 'A1', stacked: true }, 2)).toBeCloseTo(32 * 0.45); // stacked: height rule binds
+  });
+});
+
+
+describe('labelFadeAlpha', () => {
+  it('is faint at the floor, solid past floor × (1 + range), monotonic between', () => {
+    expect(labelFadeAlpha(8, 8, 0.5)).toBeCloseTo(0.18);
+    expect(labelFadeAlpha(12, 8, 0.5)).toBe(1);
+    expect(labelFadeAlpha(20, 8, 0.5)).toBe(1);
+    const a = labelFadeAlpha(9, 8, 0.5), b = labelFadeAlpha(10, 8, 0.5), c = labelFadeAlpha(11, 8, 0.5);
+    expect(a).toBeLessThan(b); expect(b).toBeLessThan(c); expect(c).toBeLessThan(1);
+  });
+  it('is off with range 0 or no floor', () => {
+    expect(labelFadeAlpha(8, 8, 0)).toBe(1);
+    expect(labelFadeAlpha(1, 0, 0.5)).toBe(1);
   });
 });
