@@ -26,6 +26,11 @@ const wasmMemoryLimitPages uint32 = 8192 // 512 MiB per worker
 type Engine struct {
 	pool           pdfium.Pool
 	perFileTimeout time.Duration
+	// ready closes once the pool exists (or init failed — see initErr). The
+	// wasm compile behind webassembly.Init takes ~10 s on a NAS; NewEngineAsync
+	// runs it off the boot path so the HTTP server can listen immediately.
+	ready   chan struct{}
+	initErr error
 }
 
 // NewEngine initialises a pdfium/wazero pool with up to maxTotal concurrent
@@ -51,11 +56,56 @@ func NewEngine(maxTotal int) (*Engine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("pdfium init: %w", err)
 	}
-	return &Engine{pool: pool, perFileTimeout: 2 * time.Minute}, nil
+	ready := make(chan struct{})
+	close(ready)
+	return &Engine{pool: pool, perFileTimeout: 2 * time.Minute, ready: ready}, nil
 }
 
-// Close shuts down all pool workers.
-func (e *Engine) Close() error { return e.pool.Close() }
+// NewEngineAsync returns immediately and compiles the pdfium pool in the
+// background. ExtractFile blocks until the pool is ready and returns the init
+// error if it failed, so callers need no readiness check of their own.
+func NewEngineAsync(maxTotal int) *Engine {
+	e := &Engine{perFileTimeout: 2 * time.Minute, ready: make(chan struct{})}
+	go func() {
+		defer close(e.ready)
+		started := time.Now()
+		inner, err := NewEngine(maxTotal)
+		if err != nil {
+			e.initErr = err
+			log.Printf("pdfium engine init failed (%v) — backend PDF indexing disabled", err)
+			return
+		}
+		e.pool = inner.pool
+		log.Printf("pdfium engine ready in %s", time.Since(started).Round(time.Millisecond))
+	}()
+	return e
+}
+
+// Ready reports whether the pool is usable (false while compiling or after a
+// failed init). Err returns the init error, if any, once init finished.
+func (e *Engine) Ready() bool {
+	select {
+	case <-e.ready:
+		return e.initErr == nil
+	default:
+		return false
+	}
+}
+
+// Err blocks until init finished and returns its error (nil on success).
+func (e *Engine) Err() error {
+	<-e.ready
+	return e.initErr
+}
+
+// Close shuts down all pool workers (waits for a pending init first).
+func (e *Engine) Close() error {
+	<-e.ready
+	if e.pool == nil {
+		return nil
+	}
+	return e.pool.Close()
+}
 
 // ExtractFile returns text per page (slice index = 0-based page number).
 // It enforces a per-file wall-clock kill so a hostile/looping PDF can't
@@ -63,6 +113,9 @@ func (e *Engine) Close() error { return e.pool.Close() }
 // successfully reached before a timeout, so the caller can pin the failure
 // to a specific page rather than just "timed out somewhere".
 func (e *Engine) ExtractFile(data []byte) ([]string, error) {
+	if err := e.Err(); err != nil {
+		return nil, fmt.Errorf("pdfium unavailable: %w", err)
+	}
 	instance, err := e.pool.GetInstance(30 * time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("get instance: %w", err)

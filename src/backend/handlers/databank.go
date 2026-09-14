@@ -36,6 +36,7 @@ type DonorIndexer interface {
 var allowedConfigKeys = map[string]bool{
 	"auto_scan":             true,
 	"auto_bind":             true,
+	"auto_bind_rules":       true,
 	"library_dir":           true,
 	"sync_enabled":          true,
 	"sync_url":              true,
@@ -462,6 +463,66 @@ func (h *DatabankHandler) CreateBinding(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(map[string]int64{"id": id})
 }
 
+// autoBindRulesFromRequest takes the rules to use from the request body when
+// one is sent (the Settings editor previews unsaved rules) and falls back to
+// the configured rules otherwise.
+func (h *DatabankHandler) autoBindRulesFromRequest(w http.ResponseWriter, r *http.Request) databank.AutoBindRules {
+	rules := h.db.LoadAutoBindRules()
+	if r.Body == nil || r.ContentLength == 0 {
+		return rules
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	var body struct {
+		Rules *databank.AutoBindRules `json:"rules"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err == nil && body.Rules != nil {
+		rules = body.Rules.Normalized()
+	}
+	return rules
+}
+
+// AutoBindPreview reports what the rule ladder would link, without writing.
+// POST /api/databank/autobind/preview — optional body {"rules": {...}}
+func (h *DatabankHandler) AutoBindPreview(w http.ResponseWriter, r *http.Request) {
+	report, err := h.db.AutoBind(r.Context(), h.autoBindRulesFromRequest(w, r), true)
+	if err != nil {
+		http.Error(w, "Preview failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, report)
+}
+
+// AutoBindRun links every unbound board the ladder can place.
+// POST /api/databank/autobind/run — optional body {"rules": {...}}
+func (h *DatabankHandler) AutoBindRun(w http.ResponseWriter, r *http.Request) {
+	report, err := h.db.AutoBind(r.Context(), h.autoBindRulesFromRequest(w, r), false)
+	if err != nil {
+		http.Error(w, "Auto-bind failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, report)
+}
+
+// AutoBindDelete removes the automatic links one rule made ("*" = every
+// automatic link). Manual links are never touched.
+// DELETE /api/databank/autobind?rule=fuzzy
+func (h *DatabankHandler) AutoBindDelete(w http.ResponseWriter, r *http.Request) {
+	rule := r.URL.Query().Get("rule")
+	switch rule {
+	case "*", databank.RuleExact, databank.RuleNumber, databank.RuleFuzzy, databank.RuleLone, databank.RuleLegacy:
+	default:
+		http.Error(w, "rule must be one of exact, number, fuzzy, lone, legacy or *", http.StatusBadRequest)
+		return
+	}
+	n, err := h.db.DeleteAutoBindingsByRule(rule)
+	if err != nil {
+		http.Error(w, "Delete failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	existing, _ := h.db.AutoBindingCounts(r.Context())
+	writeJSON(w, map[string]any{"deleted": n, "existing": existing})
+}
+
 // UpdateBinding patches a binding's category and/or auto_open flag.
 func (h *DatabankHandler) UpdateBinding(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
@@ -619,6 +680,13 @@ func (h *DatabankHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 	if !allowedConfigKeys[req.Key] {
 		http.Error(w, "unknown config key: "+req.Key, http.StatusBadRequest)
 		return
+	}
+	if req.Key == databank.AutoBindRulesKey && req.Value != "" {
+		var probe databank.AutoBindRules
+		if err := json.Unmarshal([]byte(req.Value), &probe); err != nil {
+			http.Error(w, "auto_bind_rules must be JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
 	if err := h.db.SetConfig(req.Key, req.Value); err != nil {

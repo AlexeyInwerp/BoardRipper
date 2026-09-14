@@ -544,9 +544,9 @@ func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 			log.Printf("Scanner: batch insert error (%d files): %v", len(pending), err)
 			atomic.AddInt64(&errors, int64(len(pending)))
 		} else {
-			for i := range pending {
-				log.Printf("Scanner: + %s [%s] %s", pending[i].Path, pending[i].FileType, formatSize(pending[i].Size))
-			}
+			// One line per batch: a first index of a 100k-file library used to
+			// write 100k lines here, which was measurable in the scan time.
+			log.Printf("Scanner: + %d files (through %s)", len(pending), pending[len(pending)-1].Path)
 			atomic.AddInt64(&added, int64(len(pending)))
 		}
 		pending = pending[:0]
@@ -691,13 +691,14 @@ func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 		s.mu.Unlock()
 		s.dedupSizeCollisions(cancelled)
 
-		// Phase 6: Auto-match board-PDF bindings for new files.
-		// OFF by default — on large libraries the O(boards×pdfs) match loop
-		// adds hours to the scan. Opt in via config `auto_bind=true`.
+		// Phase 6: link boards to PDFs by the rule ladder (autobind.go). Opt in
+		// via config `auto_bind=true`; rules under `auto_bind_rules`. Rules 1–2
+		// are hash lookups and 3–4 are folder-bounded, so this is seconds,
+		// not the hours the old boards × pdfs loop took.
 		if !cancelled() {
 			if v, _ := s.db.GetConfig("auto_bind"); v == "true" {
 				s.mu.Lock()
-				s.status.Phase = "Auto-matching bindings"
+				s.status.Phase = "Linking boards to PDFs"
 				s.mu.Unlock()
 				s.autoMatchBindings()
 			}
@@ -777,102 +778,21 @@ func (s *Scanner) finishScan(scanned, total, added, updated, deleted, errors int
 	}
 }
 
-// autoMatchBindings creates bindings between boards and PDFs based on filename matching.
-//
-// Failure budget: when InsertBinding starts returning errors for *every* row
-// (seen on libraries with FK-constraint pathology), we'd otherwise log one
-// line per pair and hammer the writer mutex for thousands of iterations,
-// which makes the API look unresponsive. The first few failures get full
-// diagnostics; after consecutiveFKThreshold consecutive FK errors we abort
-// the phase and log a single summary so the rest of the scan completes.
+// autoMatchBindings runs the auto-bind ladder over every board that has no
+// binding yet, with the rules from config, and logs a per-rule summary.
 func (s *Scanner) autoMatchBindings() {
-	const sampleErrLimit = 5
-	const consecutiveFKThreshold = 50
-
-	boards, err := s.db.ListFiles(context.Background(), "board", "", false)
+	report, err := s.db.AutoBind(context.Background(), s.db.LoadAutoBindRules(), false)
 	if err != nil {
-		log.Printf("Scanner: auto-match error listing boards: %v", err)
+		log.Printf("Scanner: auto-bind error: %v", err)
 		return
 	}
-	pdfs, err := s.db.ListFiles(context.Background(), "pdf", "", false)
-	if err != nil {
-		log.Printf("Scanner: auto-match error listing PDFs: %v", err)
+	if report.Total == 0 {
+		log.Printf("Scanner: auto-bind — nothing to link (%d unbound boards, %d PDFs)", report.Boards, report.Pdfs)
 		return
 	}
-
-	var bound, errs, consecutiveErrs, skipped int
-
-	for _, board := range boards {
-		existing, _ := s.db.GetBindingsForBoard(context.Background(), board.ID)
-		if len(existing) > 0 {
-			continue
-		}
-
-		boardDir := filepath.Dir(board.Path)
-		var bestPdf *FileRecord
-		bestScore := 0
-		for i := range pdfs {
-			// Drop page-fragment / pure-digit PDF names — they substring-match
-			// too many boards and produce garbage bindings (see MatchScore +
-			// IsLikelyJunkPdfName in metadata.go).
-			if IsLikelyJunkPdfName(pdfs[i].Filename) {
-				continue
-			}
-			score := MatchScore(board.Filename, pdfs[i].Filename)
-			if score == 0 {
-				continue
-			}
-			// Folder scope: same-folder pairs keep the score-50 threshold;
-			// cross-folder pairs must be a strong match (≥ 80, i.e. exact
-			// base name or Apple-board-number embedded in the PDF name).
-			// Without this guard, "any board × any PDF" anywhere in the
-			// library is fair game and unrelated docs latch on easily.
-			if filepath.Dir(pdfs[i].Path) != boardDir && score < 80 {
-				continue
-			}
-			if score > bestScore {
-				bestScore = score
-				bestPdf = &pdfs[i]
-			}
-		}
-		if bestPdf == nil || bestScore < 50 {
-			continue
-		}
-
-		if _, err := s.db.InsertBinding(board.ID, bestPdf.ID, true, "schematic", true); err != nil {
-			errs++
-			consecutiveErrs++
-			if errs <= sampleErrLimit {
-				log.Printf("Scanner: auto-bind error board#%d %q -> pdf#%d %q: %v",
-					board.ID, board.Filename, bestPdf.ID, bestPdf.Filename, err)
-			}
-			if consecutiveErrs >= consecutiveFKThreshold {
-				skipped = len(boards)
-				log.Printf("Scanner: auto-bind aborted after %d consecutive errors — likely a structural issue with the bindings table; skipping remaining %d boards in this phase",
-					consecutiveErrs, skipped)
-				break
-			}
-			continue
-		}
-
-		consecutiveErrs = 0
-		bound++
-		if bound <= sampleErrLimit {
-			log.Printf("Scanner: auto-bound board#%d %q <-> pdf#%d %q (score=%d)",
-				board.ID, board.Filename, bestPdf.ID, bestPdf.Filename, bestScore)
-		}
-	}
-
-	if bound+errs > 0 {
-		log.Printf("Scanner: auto-bind summary — %d bound, %d failed%s",
-			bound, errs,
-			func() string {
-				if skipped > 0 {
-					return ", phase aborted early"
-				}
-				return ""
-			}())
-	}
+	log.Printf("Scanner: auto-bind — %d linked of %d unbound boards (exact %d, number %d, fuzzy %d, lone %d)",
+		report.Inserted, report.Boards,
+		report.Counts[RuleExact], report.Counts[RuleNumber], report.Counts[RuleFuzzy], report.Counts[RuleLone])
 }
 
 // ResetAll clears the entire databank (files, bindings, PDF text, previews).

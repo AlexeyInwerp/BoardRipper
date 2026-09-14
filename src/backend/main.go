@@ -240,6 +240,12 @@ func main() {
 	mux.HandleFunc("POST /api/databank/bindings", write(dbHandler.CreateBinding))
 	mux.HandleFunc("PATCH /api/databank/bindings/{id}", write(dbHandler.UpdateBinding))
 	mux.HandleFunc("DELETE /api/databank/bindings/{id}", write(dbHandler.DeleteBinding))
+	// Automatic linking (rule ladder, databank/autobind.go): preview is a dry
+	// run; run writes; delete removes by rule. All synchronous — the ladder is
+	// hash lookups plus folder-bounded scans, seconds on a 100k-file library.
+	mux.HandleFunc("POST /api/databank/autobind/preview", read(dbHandler.AutoBindPreview))
+	mux.HandleFunc("POST /api/databank/autobind/run", read(dbHandler.AutoBindRun))
+	mux.HandleFunc("DELETE /api/databank/autobind", write(dbHandler.AutoBindDelete))
 	// GET /api/databank/search is registered below inside the pdfIndex block.
 	// When pdfIndex is nil (degraded boot), search is unavailable — no route.
 	mux.HandleFunc("GET /api/databank/stats", read(dbHandler.Stats))
@@ -328,6 +334,9 @@ func main() {
 	mux.HandleFunc("GET /api/obd/data", read(obdHandler.Data))
 	mux.HandleFunc("POST /api/obd/fetch", obdHandler.Fetch) // 30s upstream timeout — no wrap
 	mux.HandleFunc("DELETE /api/obd/cache", write(obdHandler.CacheDelete))
+	mux.HandleFunc("POST /api/obd/fetch-all", write(obdHandler.FetchAll))
+	mux.HandleFunc("POST /api/obd/fetch-all/stop", write(obdHandler.FetchAllStop))
+	mux.HandleFunc("GET /api/obd/fetch-all/progress", read(obdHandler.FetchAllProgress))
 
 	// PDF index API routes — only registered when pdfindex.db is available and
 	// the pdfium WASM engine initialises successfully.
@@ -338,10 +347,11 @@ func main() {
 				poolMax = n
 			}
 		}
-		engine, eerr := pdfindex.NewEngine(poolMax)
-		if eerr != nil {
-			log.Printf("WARNING: pdfium engine init failed (%v) — backend PDF indexing disabled", eerr)
-		} else {
+		// The wasm compile inside NewEngine took ~10 s of every boot before the
+		// listener came up (connection refused on a fresh install's first
+		// load). Async: routes register now, ExtractFile waits for the pool.
+		engine := pdfindex.NewEngineAsync(poolMax)
+		{
 			defer engine.Close()
 			termsFn := func() []string { return loadWatermarkTerms(db) }
 			source := handlers.NewPdfIndexSource(db, scanner.ScanRoot)

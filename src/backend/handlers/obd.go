@@ -12,8 +12,9 @@ import (
 
 // ObdHandler serves /api/obd/* endpoints.
 type ObdHandler struct {
-	store   *obd.Store
-	scraper *obd.Scraper
+	store    *obd.Store
+	scraper  *obd.Scraper
+	fetchAll *obd.FetchAllRunner
 
 	// indexSyncing single-flights /api/obd/index/sync.
 	indexSyncing bool
@@ -29,11 +30,47 @@ type ObdHandler struct {
 // If store is nil, all endpoints return 503 — used when the library
 // has no library_root configured.
 func NewObdHandler(store *obd.Store, scraper *obd.Scraper) *ObdHandler {
-	return &ObdHandler{
+	h := &ObdHandler{
 		store:         store,
 		scraper:       scraper,
 		fetchInflight: make(map[string]chan struct{}),
 	}
+	if store != nil {
+		h.fetchAll = obd.NewFetchAllRunner(store, scraper)
+	}
+	return h
+}
+
+// FetchAll starts downloading every not-yet-cached board in the index.
+// POST /api/obd/fetch-all
+func (h *ObdHandler) FetchAll(w http.ResponseWriter, r *http.Request) {
+	if !h.requireLibrary(w) {
+		return
+	}
+	if err := h.fetchAll.Run(); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	writeJSON(w, h.fetchAll.Progress())
+}
+
+// FetchAllStop cancels a running fetch-all pass.
+// POST /api/obd/fetch-all/stop
+func (h *ObdHandler) FetchAllStop(w http.ResponseWriter, r *http.Request) {
+	if !h.requireLibrary(w) {
+		return
+	}
+	h.fetchAll.Stop()
+	writeJSON(w, h.fetchAll.Progress())
+}
+
+// FetchAllProgress reports the live pass state.
+// GET /api/obd/fetch-all/progress
+func (h *ObdHandler) FetchAllProgress(w http.ResponseWriter, r *http.Request) {
+	if !h.requireLibrary(w) {
+		return
+	}
+	writeJSON(w, h.fetchAll.Progress())
 }
 
 func (h *ObdHandler) requireLibrary(w http.ResponseWriter) bool {
@@ -94,6 +131,9 @@ type IndexStatus struct {
 	Synced     bool   `json:"synced"`
 	SyncedAt   string `json:"synced_at,omitempty"`
 	BoardCount int    `json:"board_count"`
+	// Cached is how many of the indexed boards are already on disk — what
+	// "Download all" has left to do.
+	Cached int `json:"cached"`
 }
 
 // Match returns matching index entries for a board's board_number.
@@ -111,7 +151,7 @@ func (h *ObdHandler) Match(w http.ResponseWriter, r *http.Request) {
 
 	idx, err := h.store.ReadIndex()
 	if err == nil && idx != nil {
-		out.Index = IndexStatus{Synced: true, SyncedAt: idx.SyncedAt, BoardCount: len(idx.Boards)}
+		out.Index = IndexStatus{Synced: true, SyncedAt: idx.SyncedAt, BoardCount: len(idx.Boards), Cached: h.store.CachedCount(idx)}
 	}
 
 	if bn == "" || idx == nil {

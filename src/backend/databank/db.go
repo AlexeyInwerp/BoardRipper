@@ -136,7 +136,7 @@ func (db *DB) CompactIfBloated() (before int64, after int64, err error) {
 	return db.Compact()
 }
 
-const schemaVersion = 10
+const schemaVersion = 11
 
 func (db *DB) migrate() error {
 	// Create version table if not exists
@@ -200,6 +200,11 @@ func (db *DB) migrate() error {
 	if ver < 10 {
 		if err := db.migrateV10(); err != nil {
 			return fmt.Errorf("v10: %w", err)
+		}
+	}
+	if ver < 11 {
+		if err := db.migrateV11(); err != nil {
+			return fmt.Errorf("v11: %w", err)
 		}
 	}
 
@@ -592,6 +597,39 @@ func (db *DB) migrateV10() error {
 	return tx.Commit()
 }
 
+// migrateV11 records WHICH auto-bind rule produced an automatic binding
+// (`exact` / `number` / `fuzzy` / `lone`; '' for manual). Pre-existing auto
+// rows become `legacy` — they were made by the old score-only matcher and the
+// Settings editor lets the user remove links per rule, so they need a name.
+func (db *DB) migrateV11() error {
+	tx, err := db.writer.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var colCount int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('bindings') WHERE name='rule'`).Scan(&colCount); err != nil {
+		return fmt.Errorf("check bindings.rule column: %w", err)
+	}
+	if colCount == 0 {
+		if _, err := tx.Exec(`ALTER TABLE bindings ADD COLUMN rule TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add bindings.rule: %w", err)
+		}
+		if _, err := tx.Exec(`UPDATE bindings SET rule = 'legacy' WHERE auto_matched = 1`); err != nil {
+			return fmt.Errorf("stamp legacy auto-bindings: %w", err)
+		}
+	}
+
+	if _, err := tx.Exec(`DELETE FROM schema_version`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 11); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // migrateV7 adds the board_color_hex column to the files table.
 // Hex is denormalized from boards.db colors.hex at scan time so the renderer
 // can apply per-board fill colors without a per-file resolver fetch.
@@ -741,6 +779,9 @@ type BindingRecord struct {
 	AutoMatched bool   `json:"auto_matched"`
 	Category    string `json:"category"`
 	AutoOpen    bool   `json:"auto_open"`
+	// Rule names the auto-bind rule that made the link (exact / number /
+	// fuzzy / lone / legacy); empty for links a person made.
+	Rule string `json:"rule"`
 }
 
 // BindingDetail is a BindingRecord enriched with the linked file's name and path.
@@ -1095,7 +1136,7 @@ func (db *DB) UpdateFileResolution(
 // GetBindingsForBoard returns all PDF bindings for a board file.
 func (db *DB) GetBindingsForBoard(ctx context.Context, boardFileID int64) ([]BindingRecord, error) {
 	rows, err := db.reader.QueryContext(ctx,
-		`SELECT id, board_file_id, pdf_file_id, auto_matched, category, auto_open
+		`SELECT id, board_file_id, pdf_file_id, auto_matched, category, auto_open, rule
 		   FROM bindings WHERE board_file_id = ?`,
 		boardFileID,
 	)
@@ -1108,7 +1149,7 @@ func (db *DB) GetBindingsForBoard(ctx context.Context, boardFileID int64) ([]Bin
 	for rows.Next() {
 		var b BindingRecord
 		var auto, autoOpen int
-		if err := rows.Scan(&b.ID, &b.BoardFileID, &b.PdfFileID, &auto, &b.Category, &autoOpen); err != nil {
+		if err := rows.Scan(&b.ID, &b.BoardFileID, &b.PdfFileID, &auto, &b.Category, &autoOpen, &b.Rule); err != nil {
 			return nil, err
 		}
 		b.AutoMatched = auto != 0
@@ -1121,7 +1162,7 @@ func (db *DB) GetBindingsForBoard(ctx context.Context, boardFileID int64) ([]Bin
 // GetBindingsForFile returns all bindings involving a file (as board or PDF), with filenames.
 func (db *DB) GetBindingsForFile(ctx context.Context, fileID int64) ([]BindingDetail, error) {
 	rows, err := db.reader.QueryContext(ctx,
-		`SELECT b.id, b.board_file_id, b.pdf_file_id, b.auto_matched, b.category, b.auto_open,
+		`SELECT b.id, b.board_file_id, b.pdf_file_id, b.auto_matched, b.category, b.auto_open, b.rule,
 		        bf.filename, bf.path, pf.filename, pf.path
 		 FROM bindings b
 		 JOIN files bf ON bf.id = b.board_file_id
@@ -1138,7 +1179,7 @@ func (db *DB) GetBindingsForFile(ctx context.Context, fileID int64) ([]BindingDe
 	for rows.Next() {
 		var bd BindingDetail
 		var auto, autoOpen int
-		if err := rows.Scan(&bd.ID, &bd.BoardFileID, &bd.PdfFileID, &auto, &bd.Category, &autoOpen,
+		if err := rows.Scan(&bd.ID, &bd.BoardFileID, &bd.PdfFileID, &auto, &bd.Category, &autoOpen, &bd.Rule,
 			&bd.BoardFilename, &bd.BoardPath, &bd.PdfFilename, &bd.PdfPath); err != nil {
 			return nil, err
 		}
@@ -1169,6 +1210,88 @@ func (db *DB) InsertBinding(boardFileID, pdfFileID int64, autoMatched bool, cate
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// BoundBoardIDs returns the set of board file ids that already have at least
+// one binding — the auto-bind matcher only ever links boards that have none.
+func (db *DB) BoundBoardIDs(ctx context.Context) (map[int64]bool, error) {
+	rows, err := db.reader.QueryContext(ctx, `SELECT DISTINCT board_file_id FROM bindings`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[int64]bool)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
+// InsertAutoBindings writes the matcher's candidates in one transaction as
+// auto-matched schematic links that auto-open, each stamped with its rule.
+// Returns the number of rows actually inserted (UNIQUE collisions are ignored).
+func (db *DB) InsertAutoBindings(cands []AutoBindCandidate) (int, error) {
+	inserted := 0
+	err := db.WriteTx(func(tx *sql.Tx) error {
+		stmt, err := tx.Prepare(`INSERT OR IGNORE INTO bindings (board_file_id, pdf_file_id, auto_matched, category, auto_open, rule)
+		                         VALUES (?, ?, 1, 'schematic', 1, ?)`)
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+		for _, c := range cands {
+			res, err := stmt.Exec(c.BoardID, c.PdfID, c.Rule)
+			if err != nil {
+				return err
+			}
+			if n, _ := res.RowsAffected(); n > 0 {
+				inserted++
+			}
+		}
+		return nil
+	})
+	return inserted, err
+}
+
+// DeleteAutoBindingsByRule removes every automatic binding made by one rule
+// (or all automatic bindings when rule is "*"). Manual links are never touched.
+func (db *DB) DeleteAutoBindingsByRule(rule string) (int64, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	var res sql.Result
+	var err error
+	if rule == "*" {
+		res, err = db.writer.Exec(`DELETE FROM bindings WHERE auto_matched = 1`)
+	} else {
+		res, err = db.writer.Exec(`DELETE FROM bindings WHERE auto_matched = 1 AND rule = ?`, rule)
+	}
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// AutoBindingCounts returns how many automatic bindings each rule made.
+func (db *DB) AutoBindingCounts(ctx context.Context) (map[string]int, error) {
+	rows, err := db.reader.QueryContext(ctx, `SELECT rule, COUNT(*) FROM bindings WHERE auto_matched = 1 GROUP BY rule`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]int)
+	for rows.Next() {
+		var rule string
+		var n int
+		if err := rows.Scan(&rule, &n); err != nil {
+			return nil, err
+		}
+		out[rule] = n
+	}
+	return out, rows.Err()
 }
 
 // UpdateBinding patches a binding's category and/or auto_open. Nil fields are
