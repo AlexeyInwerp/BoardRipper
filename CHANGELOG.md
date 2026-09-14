@@ -1,6 +1,6 @@
 # BoardRipper changelog
 
-## Unreleased
+## v0.41.0 — 2026-09-14
 
 ### A fresh install that shows something
 
@@ -39,6 +39,32 @@
   couple of minutes — so readings are already there when a board is opened.
 - **Boards the Library knows are matched by their resolved board number**, not
   only by a number in the filename.
+
+### Comparing a component across two boards
+
+- **Highlight on board**, off by default: outlines the compared part and marks
+  every pin that is not a plain match — red where the boards disagree, amber
+  where the net is the same one named differently. Plain matches stay unmarked
+  so the ten pins that matter are not buried among the 390 that agree.
+- **The hover tooltip says what a marked pin differs to** — the other board's
+  name and its net for that pin, coloured the same way as the mark.
+- **State markers are not identity.** A leading NC / RSVD / TPT / TP / DNU / NU
+  labels the pin's state and is stripped before names are compared, so
+  NC_GPU_TRIGGER1_L and RSVD_GPU_TRIGGER1_L read as one signal. Two no-connects
+  that carry different names are shown as a partial match, not as "no
+  difference" — the pin may have been repurposed between models.
+- **Two names sharing a rail prefix read as the same rail** (PP3V8_AON_VDDMAIN
+  against PP3V8_AON_MPMU_ISNS_VIN), and a rail's fanout no longer counts as
+  evidence against a match — across two boards it differs by design.
+- Tooltip text that only restated the colour is gone.
+
+### Library
+
+- **Dropping a file onto the library never copies a duplicate.** A byte-
+  identical file already in the library is reported as existing; a same-named
+  file with different bytes is saved as "name (n)", never overwritten. Dropped
+  PDFs are indexed at once instead of waiting for the next sweep, and the
+  Library merges the new rows instead of re-streaming the whole list.
 
 ### Docs
 
