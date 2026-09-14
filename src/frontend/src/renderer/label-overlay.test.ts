@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { selectedFloorPx, selectVisibleLabels, type OverlayViewState, type OverlayThresholds } from './label-overlay';
+import { selectedFloorPx, pinNumberPlacement, selectVisibleLabels, type OverlayViewState, type OverlayThresholds } from './label-overlay';
 import type { LabelRecord } from './label-model';
 
 const ident = { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 };
@@ -69,5 +69,33 @@ describe('selectedFloorPx', () => {
   it('defaults the other-pin scale to 0.8 and honours 0 = no floor', () => {
     expect(selectedFloorPx('pinNet', false, { ...th, selectedLabelOtherScale: undefined })).toBeCloseTo(8);
     expect(selectedFloorPx('pinNet', true, { ...th, selectedLabelMinPx: 0 })).toBe(0);
+  });
+});
+
+
+describe('pinNumberPlacement', () => {
+  const th: OverlayThresholds = {
+    labelMinScreenPx: 3, circleLabelMinScreenPx: 8, pinNumberMinScreenPx: 5, twoPinLabelMinScreenPx: 6, labelZoomHide: 0,
+    selectedLabelMinPx: 11, selectedLabelLodRelax: 0.75,
+  };
+  const view = { scale: 1 } as OverlayViewState;
+  const rec: LabelRecord = {
+    x: 100, y: 90, text: 'A1', fontSize: 6, color: 0, kind: 'circleNum', partIndex: 0, pinIndex: 0,
+    anchorX: 0.5, anchorY: 1, bg: false, alt: { x: 100, y: 100, anchorY: 0.5 }, pairFontSize: 6,
+  };
+  it('sits centred in the pin while the net name is below its floor', () => {
+    expect(pinNumberPlacement(rec, { ...view, scale: 1 }, th, false)).toEqual({ x: 100, y: 100, anchorY: 0.5 });
+  });
+  it('moves to the shifted position once the net name shows', () => {
+    expect(pinNumberPlacement(rec, { ...view, scale: 1.5 }, th, false)).toEqual({ x: 100, y: 90, anchorY: 1 });
+  });
+  it('follows the selected part\'s relaxed net floor', () => {
+    // 6 * 1.1 = 6.6 ≥ 8 * 0.75 = 6 → visible when selected, hidden otherwise
+    expect(pinNumberPlacement(rec, { ...view, scale: 1.1 }, th, true).y).toBe(90);
+    expect(pinNumberPlacement(rec, { ...view, scale: 1.1 }, th, false).y).toBe(100);
+  });
+  it('is a no-op for numbers with no shifted position or no net name', () => {
+    expect(pinNumberPlacement({ ...rec, alt: undefined }, view, th, false).y).toBe(90);
+    expect(pinNumberPlacement({ ...rec, pairFontSize: undefined }, view, th, false).y).toBe(90);
   });
 });

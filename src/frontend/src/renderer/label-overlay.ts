@@ -25,7 +25,12 @@ export interface OverlayViewState {
 }
 export interface OverlayThresholds {
   labelMinScreenPx: number;
+  /** Net names on IC/BGA pins appear at this many screen px. */
   circleLabelMinScreenPx: number;
+  /** Pin numbers appear at this many screen px — lower than the net names:
+   *  a number sits inside its pin and cannot overlap, so it can stay through
+   *  more of the unzoom. Falls back to circleLabelMinScreenPx when unset. */
+  pinNumberMinScreenPx?: number;
   twoPinLabelMinScreenPx: number;
   labelZoomHide: number;
   /** Floor (screen px) for the selected part's labels — they stay readable
@@ -68,7 +73,8 @@ function partNameFade(onScreenPx: number): number {
 
 function minPxFor(kind: LabelRecord['kind'], th: OverlayThresholds): number {
   switch (kind) {
-    case 'circleNum': case 'circleNet': return th.circleLabelMinScreenPx;
+    case 'circleNum': return th.pinNumberMinScreenPx ?? th.circleLabelMinScreenPx;
+    case 'circleNet': return th.circleLabelMinScreenPx;
     case 'twoPinNet': return th.twoPinLabelMinScreenPx;
     default: return th.labelMinScreenPx;
   }
@@ -83,6 +89,22 @@ export function selectedFloorPx(kind: LabelRecord['kind'], isFocusPin: boolean, 
   if (th.selectedLabelMinPx <= 0) return 0;
   const full = isFocusPin || kind === 'part';
   return th.selectedLabelMinPx * (full ? 1 : (th.selectedLabelOtherScale ?? 0.8));
+}
+
+/** Where a pin number sits at this zoom: centred in its pin while the pin's
+ *  net name is below its appear-floor (nothing to make room for), shifted
+ *  above/below once the name shows. Mirrors the net label's own visibility
+ *  rule so the two never disagree. */
+export function pinNumberPlacement(
+  r: LabelRecord, view: OverlayViewState, th: OverlayThresholds, selected: boolean,
+): { x: number; y: number; anchorY: number } {
+  if (r.alt && r.pairFontSize) {
+    const zoomHidden = th.labelZoomHide > 0 && view.scale < th.labelZoomHide;
+    const min = th.circleLabelMinScreenPx * (selected ? th.selectedLabelLodRelax : 1);
+    const netVisible = !zoomHidden && r.pairFontSize * view.scale >= min;
+    if (!netVisible) return r.alt;
+  }
+  return { x: r.x, y: r.y, anchorY: r.anchorY };
 }
 
 export function selectVisibleLabels(
@@ -200,14 +222,15 @@ export class LabelOverlay {
           if (onTop) px = Math.max(px, selectedFloorPx(r.kind, isFocusPin, th));
           const fontPx = Math.round(px * 4) / 4;          // quantize to limit ctx.font churn
           if (fontPx !== lastFontPx) { ctx.font = `${fontPx}px monospace`; lastFontPx = fontPx; }
-          const sx0 = m.a * r.x + m.c * r.y + m.tx;
-          const sy0 = m.b * r.x + m.d * r.y + m.ty;
+          const pl = r.kind === 'circleNum' ? pinNumberPlacement(r, view, th, isSel) : r;
+          const sx0 = m.a * pl.x + m.c * pl.y + m.tx;
+          const sy0 = m.b * pl.x + m.d * pl.y + m.ty;
           // Anchor compensation: ctx draws centered (textAlign/baseline middle),
           // records carry BitmapText anchors — shift so the anchored point of
           // the text box lands on (sx0, sy0). Width via measureText; height ≈ fontPx.
           const textW = ctx.measureText(r.text).width;   // measured once — reused for bg rect
           const aw = (0.5 - r.anchorX) * textW;
-          const ah = (0.5 - r.anchorY) * fontPx;
+          const ah = (0.5 - pl.anchorY) * fontPx;
           const sx = sx0 + aw;
           const sy = sy0 + ah;
           // Diode readings are exempt from ambient dimming: a measurement

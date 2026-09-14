@@ -24,6 +24,15 @@ export interface LabelRecord {
    *  selected and the hovered pin's labels for the full size bump while the
    *  rest of a selected part's labels stay at `selectedLabelOtherScale`. */
   pinIndex?: number;
+  /** Pin numbers only: the centred placement used while the pin's net name is
+   *  below its appear-floor. The record's own x/y/anchorY is the SHIFTED
+   *  position (above/below centre, BGA-alternating) that makes room for the
+   *  net name; until that name is visible there is nothing to make room for,
+   *  so the number sits in the middle of its pin, where it cannot overlap. */
+  alt?: { x: number; y: number; anchorY: number };
+  /** Pin numbers only: the sibling net label's fontSize, so the overlay can
+   *  apply the net label's own appear-rule and pick `alt` vs shifted. */
+  pairFontSize?: number;
   /** Anchor fractions matching PixiJS `BitmapText.anchor` exactly: the point of
    *  the text's bounding box that sits AT (x, y). 0/0 = top-left, 0.5/0.5 =
    *  centered, 1/1 = bottom-right. The Task 6 overlay compensates at draw time

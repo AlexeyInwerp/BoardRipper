@@ -2238,6 +2238,7 @@ export class BoardRenderer {
     }, {
       labelMinScreenPx: s.labelMinScreenPx,
       circleLabelMinScreenPx: s.circleLabelMinScreenPx,
+      pinNumberMinScreenPx: s.pinNumberMinScreenPx ?? s.circleLabelMinScreenPx,
       twoPinLabelMinScreenPx: s.twoPinLabelMinScreenPx,
       labelZoomHide: s.labelZoomHide,
       selectedLabelMinPx: s.selectedLabelMinPx,

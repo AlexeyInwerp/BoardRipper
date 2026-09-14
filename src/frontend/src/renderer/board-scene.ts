@@ -37,7 +37,7 @@ import {
   isOutlineOnlyNet,
 } from '../store/render-settings';
 import type { RenderSettings } from '../store/render-settings';
-import { pushLabel, sortLabelModel, type LabelModel } from './label-model';
+import { pushLabel, sortLabelModel, type LabelModel, type LabelRecord } from './label-model';
 import { capsuleParams, isOblongRoundPad, capsuleGrowForRadius, type CapsuleParams } from './pad-capsule';
 import { DEFAULT_LAYER_PALETTE } from '../store/layer-store';
 import { themeStore, hexToInt } from '../store/themes';
@@ -1546,6 +1546,10 @@ export function buildBoardScene(
       const twoPinTwoLevel = twoPinShowNum && hasNet;
 
       // ── Pin number label ──────────────────────────────────────────────
+      // The overlay record for this pin's number (Text fast mode); the net
+      // block below stamps its own fontSize on it so the overlay can tell
+      // when the name is visible and move the number out of the centre.
+      let numRec: LabelRecord | null = null;
       // Multi-pin (BGA/IC): always shown when showPinNumbers is on.
       // 2-pin: shown when showTwoPinNumbers is on — sized to fit the pad rectangle.
       // NC pins skip labels entirely — no useful info, saves draw calls.
@@ -1554,6 +1558,9 @@ export function buildBoardScene(
         let pinFontSize: number;
         let pinX: number, pinY: number;
         let numAnchorY = 0.5;
+        // Centred fallback for the overlay while the net name is hidden (see
+        // LabelRecord.alt). Only set when the number is shifted for a net name.
+        let numAlt: { x: number; y: number; anchorY: number } | undefined;
 
         if (isTwoPinPart) {
           // 2-pin: fit pin number inside the pad rectangle.
@@ -1586,6 +1593,7 @@ export function buildBoardScene(
           // label space, which stays upright via the counter-rotation in
           // applyFlips). Under 90°/270° that means offsetting board X instead.
           if (bgaAlternate) {
+            numAlt = { x: pin.position.x, y: pin.position.y, anchorY: 0.5 };
             const up = even ? -bgaHalfGap : bgaHalfGap;
             if (axesSwapped) pinX += up * swapUpSign; else pinY += up;
           }
@@ -1594,12 +1602,14 @@ export function buildBoardScene(
         pinFontSize *= s.pinNumberScale || 1;      // Resize Mode: pin-number size
         pinFontSize = quantizeFontSize(pinFontSize);
         if (pinFontSize >= s.labelHideThreshold) {
-          if (!(labelModel && pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
+          numRec = {
             x: pinX, y: pinY, text: numStr, fontSize: pinFontSize,
             color: BOARD_COLORS.labelPin, kind: isTwoPinPart ? 'twoPinNet' : 'circleNum', partIndex: pi, pinIndex: pni,
             anchorX: 0.5, anchorY: numAnchorY,  // mirrors pinLabel.anchor.set(0.5, numAnchorY) incl. BGA alternating
             bg: false,
-          }))) {
+            alt: numAlt,
+          };
+          if (!(labelModel && pushLabel(labelModel, isBottom ? 'bottom' : 'top', numRec))) {
             const pinLabel = new BitmapText({
               text: numStr,
               style: { fontSize: pinFontSize, fill: BOARD_COLORS.labelPin, fontFamily: (s.pinLabelShadow ? ensureShadowFont : ensurePinFont)(pinFontSize, s.labelAtlasResolution) },
@@ -1682,6 +1692,7 @@ export function buildBoardScene(
         netFontSize = Math.max(netFontSize, netFloor);
         netFontSize *= s.netLabelScale || 1;        // Resize Mode: net-label size
         netFontSize = quantizeFontSize(netFontSize);
+        if (numRec && numRec.alt && netFontSize >= s.labelHideThreshold) numRec.pairFontSize = netFontSize;
         // Single-pin part: record whether a net label actually lands. When one
         // does, the part name takes the upper half; when it doesn't, there is
         // nothing to straddle and the name stays centred on the pad.

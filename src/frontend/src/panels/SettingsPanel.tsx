@@ -2307,8 +2307,10 @@ export function SettingsPanel() {
         <div className="color-rule-hint" style={{ marginBottom: 6 }}>Controls when text labels appear/disappear as you zoom. Higher = must zoom in more. At 100% zoom: 1 mil = 1 screen pixel.</div>
         <Slider label="Part Labels" value={draft.labelMinScreenPx} min={0} max={50} step={1} field="labelMinScreenPx" onUpdate={updateGlobal}
           title="Part name labels (R1, U1, C42) appear when they reach this many screen pixels. At 100% zoom a medium (8 mil) label = 8px. Set to 10 to hide them below 125% zoom." />
-        <Slider label="Pin Labels" value={draft.circleLabelMinScreenPx} min={0} max={50} step={1} field="circleLabelMinScreenPx" onUpdate={updateGlobal}
-          title="Pin numbers and net names on ICs/BGAs appear when they reach this many screen pixels. At 100% zoom a 6-mil pin label = 6px." />
+        <Slider label="Pin Numbers" value={draft.pinNumberMinScreenPx ?? 5} min={0} max={50} step={1} field="pinNumberMinScreenPx" onUpdate={updateGlobal}
+          title="Pin numbers on ICs/BGAs appear when they reach this many screen pixels. They sit inside the pin and cannot overlap, so this can be lower than the net-name floor; until the net name shows, the number is drawn centred in the pin." />
+        <Slider label="Net Names on Pins" value={draft.circleLabelMinScreenPx} min={0} max={50} step={1} field="circleLabelMinScreenPx" onUpdate={updateGlobal}
+          title="Net names on IC/BGA pins appear when they reach this many screen pixels. At 100% zoom a 6-mil label = 6px. When they appear, the pin numbers move out of the pin centre to make room." />
         <Slider label="2-Pin Net Names" value={draft.twoPinLabelMinScreenPx} min={0} max={50} step={1} field="twoPinLabelMinScreenPx" onUpdate={updateGlobal}
           title="Net names on resistors/capacitors (2-pin parts) appear when they reach this many screen pixels." />
         <Slider label="Label Cull (mils)" value={draft.labelHideThreshold} min={0} max={20} step={0.5} field="labelHideThreshold" onUpdate={updateGlobal}

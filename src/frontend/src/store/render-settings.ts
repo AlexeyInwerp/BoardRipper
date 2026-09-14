@@ -262,6 +262,11 @@ export interface RenderSettings {
    * (pin numbers + net names on circle/1-pin parts). Higher = needs more zoom.
    */
   circleLabelMinScreenPx: number;
+  /** Pin numbers on ICs/BGAs appear at this many screen px. Lower than the
+   *  net-name floor: a number sits inside its pin and cannot overlap, so it
+   *  stays through more of the unzoom; while the net name is still hidden the
+   *  number is drawn centred in the pin (Text fast mode). */
+  pinNumberMinScreenPx: number;
   /**
    * Min screen pixels threshold for Group B labels (net names on 2-pin parts).
    * 0 = always visible when part labels are visible.
@@ -630,7 +635,8 @@ export const DEFAULTS: RenderSettings = {
   cap60Fps: false,
   showPerfOverlay: false,
 
-  circleLabelMinScreenPx: 8,   // was 3 — pin/net names covered the whole chip long before they were readable
+  circleLabelMinScreenPx: 8,
+  pinNumberMinScreenPx: 5,   // was 3 — pin/net names covered the whole chip long before they were readable
   twoPinLabelMinScreenPx: 6,
   pinNetLabelBg: true,
   twoPinNetLabelBg: true,

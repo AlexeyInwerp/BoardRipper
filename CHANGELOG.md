@@ -14,6 +14,10 @@
   Zoom Level of Detail) defaults to 8 px instead of 3 — at 3 the names showed
   at half zoom, unreadable and covering the whole chip. An install that never
   touched the value gets the new one; a changed value is left alone.
+- **Pin numbers stay inside their pin for longer.** A number sits inside the
+  pin and cannot overlap, so it now has its own, lower appear-floor ("Pin
+  Numbers", 5 px) and is drawn centred in the pin until the net name shows —
+  then it moves aside to make room, on the same zoom step the name appears.
 
 ## v0.41.0 — 2026-09-14
 
