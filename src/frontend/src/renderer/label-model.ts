@@ -33,6 +33,14 @@ export interface LabelRecord {
   /** Pin numbers only: the sibling net label's fontSize, so the overlay can
    *  apply the net label's own appear-rule and pick `alt` vs shifted. */
   pairFontSize?: number;
+  /** Pin-attached labels on multi-pin parts: the part's minimum pin-centre
+   *  spacing (world units). The overlay caps the drawn size so the label fits
+   *  between pin centres — the largest font at which nothing on the part can
+   *  overlap — instead of testing labels against each other. */
+  pitch?: number;
+  /** True when this pin shows a number above AND a name below, so the height
+   *  budget per label is half a pitch rather than a whole one. */
+  stacked?: boolean;
   /** Anchor fractions matching PixiJS `BitmapText.anchor` exactly: the point of
    *  the text's bounding box that sits AT (x, y). 0/0 = top-left, 0.5/0.5 =
    *  centered, 1/1 = bottom-right. The Task 6 overlay compensates at draw time

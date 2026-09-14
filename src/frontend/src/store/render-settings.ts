@@ -267,6 +267,11 @@ export interface RenderSettings {
    *  stays through more of the unzoom; while the net name is still hidden the
    *  number is drawn centred in the pin (Text fast mode). */
   pinNumberMinScreenPx: number;
+  /** Cap pin labels on multi-pin parts at the size that fits between the
+   *  part's pin centres, so a selected BGA's names cannot overlap; a label
+   *  that would have to go below its appear-floor to fit is hidden. The pin
+   *  under the pointer / selected pin is exempt (Text fast mode). */
+  labelFitToPitch: boolean;
   /**
    * Min screen pixels threshold for Group B labels (net names on 2-pin parts).
    * 0 = always visible when part labels are visible.
@@ -636,7 +641,8 @@ export const DEFAULTS: RenderSettings = {
   showPerfOverlay: false,
 
   circleLabelMinScreenPx: 8,
-  pinNumberMinScreenPx: 5,   // was 3 — pin/net names covered the whole chip long before they were readable
+  pinNumberMinScreenPx: 5,
+  labelFitToPitch: true,   // was 3 — pin/net names covered the whole chip long before they were readable
   twoPinLabelMinScreenPx: 6,
   pinNetLabelBg: true,
   twoPinNetLabelBg: true,

@@ -2319,6 +2319,11 @@ export function SettingsPanel() {
           title="Hard minimum zoom level to show ANY text. 0 = disabled. All labels vanish below this zoom level." />
         <Slider label="Selected Part Labels" value={draft.selectedLabelMinPx} min={0} max={30} step={1} field="selectedLabelMinPx" onUpdate={updateGlobal}
           title="The selected part's labels never render smaller than this many screen pixels — they stay readable while you unzoom (Text fast mode). 0 = scale naturally with zoom." />
+        <div className="settings-row settings-toggle-row"
+          title="Cap pin numbers and net names on ICs/BGAs at the size that fits between the part's pin centres, so a selected chip's labels cannot overlap. A label that would have to go below its appear-floor to fit is hidden. The pin you point at is exempt.">
+          <label className="settings-label">Fit pin labels to pitch</label>
+          <input type="checkbox" checked={draft.labelFitToPitch ?? true} onChange={e => updateGlobal({ labelFitToPitch: e.target.checked })} />
+        </div>
         <Slider label="Other Pins of Selected Part" value={draft.selectedLabelOtherScale ?? 0.8} min={0.3} max={1} step={0.05} field="selectedLabelOtherScale" onUpdate={updateGlobal}
           title="Fraction of the size above for the selected part's pin labels that are not the selected or hovered pin. The pin you point at, the selected pin and the part name keep the full size; the rest stay smaller so a dense part's labels don't overlap." />
       </CollapsibleSection>

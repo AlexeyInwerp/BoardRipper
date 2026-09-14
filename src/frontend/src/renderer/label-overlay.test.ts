@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { selectedFloorPx, pinNumberPlacement, selectVisibleLabels, type OverlayViewState, type OverlayThresholds } from './label-overlay';
+import { selectedFloorPx, pinNumberPlacement, pitchCapPx, selectVisibleLabels, type OverlayViewState, type OverlayThresholds } from './label-overlay';
 import type { LabelRecord } from './label-model';
 
 const ident = { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 };
@@ -97,5 +97,23 @@ describe('pinNumberPlacement', () => {
   it('is a no-op for numbers with no shifted position or no net name', () => {
     expect(pinNumberPlacement({ ...rec, alt: undefined }, view, th, false).y).toBe(90);
     expect(pinNumberPlacement({ ...rec, pairFontSize: undefined }, view, th, false).y).toBe(90);
+  });
+});
+
+
+describe('pitchCapPx', () => {
+  const base: LabelRecord = {
+    x: 0, y: 0, text: 'PPBUS', fontSize: 6, color: 0, kind: 'circleNet', partIndex: 0, pinIndex: 0,
+    anchorX: 0.5, anchorY: 0.5, bg: false, pitch: 16,
+  };
+  it('is unbounded without a pitch', () => {
+    expect(pitchCapPx({ ...base, pitch: undefined }, 1)).toBe(Infinity);
+  });
+  it('fits the text between pin centres: 5 chars at 16 px pitch → 4.8 px', () => {
+    expect(pitchCapPx(base, 1)).toBeCloseTo((16 * 0.9) / (5 * 0.6));
+  });
+  it('scales with zoom and never exceeds the height budget', () => {
+    expect(pitchCapPx({ ...base, text: 'A1' }, 2)).toBeCloseTo((32 * 0.9) / (3 * 0.6)); // short text: width rule, 3-char minimum
+    expect(pitchCapPx({ ...base, text: 'A1', stacked: true }, 2)).toBeCloseTo(32 * 0.45); // stacked: height rule binds
   });
 });

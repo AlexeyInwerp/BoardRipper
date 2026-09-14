@@ -1608,6 +1608,8 @@ export function buildBoardScene(
             anchorX: 0.5, anchorY: numAnchorY,  // mirrors pinLabel.anchor.set(0.5, numAnchorY) incl. BGA alternating
             bg: false,
             alt: numAlt,
+            pitch: minPinSpacing < Infinity ? minPinSpacing : undefined,
+            stacked: bgaAlternate,
           };
           if (!(labelModel && pushLabel(labelModel, isBottom ? 'bottom' : 'top', numRec))) {
             const pinLabel = new BitmapText({
@@ -1710,6 +1712,8 @@ export function buildBoardScene(
             color: BOARD_COLORS.labelNet, kind: isTwoPinPart ? 'twoPinNet' : 'circleNet', partIndex: pi, pinIndex: pni,
             anchorX, anchorY,  // mirrors netLabel.anchor.set(anchorX, anchorY) — same locals, incl. 2-pin/BGA parity
             bg: isTwoPinPart ? s.twoPinNetLabelBg : s.pinNetLabelBg,  // same condition the wrapper Graphics is created under
+            pitch: minPinSpacing < Infinity ? minPinSpacing : undefined,
+            stacked: bgaAlternate,
           }))) {
             const netLabel = new BitmapText({
               text: pin.net,

@@ -46,6 +46,10 @@ export interface OverlayThresholds {
    *  name — get the full floor; every pin of a dense part at 11 px overlapped
    *  its neighbours. */
   selectedLabelOtherScale?: number;
+  /** Cap every pin label of a multi-pin part at the size that fits between
+   *  its pin centres (`labelFitToPitch`, default on). Labels that would have
+   *  to shrink below their appear-floor to fit are hidden instead. */
+  fitToPitch?: boolean;
 }
 
 const OFFSCREEN_MARGIN = 40;      // px — keep labels whose center is just off-edge
@@ -89,6 +93,20 @@ export function selectedFloorPx(kind: LabelRecord['kind'], isFocusPin: boolean, 
   if (th.selectedLabelMinPx <= 0) return 0;
   const full = isFocusPin || kind === 'part';
   return th.selectedLabelMinPx * (full ? 1 : (th.selectedLabelOtherScale ?? 0.8));
+}
+
+/** The largest screen-px font at which this label still fits between its
+ *  part's pin centres: width `chars × 0.6 × px ≤ 0.9 × pitch`, height
+ *  `px ≤ 0.9 × pitch` (0.45 × pitch when a number and a name are stacked on
+ *  the pin — two labels share the pitch). Infinity when the record carries no pitch. This is the whole
+ *  overlap test — per label, one multiply, no pairwise comparison: on a grid
+ *  of pins, "fits between centres" is exactly "cannot overlap a neighbour". */
+export function pitchCapPx(r: LabelRecord, scale: number): number {
+  if (!r.pitch) return Infinity;
+  const pitchPx = r.pitch * scale;
+  const width = (pitchPx * 0.9) / (Math.max(r.text.length, 3) * 0.6);
+  const height = pitchPx * (r.stacked ? 0.45 : 0.9);
+  return Math.min(width, height);
 }
 
 /** Where a pin number sits at this zoom: centred in its pin while the pin's
@@ -220,6 +238,16 @@ export class LabelOverlay {
           visible += 1;
           let px = r.fontSize * view.scale;
           if (onTop) px = Math.max(px, selectedFloorPx(r.kind, isFocusPin, th));
+          // Fit to pitch — every pin label except the one being pointed at,
+          // which is one label drawn on top and may cover its neighbours.
+          if (th.fitToPitch !== false && !isFocusPin && r.pitch) {
+            const cap = pitchCapPx(r, view.scale);
+            if (px > cap) {
+              px = cap;
+              // Below the appear-floor it is noise, not a label: hide, don't shrink.
+              if (px < minPxFor(r.kind, th) * (isSel ? th.selectedLabelLodRelax : 1)) continue;
+            }
+          }
           const fontPx = Math.round(px * 4) / 4;          // quantize to limit ctx.font churn
           if (fontPx !== lastFontPx) { ctx.font = `${fontPx}px monospace`; lastFontPx = fontPx; }
           const pl = r.kind === 'circleNum' ? pinNumberPlacement(r, view, th, isSel) : r;
