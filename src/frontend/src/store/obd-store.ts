@@ -3,6 +3,7 @@ import { Emitter } from './emitter';
 import { log } from './log-store';
 import { updateStore } from './update-store';
 import { isLiteBuild } from './build-mode';
+import { databankStore } from './databank-store';
 
 // Mirrors the backend Match shape.
 export interface ObdMatch {
@@ -58,6 +59,26 @@ interface IndexStatus {
   synced: boolean;
   synced_at: string | null;  // null when never synced; string when synced
   board_count: number;
+  /** Boards already on disk — what "Download all" still has to fetch. */
+  cached: number;
+}
+
+/** Mirrors obd.FetchAllProgress. */
+export interface ObdFetchAllProgress {
+  running: boolean;
+  total: number;
+  done: number;
+  fetched: number;
+  skipped: number;
+  failed: number;
+  current?: string;
+  started_at?: number;
+  last_error?: string;
+}
+
+type IndexWire = { synced: boolean; synced_at?: string; board_count: number; cached?: number };
+function indexFromWire(w: IndexWire): IndexStatus {
+  return { synced: w.synced, synced_at: w.synced_at ?? null, board_count: w.board_count, cached: w.cached ?? 0 };
 }
 
 /** LRU cap for the per-board OBD caches — bounds a long session of viewing many
@@ -78,7 +99,9 @@ class ObdStore extends Emitter {
     map.set(key, value);
   }
   private _fetching: Set<string> = new Set();
-  private _index: IndexStatus = { synced: false, synced_at: null, board_count: 0 };
+  private _index: IndexStatus = { synced: false, synced_at: null, board_count: 0, cached: 0 };
+  private _fetchAll: ObdFetchAllProgress | null = null;
+  private _fetchAllTimer: ReturnType<typeof setInterval> | null = null;
   private _syncing = false;
   private _error: string | null = null;
   private _snapshot = this._buildSnapshot();
@@ -91,6 +114,7 @@ class ObdStore extends Emitter {
       data: this._data,
       fetching: this._fetching,
       index: this._index,
+      fetchAll: this._fetchAll,
       syncing: this._syncing,
       error: this._error,
     };
@@ -122,15 +146,9 @@ class ObdStore extends Emitter {
         this._bump();
         return [];
       }
-      const json = await res.json() as { matches: ObdMatch[]; index?: { synced: boolean; synced_at?: string; board_count: number } };
+      const json = await res.json() as { matches: ObdMatch[]; index?: IndexWire };
       this._cachePut(this._matchesByBn, boardNumber, json.matches);
-      if (json.index) {
-        this._index = {
-          synced: json.index.synced,
-          synced_at: json.index.synced_at ?? null,
-          board_count: json.index.board_count,
-        };
-      }
+      if (json.index) this._index = indexFromWire(json.index);
       this._bump();
       // Auto-load already-fetched payloads from disk so the BoardViewer's
       // tooltip + sidebar Info-tab surfaces have data without forcing
@@ -181,13 +199,9 @@ class ObdStore extends Emitter {
     try {
       const res = await fetch('/api/obd/match?board_number=');
       if (!res.ok) return;
-      const json = await res.json() as { index?: { synced: boolean; synced_at?: string; board_count: number } };
+      const json = await res.json() as { index?: IndexWire };
       if (json.index) {
-        this._index = {
-          synced: json.index.synced,
-          synced_at: json.index.synced_at ?? null,
-          board_count: json.index.board_count,
-        };
+        this._index = indexFromWire(json.index);
         this._bump();
       }
     } catch (e) {
@@ -239,11 +253,76 @@ class ObdStore extends Emitter {
         return;
       }
       const json = await res.json() as { synced_at: string; board_count: number };
-      this._index = { synced: true, synced_at: json.synced_at, board_count: json.board_count };
+      this._index = { synced: true, synced_at: json.synced_at, board_count: json.board_count, cached: this._index.cached };
       this._matchesByBn.clear(); // invalidate cached matches
+      void this.refreshStatus(); // picks up the cached count
     } finally {
       this._syncing = false;
       this._bump();
+    }
+  }
+
+  /** POST /api/obd/fetch-all — download every board in the index that is not
+   *  cached yet (~110 boards, ~2 min), then poll progress. Syncs the index
+   *  first when it was never synced. */
+  async fetchAll(): Promise<void> {
+    if (isLiteBuild()) return;
+    if (!this._index.synced) await this.syncIndex();
+    this._error = null;
+    const res = await fetch('/api/obd/fetch-all', { method: 'POST' });
+    if (!res.ok) {
+      this._error = `Download failed: ${(await res.text()) || res.statusText}`;
+      this._bump();
+      return;
+    }
+    this._fetchAll = await res.json() as ObdFetchAllProgress;
+    this._bump();
+    this._startFetchAllPolling();
+  }
+
+  async stopFetchAll(): Promise<void> {
+    if (isLiteBuild()) return;
+    await fetch('/api/obd/fetch-all/stop', { method: 'POST' }).catch(() => undefined);
+  }
+
+  /** One-shot progress read; resumes polling when a pass is running (e.g.
+   *  Settings opened mid-download). */
+  async refreshFetchAll(): Promise<void> {
+    if (isLiteBuild()) return;
+    try {
+      const res = await fetch('/api/obd/fetch-all/progress');
+      if (!res.ok) return;
+      this._fetchAll = await res.json() as ObdFetchAllProgress;
+      this._bump();
+      if (this._fetchAll.running) this._startFetchAllPolling();
+    } catch { /* offline */ }
+  }
+
+  private _startFetchAllPolling(): void {
+    this._stopFetchAllPolling();
+    this._fetchAllTimer = setInterval(async () => {
+      try {
+        const res = await fetch('/api/obd/fetch-all/progress');
+        if (!res.ok) return;
+        this._fetchAll = await res.json() as ObdFetchAllProgress;
+        this._bump();
+        if (!this._fetchAll.running) {
+          this._stopFetchAllPolling();
+          // Boards already open re-match so the new cache lights them up
+          // without a reload; the index status picks up the cached count.
+          const bns = [...this._matchesByBn.keys()];
+          this._matchesByBn.clear();
+          for (const bn of bns) void this.loadMatches(bn);
+          void this.refreshStatus();
+        }
+      } catch { /* keep polling */ }
+    }, 1500);
+  }
+
+  private _stopFetchAllPolling(): void {
+    if (this._fetchAllTimer) {
+      clearInterval(this._fetchAllTimer);
+      this._fetchAllTimer = null;
     }
   }
 
@@ -256,7 +335,7 @@ class ObdStore extends Emitter {
     } else {
       this._matchesByBn.clear();
       this._data.clear();
-      this._index = { synced: false, synced_at: null, board_count: 0 };
+      this._index = { synced: false, synced_at: null, board_count: 0, cached: 0 };
     }
     this._bump();
   }
@@ -394,11 +473,31 @@ export function useObdForBoard(boardNumber: string | undefined) {
     indexSynced: snap.index.synced,
     indexBoardCount: snap.index.board_count,
     indexSyncedAt: snap.index.synced_at,
+    indexCached: snap.index.cached,
+    fetchAllProgress: snap.fetchAll,
     error: snap.error,
     loadMatches: () => boardNumber ? obdStore.loadMatches(boardNumber) : Promise.resolve([]),
     fetchBoard: (bpath: string) => obdStore.fetchBoard(bpath),
     syncIndex: () => obdStore.syncIndex(),
     clearCache: () => obdStore.clearCache(),
     refreshStatus: () => obdStore.refreshStatus(),
+    fetchAll: () => obdStore.fetchAll(),
+    stopFetchAll: () => obdStore.stopFetchAll(),
+    refreshFetchAll: () => obdStore.refreshFetchAll(),
   };
+}
+
+/** The board number OBD is matched on for a tab. Prefers the databank's
+ *  resolved `board_number` (the scanner resolved it against boards.db) when
+ *  the tab came from the Library, and falls back to the filename regex —
+ *  the only source before, which left a board named
+ *  "MacBookPro14,1 logic board.brd" without readings in the viewer even
+ *  though the Library knew its number. */
+export function obdBoardNumberFor(tab: { fileName: string; fileId?: number } | null | undefined): string | null {
+  if (!tab) return null;
+  if (tab.fileId != null) {
+    const bn = databankStore.fileById(tab.fileId)?.board_number?.trim();
+    if (bn) return bn;
+  }
+  return extractBoardNumberFromFilename(tab.fileName);
 }

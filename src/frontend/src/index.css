@@ -8954,3 +8954,41 @@ body {
 /* Wide layout: one line per pin, both sides in their own column. */
 .part-compare[data-wide='true'] .part-compare-row .pc-net { flex: 1 1 0; }
 .part-compare[data-wide='true'] .part-compare-row .pc-pin { min-width: 34px; }
+
+/* ── First-run library setup (components/FirstRunSetup.tsx) ─────────────── */
+.firstrun-modal code { font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; }
+.firstrun-warn { color: var(--accent-text, var(--accent)); }
+.firstrun-steps { margin: 12px 0 4px; padding: 0 0 0 22px; display: flex; flex-direction: column; gap: 10px; }
+.firstrun-steps li { font-size: 12px; color: var(--text-secondary); line-height: 1.4; }
+.firstrun-steps li > b { display: block; color: var(--text-primary); }
+.firstrun-steps li > span { display: block; }
+.firstrun-steps .welcome-check { margin: 0; }
+.firstrun-rescan { margin-top: 12px; }
+
+/* ── Automatic linking editor (panels/settings/AutoBindSection.tsx) ──────── */
+.autobind-rules { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 8px; }
+.autobind-rule { display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: baseline; font-size: 12px; }
+.autobind-rule > input[type="checkbox"] { grid-row: span 2; align-self: start; margin-top: 2px; }
+.autobind-rule-name { color: var(--text-primary); }
+.autobind-rule-hint { color: var(--text-secondary); font-size: 11px; line-height: 1.6; }
+.autobind-pct { width: 44px; font-size: 11px; padding: 1px 3px; }
+.autobind-radius { font-size: 11px; padding: 1px 3px; }
+.autobind-sub { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; white-space: nowrap; }
+.autobind-report { font-size: 12px; color: var(--text-secondary); margin: 6px 0; }
+.autobind-report b { color: var(--text-primary); }
+.autobind-samples { margin-top: 4px; }
+.autobind-samples summary { cursor: pointer; font-size: 11px; }
+.autobind-samples ul { margin: 4px 0 0; padding-left: 16px; font-size: 11px; }
+.autobind-samples li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.autobind-samples em { color: var(--text-secondary); font-style: normal; }
+.autobind-existing { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 11px; color: var(--text-secondary); margin: 6px 0; }
+.autobind-existing b { color: var(--text-primary); margin: 0 4px 0 2px; }
+.autobind-existing button { font-size: 11px; padding: 0 6px; }
+
+/* ── Bind picker cap (LibraryPanel BindPicker) ───────────────────────────── */
+.library-bind-more { font-size: 11px; color: var(--text-secondary); padding: 6px 8px; }
+.library-bind-more button { font-size: 11px; margin-left: 4px; }
+
+/* ── OBD download-all progress (Settings ▸ Library) ──────────────────────── */
+.obd-fetchall-bar { height: 4px; background: var(--bg-tertiary); border-radius: 2px; overflow: hidden; margin: 0 0 8px; }
+.obd-fetchall-fill { height: 100%; background: var(--accent); transition: width 0.3s; }

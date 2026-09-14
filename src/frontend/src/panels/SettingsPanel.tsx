@@ -34,6 +34,8 @@ import { useObdForBoard } from '../store/obd-store';
 import { LibrarySyncSection, SoftwareUpdateSection } from './LibrarySyncSection';
 import { welcomeStore } from '../store/welcome-store';
 import { OverlayCustomizer } from './settings/OverlayCustomizer';
+import { AutoBindSection } from './settings/AutoBindSection';
+import { firstRunStore } from '../store/first-run-store';
 import { pdfIndexClient } from '../pdf/pdf-index-client';
 import { fmtIndexEta } from './LibraryPanel';
 import { isElectron, hasBackend } from '../store/databank-store';
@@ -2486,6 +2488,7 @@ export function SettingsPanel() {
         onToggle={toggleSection} sectionRef={serverRef} isFocused={focusedSection === 'server'}>
         <LibraryFolderSetting />
         <AutoScanToggle />
+        <AutoBindSection />
         <LibrarySettingsSection />
       </CollapsibleSection>
       <CollapsibleSection id="dbinfo" title="Database info" isOpen={openSections.has('dbinfo')}
@@ -3178,10 +3181,18 @@ function LibraryTab() {
   // Cold-start: when the user opens this tab, refresh the index status
   // from disk so "Last synced: ..." reflects index.json without waiting
   // for the user to view a board first.
-  useEffect(() => { obd.refreshStatus(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { obd.refreshStatus(); obd.refreshFetchAll(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const fa = obd.fetchAllProgress;
+  const downloading = !!fa?.running;
 
   return (
     <div className="settings-tab-body" data-testid="settings-library-tab">
+      <div className="settings-row settings-toggle-row">
+        <label className="settings-label">First-run library setup</label>
+        <button className="settings-action-btn" onClick={() => firstRunStore.show()} data-testid="firstrun-show-btn">
+          Show again
+        </button>
+      </div>
       <LibrarySyncSection />
 
       <StandaloneCollapsibleSection title="OpenBoardData" storageKey="obd" searchSectionId="obd">
@@ -3209,6 +3220,28 @@ function LibraryTab() {
               : 'Never synced'}
           </span>
         </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+          {downloading ? (
+            <button onClick={() => obd.stopFetchAll()} data-testid="obd-fetch-all-stop">Stop</button>
+          ) : (
+            <button onClick={() => obd.fetchAll()} data-testid="obd-fetch-all-btn"
+              title="Fetch every board in the index that is not cached yet (~1 request per second)">
+              Download all boards
+            </button>
+          )}
+          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+            {downloading && fa
+              ? `${fa.done} of ${fa.total} · ${fa.fetched} fetched · ${fa.skipped} cached${fa.failed ? ` · ${fa.failed} failed` : ''}${fa.current ? ` · ${fa.current}` : ''}`
+              : obd.indexSynced
+                ? `${obd.indexCached} of ${obd.indexBoardCount} boards cached${fa && !fa.running && fa.total > 0 ? ` · last run: ${fa.fetched} fetched, ${fa.failed} failed` : ''}`
+                : 'Sync the index first, or click Download all — it syncs on its own.'}
+          </span>
+        </div>
+        {downloading && fa && fa.total > 0 && (
+          <div className="obd-fetchall-bar" aria-hidden="true">
+            <div className="obd-fetchall-fill" style={{ width: `${Math.round((fa.done / fa.total) * 100)}%` }} />
+          </div>
+        )}
         {obd.error && (
           <div style={{ color: '#c33', fontSize: 12, marginBottom: 8 }}>{obd.error}</div>
         )}

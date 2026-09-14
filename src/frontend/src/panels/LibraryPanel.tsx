@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useDatabank } from '../hooks/useDatabank';
 import { useLibraryLoad } from '../store/library-load-store';
-import { databankStore, contentCollapsePlan, isElectron } from '../store/databank-store';
+import { databankStore, contentCollapsePlan, isElectron, AUTOBIND_RULE_LABEL } from '../store/databank-store';
 import type { CollapsedFileInfo, DatabankBinding, DatabankFile, DonorBackupInfo, DonorEntry, FileDetail, FolderNode, MetadataGroup, ModelGroup, SearchResult, ViewMode } from '../store/databank-store';
 import { pdfIndexClient } from '../pdf/pdf-index-client';
 import type { PdfIndexFailedEntry } from '../pdf/pdf-index-client';
@@ -65,6 +65,9 @@ function useDebouncedValue<T extends string>(value: T, delayMs: number): T {
   }, [value, debounced, delayMs]);
   return debounced;
 }
+
+/** Rows the bind picker renders before asking the user to narrow. */
+const BIND_PICKER_VISIBLE = 200;
 
 const MULTILAYER_FORMATS = new Set(['TVW', 'ALLEGRO_BRD']);
 /** Extensions that always indicate multi-layer formats (format_id may not be set by backend) */
@@ -2042,7 +2045,10 @@ function BindingRow({ row, isBoard, onOpen, onUpdateBinding, onDeleteBinding }: 
           ))}
         </select>
       )}
-      {row.auto_matched && <span className="library-binding-auto" title="Auto-matched">A</span>}
+      {row.auto_matched && (
+        <span className="library-binding-auto"
+          title={`Linked automatically${row.source === 'binding' && row.rule ? ` — ${AUTOBIND_RULE_LABEL[row.rule] ?? row.rule}` : ''}`}>A</span>
+      )}
       <button
         className="library-binding-remove"
         onClick={(e) => { e.stopPropagation(); onDeleteBinding(row.id); }}
@@ -2062,6 +2068,11 @@ function BindPicker({ isBoard, focal, candidates, onPick }: {
   onPick: (file: DatabankFile) => void;
 }) {
   const [filter, setFilter] = useState('');
+  // Debounced: with thousands of PDFs a synchronous re-filter per keystroke
+  // blocked the input (66–98 ms at 7.5 k candidates, linear in library size).
+  const debouncedFilter = useDebouncedValue(filter, 150);
+  const [showAll, setShowAll] = useState(false);
+  useEffect(() => { setShowAll(false); }, [debouncedFilter]);
 
   // Score each candidate against the focal file. Filename match handles the
   // 820-XXXXX-style cases; metadata match handles cases where the file
@@ -2085,7 +2096,7 @@ function BindPicker({ isBoard, focal, candidates, onPick }: {
   // candidate list. Matches filename and the metadata fields the library's
   // own search uses (board_number, manufacturer, model).
   const filtered = useMemo(() => {
-    const q = filter.trim().toLowerCase();
+    const q = debouncedFilter.trim().toLowerCase();
     if (!q) return scored;
     return scored.filter(({ f }) =>
       f.filename.toLowerCase().includes(q) ||
@@ -2093,7 +2104,11 @@ function BindPicker({ isBoard, focal, candidates, onPick }: {
       f.manufacturer?.toLowerCase().includes(q) ||
       f.model?.toLowerCase().includes(q)
     );
-  }, [scored, filter]);
+  }, [scored, debouncedFilter]);
+  // Never render the whole library as rows: 200 fit in one frame, the filter
+  // is the navigation. "Show all" stays for the user who wants to scroll.
+  const visible = showAll ? filtered : filtered.slice(0, BIND_PICKER_VISIBLE);
+  const hidden = filtered.length - visible.length;
 
   return (
     <div className="library-bind-picker">
@@ -2114,7 +2129,7 @@ function BindPicker({ isBoard, focal, candidates, onPick }: {
             : `No matches for "${filter}"`}
         </div>
       ) : (
-        filtered.map(({ f, score }) => (
+        visible.map(({ f, score }) => (
           <div
             key={f.id}
             className="library-bind-candidate"
@@ -2130,6 +2145,12 @@ function BindPicker({ isBoard, focal, candidates, onPick }: {
             )}
           </div>
         ))
+      )}
+      {hidden > 0 && (
+        <div className="library-bind-more" data-testid="bind-picker-more">
+          … {hidden.toLocaleString()} more — type to narrow{' '}
+          <button type="button" onClick={() => setShowAll(true)}>Show all</button>
+        </div>
       )}
     </div>
   );

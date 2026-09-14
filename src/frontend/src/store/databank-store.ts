@@ -129,6 +129,9 @@ export interface DatabankBinding {
    *  the board. Independent of category so a user can pin a datasheet to
    *  auto-open or keep a schematic listed-only. */
   auto_open: boolean;
+  /** Auto-bind rule that made the link (`exact` / `number` / `fuzzy` /
+   *  `lone` / `legacy`); empty for links a person made. */
+  rule: string;
   board_filename: string;
   board_path: string;
   pdf_filename: string;
@@ -137,6 +140,59 @@ export interface DatabankBinding {
 
 export interface FileDetail extends DatabankFile {
   bindings: DatabankBinding[];
+}
+
+/** Auto-bind rule ladder (mirrors databank.AutoBindRules on the backend).
+ *  Fixed order — exact, number, fuzzy, lone — the user tunes, never reorders. */
+export interface AutoBindRules {
+  exact: boolean;
+  number: boolean;
+  fuzzy: { on: boolean; min: number; radius: number };
+  lone: { on: boolean; radius: number; require_one_board: boolean };
+}
+
+export const DEFAULT_AUTOBIND_RULES: AutoBindRules = {
+  exact: true,
+  number: true,
+  fuzzy: { on: true, min: 75, radius: 0 },
+  lone: { on: true, radius: 0, require_one_board: true },
+};
+
+export const AUTOBIND_RULE_LABEL: Record<string, string> = {
+  exact: 'same name',
+  number: 'board number in the PDF name',
+  fuzzy: 'similar name',
+  lone: 'only PDF in the folder',
+  legacy: 'auto-matched before rules had names',
+};
+
+export const AUTOBIND_RADIUS_LABEL: Record<number, string> = {
+  0: 'same folder',
+  1: 'share a parent folder',
+  2: 'share a grandparent folder',
+};
+
+export interface AutoBindCandidate {
+  board_id: number;
+  pdf_id: number;
+  rule: string;
+  score: number;
+  board_name: string;
+  board_path: string;
+  pdf_name: string;
+  pdf_path: string;
+  shared?: string[];
+}
+
+export interface AutoBindReport {
+  rules: AutoBindRules;
+  boards: number;
+  pdfs: number;
+  total: number;
+  counts: Record<string, number>;
+  samples: Record<string, AutoBindCandidate[]>;
+  inserted: number;
+  existing: Record<string, number>;
 }
 
 export interface FolderNode {
@@ -1589,14 +1645,46 @@ class DatabankStore extends Emitter {
 
   private _filesFetchedAfterScan = false;
 
+  private _midScanRefreshing = false;
+
+  /** Re-stream the list while a scan is still running. The rows are in the
+   *  database long before the scan ends (a 60k-file first index writes its
+   *  first batch within a second and takes five minutes), and the old rule
+   *  — fetch only once `running` flips false — left a new install staring
+   *  at an empty Library for the whole scan. */
+  private async _midScanRefresh(): Promise<void> {
+    if (this._midScanRefreshing) return;
+    this._midScanRefreshing = true;
+    try {
+      await this._drainFilesInflight();
+      this._filesComplete = false;
+      this._filesSignature = null;
+      await this.fetchFiles();
+      await this.fetchTree();
+      this.notify();
+    } finally {
+      this._midScanRefreshing = false;
+    }
+  }
+
   private _startScanPolling() {
     this._stopScanPolling();
     this._filesFetchedAfterScan = false;
+    // Refresh the list at 5, 10, 20, 40 s and then every 60 s: fast feedback
+    // early (the point), cheap later (a 60k-row stream is ~0.6 s).
+    const startedAt = Date.now();
+    let refreshDelay = 5000;
+    let nextRefreshAt = refreshDelay;
     this._scanPollTimer = setInterval(async () => {
       const status = await this.apiFetch<ScanStatus>('/api/databank/scan/status');
       if (status) {
         this._scanStatus = status;
         this._persistScanStatus();
+        if (status.running && Date.now() - startedAt >= nextRefreshAt && !this._midScanRefreshing) {
+          refreshDelay = refreshDelay < 40000 ? refreshDelay * 2 : 60000;
+          nextRefreshAt = (Date.now() - startedAt) + refreshDelay;
+          void this._midScanRefresh();
+        }
         // Notify every tick while polling. The previous `changed` gate only
         // fired on scanned/running/phase deltas, so during long phases where
         // those don't change tick-to-tick (e.g. "Walking filesystem" /
@@ -1780,6 +1868,48 @@ class DatabankStore extends Emitter {
     await this.apiFetch<{ status: string }>(`/api/databank/bindings/${id}`, { method: 'DELETE' });
   }
 
+  /** Generic config write (PUT /api/config). Empty value clears a boolean key. */
+  async setConfig(key: string, value: string): Promise<boolean> {
+    const res = await this.apiFetch<{ status: string }>('/api/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, value }),
+    });
+    return !!res;
+  }
+
+  private autoBindBody(rules?: AutoBindRules): RequestInit {
+    return rules
+      ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rules }) }
+      : { method: 'POST' };
+  }
+
+  /** Dry run of the auto-bind ladder — what it would link, per rule, with samples. */
+  async previewAutoBind(rules?: AutoBindRules): Promise<AutoBindReport | null> {
+    return this.apiFetch<AutoBindReport>('/api/databank/autobind/preview', this.autoBindBody(rules));
+  }
+
+  /** Link every unbound board the ladder can place, then refresh what the UI shows. */
+  async runAutoBind(rules?: AutoBindRules): Promise<AutoBindReport | null> {
+    const report = await this.apiFetch<AutoBindReport>('/api/databank/autobind/run', this.autoBindBody(rules));
+    if (report) {
+      void this.fetchStats();
+      if (this.selectedFileId != null) void this.fetchFileDetail(this.selectedFileId);
+    }
+    return report;
+  }
+
+  /** Remove the automatic links one rule made (`*` = every automatic link). */
+  async deleteAutoBindings(rule: string): Promise<{ deleted: number; existing: Record<string, number> } | null> {
+    const res = await this.apiFetch<{ deleted: number; existing: Record<string, number> }>(
+      `/api/databank/autobind?rule=${encodeURIComponent(rule)}`, { method: 'DELETE' });
+    if (res) {
+      void this.fetchStats();
+      if (this.selectedFileId != null) void this.fetchFileDetail(this.selectedFileId);
+    }
+    return res;
+  }
+
   /** Promote/demote a runtime board↔PDF link to the durable backend `bindings`
    *  table. Always canonical (board, pdf) order, so the same link created from
    *  the board tab ∞ or the PDF tab ∞ resolves to the SAME row — never doubled
@@ -1891,9 +2021,18 @@ class DatabankStore extends Emitter {
       try {
         localStorage.removeItem('boardripper-scan-status');
         localStorage.removeItem('boardripper-stats');
+        // The first-run setup must come back after a wipe even if it was
+        // dismissed with "Don't show again" (first-run-store keys).
+        localStorage.removeItem('boardripper-firstrun-never');
+        sessionStorage.removeItem('boardripper-firstrun-skipped');
       } catch { /* ignored */ }
       await this.fetchStats();
       this.notify();
+      // A wipe leaves half the in-memory state (folder tree, caches, open
+      // detail panes, scan polling) pointing at rows that no longer exist.
+      // Reload: the first-run setup then shows again, since the backend
+      // reports no scan and no files.
+      if (typeof window !== 'undefined') window.setTimeout(() => window.location.reload(), 250);
       return true;
     }
     return false;

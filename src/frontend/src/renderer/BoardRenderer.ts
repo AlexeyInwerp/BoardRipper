@@ -45,7 +45,7 @@ import { getFormat } from '../parsers/registry';
 import { log } from '../store/log-store';
 import { ensurePdfPanel } from '../store/dockview-api';
 import { fileInputRefs } from '../store/file-inputs';
-import { obdNetIndex, extractBoardNumberFromFilename, obdStore } from '../store/obd-store';
+import { obdNetIndex, obdBoardNumberFor, obdStore } from '../store/obd-store';
 import { primaryDiodeReading, boardHasDiodeData, formatDiode } from '../store/diode-readings';
 import { stepExpApproach, ZOOM_TWEEN_RATE } from './smooth-zoom';
 
@@ -6185,10 +6185,11 @@ export class BoardRenderer {
   private _obdMemoBoardNumber: string | null = null;
 
   private getMemoizedObdBoardNumber(): string | null {
-    const fn = boardStore.fileName;
-    if (fn !== this._obdMemoFileName) {
-      this._obdMemoFileName = fn;
-      this._obdMemoBoardNumber = fn ? extractBoardNumberFromFilename(fn) : null;
+    const tab = boardStore.activeTab;
+    const key = tab ? `${tab.fileId ?? ''}|${tab.fileName}` : '';
+    if (key !== this._obdMemoFileName) {
+      this._obdMemoFileName = key;
+      this._obdMemoBoardNumber = obdBoardNumberFor(tab);
     }
     return this._obdMemoBoardNumber;
   }

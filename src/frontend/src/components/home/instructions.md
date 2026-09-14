@@ -15,8 +15,9 @@ finds. Nothing has to be imported by hand.
   example `/path/MacBooks:/library/MacBooks:ro`.
 - **`/data`** — writable. Files you drop onto the app are stored here and
   survive a restart.
-- Open the host port in a browser. New files in the library are picked up
-  automatically.
+- Open the host port in a browser. The first visit asks to index the library;
+  after that, tick **Re-index on every start** there or in Settings ▸ Library,
+  or press **Scan now** when you have added files.
 - The Library can also mirror a remote WebDAV or CopyParty share on a schedule
   (Settings ▸ Library), and the container updates itself from a signed release.
 
@@ -44,6 +45,14 @@ the container.
 
 The **Library** tab in the sidebar is where the Docker setup pays off.
 
+- Two indexes, in this order. The **file index** walks the mounted folders and
+  builds the board and PDF list — about 200 files a second, and everything
+  below depends on it. The **PDF text index** then extracts the text of every
+  schematic for full-text search; it is slow, runs in the background, starts
+  by itself when the file index finishes, and is safe to leave running.
+- **Linking** pairs each board with its schematic by name, board number,
+  similarity or "the only PDF in the folder". Rules are editable in
+  Settings ▸ Library, with a preview before anything is written.
 - **Board #** groups everything by board number and model. Byte-identical
   copies in different folders are shown once.
 - **PDF** searches the full text of every indexed schematic. Type a part or a

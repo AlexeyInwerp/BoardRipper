@@ -2,7 +2,7 @@ import { IconCircuitDiode, IconCircuitDiodeZener } from '@tabler/icons-react';
 import { renderSettingsStore } from '../../../store/render-settings';
 import { useRenderSettings } from '../../../hooks/useRenderSettings';
 import { boardStore } from '../../../store/board-store';
-import { extractBoardNumberFromFilename, useObdForBoard } from '../../../store/obd-store';
+import { obdBoardNumberFor, useObdForBoard } from '../../../store/obd-store';
 import { boardHasDiodeData, diodeMode, cycleDiodeMode, diodeModeTitle } from '../../../store/diode-readings';
 import type { SlotCtx } from '../slot-ctx';
 
@@ -13,7 +13,7 @@ import type { SlotCtx } from '../slot-ctx';
  *  OBD). */
 export function DiodeValuesButton({ ctx }: { ctx: SlotCtx }) {
   const settings = useRenderSettings();
-  const bn = ctx.thisTab.fileName ? extractBoardNumberFromFilename(ctx.thisTab.fileName) : null;
+  const bn = obdBoardNumberFor(boardStore.activeTab ?? { fileName: ctx.thisTab.fileName });
   // Subscribe to OBD so the button appears once OBD readings fetch in.
   useObdForBoard(bn ?? undefined);
 

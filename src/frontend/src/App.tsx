@@ -30,6 +30,7 @@ import { LoadProgressOverlay } from './components/LoadProgressOverlay';
 import { PeekHintChip } from './components/PeekHintChip';
 import { FZKeyDialog } from './components/FZKeyDialog';
 import { WelcomeSetup } from './components/WelcomeSetup';
+import { FirstRunSetup } from './components/FirstRunSetup';
 import { SessionRestorePrompt } from './components/SessionRestorePrompt';
 import { setDockviewApi, ensureBoardPanel, boardPanelId, isRedockingPdf } from './store/dockview-api';
 import { boardStore } from './store/board-store';
@@ -395,6 +396,7 @@ function App() {
       <PeekHintChip />
       <FZKeyDialog />
       <WelcomeSetup />
+      <FirstRunSetup />
       <SessionRestorePrompt />
     </div>
   );

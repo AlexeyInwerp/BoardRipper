@@ -21,6 +21,7 @@ import {
 } from '../../store/dockview-api';
 import { showSidebarTab } from '../Sidebar.utils';
 import { welcomeStore } from '../../store/welcome-store';
+import { firstRunStore } from '../../store/first-run-store';
 import { shortcuts, formatShortcut, CATEGORY_LABELS, CATEGORY_ORDER } from '../../store/keyboard-shortcuts';
 import {
   SCROLL_BINDINGS_KEY,
@@ -1089,14 +1090,19 @@ function LibraryStats() {
       </p>
     );
   }
-  if (!stats) {
+  const scanning = scanStatus?.running;
+  // `stats` is non-null on a fresh install (the endpoint returns zeros), so
+  // the empty case has to be recognised by its counts, not by a null.
+  if (!stats || (stats.boards + stats.pdfs === 0 && !scanning)) {
     return (
       <p className="home-card-empty">
-        Library not scanned yet. Mount your boards under <code>/library</code> to populate.
+        Library not indexed yet. Mount your boards under <code>/library</code>, then{' '}
+        <button type="button" className="home-settings-link" onClick={() => firstRunStore.show()}>
+          run the library setup →
+        </button>
       </p>
     );
   }
-  const scanning = scanStatus?.running;
   return (
     <div className="home-stats">
       <div className="home-stats-row">

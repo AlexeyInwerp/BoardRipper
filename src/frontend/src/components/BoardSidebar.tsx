@@ -11,7 +11,7 @@ import type { SelectionState } from '../store/board-store';
 import { colorToHex, hexToColor } from '../store/layer-store';
 import { renderSettingsStore, isNcNet } from '../store/render-settings';
 import { useRenderSettings } from '../hooks/useRenderSettings';
-import { extractBoardNumberFromFilename } from '../store/obd-store';
+import { obdBoardNumberFor } from '../store/obd-store';
 import { boardHasDiodeData, diodeMode, cycleDiodeMode, diodeModeTitle } from '../store/diode-readings';
 import { ComponentInfoBody } from './ComponentInfoBody';
 import { WorklistPanel } from '../panels/WorklistPanel';
@@ -274,7 +274,7 @@ function LayersTab({ tabId }: { tabId: number }) {
   // Diode-only mode blanks both, board-wide, without touching either setting —
   // show them as forced-off rather than pretending the user's choice changed.
   const labelsForcedOff = showDiodeValues && diodeValuesOnly;
-  const diodeBn = tab?.fileName ? extractBoardNumberFromFilename(tab.fileName) : null;
+  const diodeBn = obdBoardNumberFor(tab);
   const hasDiodeData = boardHasDiodeData(board, diodeBn ?? undefined);
   const selection = tab?.selection ?? { partIndex: null, pinIndex: null, highlightedNet: null };
   const foldMode = tab?.foldMode ?? 'suggested';
@@ -664,8 +664,7 @@ function InfoTab({ tabId }: { tabId: number }) {
   const tab = tabs.find(t => t.id === tabId);
   const board = tab?.board ?? null;
   const selection = tab?.selection ?? EMPTY_SELECTION;
-  const tabFileName = tab?.fileName ?? '';
-  const boardNumber = extractBoardNumberFromFilename(tabFileName) ?? undefined;
+  const boardNumber = obdBoardNumberFor(tab) ?? undefined;
   const showBomAlternates = tab?.showBomAlternates ?? false;
   const bomClusterSelections: ReadonlyMap<string, string> =
     tab?.bomClusterSelections ?? EMPTY_BOM_SELECTIONS;

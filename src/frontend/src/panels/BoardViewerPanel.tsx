@@ -9,7 +9,7 @@ import { pdfStore } from '../store/pdf-store';
 import { fileInputRefs } from '../store/file-inputs';
 import { log } from '../store/log-store';
 import { useBareScrollAction } from '../store/scroll-mode';
-import { obdStore, extractBoardNumberFromFilename } from '../store/obd-store';
+import { obdStore, obdBoardNumberFor } from '../store/obd-store';
 import { renderOverlayLayout } from '../components/overlay/slot-renderers';
 import { IconChevronLeft, IconChevronRight, IconChevronUp, IconChevronDown, IconLayoutSidebarRight } from '@tabler/icons-react';
 import { useOverlayCollapsed, toggleOverlayCollapsed } from '../store/overlay-collapse-store';
@@ -141,10 +141,11 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   // user to detour through the Library detail pane. Best-effort: when the
   // backend has no library_dir or no index, this no-ops cleanly.
   const tabFileName = thisTab?.fileName ?? '';
+  const tabFileId = thisTab?.fileId;
   useEffect(() => {
-    const bn = extractBoardNumberFromFilename(tabFileName);
+    const bn = obdBoardNumberFor({ fileName: tabFileName, fileId: tabFileId });
     if (bn) obdStore.loadMatches(bn);
-  }, [tabFileName]);
+  }, [tabFileName, tabFileId]);
 
   // Create and destroy the renderer with the panel
   useEffect(() => {
