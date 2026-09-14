@@ -19,7 +19,7 @@ import { isLiteBuild } from '../store/build-mode';
 import { log } from '../store/log-store';
 
 export function FirstRunSetup() {
-  const fr = useSyncExternalStore(firstRunStore.subscribe, firstRunStore.getSnapshot);
+  const fr = useSyncExternalStore((cb) => firstRunStore.subscribe(cb), firstRunStore.getSnapshot);
   const welcomeOpen = useSyncExternalStore(welcomeStore.subscribe, welcomeStore.getSnapshot);
   const { stats, scanStatus, backendAvailable, electronMode, loadStatus } = useDatabank();
 
@@ -28,11 +28,14 @@ export function FirstRunSetup() {
     if (backendAvailable && hasBackend() && !stats) void databankStore.fetchStats();
   }, [backendAvailable, stats]);
 
-  if (isLiteBuild() || electronMode || !hasBackend() || !backendAvailable) return null;
+  if (isLiteBuild() || electronMode || !hasBackend()) return null;
   if (welcomeOpen) return null; // the gesture wizard goes first
   const neverIndexed = !!stats && stats.last_file_scan_at === 0 && stats.boards + stats.pdfs === 0
     && !scanStatus?.running && loadStatus !== 'loading';
-  const auto = neverIndexed && !fr.skipped && !fr.never && !firstRunStore.automated();
+  // Opened from Settings / the start page it shows regardless of backend
+  // state; the automatic case needs a reachable backend that reports a
+  // never-indexed library.
+  const auto = backendAvailable && neverIndexed && !fr.skipped && !fr.never && !firstRunStore.automated();
   if (!fr.forced && !auto) return null;
   return <FirstRunBody neverIndexed={neverIndexed} />;
 }

@@ -55,11 +55,11 @@ services:
     # (see the secure update pipeline in CLAUDE.md / docs/RELEASE_RUNBOOK.md).
     healthcheck:
       test: ["NONE"]
-    # Hard memory cap. NOTE: the previous `deploy.resources.limits.memory` key is
-    # SILENTLY IGNORED by `docker compose up` / `docker run` (it only applies
-    # under `docker stack deploy` / swarm), so the container was effectively
-    # uncapped and free to balloon to many GB. `mem_limit` is the Compose-v2 key
-    # that actually maps to --memory. The runtime derives a soft GOMEMLIMIT at
+    # Hard memory cap. `mem_limit` maps to --memory on every Compose version;
+    # `deploy.resources.limits.memory` was ignored by early Compose v2 outside
+    # swarm (the container ran uncapped) and is honoured by current releases
+    # (measured 2026-09-12 on Compose 5.5) — `mem_limit` is the one that has
+    # always worked, so it stays. The runtime derives a soft GOMEMLIMIT at
     # 90% of this (see configureMemoryLimit in main.go) so the GC reclaims before
     # the hard cap OOM-kills, and GODEBUG=madvdontneed=1 (Dockerfile) returns
     # freed pages promptly. Tune down on a small NAS together with

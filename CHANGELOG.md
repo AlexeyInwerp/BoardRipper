@@ -1,5 +1,52 @@
 # BoardRipper changelog
 
+## Unreleased
+
+### A fresh install that shows something
+
+- **The Library fills while the scan runs.** Rows were in the database seconds
+  after a scan started and the panel still waited for the scan to end — five
+  minutes of an empty list on a 60,000-file library. The list now refreshes
+  during the scan (5, 10, 20, 40 seconds in, then every minute).
+- **First visit asks to set up the library.** A new install never indexed
+  anything until someone found *Scan now* in Settings. The first visit now
+  shows what is mounted, explains the two indexes — files now, PDF text in the
+  background afterwards — and starts the scan. Two options, both on: link
+  boards to their PDFs automatically, and download the OpenBoardData readings.
+  A database reset reloads the page and the setup comes back.
+- **The server answers at once.** Compiling the PDF text engine used to hold
+  the port closed for ten seconds on every start.
+
+### Linking boards to PDFs
+
+- **Four rules, in order, editable.** Same name; the board number in the PDF
+  name; a similar name (at least 75 % of the shorter name's words, within the
+  same folder by default); the only PDF in the folder (by default only when it
+  holds one board too). Settings ▸ Library shows the ladder with a **Preview**
+  — how many links each rule would make, with examples — before anything is
+  written, and every link remembers its rule so the links one rule made can be
+  removed together.
+- **Seconds, not hours.** The old matcher compared every board with every PDF,
+  which is why it was off by default. Rules 1–2 are lookups and rules 3–4 only
+  look near the board's folder, so it can be on.
+- **The bind picker no longer freezes.** Choosing a PDF for a board rendered
+  every PDF in the library; with 7,500 it blocked for a quarter second to open
+  and on every keystroke. It shows 200 and the filter narrows the rest.
+
+### OpenBoardData
+
+- **Download all boards** in Settings ▸ Library — about a hundred boards, a
+  couple of minutes — so readings are already there when a board is opened.
+- **Boards the Library knows are matched by their resolved board number**, not
+  only by a number in the filename.
+
+### Docs
+
+- README: the build-from-source and dev commands now work as written (go.mod
+  lives in `src/backend`; the Vite proxy targets port 1336), the Synology
+  `docker run` carries `--user 0:0` and the `incoming` mount, the tarball name
+  matches what the release script produces.
+
 ## v0.40.0 — 2026-09-12
 
 ### Comparing a component across two boards

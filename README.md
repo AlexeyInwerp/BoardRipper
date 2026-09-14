@@ -116,9 +116,13 @@ BoardRipper is primarily a **server** you run on a NAS or host machine and acces
 ### Docker (typical deployment)
 
 ```bash
-docker compose up -d
+docker compose up -d      # the checked-in compose file BUILDS the image from source (build: .)
 # → http://localhost:8081
 ```
+
+It mounts `./library`, which starts empty — put your board folders in there or edit the
+`volumes:` block to mount them read-only (see Docker setup). On first visit the app asks to
+index the library and offers automatic board↔PDF linking and the OpenBoardData download.
 
 Or pull directly:
 
@@ -137,12 +141,13 @@ cd BoardRipper
 # Build the frontend bundle:
 cd src/frontend && npm install && npm run build && cd ../..
 
-# Run the Go server pointing at the built bundle:
-STATIC_DIR=./src/frontend/dist DATA_DIR=./data go run ./src/backend
+# Run the Go server pointing at the built bundle (go.mod lives in src/backend):
+cd src/backend
+STATIC_DIR=../frontend/dist DATA_DIR=../../data LIBRARY_DIR=/path/to/boards go run .
 # → http://localhost:8080
 ```
 
-The released artifact is the Docker image (above) — no per-platform standalone binaries are published. If you need a portable binary, build the Go server with `CGO_ENABLED=0 go build -o boardripper ./src/backend` and ship it next to the `dist/` directory and a `STATIC_DIR=` env var. Self-update only works in Docker (it needs the host's Docker socket).
+The released artifact is the Docker image (above) — no per-platform standalone binaries are published. If you need a portable binary, build the Go server with `cd src/backend && CGO_ENABLED=0 go build -o boardripper .` and ship it next to the `dist/` directory and a `STATIC_DIR=` env var. Set `LIBRARY_DIR` to the folder to index — without it the server indexes `DATA_DIR`. Self-update only works in Docker (it needs the host's Docker socket).
 
 ### Development
 
@@ -150,8 +155,8 @@ The released artifact is the Docker image (above) — no per-platform standalone
 # Frontend (hot reload)
 cd src/frontend && npm install && npm run dev    # http://localhost:5173
 
-# Backend (separate terminal)
-cd src/backend && go run .                       # http://localhost:8080
+# Backend (separate terminal) — the Vite dev proxy targets port 1336
+cd src/backend && PORT=1336 go run .             # http://localhost:1336
 ```
 
 ## Docker setup
@@ -161,7 +166,7 @@ cd src/backend && go run .                       # http://localhost:8080
 ```yaml
 services:
   boardripper:
-    image: ghcr.io/alexeyinwerp/boardripper:latest    # or build: .
+    image: ghcr.io/alexeyinwerp/boardripper:latest    # the repo's own docker-compose.yml says `build: .` instead
     # The image ships USER 65532:65532 (distroless `nonroot`) so a hypothetical
     # RCE doesn't own your bind-mounted /data. The default `docker compose up`
     # flow creates ./data as root on Linux hosts (Docker daemon runs as root),
@@ -187,10 +192,7 @@ services:
     environment:
       - PORT=8080
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 1024M   # pdfium/wazero pool; 512M boot-fails with SQLite OOM at databank open
+    mem_limit: 2g               # hard cap; 512M boot-fails with SQLite OOM at databank open
     # environment also accepts:
     #   - PDFINDEX_POOL_MAX=2   # max concurrent pdfium/wazero PDF-index workers;
     #                           # reduce to 1 on a NAS with <1 GB free RAM
@@ -214,16 +216,21 @@ These appear as top-level folders in the Library panel. Use `:ro` for read-only 
 1. Download `boardripper-<version>.tar.gz` (or `latest.tar.gz`) from <https://www.ripperdoc.de/boardripper/releases/>
 2. SSH into your NAS and load the image:
    ```bash
-   docker load < boardripper-docker-<version>.tar.gz
+   docker load < boardripper-<version>.tar.gz
    ```
-3. Create the container:
+3. Create the container. `--user 0:0` is needed because DSM creates the data folder
+   root-owned and the image runs as UID 65532 otherwise (the container would exit with
+   "unable to open database file"); `/library/incoming` is where drag-dropped files land:
    ```bash
    docker run -d \
      --name boardripper \
+     --user 0:0 \
      -p 8090:8080 \
+     --memory 2g \
      -v /volume1/docker/boardripper/data:/data \
      -v /volume1/your-boards/MacBooks:/library/MacBooks:ro \
      -v /volume1/your-boards/iPhones:/library/iPhones:ro \
+     -v /volume1/docker/boardripper/incoming:/library/incoming:rw \
      -v /var/run/docker.sock:/var/run/docker.sock \
      -e PORT=8080 \
      --restart unless-stopped \
