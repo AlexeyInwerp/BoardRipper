@@ -229,3 +229,30 @@ drop does.
 Steps 1–2 fit 0.41.1 together with the label work already on `main`; 3–5 are
 0.42 material (they change what users see in Settings and deserve their own
 changelog section).
+
+## Compound control — decided 2026-09-16
+
+The "show it / how big" pairs (pin numbers, net names, diode values, part
+names, type colours + fill opacity, dashed + dash length, HDR outline +
+intensity) merge into one row with one control, **`toggleSlider`**:
+
+- **Thumb:** click = on/off, drag = size. Filled thumb = on, hollow ring =
+  off; a soft halo on hover is the only "this clicks" cue. No icon.
+- **Row name:** click = on/off (checkbox-label behaviour); **greyed when off**.
+  No marker before the name.
+- **Track:** click or drag = size, as any slider. **Number:** reads, never
+  toggles; greyed when off.
+- Off = name muted, number muted, track empty, thumb hollow. The value is kept
+  while off; on brings it back unchanged.
+- Keyboard: the name is a button (Space); the slider takes ← → Home End and
+  Space. Two Tab stops per row. Tap-vs-drag on the thumb uses the usual 4 px
+  threshold.
+- Schema: `{ control: 'toggleSlider', onKey, key, min, max, step, unit }` —
+  the two keys the settings already have; no migration, only the rows merge.
+
+Explored and stashed (mockup `https://claude.ai/code/artifact/0a70da53-7f85-43df-986e-46e076d3a5a8`,
+folded section): switch beside slider, left-end-is-off with a socket, the
+thumb-plus-socket hybrid, a power cap in the track, a readout that toggles, a
+ring before the name. Rejected for good: any word on the track ("OFF"), any
+icon on the thumb, double-click toggles (fight double-click-to-reset), and
+toggling on a click of the empty track.
