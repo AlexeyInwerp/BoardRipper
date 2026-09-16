@@ -220,7 +220,7 @@ function Slider({ label, value, min, max, step, field, onUpdate, title, toggleFi
     <div className={`settings-row${isOverride ? ' settings-override' : ''}${matched ? ' settings-search-match' : ''}${toggleField && !on ? ' settings-row-off' : ''}`} title={title} data-field={field}>
       {toggleField ? (
         <button type="button" className="settings-label settings-label-btn" aria-pressed={on}
-          onClick={() => onUpdate({ [toggleField]: !on })}>
+          onClick={() => onUpdate({ [toggleField]: !on })} title={on ? 'Click to turn off' : 'Click to turn on'}>
           {label}{readout}
         </button>
       ) : (
@@ -241,7 +241,7 @@ function Slider({ label, value, min, max, step, field, onUpdate, title, toggleFi
         <div className={`settings-slider-tooltip${dragging ? ' is-visible' : ''}`} style={{ left: `${pct}%` }}>
           {dragging
             ? <span className="settings-slider-reset-hint">dbl-click track to reset{isModified ? ` (${Number(defaultValue.toFixed(2))})` : ''}</span>
-            : <>{Number(value.toFixed(2))}{toggleField ? <span className="settings-slider-reset-hint"> · click thumb or name: {on ? 'off' : 'on'}</span> : null}</>
+            : Number(value.toFixed(2))
           }
         </div>
       </div>

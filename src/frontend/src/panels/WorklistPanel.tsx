@@ -373,6 +373,18 @@ function ActiveWorklistView({ renameOnMount, onRenameHandled }: {
   }, [activeWorklist?.id]);
 
   useEffect(() => { if (renaming) renameRef.current?.select(); }, [renaming]);
+
+  // Click away and the open reading slots fold back to the values. Without
+  // this the slots stayed open for ever once a row had been touched, which is
+  // the state the redesign exists to avoid.
+  useEffect(() => {
+    if (!selected) return;
+    const onDown = (e: PointerEvent) => {
+      if (!(e.target as HTMLElement | null)?.closest?.('.wl-row')) setSelected(null);
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, [selected]);
   useEffect(() => { if (renameOnMount) onRenameHandled(); }, [renameOnMount, onRenameHandled]);
 
   if (!activeWorklist) return null;

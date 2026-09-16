@@ -126,7 +126,7 @@ export function RangeControl({
     >
       <div className="rc-track" />
       <div className="rc-fill" style={{ width: `${ratio * 100}%` }} />
-      <div className="rc-thumb" style={{ left: `${ratio * 100}%` }} />
+      <div className="rc-thumb" style={{ left: `${ratio * 100}%` }} title={toggleMode ? (isOff ? 'Click to turn on · drag to set' : 'Click to turn off · drag to set') : undefined} />
     </div>
   );
 }

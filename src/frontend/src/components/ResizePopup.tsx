@@ -50,7 +50,7 @@ function ControlRow({ k }: { k: keyof RenderSettings }) {
         <span style={{ fontSize: 12, color: toggle && !on ? 'var(--text-secondary)' : undefined }}>
           {toggle ? (
             <button type="button" className="settings-label-btn" aria-pressed={on} style={{ display: 'inline', width: 'auto' }}
-              onClick={() => resizeModeStore.commitBool(k, !on)}>{def.label}</button>
+              onClick={() => resizeModeStore.commitBool(k, !on)} title={on ? 'Click to turn off' : 'Click to turn on'}>{def.label}</button>
           ) : def.label}
           {modified && (
             <span
@@ -83,7 +83,7 @@ function ControlRow({ k }: { k: keyof RenderSettings }) {
       ) : (
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}>
           <button onClick={() => resizeModeStore.nudge(k, -1)} style={btnStyle} title={`− ${def.step}`}>−</button>
-          <div style={{ flex: 1 }} title={toggle ? 'Click the thumb or the name to turn on/off · drag to set · double-click the track to reset' : 'Drag to set · double-click to reset to default'}>
+          <div style={{ flex: 1 }} title={toggle ? undefined : 'Double-click to reset to default'}>
             <RangeControl
               value={value} min={def.min} max={def.max} step={def.step}
               onChange={(v) => resizeModeStore.commit(k, v)}

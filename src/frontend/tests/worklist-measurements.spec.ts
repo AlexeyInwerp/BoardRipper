@@ -119,6 +119,10 @@ test('net row: records V + diode + Ω independently (three values coexist)', asy
   await page.locator('[data-board-tab="worklist"]').click();
   const netRow = page.locator('[data-testid="worklist-net-row"]', { hasText: 'GND' }).first();
   await expect(netRow).toBeVisible();
+  // Empty slots belong to the selected row — nothing to fill in until you are
+  // on it, which is the point of the change. Select it, then record.
+  await expect(netRow.locator('[data-testid="net-meas-input-voltage"]')).toHaveCount(0);
+  await netRow.locator('.wl-row-main').click();
   // Fill all three slots independently — they coexist (no type switch).
   const vIn = netRow.locator('[data-testid="net-meas-input-voltage"]');
   const dIn = netRow.locator('[data-testid="net-meas-input-diode"]');
@@ -151,9 +155,47 @@ test('net row: diode chip shows the circuit-diode icon, not the word "Diode"', a
   await page.locator('[data-board-tab="worklist"]').click();
   const netRow = page.locator('[data-testid="worklist-net-row"]', { hasText: 'GND' }).first();
   await expect(netRow).toBeVisible();
+  await netRow.locator('.wl-row-main').click();          // slots open on the selected row
   const diodeChip = netRow.locator('[data-testid="net-meas-chip-diode"]');
   await expect(diodeChip.locator('svg.tabler-icon-circuit-diode')).toBeVisible();
   await expect(diodeChip).not.toContainText('Diode');
   await expect(netRow.locator('[data-testid="net-meas-chip-voltage"]')).toHaveText('V');
   await expect(netRow.locator('[data-testid="net-meas-chip-resistance"]')).toHaveText('Ω');
+});
+
+test('net row: readings show as values when the row is not selected, and an untouched net is one line', async ({ page }) => {
+  test.skip(!haveBrd, 'sample brd missing');
+  await page.goto('/');
+  await page.getByTestId('file-input').setInputFiles(BRD);
+  await expect(page.locator('.dv-tab', { hasText: '.brd' }).first()).toBeVisible({ timeout: 15000 });
+  await page.waitForFunction(() => !!(window as any).__boardStore?.board, { timeout: 20000 });
+  await page.evaluate(() => {
+    // @ts-expect-error DEV global
+    window.__worklistStore.pushNetToActive('GND');
+  });
+  await page.locator('.board-sidebar-toggle').first().click();
+  await page.locator('[data-board-tab="worklist"]').click();
+  const netRow = page.locator('[data-testid="worklist-net-row"]', { hasText: 'GND' }).first();
+  await expect(netRow).toBeVisible();
+
+  // Nothing measured: no reading area at all — the row is exactly one line.
+  await expect(netRow.locator('[data-testid="net-meas-values"]')).toHaveCount(0);
+  await expect(netRow.locator('[data-testid="net-meas-strip"]')).toHaveCount(0);
+  const oneLine = (await netRow.boundingBox())!.height;
+
+  // Record one reading, then move the selection away.
+  await netRow.locator('.wl-row-main').click();
+  const dIn = netRow.locator('[data-testid="net-meas-input-diode"]');
+  await dIn.fill('0.47');
+  await dIn.blur();
+  await page.locator('[data-testid="worklist-ticket-toggle"]').click();   // deselect by clicking elsewhere
+  await page.locator('[data-testid="worklist-ticket-toggle"]').click();
+
+  // Only the reading that exists is shown, as a value, and the empty two are gone.
+  const vals = netRow.locator('[data-testid="net-meas-values"]');
+  await expect(vals).toBeVisible();
+  await expect(vals).toContainText('0.47');
+  await expect(netRow.locator('[data-testid="net-meas-value-voltage"]')).toHaveCount(0);
+  await expect(netRow.locator('[data-testid="net-meas-value-resistance"]')).toHaveCount(0);
+  expect((await netRow.boundingBox())!.height).toBeGreaterThan(oneLine);
 });

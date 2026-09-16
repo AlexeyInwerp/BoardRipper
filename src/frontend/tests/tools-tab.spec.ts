@@ -6,8 +6,9 @@ test.describe('Tools tab', () => {
   });
 
   test('Tools tab opens a calculator and returns via back', async ({ page }) => {
-    // Open the Tools sidebar tab (button rendered from the TABS registry).
-    await page.getByRole('button', { name: 'Tools', exact: true }).click();
+    // Open the Tools destination. The activity rail renders destinations as
+    // role="tab", so they are located by data-sidebar-tab, never by button role.
+    await page.locator('[data-sidebar-tab="tools"]').first().click();
 
     // Landing list shows the three calculators.
     await expect(page.getByTestId('tools-entry-resistor')).toBeVisible();
@@ -28,7 +29,7 @@ test.describe('Tools tab', () => {
   });
 
   test('capacitor converter converts live across pF / nF / µF', async ({ page }) => {
-    await page.getByRole('button', { name: 'Tools', exact: true }).click();
+    await page.locator('[data-sidebar-tab="tools"]').first().click();
     await page.getByTestId('tools-entry-capacitor').click();
     // Type 100 nF → the other two units convert live.
     await page.getByTestId('cap-nf').fill('100');
@@ -40,14 +41,14 @@ test.describe('Tools tab', () => {
   });
 
   test('resistor color-band shows a live readout', async ({ page }) => {
-    await page.getByRole('button', { name: 'Tools', exact: true }).click();
+    await page.locator('[data-sidebar-tab="tools"]').first().click();
     await page.getByTestId('tools-entry-resistor').click();
     // Default 4-band is brown-black-red-gold → 1 kΩ.
     await expect(page.getByTestId('rc-readout')).toContainText('1 kΩ');
   });
 
   test('Worklists catalog opens and renders its empty state', async ({ page }) => {
-    await page.getByRole('button', { name: 'Tools', exact: true }).click();
+    await page.locator('[data-sidebar-tab="tools"]').first().click();
     await page.getByTestId('tools-entry-worklists').click();
     // The catalog mounts regardless of whether any worklists are stored.
     await expect(page.getByTestId('tools-worklists')).toBeVisible();
