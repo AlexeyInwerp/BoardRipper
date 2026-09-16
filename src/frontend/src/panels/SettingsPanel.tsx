@@ -34,6 +34,7 @@ import { useObdForBoard } from '../store/obd-store';
 import { LibrarySyncSection, SoftwareUpdateSection } from './LibrarySyncSection';
 import { welcomeStore } from '../store/welcome-store';
 import { OverlayCustomizer } from './settings/OverlayCustomizer';
+import { RangeControl } from '../components/RangeControl';
 import { AutoBindSection } from './settings/AutoBindSection';
 import { firstRunStore } from '../store/first-run-store';
 import { pdfIndexClient } from '../pdf/pdf-index-client';
@@ -194,35 +195,52 @@ function CollapsibleSection({
 interface SliderProps {
   label: string; value: number; min: number; max: number; step: number;
   field: keyof RenderSettings; onUpdate: DraftUpdater; title?: string;
+  /** Boolean setting this slider also switches: the thumb toggles on click,
+   *  the row name toggles on click, and the row greys out while off. One
+   *  row for "show it" and "how big" (RangeControl in on/off mode). */
+  toggleField?: keyof RenderSettings;
+  unit?: string;
 }
 
-function Slider({ label, value, min, max, step, field, onUpdate, title }: SliderProps) {
+function Slider({ label, value, min, max, step, field, onUpdate, title, toggleField, unit }: SliderProps) {
   const [dragging, setDragging] = useState(false);
   const { isOverride, resetValue: ovReset } = useOverride(field);
+  const ctx = useContext(OverrideContext);
   const defaultValue = ovReset ?? DEFAULTS[field] as number;
   const pct = ((value - min) / (max - min)) * 100;
   const isModified = Math.abs(value - defaultValue) > step * 0.5;
-  useEffect(() => { recordRenderedField(field); }, [field]);
-  const { hidden, matched } = useFieldSearchState(field);
+  useEffect(() => { recordRenderedField(field); if (toggleField) recordRenderedField(toggleField); }, [field, toggleField]);
+  const fs = useFieldSearchState(field);
+  const ts = useFieldSearchState(toggleField ?? field);
+  const hidden = fs.hidden && ts.hidden, matched = fs.matched || ts.matched;
+  const on = toggleField ? (ctx?.draft[toggleField] as boolean | undefined ?? true) : true;
   if (hidden) return null;
+  const readout = <span className="settings-value">{Number(value.toFixed(2))}{unit ? ` ${unit}` : ''}</span>;
   return (
-    <div className={`settings-row${isOverride ? ' settings-override' : ''}${matched ? ' settings-search-match' : ''}`} title={title}>
-      <label className="settings-label">
-        {label}
-        <span className="settings-value">{Number(value.toFixed(2))}</span>
-      </label>
+    <div className={`settings-row${isOverride ? ' settings-override' : ''}${matched ? ' settings-search-match' : ''}${toggleField && !on ? ' settings-row-off' : ''}`} title={title} data-field={field}>
+      {toggleField ? (
+        <button type="button" className="settings-label settings-label-btn" aria-pressed={on}
+          onClick={() => onUpdate({ [toggleField]: !on })} title={on ? 'Click to turn off' : 'Click to turn on'}>
+          {label}{readout}
+        </button>
+      ) : (
+        <label className="settings-label">{label}{readout}</label>
+      )}
       <div className="settings-slider-wrap">
-        <input
-          type="range" className={`settings-slider${isOverride ? ' slider-override' : ''}`}
-          min={min} max={max} step={step} value={value}
-          onChange={(e) => onUpdate({ [field]: parseFloat(e.target.value) })}
-          onPointerDown={() => setDragging(true)}
-          onPointerUp={() => setDragging(false)}
-          onDoubleClick={() => onUpdate({ [field]: defaultValue })}
+        <RangeControl
+          value={value} min={min} max={max} step={step}
+          onChange={(v) => onUpdate({ [field]: v })}
+          on={toggleField ? on : undefined}
+          onToggle={toggleField ? (next) => onUpdate({ [toggleField]: next }) : undefined}
+          defaultValue={defaultValue}
+          ariaLabel={label}
+          onDragChange={setDragging}
+          className={isOverride ? 'slider-override' : undefined}
+          testId={`range-${field}`}
         />
-        <div className="settings-slider-tooltip" style={{ left: `${pct}%` }}>
+        <div className={`settings-slider-tooltip${dragging ? ' is-visible' : ''}`} style={{ left: `${pct}%` }}>
           {dragging
-            ? <span className="settings-slider-reset-hint">dbl-click to reset{isModified ? ` (${Number(defaultValue.toFixed(2))})` : ''}</span>
+            ? <span className="settings-slider-reset-hint">dbl-click track to reset{isModified ? ` (${Number(defaultValue.toFixed(2))})` : ''}</span>
             : Number(value.toFixed(2))
           }
         </div>
@@ -2154,12 +2172,11 @@ export function SettingsPanel() {
           title="Extra space (mils) between component pins and the part border. Larger = more room around the IC/chip outline" />
         <Slider label="2-Pin Body Ratio" value={draft.partMinBodyRatio} min={0} max={1} step={0.01} field="partMinBodyRatio" onUpdate={updateDraft}
           title="Short-axis to pin-distance ratio for 2-pin parts (resistors, capacitors). 0.333 = 1:3 proportion. 0 = use file data as-is" />
-        <Toggle label="Component Type Colors" value={draft.showComponentColors} field="showComponentColors" onUpdate={updateDraft}
-          title="Fill component bodies with colors based on their type prefix (R = resistor, C = capacitor, U = IC, etc.). Colors are configured in Part Type Overrides" />
-        <Slider label="Type Fill Opacity" value={draft.componentFillAlpha} min={0} max={1} step={0.05} field="componentFillAlpha" onUpdate={updateDraft}
+        {/* Type colours: name/thumb toggle showComponentColors, drag sets the fill opacity. */}
+        <Slider label="Type colours" value={draft.componentFillAlpha} min={0} max={1} step={0.05} field="componentFillAlpha" toggleField="showComponentColors" onUpdate={updateDraft}
           title="Transparency of the component type color fills. 0 = invisible, 1 = fully opaque" />
-        <Toggle label="Show Part Labels" value={draft.showPartLabels} field="showPartLabels" onUpdate={updateDraft}
-          title="Display component reference designators (e.g. U1, R100, C42) centered on each part" />
+        <Slider label="Part names" value={draft.partLabelScale ?? 1} min={0.3} max={4} step={0.1} field="partLabelScale" toggleField="showPartLabels" unit="×" onUpdate={updateDraft}
+          title="Show component designators (U1, R100…); the slider scales the auto-fit size. Click the name or the thumb to turn them off." />
         <Toggle label="Label Drop Shadow" value={draft.partLabelShadow} field="partLabelShadow" onUpdate={updateDraft}
           title="Add a dark shadow halo behind part labels for better readability against colored or busy backgrounds" />
         <Toggle label="Pin Label Shadow" value={draft.pinLabelShadow} field="pinLabelShadow" onUpdate={updateDraft}
@@ -2182,12 +2199,12 @@ export function SettingsPanel() {
           title="How much the file-specified pin radius affects rendered size. 0 = all pins identical (Min Radius). 1 = proportional to file data. >1 = exaggerated differences" />
         <Slider label="Fill Opacity" value={draft.pinAlpha} min={0} max={1} step={0.05} field="pinAlpha" onUpdate={updateDraft}
           title="Fill transparency of pin circles and rectangular pads. 0 = invisible, 1 = fully opaque" />
-        <Toggle label="Show Pin Numbers" value={draft.showPinNumbers} field="showPinNumbers" onUpdate={updateDraft}
-          title="Display pin number/name labels inside pin circles on multi-pin components (ICs, connectors). On BGA parts, numbers and net names alternate vertically to reduce overlap" />
-        <Toggle label="Show Net Names" value={draft.showNetNames} field="showNetNames" onUpdate={updateDraft}
-          title="Display the net name on each pin (GND and NC are excluded — already colour-coded). Turn off to unclutter dense parts, or to leave the pin free for diode readings" />
-        <Toggle label="Show Diode Values" value={draft.showDiodeValues} field="showDiodeValues" onUpdate={updateDraft}
-          title="Draw diode-mode reference readings on pins (XZZ-baked values + OpenBoardData). Only visible on boards that carry readings; also toggleable from the board sidebar's View tab" />
+        <Slider label="Pin numbers" value={draft.pinNumberScale ?? 1} min={0.3} max={4} step={0.1} field="pinNumberScale" toggleField="showPinNumbers" unit="×" onUpdate={updateDraft}
+          title="Show pin numbers on ICs and connectors; the slider scales them. Click the name or the thumb to turn them off." />
+        <Slider label="Net names" value={draft.netLabelScale ?? 1} min={0.3} max={4} step={0.1} field="netLabelScale" toggleField="showNetNames" unit="×" onUpdate={updateDraft}
+          title="Show net names on pins (GND and NC are excluded — already colour-coded); the slider scales them." />
+        <Slider label="Diode values" value={draft.diodeValueScale ?? 1} min={0.3} max={4} step={0.1} field="diodeValueScale" toggleField="showDiodeValues" unit="×" onUpdate={updateDraft}
+          title="Draw diode-mode readings on pins (from the file or OpenBoardData); the slider scales them." />
         <Toggle label="Diode Values Only" value={draft.diodeValuesOnly} field="diodeValuesOnly" onUpdate={updateDraft}
           title="While diode values are shown, hide pin numbers and net names board-wide so a pin carries nothing but its reading. Your Show Pin Numbers / Show Net Names settings are left untouched and come back when this is off. Same as the third state of the diode button on the board overlay" />
         <Toggle label="Pin 1 Marker" value={draft.showPin1Marker} field="showPin1Marker" onUpdate={updateDraft}
@@ -2377,12 +2394,10 @@ export function SettingsPanel() {
           title="Show a large background-backed label above the selected component with its reference designator (e.g. U1)" />
         <Toggle label="Floating Pin Label" value={draft.showElevatedPinLabel} field="showElevatedPinLabel" onUpdate={updateDraft}
           title="Show a background-backed label above the selected pin with its pin number and net name" />
-        <Toggle label="HDR focus glow (experimental)" value={draft.hdrFocusGlow} field="hdrFocusGlow" onUpdate={updateGlobal}
+        <Slider label="HDR outline (experimental)" value={draft.hdrGlowIntensity} min={1} max={10} step={1} field="hdrGlowIntensity" toggleField="hdrFocusGlow" onUpdate={updateGlobal}
           title={hdrCapable
-            ? "On an HDR display, burn the selected element brighter than white for as long as it stays selected — a super-selection you cannot lose on a dense board. Purely additive: the normal highlight is unchanged."
+            ? "On an HDR display, burn the selected outline brighter than white for as long as it stays selected. The slider is the brightness: if the rest of the UI visibly dims while a part is selected, lower it. Click the name or the thumb to turn it off."
             : "No HDR display detected. Needs an HDR-capable screen in HDR mode; automatic on macOS, must be enabled system-wide on Windows."} />
-        <Slider label="HDR Glow Intensity" value={draft.hdrGlowIntensity} min={1} max={10} step={1} field="hdrGlowIntensity" onUpdate={updateGlobal}
-          title="How far above SDR white the glow burns. If the rest of the UI visibly dims while a part is selected, lower this" />
       </CollapsibleSection>
       )}
 
@@ -2420,9 +2435,7 @@ export function SettingsPanel() {
           title="Thickness of the connection lines drawn between pins of the same net when a net is selected" />
         <Slider label="Line Opacity" value={draft.netLineAlpha} min={0} max={1} step={0.05} field="netLineAlpha" onUpdate={updateDraft}
           title="Transparency of net connection lines. 0 = invisible, 1 = fully opaque" />
-        <Toggle label="Dashed Lines" value={draft.netLineDashed} field="netLineDashed" onUpdate={updateDraft}
-          title="Draw net connection lines as dashed instead of solid. Easier to distinguish from board traces" />
-        <Slider label="Dash Length" value={draft.netLineDashLength} min={2} max={20} step={1} field="netLineDashLength" onUpdate={updateDraft}
+        <Slider label="Dashed" value={draft.netLineDashLength} min={2} max={20} step={1} field="netLineDashLength" toggleField="netLineDashed" unit="px" onUpdate={updateDraft}
           title="Length of each dash segment (screen pixels) in the dashed net line pattern" />
         <Toggle label="Pulse Animation" value={draft.netLinePulse} field="netLinePulse" onUpdate={updateDraft}
           title="Animate net lines with a red traveling pulse effect, making the connection path easier to follow across the board" />

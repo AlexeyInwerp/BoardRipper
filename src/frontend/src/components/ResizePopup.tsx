@@ -23,6 +23,7 @@ import { useRef, useEffect, useSyncExternalStore, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { resizeModeStore, CONTROLS } from '../store/resize-mode-store';
 import { DEFAULTS, type RenderSettings } from '../store/render-settings';
+import { RangeControl } from './RangeControl';
 
 function subscribe(cb: () => void) {
   return resizeModeStore.subscribe(cb);
@@ -35,6 +36,8 @@ function ControlRow({ k }: { k: keyof RenderSettings }) {
   const value = resizeModeStore.valueOf(k);
   const isColor = def.type === 'color';
   const modified = resizeModeStore.isModified(k);
+  const toggle = !!def.onKey;
+  const on = resizeModeStore.boolOf(k);
   const onWheel = useCallback((e: React.WheelEvent) => {
     if (isColor) return;
     e.stopPropagation();
@@ -44,8 +47,11 @@ function ControlRow({ k }: { k: keyof RenderSettings }) {
   return (
     <div onWheel={onWheel} style={{ marginTop: 8 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
-        <span style={{ fontSize: 12 }}>
-          {def.label}
+        <span style={{ fontSize: 12, color: toggle && !on ? 'var(--text-secondary)' : undefined }}>
+          {toggle ? (
+            <button type="button" className="settings-label-btn" aria-pressed={on} style={{ display: 'inline', width: 'auto' }}
+              onClick={() => resizeModeStore.commitBool(k, !on)} title={on ? 'Click to turn off' : 'Click to turn on'}>{def.label}</button>
+          ) : def.label}
           {modified && (
             <span
               data-testid="resize-modified-dot"
@@ -58,7 +64,7 @@ function ControlRow({ k }: { k: keyof RenderSettings }) {
         </span>
         <span style={{
           fontVariantNumeric: 'tabular-nums',
-          color: modified ? 'var(--accent-text)' : 'var(--text-secondary)',
+          color: modified && !(toggle && !on) ? 'var(--accent-text)' : 'var(--text-secondary)',
           fontSize: 12,
         }}>
           {isColor ? toHex(value) : value}{!isColor && def.unit && <span style={{ opacity: 0.6, marginLeft: 3 }}>{def.unit}</span>}
@@ -77,14 +83,17 @@ function ControlRow({ k }: { k: keyof RenderSettings }) {
       ) : (
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}>
           <button onClick={() => resizeModeStore.nudge(k, -1)} style={btnStyle} title={`− ${def.step}`}>−</button>
-          <input
-            type="range"
-            min={def.min} max={def.max} step={def.step} value={value}
-            onChange={(e) => resizeModeStore.commit(k, Number(e.target.value))}
-            onDoubleClick={() => resizeModeStore.reset(k)}
-            title="Double-click to reset to default"
-            style={{ flex: 1, accentColor: 'var(--accent)' }}
-          />
+          <div style={{ flex: 1 }} title={toggle ? undefined : 'Double-click to reset to default'}>
+            <RangeControl
+              value={value} min={def.min} max={def.max} step={def.step}
+              onChange={(v) => resizeModeStore.commit(k, v)}
+              on={toggle ? on : undefined}
+              onToggle={toggle ? (next) => resizeModeStore.commitBool(k, next) : undefined}
+              defaultValue={DEFAULTS[k] as number}
+              ariaLabel={def.label}
+              testId={`resize-range-${String(k)}`}
+            />
+          </div>
           <button onClick={() => resizeModeStore.nudge(k, 1)} style={btnStyle} title={`+ ${def.step}`}>+</button>
           {modified && (
             <button

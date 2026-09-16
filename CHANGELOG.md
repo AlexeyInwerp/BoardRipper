@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### One slider, with or without a switch
+
+- **Show-and-size settings are one row.** Pin numbers, net names, diode
+  values, part names, type colours, dashed net lines and the HDR outline each
+  used to be a toggle plus a separate size slider (some of the sizes only in
+  Interactive mode). Each is now one slider: click the thumb or the row's name
+  to turn the thing off — the row greys out and keeps its value — drag to set
+  the size. Plain sliders look the same; only the on/off ones react to a click.
+  Same control in Settings and in the Interactive-mode popups.
+
 ### Selected part's pin labels no longer overlap
 
 - **Only the pin you point at is big.** Selecting a part used to enlarge every

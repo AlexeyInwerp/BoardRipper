@@ -2477,6 +2477,7 @@ body {
   transition: opacity 0.1s;
 }
 
+.settings-slider-tooltip.is-visible,
 .settings-slider:active + .settings-slider-tooltip {
   opacity: 1;
 }
@@ -8992,3 +8993,24 @@ body {
 /* ── OBD download-all progress (Settings ▸ Library) ──────────────────────── */
 .obd-fetchall-bar { height: 4px; background: var(--bg-tertiary); border-radius: 2px; overflow: hidden; margin: 0 0 8px; }
 .obd-fetchall-fill { height: 100%; background: var(--accent); transition: width 0.3s; }
+
+/* ── RangeControl — the one slider (components/RangeControl.tsx) ─────────── */
+.rc { position: relative; height: 22px; width: 100%; touch-action: none; user-select: none; outline: none; cursor: pointer; }
+.rc-track { position: absolute; left: 0; right: 0; top: 9px; height: 4px; background: var(--border); border-radius: 2px; }
+.rc-fill { position: absolute; left: 0; top: 9px; height: 4px; background: var(--accent); border-radius: 2px; pointer-events: none; }
+.rc-thumb { position: absolute; top: 4px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background: var(--accent); border: 2px solid var(--accent); box-sizing: border-box; cursor: grab; }
+.rc-thumb:hover { background: var(--accent-hover, var(--accent)); border-color: var(--accent-hover, var(--accent)); }
+.rc-dragging .rc-thumb { cursor: grabbing; }
+.rc:focus-visible .rc-thumb { box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--accent); }
+/* on/off mode: filled thumb = on, hollow ring = off; a halo on hover says the thumb clicks */
+.rc-toggle .rc-thumb { cursor: pointer; }
+.rc-toggle .rc-thumb:hover { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 28%, transparent); }
+.rc-off .rc-fill { width: 0 !important; }
+.rc-off .rc-thumb { background: var(--bg-secondary); border-color: var(--text-secondary); }
+.rc-off .rc-thumb:hover { background: var(--bg-secondary); border-color: var(--accent); }
+.rc-off .rc-track { opacity: .7; }
+/* Settings rows: the name doubles as the switch; off mutes name and value */
+.settings-label-btn { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; text-align: left; display: flex; justify-content: space-between; width: 100%; border-radius: 3px; }
+.settings-label-btn:hover { text-decoration: underline; text-underline-offset: 2px; }
+.settings-label-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.settings-row-off .settings-label, .settings-row-off .settings-value { color: var(--text-secondary); }

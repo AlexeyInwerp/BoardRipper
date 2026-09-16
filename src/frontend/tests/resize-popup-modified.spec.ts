@@ -26,7 +26,7 @@ test('a changed handle is marked and can be put back', async ({ page }) => {
 
   // Move the first handle the way a stray drag would.
   const before = await page.evaluate(() => (window as any).__resizeModeStore.valueOf('pinSizeScale'));
-  const slider = popup.locator('input[type=range]').first();
+  const slider = popup.locator('.rc').first();
   const box = (await slider.boundingBox())!;
   await page.mouse.move(box.x + box.width * 0.5, box.y + box.height / 2);
   await page.mouse.down();

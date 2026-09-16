@@ -37,7 +37,7 @@ test('the resize popup survives using its handles with several boards open', asy
 
   // Dragging a slider handle edits the setting and keeps the popup open.
   const before = await firstValue();
-  const slider = popup.locator('input[type=range]').first();
+  const slider = popup.locator('.rc').first();
   const box = (await slider.boundingBox())!;
   await page.mouse.move(box.x + box.width * 0.5, box.y + box.height / 2);
   await page.mouse.down();
