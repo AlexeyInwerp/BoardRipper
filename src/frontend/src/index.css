@@ -144,7 +144,7 @@ body {
   height: var(--toolbar-height);
   background: var(--bg-tertiary);
   border-bottom: 1px solid var(--border);
-  padding: 0 8px;
+  padding: 0 8px 0 0;   /* no left padding: the corner cell starts at the window edge */
   gap: 6px;
   flex-shrink: 0;
 }
@@ -288,11 +288,23 @@ body {
    here puts this icon's centre exactly on the rail's icon column below. */
 .toolbar-btn.toolbar-railcell {
   width: 45px;
-  margin-left: -8px;
+  margin-left: 0;
   margin-right: 2px;
-  padding: 4px 0;
+  padding: 0;
   justify-content: center;
+  /* A full-height corner cell, darker than the bar, with the rail's own right
+     border running through it — the bar and the rail read as one corner. */
+  align-self: stretch;
+  min-height: 0;
+  height: 100%;
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--bg-tertiary) 72%, #000);
+  color: var(--text-secondary);
 }
+.toolbar-btn.toolbar-railcell:hover:not(:disabled) { background: color-mix(in srgb, var(--bg-tertiary) 55%, #000); color: var(--text-primary); }
+.toolbar-btn.toolbar-railcell.active { background: color-mix(in srgb, var(--bg-tertiary) 55%, #000); color: var(--text-primary); }
 
 /* Update badge: the version and the word swap places so an available update
    reads as a thing to do, not just a number. One grid cell, so the badge does
@@ -349,23 +361,28 @@ body {
 
 .toolbar-search {
   background: var(--bg-secondary);
-  border: 1px solid var(--border);
+  border: 0;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
   color: var(--text-primary);
-  padding: 4px 10px;
-  border-radius: 3px;
+  padding: 0 12px;
+  border-radius: 0;
   font-size: 0.9em;
   width: min(440px, 36vw);
-  height: 28px;
+  height: 100%;            /* the field spans the bar, top edge to bottom edge */
   box-sizing: border-box;
 }
 
 .toolbar-search:focus {
   outline: none;
   border-color: var(--accent);
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .toolbar-search-wrap {
   position: relative;
+  align-self: stretch;
+  display: flex;
 }
 
 .toolbar-search-dropdown {

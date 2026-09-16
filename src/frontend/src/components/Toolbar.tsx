@@ -584,7 +584,7 @@ export function Toolbar() {
         data-testid="open-btn"
         data-tooltip={isElectron() ? 'Open boards or PDFs' : 'Open boards or PDFs from your device'}
       >
-        <IconUpload size={15} stroke={1.75} />Open
+        <IconUpload size={16} stroke={1.75} />Open
       </button>
 
       {/* ── Search, centred ── */}
@@ -606,8 +606,8 @@ export function Toolbar() {
             : '2-window mode — detach PDF viewer into its own window'}
         >
           {twoWindow
-            ? <IconBoxMultiple size={15} stroke={1.75} />
-            : <IconLayoutBoardSplit size={15} stroke={1.75} />}
+            ? <IconBoxMultiple size={16} stroke={1.75} />
+            : <IconLayoutBoardSplit size={16} stroke={1.75} />}
           <span>2-Window</span>
         </button>
       )}

@@ -17,6 +17,10 @@
   plain click, so the switch that ends it sits where the clicks happen, not in
   Settings.
 
+- **The top bar is one row.** The sidebar button is a full-height, darker
+  corner cell that continues into the activity rail below it, the global search
+  spans the bar from top edge to bottom edge, and the bar's icons are one size.
+
 ### Selected part's pin labels no longer overlap
 
 - **Only the pin you point at is big.** Selecting a part used to enlarge every
