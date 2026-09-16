@@ -20,6 +20,7 @@ import { getFormat } from '../parsers';
 import { useRenderSettings } from '../hooks/useRenderSettings';
 import { renderSettingsStore } from '../store/render-settings';
 import type { SlotCtx } from '../components/overlay/slot-ctx';
+import { ResizeModeBanner } from '../components/ResizeModeBanner';
 import {
   registerBoardSearchHandler,
   registerBoardSidebarTabHandler,
@@ -283,6 +284,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
           <span className="board-loading-text">Loading board...</span>
         </div>
       )}
+      <ResizeModeBanner />
       <div className="board-sidebar-toggle-group">
         <button
           className={`board-sidebar-toggle ${sidebarOpen ? 'active' : ''}`}

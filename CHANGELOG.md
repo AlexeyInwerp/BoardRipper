@@ -12,6 +12,11 @@
   the size. Plain sliders look the same; only the on/off ones react to a click.
   Same control in Settings and in the Interactive-mode popups.
 
+- **Interactive mode shows its way out.** While it is on, a pill at the top
+  of the board says so and carries a *Done* button — the mode repurposes a
+  plain click, so the switch that ends it sits where the clicks happen, not in
+  Settings.
+
 ### Selected part's pin labels no longer overlap
 
 - **Only the pin you point at is big.** Selecting a part used to enlarge every
