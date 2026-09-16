@@ -31,6 +31,7 @@ Same codebase as the Docker build — `npm run build:lite` / `npm run build:offl
 - **Multi-board tabs** — open several boards at once, switch between them.
 - **Multi-layer support** — show/hide top, bottom, and inner layers independently. Butterfly mode shows top and bottom side by side.
 - **Net highlight** — click a pin and the whole net lights up across the board. Chain-adjacent mode walks through neighbouring nets too.
+- **Part comparison** — put one component's pinout next to the same chip on another open board, pin by pin. Where the net names differ, BoardRipper checks what each net actually touches and reads the naming conventions boards use — a pin marked unused, a rail written two ways — so a board that was only renamed does not read as a fault. Optionally marks the differing pins on the board itself.
 - **Touch input** — pinch-zoom, drag-pan, tap to select. Usable on a tablet at the bench.
 - **Customizable colors** — per-net rules by name pattern (e.g. `GND`, `VCC`, `PP*`), per-component-type fills (R / C / L / U / Q / D / J), per-layer colors, label / pin / outline tuning. Live preview before applying.
 - **Multi-line search** — each line is an extra AND-filter, useful when a component carries value and voltage on separate label lines (`20uF` ⨯ `10V` ⨯ `C12*`).

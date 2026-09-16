@@ -1,7 +1,8 @@
 # Part pin comparison — design
 
 **Date:** 2026-09-11
-**Status:** implemented (phase 1)
+**Status:** shipped — the tool in v0.40.0, the board highlight, hover line and
+refined name rules in v0.41.0
 **Scope:** compare one component's pinout across two open boards, pin by pin, with
 the differences called out.
 
@@ -192,11 +193,11 @@ For each aligned pair, the status is one of:
 | `same` | net names equal after normalisation | `=` neutral |
 | `renamed` | names differ, **neighbour sets identical** | `~` amber |
 | `similar` | names differ, Jaccard ≥ 0.6 | `~` amber + score |
-| `partial` | names differ, but one **contains** the other (or they differ only in punctuation) | `≈` amber |
-| `bulk` | both sides are ground/power-class nets | `≈` neutral |
+| `partial` | names differ, but the name rules below relate them | `≈` amber |
+| `bulk` | both sides are ground/power-class nets **of comparable size** | `≡` neutral |
 | `differs` | names and topology both differ | `≠` red |
 | `only-a` / `only-b` | pin exists on one side only | `◁` / `▷` red |
-| `nc` | both sides unconnected | `·` grey, not a difference |
+| `nc` | both sides unconnected, with nothing contradicting that they are the same thing | `·` grey, not a difference |
 
 Name normalisation: trim, uppercase; `''`, `NC` and `UNCONNECTED` all mean *no
 net* (the XZZ parser already folds the latter two to `''` —
@@ -359,6 +360,54 @@ is precisely what a tech is hunting for.
 * **`[Copy]`** — TSV of the visible rows to the clipboard, following
   `store/worklist-clipboard.ts`.
 
+### Highlight on board (v0.41.0)
+
+A toggle in the controls row, **off by default** — it is a second persistent
+highlight competing with the selection, so it appears only when asked for.
+While on, the compared part carries a standing outline and every pin that is
+not a plain match is marked: red for `differs` / `only-a` / `only-b`, amber for
+`renamed` / `similar` / `partial`. `same`, `bulk` and `nc` are deliberately
+**unmarked** — on a 400-pin BGA where 390 agree, painting those buries the ten
+that matter, and the outline already says which part is under comparison.
+
+Drawn by `BoardRenderer.drawCompareHighlight` into the **existing**
+`multiHighlightGfx` — the layer the cyan multi-select and worklist marks use.
+Same kind of persistent, store-driven overlay, already in
+`invalidateAllScenes`'s detach list; a new Graphics is precisely the bug shape
+that took out the halo sprite and `butterflyDimGfx`. Pin marks reuse the
+net-highlight's shape resolution (`drawPadShape` / `drawPinShape`, the
+`showPads` gate, the per-part `pinRadiusClamp`) so a mark traces the pin as
+drawn, and are grouped one `stroke()` per colour because a Graphics flushes its
+path on every stroke.
+
+`comparePart` moved behind `partCompareStore.result`, memoised on both sides,
+the mode **and board identity** (a reload or `deriveBoardView` yields a fresh
+`BoardData`). The renderer needs the same answer the panel shows, and computing
+it in two places would let them drift. `highlightFor(tabId)` resolves which
+side a tab is, so the renderer never has to know.
+
+Like the cyan multi-select, it has **no butterfly top/bottom split**.
+
+### The hover line (v0.41.0)
+
+A red pin that does not say what it differs *to* only raises a question. While
+the highlight is on, hovering any pin of the compared part adds a line naming
+the other board and its net — `↔ 820-01598: PPBUS_G3H — renamed, same
+connections` — coloured by the same three-way split as the marks. It reads the
+identical `highlightFor` projection the overlay draws from, so the colour under
+the cursor and the words in the tooltip cannot disagree. Gated on the same
+toggle, so the tooltip is untouched for anyone not comparing.
+
+It shows on **every** pin of the compared part, matching ones included (`same
+net`): silence on a matching pin would be ambiguous with "not part of the
+comparison".
+
+The trailing note is added only where the two names and the colour do not
+already say why — "unused on one board", "same `PP3V8_AON` prefix", "renamed,
+same connections". Not for `differs` (the mark is red and the net is named),
+nor for containment or punctuation-only matches, which the two strings show
+side by side.
+
 ### Right-click entry
 
 A new `Compare pins` group in `ContextMenu.renderBoardBody`, below the existing
@@ -398,7 +447,10 @@ following `Sidebar.utils.ts`'s pattern of state-outside-the-component. Then
 | `src/frontend/src/store/board-store.ts` | `selectPinInTab()` — additive; `_resolveAdjacentNets` split into a tab-scoped `_adjacentNetsFor` |
 | `src/frontend/src/panels/tools/part-compare-open.ts` | **new** — the one deep link (store + tool nav + sidebar tab) |
 | `src/frontend/src/index.css` | `.part-compare-*` |
+| `src/frontend/src/renderer/BoardRenderer.ts` | `drawCompareHighlight`, the `.pnt-compare` tooltip line, `formatCompareForPin` |
+| `src/frontend/src/store/part-compare-store.test.ts` | **new** — vitest for the projection and the off-by-default contract |
 | `src/frontend/tests/part-compare.spec.ts` | **new** — Playwright |
+| `src/frontend/tests/compare-highlight.spec.ts` | **new** — Playwright for the toggle, the marks and the hover line |
 
 Nothing existing changes behaviour: the board store gains one method, the tools
 panel's local state moves out unchanged, the context menu gains one group.
@@ -425,7 +477,12 @@ tab-scoped `_adjacentNetsFor`, with the active-tab form delegating to it.
 * Bulk rule: a 3000-member GND never builds a fingerprint; two rails of similar
   size → `bulk`.
 * `nc` handling for `''`, `NC`, `UNCONNECTED`.
-* Diode delta threshold at the 50 mV / 15 % boundary.
+* Diode delta threshold at the 50 mV / 10 % boundary.
+* The **M1 PMU corpus**: every pair from a real 820-02016 vs 820-02020
+  comparison, as a table of expected relations — the list that drove the state
+  markers, no-connect and rail-prefix rules, kept as their specification.
+* Sibling nets that must never fold: `SMC_RST_L` / `SMC_RST_R`,
+  `PP1V8_S0_A` / `PP1V8_S0_B`, `MPMU_GPIO6` / `MPMU_GPIO10`.
 
 **E2E (`part-compare.spec.ts`)**:
 
@@ -443,6 +500,14 @@ tab-scoped `_adjacentNetsFor`, with the active-tab form delegating to it.
 4. **Right-click path** — the menu group appears, click opens Tools ▸ Part
    comparison with both sides filled.
 
+**E2E (`compare-highlight.spec.ts`)** — off by default, then both kinds of mark
+on a fixture with exactly one rewired pad and one renamed net; the hover line
+naming the other board's net; the line absent while the toggle is off. Mark
+counts come through a DEV-only renderer probe, which is as close as a test gets
+to "the right pins are red" without pixel comparison — the colours themselves
+are checked by eye. Both this spec and `shift-drag-worklist.spec.ts` skip
+against a production bundle, where the DEV globals they drive do not exist.
+
 Fixtures are generated in the test from one checked-in sample by a named edit,
 so the expected answer is a property of the edit rather than a number someone
 once observed. Subject: `SW2`, a 4-pad captouch footprint on `/TOUCH_1../TOUCH_4`.
@@ -451,9 +516,15 @@ once observed. Subject: `SW2`, a 4-pad captouch footprint on `/TOUCH_1../TOUCH_4
 
 ## 8. Phasing
 
-* **Phase 1** — kernel + tool + pickers + right-click entry + tests. Everything
-  above.
-* **Phase 2** (not now, listed so phase 1 doesn't paint itself into a corner):
+* **Phase 1** (v0.40.0) — kernel + tool + pickers + right-click entry + tests.
+* **Phase 1.5** (v0.41.0) — the opt-in board highlight, the hover line, and the
+  name rules refined against a real cross-model pair. Two bugs surfaced only
+  once real data was run through it: the prefix rule was unreachable for rails,
+  because the bulk branch returned `differs` before the names were consulted;
+  and two differently-named no-connects were being called "no difference",
+  which the names do not support.
+* **Phase 2** (not now, listed so the earlier phases don't paint themselves
+  into a corner):
   compare against a board that is *not* open (load from the Library on demand);
   a whole-board part diff ("which components does A have that B doesn't");
   an MCP tool `compare_part` over the same kernel — trivial once the kernel is
@@ -473,7 +544,21 @@ once observed. Subject: `SW2`, a 4-pad captouch footprint on `/TOUCH_1../TOUCH_4
   neighbour sets would read as a rename. On a real board that means the two nets
   touch exactly the same components, which is itself worth seeing; the row still
   prints both names.
-* **Cross-family comparison** (different board models) will legitimately produce
-  many `differs` rows. That is the answer, not a failure — but the summary must
-  not imply otherwise, hence the explicit alignment score and package-size
-  warning.
+* **Cross-family comparison** (different board models) is the case topology
+  cannot help with: refdes differ by design, so neighbour sets almost never
+  match and the name rules carry nearly the whole load. That is why those rules
+  were tuned against a real cross-model pair rather than invented.
+* **The rail-prefix rule is a claim about prefixes, not about nets.**
+  `PP3V8_AON_VDDMAIN` and `PP3V8_AON_MPMU_ISNS_VIN` may be opposite ends of a
+  sense resistor. It is reported as "same `PP3V8_AON` prefix" and coloured
+  amber for exactly that reason; it must never be worded as "the same net".
+* **The marker list is fixed, not configurable.** `NC` / `RSVD` / `TPT` / `TP` /
+  `DNU` / `NU` / `RESERVED` cover the Apple corpus; another vendor's convention
+  would need the list extended, and a board that uses `NC_` to mean something
+  else would be read wrongly.
+* **Repeated identical pairs are repeated rows.** One rail against one rail
+  filled ~50 rows of a real comparison with the same two names. Collapsing
+  identical pairs into a single row with a pin count would cut that list to
+  about twenty — not done, and the obvious next improvement to the table.
+* **No butterfly top/bottom split** in the board highlight, matching the cyan
+  multi-select it is drawn alongside.
