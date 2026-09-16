@@ -2477,6 +2477,7 @@ body {
   transition: opacity 0.1s;
 }
 
+.settings-slider-wrap:hover .settings-slider-tooltip,
 .settings-slider-tooltip.is-visible,
 .settings-slider:active + .settings-slider-tooltip {
   opacity: 1;
@@ -9011,6 +9012,223 @@ body {
 .rc-off .rc-track { opacity: .7; }
 /* Settings rows: the name doubles as the switch; off mutes name and value */
 .settings-label-btn { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; text-align: left; display: flex; justify-content: space-between; width: 100%; border-radius: 3px; }
-.settings-label-btn:hover { text-decoration: underline; text-underline-offset: 2px; }
+.settings-label-btn:hover { color: var(--accent-text, var(--accent)); }
 .settings-label-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .settings-row-off .settings-label, .settings-row-off .settings-value { color: var(--text-secondary); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   WORKLIST PANEL
+   Was 73 inline style objects written against variable names that do not
+   exist here (--panel-bg, --text, --muted, --input-bg …), so the panel ran on
+   its hardcoded dark fallbacks and never followed a theme. These are the same
+   measurements, in the app's own tokens.
+   The ROW is deliberately unchanged in shape: mark, condition flag, refdes,
+   note peek, remove — every control kept, in that order.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.wl-root { display: flex; flex-direction: column; height: 100%; min-height: 0; font-size: 13px; }
+.wl-empty { padding: 18px 14px; color: var(--text-secondary); font-size: 12px; text-align: center; }
+
+/* Cyan selection band — reports a canvas state, not worklist contents.
+   Untouched by the redesign; it gets its own review. */
+.wl-band { padding: 8px 10px; border-bottom: 1px solid var(--border); flex: none; }
+.wl-band-head { display: flex; align-items: center; gap: 6px; }
+.wl-band-sub { font-size: 11px; color: var(--text-secondary); margin-top: 4px; }
+.wl-pill { background: var(--accent); color: var(--accent-fg); border-radius: 9px; padding: 0 6px; font-size: 11px; }
+
+/* ── Worklist finder: the line that names the open worklist, and becomes a
+      search when you click it. Replaces a wrapping row of pills that took two
+      lines at three tickets and four at ten. ─────────────────────────────── */
+.wl-find {
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 8px 5px 10px; border-bottom: 1px solid var(--border);
+  flex: none; color: var(--text-secondary); font-size: 12px;
+  background: none; border-left: none; border-right: none; border-top: none;
+  width: 100%; text-align: left; font-family: inherit; cursor: pointer;
+}
+.wl-find:hover { background: var(--surface-hover); }
+.wl-find .cur { color: var(--text-primary); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-find .n { font-family: ui-monospace, monospace; font-size: 11px; font-variant-numeric: tabular-nums; }
+.wl-find .more { margin-left: auto; opacity: 0.6; flex: none; }
+.wl-find-open { display: flex; align-items: center; gap: 7px; padding: 4px 8px 4px 10px; border-bottom: 1px solid var(--border); flex: none; color: var(--text-secondary); }
+.wl-find-input {
+  flex: 1; min-width: 0; background: transparent; border: none; outline: none;
+  color: var(--text-primary); font: inherit; font-size: 12.5px; padding: 2px 0;
+}
+.wl-find-input::placeholder { color: var(--text-secondary); opacity: 0.85; }
+
+.wl-results { flex: none; max-height: 210px; overflow-y: auto; border-bottom: 1px solid var(--border); }
+.wl-hit {
+  display: flex; align-items: baseline; gap: 7px; width: 100%;
+  padding: 5px 10px; background: none; border: none; text-align: left;
+  color: var(--text-primary); font: inherit; font-size: 12.5px; cursor: pointer;
+}
+.wl-hit:hover, .wl-hit.on { background: var(--surface-hover); }
+.wl-hit.cur { box-shadow: inset 2px 0 0 var(--accent); }
+.wl-hit .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-hit .nm mark { background: transparent; color: var(--accent); font-weight: 600; }
+.wl-hit .bd, .wl-hit .n {
+  flex: none; font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--text-secondary);
+}
+.wl-hit .bd { max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-nohit { padding: 8px 10px; color: var(--text-secondary); font-size: 12px; }
+
+.wl-acts { flex: none; padding: 3px; border-bottom: 1px solid var(--border); }
+.wl-act {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  padding: 4px 8px; border-radius: 3px; background: none; border: none;
+  color: var(--text-primary); font: inherit; font-size: 12px; text-align: left; cursor: pointer;
+}
+.wl-act:hover { background: var(--surface-hover); }
+.wl-act.link { color: var(--accent); }
+
+/* ── Header: name, Highlight (a feature, so it keeps its word), ⋯ ───────── */
+.wl-head { display: flex; align-items: center; gap: 5px; padding: 6px 8px 6px 10px; border-bottom: 1px solid var(--border); flex: none; }
+.wl-name {
+  flex: 1; min-width: 0; font-weight: 600; font-size: 13px; padding: 2px 4px; border-radius: 3px;
+  background: none; border: none; color: var(--text-primary); font-family: inherit;
+  text-align: left; cursor: text; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wl-name:hover { background: var(--surface-hover); }
+.wl-rename {
+  flex: 1; min-width: 0; font-weight: 600; font-size: 13px; padding: 2px 4px;
+  background: var(--bg-primary); border: 1px solid var(--accent); border-radius: 3px;
+  color: var(--text-primary); font-family: inherit; outline: none;
+}
+.wl-hl {
+  height: 24px; flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px;
+  border: 1px solid var(--border); border-radius: 5px; background: transparent;
+  color: var(--text-secondary); font: inherit; font-size: 12px; cursor: pointer;
+}
+.wl-hl:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
+.wl-hl.on { background: var(--surface-active); color: var(--accent); border-color: var(--accent); }
+.wl-hl:disabled { opacity: 0.4; cursor: not-allowed; }
+.wl-icon-btn {
+  width: 26px; height: 24px; flex: none; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; border-radius: 5px; background: transparent;
+  color: var(--text-secondary); cursor: pointer; padding: 0;
+}
+.wl-icon-btn:hover { background: var(--surface-hover); color: var(--text-primary); }
+.wl-icon-btn.on { background: var(--surface-active); color: var(--accent); border-color: var(--accent); }
+
+/* Confirm strip — replaces window.confirm for wipe and delete, so the
+   question is asked where the thing being destroyed is. */
+.wl-confirm { display: flex; align-items: center; gap: 7px; padding: 6px 10px; border-bottom: 1px solid var(--border); flex: none; font-size: 12px; background: color-mix(in srgb, var(--danger, #ff5566) 10%, transparent); }
+.wl-confirm .q { flex: 1; min-width: 0; }
+.wl-confirm button { font: inherit; font-size: 12px; padding: 2px 9px; border-radius: 4px; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text-primary); }
+.wl-confirm button.go { border-color: #ff5566; color: #ff5566; }
+.wl-confirm button.go:hover { background: rgba(255,85,102,0.14); }
+
+/* ── Ticket note ────────────────────────────────────────────────────────── */
+.wl-ticket { border-bottom: 1px solid var(--border); flex: none; }
+.wl-ticket-toggle {
+  display: flex; align-items: center; gap: 5px; width: 100%;
+  padding: 5px 10px; background: none; border: none; color: var(--text-secondary);
+  font: inherit; font-size: 12px; text-align: left; cursor: pointer;
+}
+.wl-ticket-toggle:hover { background: var(--surface-hover); }
+.wl-ticket-toggle b { color: var(--text-primary); font-weight: 600; }
+.wl-ticket-peek { opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.wl-ticket-area {
+  display: block; width: calc(100% - 20px); margin: 0 10px 8px; min-height: 70px; resize: vertical;
+  background: var(--bg-primary); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text-primary); font: inherit; font-size: 12px; padding: 5px 6px;
+}
+
+/* ── List + rows ────────────────────────────────────────────────────────── */
+.wl-list { flex: 1; overflow-y: auto; min-height: 0; }
+.wl-sec { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-secondary); padding: 8px 10px 3px; }
+
+.wl-row { border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent); }
+.wl-row.unresolved { opacity: 0.45; }
+.wl-row.sel { background: var(--surface-hover); box-shadow: inset 2px 0 0 var(--accent); }
+.wl-row-main { display: flex; align-items: center; gap: 6px; padding: 5px 9px 5px 10px; cursor: pointer; }
+.wl-row-main:hover { background: rgba(255,255,255,0.03); }
+.wl-mark {
+  width: 22px; height: 21px; flex: none; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); border-radius: 4px; background: transparent; cursor: pointer; padding: 0;
+}
+.wl-mark .none { opacity: 0.4; }
+.wl-flag {
+  width: 21px; height: 21px; flex: none; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; border-radius: 4px; background: transparent;
+  color: var(--text-primary); cursor: pointer; padding: 0; opacity: 0.34;
+}
+.wl-flag:hover { opacity: 0.8; background: var(--surface-hover); }
+.wl-flag.on { opacity: 1; }
+.wl-ref { flex: 1; min-width: 0; font-family: ui-monospace, monospace; font-weight: 600; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-ref .missing { margin-left: 6px; opacity: 0.7; font-size: 11px; font-family: var(--font-ui, inherit); }
+.wl-note-btn {
+  display: inline-flex; align-items: center; gap: 4px; flex: none; max-width: 120px;
+  background: none; border: none; padding: 0; color: var(--text-secondary); cursor: pointer;
+}
+.wl-note-btn:hover { color: var(--text-primary); }
+.wl-note-peek { font-size: 11.5px; opacity: 0.8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-x { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; background: none; border: none; color: var(--text-secondary); opacity: 0.45; cursor: pointer; border-radius: 3px; }
+.wl-row-main:hover .wl-x { opacity: 0.85; }
+.wl-x:hover { background: var(--surface-hover); color: var(--text-primary); opacity: 1; }
+.wl-note-area {
+  display: block; width: calc(100% - 47px); margin: 0 10px 7px 37px; min-height: 50px; resize: vertical;
+  background: var(--bg-primary); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text-primary); font: inherit; font-size: 12px; padding: 5px 6px;
+}
+
+/* Readings. A net shows the values it holds; the empty slots belong to the
+   selected row only, which is where you are about to measure something. */
+.wl-vals { display: flex; gap: 5px; padding: 0 10px 5px 37px; flex-wrap: wrap; }
+.wl-val {
+  display: inline-flex; align-items: center; gap: 4px; padding: 0 5px;
+  border: 1px solid var(--border); border-radius: 3px; background: var(--bg-primary);
+  font-family: ui-monospace, monospace; font-size: 11px; font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.wl-val .k { color: var(--text-secondary); font-size: 10px; display: inline-flex; align-items: center; }
+.wl-val.asked { border-color: var(--accent); color: var(--accent); }
+.wl-val.asked .k { color: var(--accent); }
+.wl-meas { display: flex; gap: 5px; padding: 1px 10px 6px 37px; flex-wrap: wrap; align-items: center; }
+.wl-slot { display: inline-flex; align-items: center; gap: 3px; }
+.wl-chip {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 17px; padding: 0 3px;
+  border: 1px solid var(--border); border-radius: 3px; font-size: 10px;
+  color: var(--text-secondary); font-family: ui-monospace, monospace;
+}
+.wl-in {
+  width: 48px; padding: 1px 4px; background: var(--bg-primary);
+  border: 1px solid var(--border); border-radius: 3px; color: var(--text-primary);
+  font-family: ui-monospace, monospace; font-size: 11px; font-variant-numeric: tabular-nums;
+}
+.wl-in.req { border-color: var(--accent); }
+.wl-in::placeholder { color: var(--text-secondary); opacity: 0.5; }
+
+/* Mark flash: portalled to <body> so the sidebar's overflow:auto cannot clip it. */
+.wl-flash {
+  position: fixed; z-index: 10000; transform: translateX(-50%);
+  padding: 2px 7px; border-radius: 3px; font-size: 11px; font-weight: 600;
+  pointer-events: none; white-space: nowrap;
+}
+
+/* ── AI relay ───────────────────────────────────────────────────────────── */
+.wl-ai { flex: none; border-top: 1px solid var(--border); padding: 6px 8px; background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.wl-ai-head { display: flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: var(--accent); margin-bottom: 5px; }
+.wl-ai-log { max-height: 160px; overflow-y: auto; font-size: 11px; margin-bottom: 4px; padding: 2px 0; }
+.wl-ai-msg { margin-bottom: 3px; }
+.wl-ai-who { font-weight: 600; font-size: 10px; }
+.wl-ai-who.agent { color: var(--accent); }
+.wl-ai-who.user { color: var(--text-secondary); }
+.wl-ai-row { display: flex; gap: 4px; margin-top: 6px; }
+.wl-ai-in { flex: 1; min-width: 0; font-size: 11px; padding: 4px 6px; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary); }
+.wl-ai-send { font-size: 11px; padding: 4px 10px; border-radius: 4px; border: 1px solid var(--border); background: var(--surface-hover); color: var(--accent); cursor: pointer; }
+.wl-ai-send:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Worklists catalog (Tools ▸ Workbench ▸ Worklists) ──────────────────── */
+.wlcat-row {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 7px 10px; background: none; border: none; border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+  color: var(--text-primary); font: inherit; text-align: left; cursor: pointer;
+}
+.wlcat-row:hover { background: var(--surface-hover); }
+.wlcat-row.cur { box-shadow: inset 2px 0 0 var(--accent); }
+.wlcat-body { flex: 1; min-width: 0; }
+.wlcat-name { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wlcat-meta { font-size: 11px; color: var(--text-secondary); font-family: ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wlcat-bar { width: 30px; height: 3px; flex: none; border-radius: 2px; background: color-mix(in srgb, var(--text-secondary) 25%, transparent); overflow: hidden; }
+.wlcat-bar i { display: block; height: 100%; background: #33cc88; }

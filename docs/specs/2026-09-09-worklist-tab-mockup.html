@@ -200,253 +200,183 @@ figure { margin: 0; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 @media (max-width: 720px) { main { padding: 26px 14px 60px; } .rail { gap: 18px; } }
+
+/* ── added for the final pass ──────────────────────────────────────────── */
+/* A selected row: the one you are working on. Accent edge, not a fill, so the
+   mark colours stay the loudest thing in the list. */
+.r.sel { background: rgba(74,158,255,0.07); box-shadow: inset 2px 0 0 var(--accent); }
+
+/* Readings a net actually holds: chips, only the ones with a value. */
+.r-vals { display: flex; gap: 5px; padding: 0 10px 5px 37px; flex-wrap: wrap; }
+.r-val {
+  display: inline-flex; align-items: center; gap: 4px;
+  border: 1px solid var(--border); border-radius: 3px; padding: 0 5px;
+  background: #0b0b14; font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+  font-variant-numeric: tabular-nums; color: var(--text-primary);
+}
+.r-val .k { color: var(--text-secondary); font-size: 10px; }
+.r-val.asked { border-color: var(--accent); color: var(--accent); }
+.r-val.asked .k { color: var(--accent); }
+
+/* The three-slot editor, shown only while the row is selected. */
+.r-edit { display: flex; gap: 5px; padding: 1px 10px 6px 37px; align-items: center; }
+.r-edit .hint { font-size: 10px; color: var(--text-secondary); opacity: 0.7; margin-left: 2px; }
+
+/* Worklist line as a search field. */
+.w-find { display: flex; align-items: center; gap: 7px; padding: 5px 8px 5px 10px; border-bottom: 1px solid var(--border); flex: none; }
+.w-find input {
+  flex: 1; min-width: 0; background: transparent; border: none; outline: none;
+  color: var(--text-primary); font: inherit; font-size: 12.5px; padding: 0;
+}
+.w-find input::placeholder { color: var(--text-secondary); opacity: 0.8; }
+.w-find .caret { width: 1px; height: 14px; background: var(--accent); animation: wl-caret 1.1s steps(1) infinite; }
+@keyframes wl-caret { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .w-find .caret { animation: none; } }
+
+/* Results under the search line. */
+.w-res { border-bottom: 1px solid var(--border); }
+.w-hit { display: flex; align-items: baseline; gap: 7px; padding: 5px 10px; cursor: pointer; }
+.w-hit:hover, .w-hit.on { background: var(--surface-hover); }
+.w-hit .nm { font-size: 12.5px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w-hit .nm mark { background: transparent; color: var(--accent); font-weight: 600; }
+.w-hit .bd { font-size: 10.5px; color: var(--text-secondary); font-family: 'IBM Plex Mono', monospace; }
+.w-hit .n { font-size: 10.5px; color: var(--text-secondary); font-family: 'IBM Plex Mono', monospace; flex: none; }
+.w-acts { padding: 3px; }
+.w-act { display: flex; align-items: center; gap: 7px; padding: 4px 8px; border-radius: 3px; font-size: 12px; color: var(--text-primary); cursor: pointer; }
+.w-act:hover { background: var(--surface-hover); }
+.w-act.link { color: var(--accent); }
+
+.two-up { display: flex; gap: 26px; flex-wrap: wrap; align-items: flex-start; }
+.two-up figcaption { font-size: 12.5px; color: var(--page-muted); margin-top: 8px; max-width: 300px; }
+.state-tag {
+  display: inline-block; font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--page-muted); margin-bottom: 6px;
+}
+.changed { border-left: 3px solid var(--page-keep); background: var(--page-panel); border-radius: 0 5px 5px 0; padding: 12px 16px; margin: 0 0 20px; }
+.changed p:last-child { margin-bottom: 0; }
 </style></head><body><main>
 
-<h1>Worklist, without touching the parts that work</h1>
-<p class="lede">The row is not the problem. Managing worklists is, and so is the chrome around them: this is the last panel still built from inline styles, browser prompts and text buttons. One switcher line fixes the panel, and the catalog that already exists becomes the place where all worklists live.</p>
-<p class="stamp">2026-09-09 · settled: switcher line, with the catalog as its index · specimens use the real tokens from index.css</p>
+<h1>Worklist, final check</h1>
+<p class="lede">Two changes since the last pass: readings only appear when there is a reading, and the worklist line becomes a search. Everything else is as agreed, and the row itself is still untouched.</p>
+<p class="stamp">2026-09-16 · final check before building · specimens use the real tokens from index.css</p>
 
 <section>
-  <h2>The row stays exactly as it is</h2>
-  <p>Every control here does a job on the bench. The design below keeps all of them, in this order, with these colours.</p>
-  <div class="anat-wrap">
-    <div class="app anat">
-      <div class="r"><div class="r-main">
-        <button class="r-mark replaced"><svg class="ico s13" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 5v4h4"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4"/></svg></button>
-        <button class="r-flag on water"><svg class="ico s13" viewBox="0 0 24 24"><path d="M7.5 12.5a4.5 4.5 0 1 0 9 0c0-3-4.5-8.5-4.5-8.5s-4.5 5.5-4.5 8.5"/></svg></button>
-        <span class="r-ref">U5000</span>
-        <span class="r-note"><svg class="ico s12" viewBox="0 0 24 24"><path d="M9 6l6 6l-6 6"/></svg><span class="peek">got hot, don…</span></span>
-        <span class="r-x"><svg class="ico s12" viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6"/></svg></span>
-      </div></div>
-      <div class="r">
-        <div class="r-main">
-          <button class="r-mark"><span class="dot">●</span></button>
-          <button class="r-flag surge"><svg class="ico s13" viewBox="0 0 24 24"><path d="M13 3l-9 12h7l-1 6l9-12h-7z"/></svg></button>
-          <span class="r-ref">PP3V3_S5</span>
-          <span class="r-note"><svg class="ico s12" viewBox="0 0 24 24"><path d="M9 6l6 6l-6 6"/></svg></span>
-          <span class="r-x"><svg class="ico s12" viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6"/></svg></span>
-        </div>
-        <div class="r-meas">
-          <span class="r-slot"><span class="r-chip">V</span><input class="r-in" value="" placeholder="—" readonly></span>
-          <span class="r-slot"><span class="r-chip">⌁</span><input class="r-in req" value="0.000" readonly></span>
-          <span class="r-slot"><span class="r-chip">Ω</span><input class="r-in" value="" placeholder="—" readonly></span>
-        </div>
-      </div>
-    </div>
-    <ol class="callouts">
-      <li><b>Mark, cycled by clicking.</b> <span class="why">Amber unchecked, red replaced, orange reworked, green cleaned. The same four colours the board draws.</span></li>
-      <li><b>Condition flag, always there to press.</b> <span class="why">Water damage on parts, surge on nets. Dim when clear, lit in its own colour when set. This is a control, not a badge, so it does not get hidden when empty.</span></li>
-      <li><b>Reference designator, monospace.</b> <span class="why">Clicking the row still focuses the part or net on the board.</span></li>
-      <li><b>Note, with its first characters peeking.</b> <span class="why">Opens a text area under the row, saved when you click out.</span></li>
-      <li><b>Remove.</b> <span class="why">A real icon instead of a typed ✕, otherwise unchanged.</span></li>
-      <li><b>Three readings per net, side by side.</b> <span class="why">Volts, diode, ohms, all three able to hold a value at once, with the agent's request still marked in the accent colour.</span></li>
-    </ol>
+  <h2>Change one · readings appear when there is something to show</h2>
+  <div class="changed">
+    <p>The three slots no longer render on every net. A net shows only the readings it holds, as values rather than boxes, and the empty slots appear under the row you have selected — where you are about to measure something anyway.</p>
   </div>
-  <ul class="keeps" style="margin-top:22px">
-    <li><b>The ticket note keeps its fold and its peek.</b> <span class="why">Only its arrow becomes an icon.</span></li>
-    <li><b>Scroll position per worklist stays.</b> <span class="why">Including across a remount.</span></li>
-    <li><b>Marks keep cycling forwards and backwards</b> <span class="why">with the flash chip that names the mark you landed on.</span></li>
-    <li><b>The cyan selection band stays where it is.</b> <span class="why">Not touched here at all. Worth its own look later, on its own terms.</span></li>
-  </ul>
+  <div class="two-up">
+    <figure>
+      <span class="state-tag">Nothing measured</span>
+      <div class="app" style="height:auto">
+        <div class="r"><div class="r-main"><button class="r-mark none"><span class="dot">●</span></button><button class="r-flag surge"><svg class="ico s13" viewBox="0 0 24 24"><path d="M13 3l-9 12h7l-1 6l9-12h-7z"/></svg></button><span class="r-ref">PPBUS_G3H</span><span class="r-note"><svg class="ico s12" viewBox="0 0 24 24"><path d="M9 6l6 6l-6 6"/></svg><span class="peek">present at Q7000</span></span><span class="r-x"><svg class="ico s12" viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6"/></svg></span></div></div>
+      </div>
+      <figcaption>One line. This is the common case on a fresh worklist, and it used to cost two lines and three empty boxes.</figcaption>
+    </figure>
+    <figure>
+      <span class="state-tag">Has readings</span>
+      <div class="app" style="height:auto">
+        <div class="r"><div class="r-main"><button class="r-mark replaced"><svg class="ico s13" viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6"/></svg></button><button class="r-flag surge on"><svg class="ico s13" viewBox="0 0 24 24"><path d="M13 3l-9 12h7l-1 6l9-12h-7z"/></svg></button><span class="r-ref">PP3V3_S5</span><span class="r-note"><svg class="ico s12" viewBox="0 0 24 24"><path d="M9 6l6 6l-6 6"/></svg><span class="peek">short to ground</span></span><span class="r-x"><svg class="ico s12" viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6"/></svg></span></div><div class="r-vals"><span class="r-val asked"><span class="k">⌁</span>0.000</span><span class="r-val"><span class="k">Ω</span>0.4</span></div></div>
+      </div>
+      <figcaption>Only what was measured, as values. The accent still marks the one the agent asked for. Volts is absent because nobody measured volts.</figcaption>
+    </figure>
+    <figure>
+      <span class="state-tag">Selected</span>
+      <div class="app" style="height:auto">
+        <div class="r sel"><div class="r-main"><button class="r-mark replaced"><svg class="ico s13" viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6"/></svg></button><button class="r-flag surge on"><svg class="ico s13" viewBox="0 0 24 24"><path d="M13 3l-9 12h7l-1 6l9-12h-7z"/></svg></button><span class="r-ref">PP3V3_S5</span><span class="r-note"><svg class="ico s12" viewBox="0 0 24 24"><path d="M9 6l6 6l-6 6"/></svg><span class="peek">short to ground</span></span><span class="r-x"><svg class="ico s12" viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6"/></svg></span></div><div class="r-edit"><span class="r-slot"><span class="r-chip">V</span><input class="r-in" value="" placeholder="—" readonly></span><span class="r-slot"><span class="r-chip">⌁</span><input class="r-in req" value="0.000" placeholder="—" readonly></span><span class="r-slot"><span class="r-chip">Ω</span><input class="r-in" value="0.4" placeholder="—" readonly></span><span class="hint">record</span></div></div>
+      </div>
+      <figcaption>The row you are on opens all three slots, each carrying whatever it already holds, so recording a missing one is a click and a number. Click away and it folds back to the values alone.</figcaption>
+    </figure>
+  </div>
+  <p style="margin-top:18px">Parts are unaffected: they never had readings. A net with nothing measured is now exactly as tall as a part, so a mixed list reads as one list.</p>
 </section>
 
 <section>
-  <h2>What is actually inconsistent</h2>
-  <ol class="findings">
-    <li><b>It cannot follow a theme.</b> <span class="why">The panel is styled entirely inline, against variable names that do not exist in the stylesheet, so it runs on hardcoded dark values while every other panel recolours.</span></li>
-    <li><b>Creating a worklist opens a browser prompt.</b> <span class="why">Wiping and deleting open browser confirms. Renaming, on the other hand, is already inline and is the model the other two should follow.</span></li>
-    <li><b>The switcher is a wrapping row of pills</b> <span class="why">with New and Import mixed into the same row. Three tickets take two lines, and a busy bench takes four.</span></li>
-    <li><b>Copy, Wipe and a red cross are text buttons</b> <span class="why">in a 300 pixel header, where the app now uses quiet icon buttons and a menu. Highlight is a different case: it is a feature and should read like one.</span></li>
-    <li><b>Typed glyphs where the app uses icons.</b> <span class="why">A literal ✕ for remove and delete, ▸ ▾ for the two folds.</span></li>
-    <li><b>The Worklists catalog cannot open anything.</b> <span class="why">It lists every worklist on the device as plain text.</span></li>
-  </ol>
-</section>
-
-<section>
-  <h2>The panel: one switcher line</h2>
-  <p style="margin-bottom:18px">The wrapping pill block becomes a single line naming the open worklist. Clicking it drops down the rest, with New, Paste and a way through to the full catalog at the foot. Nothing wraps, however many tickets a board collects.</p>
+  <h2>Change two · the worklist line is a search</h2>
+  <div class="changed">
+    <p>Clicking the line puts a cursor in it. Before you type it lists the worklists you touched most recently; type and it searches, across boards as well as this one. The menu items stay at the foot, where they were fine.</p>
+  </div>
   <div class="rail">
 
-    <!-- TODAY -->
     <div class="slab">
-      <div class="slab-head"><span class="tag">Today</span><h3>As it ships</h3><p>Reproduced from the panel's inline styles.</p></div>
-      <div class="app tall">
-        <div class="t-band">
-          <div style="display:flex;align-items:center;gap:6px"><span style="font-weight:600">Cyan selection</span><span class="t-pill">3</span><button class="t-btn" style="margin-left:auto">Clear</button></div>
-          <div style="font-size:11px;opacity:.6;margin-top:4px">Loaded by multi-select on the canvas. Visual only — has no effect on the worklist contents.</div>
-        </div>
-        <div class="t-tabs">
-          <button class="t-tab active">No power <span style="opacity:.55">6</span></button>
-          <button class="t-tab">Backlight <span style="opacity:.55">2</span></button>
-          <button class="t-tab">USB-C <span style="opacity:.55">4</span></button>
-          <button class="t-tab">+</button><button class="t-tab">Import</button>
-          <span class="numtag" style="background:#b4232f">3</span>
-        </div>
-        <div class="t-head">
-          <span style="font-weight:600;flex:1;min-width:0">No power — 820-01598</span>
-          <button class="t-btn">Highlight</button><button class="t-btn">Copy</button><button class="t-btn">Wipe</button><button class="t-btn danger">✕</button>
-          <span class="numtag" style="background:#b4232f">4</span>
-        </div>
-        <div class="w-ticket">▸ <b>Ticket note</b> <span class="peek">dead on arrival, no PPBUS…</span></div>
-        <div class="scroll">
-          <div class="r"><div class="r-main"><button class="r-mark replaced"><svg class="ico s13" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 5v4h4"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4"/></svg></button><button class="r-flag on water"><svg class="ico s13" viewBox="0 0 24 24"><path d="M7.5 12.5a4.5 4.5 0 1 0 9 0c0-3-4.5-8.5-4.5-8.5s-4.5 5.5-4.5 8.5"/></svg></button><span class="r-ref">U5000</span><span class="r-note">▸<span class="peek">got hot, r…</span></span><span class="r-x">✕</span></div></div>
-          <div class="r"><div class="r-main"><button class="r-mark"><span class="dot">·</span></button><button class="r-flag water"><svg class="ico s13" viewBox="0 0 24 24"><path d="M7.5 12.5a4.5 4.5 0 1 0 9 0c0-3-4.5-8.5-4.5-8.5s-4.5 5.5-4.5 8.5"/></svg></button><span class="r-ref">C7100</span><span class="r-note">▸</span><span class="r-x">✕</span></div></div>
-          <div class="r"><div class="r-main"><button class="r-mark cleaned"><svg class="ico s13" viewBox="0 0 24 24"><path d="M5 12l5 5l9-9"/></svg></button><button class="r-flag water"><svg class="ico s13" viewBox="0 0 24 24"><path d="M7.5 12.5a4.5 4.5 0 1 0 9 0c0-3-4.5-8.5-4.5-8.5s-4.5 5.5-4.5 8.5"/></svg></button><span class="r-ref">J6100</span><span class="r-note">▸</span><span class="r-x">✕</span></div></div>
-          <div class="sec">Nets</div>
-          <div class="r">
-            <div class="r-main"><button class="r-mark replaced"><svg class="ico s13" viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6"/></svg></button><button class="r-flag surge"><svg class="ico s13" viewBox="0 0 24 24"><path d="M13 3l-9 12h7l-1 6l9-12h-7z"/></svg></button><span class="r-ref">PP3V3_S5</span><span class="r-note">▸</span><span class="r-x">✕</span></div>
-            <div class="r-meas"><span class="r-slot"><span class="r-chip">V</span><input class="r-in" readonly></span><span class="r-slot"><span class="r-chip">⌁</span><input class="r-in req" value="0.000" readonly></span><span class="r-slot"><span class="r-chip">Ω</span><input class="r-in" readonly></span></div>
-          </div>
-        </div>
-      </div>
-      <p class="verdict drop">The rows are fine. Everything above them is from an older vocabulary.</p>
-    </div>
-
-    <!-- A -->
-    <div class="slab">
-      <div class="slab-head"><span class="tag">Proposed</span><h3>One switcher line</h3><p>Same rows, same order, same colours. Only the chrome above them changes.</p></div>
-      <div class="app tall">
+      <div class="slab-head"><span class="tag">Closed</span><h3>The line at rest</h3><p>Names the open worklist and how much is in it.</p></div>
+      <div class="app" style="height:300px">
         <div class="w-head">
           <span class="w-name">No power — 820-01598</span>
           <button class="lbtn on"><svg class="ico s13" viewBox="0 0 24 24"><path d="M3 12h4l3 8l4-16l3 8h4"/></svg>Highlight</button>
           <button class="qbtn"><svg class="ico s13" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
         </div>
         <div class="w-switch">
-          <svg class="ico s12" viewBox="0 0 24 24"><path d="M6 9l6 6l6-6"/></svg>
-          <span class="cur">No power</span><span class="n">6</span>
+          <svg class="ico s13" viewBox="0 0 24 24"><circle cx="10" cy="10" r="7"/><path d="M21 21l-6-6"/></svg><span class="cur">No power</span><span class="n">6</span>
           <span style="opacity:.5;margin-left:auto">2 more</span>
         </div>
         <div class="w-ticket"><svg class="ico s12" viewBox="0 0 24 24"><path d="M9 6l6 6l-6 6"/></svg><b>Ticket note</b><span class="peek">dead on arrival, no PPBUS…</span></div>
         <div class="scroll">
-          <div class="r"><div class="r-main"><button class="r-mark replaced"><svg class="ico s13" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 5v4h4"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4"/></svg></button><button class="r-flag on water"><svg class="ico s13" viewBox="0 0 24 24"><path d="M7.5 12.5a4.5 4.5 0 1 0 9 0c0-3-4.5-8.5-4.5-8.5s-4.5 5.5-4.5 8.5"/></svg></button><span class="r-ref">U5000</span><span class="r-note"><svg class="ico s12" viewBox="0 0 24 24"><path d="M9 6l6 6l-6 6"/></svg><span class="peek">got hot, d…</span></span><span class="r-x"><svg class="ico s12" viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6"/></svg></span></div></div>
-          <div class="r"><div class="r-main"><button class="r-mark"><span class="dot">●</span></button><button class="r-flag water"><svg class="ico s13" viewBox="0 0 24 24"><path d="M7.5 12.5a4.5 4.5 0 1 0 9 0c0-3-4.5-8.5-4.5-8.5s-4.5 5.5-4.5 8.5"/></svg></button><span class="r-ref">C7100</span><span class="r-note"><svg class="ico s12" viewBox="0 0 24 24"><path d="M9 6l6 6l-6 6"/></svg></span><span class="r-x"><svg class="ico s12" viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6"/></svg></span></div></div>
-          <div class="r"><div class="r-main"><button class="r-mark cleaned"><svg class="ico s13" viewBox="0 0 24 24"><path d="M5 12l5 5l9-9"/></svg></button><button class="r-flag on water"><svg class="ico s13" viewBox="0 0 24 24"><path d="M7.5 12.5a4.5 4.5 0 1 0 9 0c0-3-4.5-8.5-4.5-8.5s-4.5 5.5-4.5 8.5"/></svg></button><span class="r-ref">J6100</span><span class="r-note"><svg class="ico s12" viewBox="0 0 24 24"><path d="M9 6l6 6l-6 6"/></svg><span class="peek">corrosion…</span></span><span class="r-x"><svg class="ico s12" viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6"/></svg></span></div></div>
-          <div class="r"><div class="r-main"><button class="r-mark reworked"><svg class="ico s13" viewBox="0 0 24 24"><path d="M12 3v3m0 12v3M5.6 5.6l2.2 2.2m8.4 8.4l2.2 2.2M3 12h3m12 0h3M5.6 18.4l2.2-2.2m8.4-8.4l2.2-2.2"/></svg></button><button class="r-flag water"><svg class="ico s13" viewBox="0 0 24 24"><path d="M7.5 12.5a4.5 4.5 0 1 0 9 0c0-3-4.5-8.5-4.5-8.5s-4.5 5.5-4.5 8.5"/></svg></button><span class="r-ref">Q7050</span><span class="r-note"><svg class="ico s12" viewBox="0 0 24 24"><path d="M9 6l6 6l-6 6"/></svg><span class="peek">reflowed</span></span><span class="r-x"><svg class="ico s12" viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6"/></svg></span></div></div>
-          <div class="sec">Nets</div>
-          <div class="r">
-            <div class="r-main"><button class="r-mark replaced"><svg class="ico s13" viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6"/></svg></button><button class="r-flag on surge"><svg class="ico s13" viewBox="0 0 24 24"><path d="M13 3l-9 12h7l-1 6l9-12h-7z"/></svg></button><span class="r-ref">PP3V3_S5</span><span class="r-note"><svg class="ico s12" viewBox="0 0 24 24"><path d="M9 6l6 6l-6 6"/></svg><span class="peek">short to…</span></span><span class="r-x"><svg class="ico s12" viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6"/></svg></span></div>
-            <div class="r-meas"><span class="r-slot"><span class="r-chip">V</span><input class="r-in" placeholder="—" readonly></span><span class="r-slot"><span class="r-chip">⌁</span><input class="r-in req" value="0.000" readonly></span><span class="r-slot"><span class="r-chip">Ω</span><input class="r-in" placeholder="—" readonly></span></div>
-          </div>
+          <div class="r"><div class="r-main"><button class="r-mark replaced"><svg class="ico s13" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 5v4h4"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4"/></svg></button><button class="r-flag water on"><svg class="ico s13" viewBox="0 0 24 24"><path d="M7.5 12.5a4.5 4.5 0 1 0 9 0c0-3-4.5-8.5-4.5-8.5s-4.5 5.5-4.5 8.5"/></svg></button><span class="r-ref">U5000</span><span class="r-note"><svg class="ico s12" viewBox="0 0 24 24"><path d="M9 6l6 6l-6 6"/></svg><span class="peek">got hot, d…</span></span><span class="r-x"><svg class="ico s12" viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6"/></svg></span></div></div>
+          <div class="r"><div class="r-main"><button class="r-mark replaced"><svg class="ico s13" viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6"/></svg></button><button class="r-flag surge on"><svg class="ico s13" viewBox="0 0 24 24"><path d="M13 3l-9 12h7l-1 6l9-12h-7z"/></svg></button><span class="r-ref">PP3V3_S5</span><span class="r-note"><svg class="ico s12" viewBox="0 0 24 24"><path d="M9 6l6 6l-6 6"/></svg><span class="peek">short to ground</span></span><span class="r-x"><svg class="ico s12" viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6"/></svg></span></div><div class="r-vals"><span class="r-val asked"><span class="k">⌁</span>0.000</span></div></div>
         </div>
       </div>
-      <p class="verdict keep">One line replaces the pill block. Highlight stays a named control, and Copy, Wipe and delete move into the menu beside it.</p>
+      <p class="verdict">A magnifier, not a chevron, so it reads as a thing you can type into.</p>
     </div>
 
-  </div>
-
-  <figure class="menu-figure" style="margin-top:26px">
-    <div class="app-tokens">
-      <div class="w-menu" style="width:214px">
-        <div style="opacity:.55;font-size:10px;letter-spacing:.07em;text-transform:uppercase;padding:5px 8px 3px">On this board</div>
-        <div style="background:rgba(74,158,255,0.12)">No power — 820-01598 <span style="float:right;opacity:.55;font-family:'IBM Plex Mono',monospace;font-size:11px">6</span></div>
-        <div>Backlight <span style="float:right;opacity:.55;font-family:'IBM Plex Mono',monospace;font-size:11px">2</span></div>
-        <div>USB-C not charging <span style="float:right;opacity:.55;font-family:'IBM Plex Mono',monospace;font-size:11px">4</span></div>
-        <div class="sep"></div>
-        <div>New worklist</div>
-        <div>Paste a worklist</div>
-        <div class="sep"></div>
-        <div style="color:#64a8ff">All worklists…</div>
-      </div>
-    </div>
-    <figcaption>What the switcher line opens. The board's own worklists first, then the two ways to make one, then the way out to every worklist on the device. Creating no longer opens a browser prompt: the new worklist appears with its name already in edit, which is how renaming works today.</figcaption>
-  </figure>
-</section>
-
-<section>
-  <h2>The catalog becomes the index</h2>
-  <p>There is no need for a second index inside the panel, because one already exists: <b>Tools ▸ Workbench ▸ Worklists</b>, which lists every worklist stored on this device. Today it is printed text that cannot be opened. Give its rows the counts, the progress and a click, and it is the index, reachable from the switcher line above and from the rail.</p>
-  <p style="color:var(--page-muted);font-size:14px">Worth saying plainly: this lives under Tools, not in the Library panel. Library's tabs are history, metadata, folders, board number and PDF. If you would rather it sat in the Library, that is a small move and a separate decision — the link works the same either way.</p>
-  <div class="pair" style="margin-top:20px">
-    <figure>
-      <div class="app" style="width:330px;height:300px">
+    <div class="slab">
+      <div class="slab-head"><span class="tag">Clicked</span><h3>Recent first</h3><p>No typing yet, so it offers what you were last working on.</p></div>
+      <div class="app" style="height:300px">
         <div class="w-head">
-          <span class="w-name">Worklists</span>
-          <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-secondary)">11</span>
-        </div>
-        <div class="scroll">
-          <div class="sec">This board · 820-01598</div>
-          <div class="w-idx cur">
-            <div class="body"><div class="nm">No power</div><div class="meta">4 parts · 2 nets · today</div></div>
-            <span class="bar"><i style="width:50%"></i></span>
-          </div>
-          <div class="w-idx">
-            <div class="body"><div class="nm">Backlight</div><div class="meta">2 parts · 0 nets · yesterday</div></div>
-            <span class="bar"><i style="width:100%"></i></span>
-          </div>
-          <div class="w-idx">
-            <div class="body"><div class="nm">USB-C not charging</div><div class="meta">3 parts · 1 net · 3 days</div></div>
-            <span class="bar"><i style="width:25%"></i></span>
-          </div>
-          <div class="sec">Other boards</div>
-          <div class="w-idx">
-            <div class="body"><div class="nm">Water damage — A2141</div><div class="meta">820-01700 · 9 parts · last week</div></div>
-            <span class="bar"><i style="width:78%"></i></span>
-          </div>
-          <div class="w-idx">
-            <div class="body"><div class="nm">No backlight — A1990</div><div class="meta">820-01041 · 5 parts · last week</div></div>
-            <span class="bar"><i style="width:100%"></i></span>
-          </div>
-        </div>
-      </div>
-      <figcaption style="max-width:330px">Same row shape either way. A worklist on the open board switches straight to it. One on another board says which board, and opening it opens that board first.</figcaption>
-    </figure>
-    <figure>
-      <div class="app" style="width:330px">
-        <div class="w-idx" style="border-bottom:none">
-          <div class="body"><div class="nm">No power</div><div class="meta">4 parts · 2 nets · today</div></div>
-          <span class="bar"><i style="width:50%"></i></span>
-        </div>
-      </div>
-      <figcaption style="max-width:330px">The row: name, what is in it, when it was last touched, and how much of it is marked done. The bar is the same green as the cleaned mark, so progress and marks agree on their colour.</figcaption>
-    </figure>
-  </div>
-</section>
-
-<section>
-  <h2>Highlighting, kept as a feature</h2>
-  <p>Lighting the worklist on the board is the reason to keep the list open while working, so it does not become an anonymous icon in a row of icons. It stays a named control in the header, lit in the accent when on, and it keeps its current behaviour: outlines in each entry's mark colour, plus the glow on nets shared by more than one entry.</p>
-  <div class="pair">
-    <figure>
-      <div class="app" style="padding:0">
-        <div class="w-head" style="border-bottom:none">
           <span class="w-name">No power — 820-01598</span>
           <button class="lbtn on"><svg class="ico s13" viewBox="0 0 24 24"><path d="M3 12h4l3 8l4-16l3 8h4"/></svg>Highlight</button>
           <button class="qbtn"><svg class="ico s13" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
         </div>
-      </div>
-      <figcaption>On. Named, lit, and the first control your eye lands on after the worklist's name.</figcaption>
-    </figure>
-    <figure>
-      <div class="app" style="padding:0">
-        <div class="w-head" style="border-bottom:none">
-          <span class="w-name">No power — 820-01598</span>
-          <button class="lbtn"><svg class="ico s13" viewBox="0 0 24 24"><path d="M3 12h4l3 8l4-16l3 8h4"/></svg>Highlight</button>
-          <button class="qbtn"><svg class="ico s13" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+        <div class="w-find"><svg class="ico s13" viewBox="0 0 24 24"><circle cx="10" cy="10" r="7"/><path d="M21 21l-6-6"/></svg><input placeholder="Search worklists" readonly><span class="caret"></span></div>
+        <div class="w-res">
+          <div class="w-hit on"><span class="nm">No power</span><span class="n">6</span></div>
+          <div class="w-hit"><span class="nm">USB-C not charging</span><span class="n">4</span></div>
+          <div class="w-hit"><span class="nm">Backlight</span><span class="n">2</span></div>
+          <div class="w-hit"><span class="nm">Water damage</span><span class="bd">A2141</span><span class="n">9</span></div>
+        </div>
+        <div class="w-acts">
+          <div class="w-act"><svg class="ico s12" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New worklist</div>
+          <div class="w-act"><svg class="ico s12" viewBox="0 0 24 24"><path d="M9 5h-2a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg>Paste a worklist</div>
+          <div class="w-act link"><svg class="ico s12" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>All worklists…</div>
         </div>
       </div>
-      <figcaption>Off. Everything else that was a text button moves into the menu beside it.</figcaption>
-    </figure>
-    <figure>
-      <div class="w-menu">
-        <div>Copy to clipboard</div>
-        <div>Rename</div>
-        <div>Ticket note…</div>
-        <div class="sep"></div>
-        <div>Clear all entries</div>
-        <div class="danger">Delete worklist</div>
+      <p class="verdict">Most recently touched first, this board's and others'. The open one is highlighted so you can see where you are.</p>
+    </div>
+
+    <div class="slab">
+      <div class="slab-head"><span class="tag">Typed</span><h3>Searching</h3><p>Matches anywhere in the name, across every board.</p></div>
+      <div class="app" style="height:300px">
+        <div class="w-head">
+          <span class="w-name">No power — 820-01598</span>
+          <button class="lbtn on"><svg class="ico s13" viewBox="0 0 24 24"><path d="M3 12h4l3 8l4-16l3 8h4"/></svg>Highlight</button>
+          <button class="qbtn"><svg class="ico s13" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+        </div>
+        <div class="w-find"><svg class="ico s13" viewBox="0 0 24 24"><circle cx="10" cy="10" r="7"/><path d="M21 21l-6-6"/></svg><input value="back" readonly><span class="caret"></span></div>
+        <div class="w-res">
+          <div class="w-hit on"><span class="nm"><mark>Back</mark>light</span><span class="n">2</span></div>
+          <div class="w-hit"><span class="nm">No <mark>back</mark>light — A1990</span><span class="bd">820-01041</span><span class="n">5</span></div>
+          <div class="w-hit"><span class="nm">Key<mark>back</mark> light dim</span><span class="bd">820-02100</span><span class="n">3</span></div>
+        </div>
+        <div class="w-acts">
+          <div class="w-act"><svg class="ico s12" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New worklist “back”</div>
+          <div class="w-act link"><svg class="ico s12" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>All worklists…</div>
+        </div>
       </div>
-      <figcaption>Wipe and delete ask inside the panel instead of opening a browser confirm, the way renaming already works.</figcaption>
-    </figure>
+      <p class="verdict">A hit on another board says which board. Opening it opens that board first. New worklist takes what you typed as its name, so naming needs no prompt.</p>
+    </div>
   </div>
 </section>
 
 <section>
-  <h2>One thing I am not deciding for you</h2>
-  <div class="q">
-    <p><b>The three reading slots on a net row.</b> They render whether or not they hold a value, so an untouched net is two lines. That is either a waste of a narrow panel, or it is the point: three labelled boxes waiting to be filled in are a prompt to measure, and a bench probably wants them there.</p>
-    <p>The design above keeps them exactly as they are today. If you want them to appear only once a reading exists, that is a one-line change and I will show it, but it is your call, not a cleanup.</p>
-  </div>
-  <p><b>Settled:</b> the switcher line in the panel, and the existing catalog as the index behind it. That is one new line of chrome, one menu, and a list that already exists finally doing something when you click it.</p>
+  <h2>Unchanged from the agreed design</h2>
+  <ul class="keeps">
+    <li><b>The row is exactly as it is.</b> <span class="why">Mark cycle and its four colours, the condition flag always there to press, monospace designator, note with its peek, remove. Nothing hidden, nothing reordered.</span></li>
+    <li><b>Highlight stays a named control</b> <span class="why">in the header, lit when on, with Copy, Wipe and delete in the menu beside it.</span></li>
+    <li><b>No browser dialogs.</b> <span class="why">Naming happens in the search line or in the header, the way renaming already works. Wipe and delete ask inside the panel.</span></li>
+    <li><b>The Tools catalog is the index.</b> <span class="why">Rows get counts, progress and a click; “All worklists…” goes there.</span></li>
+    <li><b>Real stylesheet classes</b> <span class="why">so the panel follows the theme, and one row component instead of two near-identical ones.</span></li>
+    <li><b>The cyan selection band is untouched.</b> <span class="why">Still its own review, on its own terms.</span></li>
+  </ul>
 </section>
 
 </main></body></html>
