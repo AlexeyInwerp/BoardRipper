@@ -22,11 +22,28 @@
  * softer copper and silk, not blurry labels.
  */
 
-/** True when the primary input is a finger — a phone or tablet, not a laptop
- *  with a touchscreen bolted on (that reports `fine` for its trackpad). */
+/** True for a phone or tablet — not for a laptop with a touchscreen bolted on,
+ *  which reports `fine` for its trackpad and has a desktop GPU behind it.
+ *
+ *  Two tests, because neither covers the device on its own:
+ *
+ *  - `(pointer: coarse)` catches the ordinary case and is the only signal that
+ *    works on Android.
+ *  - An iPad with a Magic Keyboard attached reports `fine` — the pointer is a
+ *    trackpad — while the GPU, the panel and the 120 Hz refresh are unchanged,
+ *    so the first test alone switches the profile off on exactly the machine
+ *    it was written for. `GestureEvent` is a WebKit-only global and
+ *    `maxTouchPoints > 0` excludes desktop Safari (which reports 0), so the
+ *    pair identifies iOS/iPadOS and nothing else. It also survives iPadOS's
+ *    desktop-mode Safari, where the user agent claims to be a Mac.
+ *
+ *  A Windows touch laptop matches neither: `fine` for its mouse, and its
+ *  Chromium has no `GestureEvent`. */
 export function isTouchPrimary(): boolean {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
-  return window.matchMedia('(pointer: coarse)').matches;
+  if (window.matchMedia('(pointer: coarse)').matches) return true;
+  const webkit = typeof (window as { GestureEvent?: unknown }).GestureEvent !== 'undefined';
+  return webkit && (navigator?.maxTouchPoints ?? 0) > 0;
 }
 
 /** Device pixel ratio ceiling for the WebGL board canvas when the touch
