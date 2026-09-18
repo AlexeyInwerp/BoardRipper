@@ -1,6 +1,31 @@
 # BoardRipper changelog
 
-## Unreleased
+## v0.42.0 — 2026-09-18
+
+### Worklist
+
+- **The worklist line is a search.** The wrapping row of worklist buttons is
+  one line naming the open worklist. Click it and you get a cursor: the
+  worklists you touched most recently are listed, and typing searches them,
+  across other boards as well as this one. New worklist, Paste a worklist and
+  All worklists sit underneath.
+- **Naming, clearing and deleting no longer use browser pop-ups.** A new
+  worklist takes the name you typed in the search, or opens for renaming if
+  you typed nothing. Clearing and deleting ask in the panel itself.
+- **Readings appear where there are readings.** A net used to carry three
+  boxes whether or not anything had been measured, so ten nets were twenty
+  lines of which ten were empty. A net now shows only the readings it holds,
+  and the empty boxes open on the row you have selected, which is where you
+  are about to measure something. Click away and they fold back.
+- **The panel follows the theme.** It was the last one painting itself from
+  colours that were not the app's, so it stayed dark while everything else
+  changed.
+- **The Worklists catalog opens worklists.** In Tools it was a printed list
+  you could not act on. Rows now say how much is in a worklist, how much of it
+  is marked done and when you last touched it, and a worklist on the open
+  board switches to it. One belonging to another board says which board.
+- The row itself is unchanged: the mark and its colours, the water and surge
+  flags, the reference, the note, remove — all of it, in the same order.
 
 ### One slider, with or without a switch
 
@@ -49,6 +74,11 @@
   labels swell into view past their appear-floor — the same mechanism as the
   part-name fade, at the small end. *Label Fade-In* in the same section; 0
   restores the pop.
+
+### Fixed
+
+- The Tools tab tests reached the sidebar the way the old text strip worked,
+  so they had been failing since the icon rail replaced it.
 
 ## v0.41.0 — 2026-09-14
 
@@ -122,38 +152,6 @@
   lives in `src/backend`; the Vite proxy targets port 1336), the Synology
   `docker run` carries `--user 0:0` and the `incoming` mount, the tarball name
   matches what the release script produces.
-
-## Unreleased
-
-### Worklist
-
-- **The worklist line is a search.** The wrapping row of worklist buttons is
-  one line naming the open worklist. Click it and you get a cursor: the
-  worklists you touched most recently are listed, and typing searches them,
-  across other boards as well as this one. New worklist, Paste a worklist and
-  All worklists sit underneath.
-- **Naming, clearing and deleting no longer use browser pop-ups.** A new
-  worklist takes the name you typed in the search, or opens for renaming if
-  you typed nothing. Clearing and deleting ask in the panel itself.
-- **Readings appear where there are readings.** A net used to carry three
-  boxes whether or not anything had been measured, so ten nets were twenty
-  lines of which ten were empty. A net now shows only the readings it holds,
-  and the empty boxes open on the row you have selected, which is where you
-  are about to measure something. Click away and they fold back.
-- **The panel follows the theme.** It was the last one painting itself from
-  colours that were not the app's, so it stayed dark while everything else
-  changed.
-- **The Worklists catalog opens worklists.** In Tools it was a printed list
-  you could not act on. Rows now say how much is in a worklist, how much of it
-  is marked done and when you last touched it, and a worklist on the open
-  board switches to it. One belonging to another board says which board.
-- The row itself is unchanged: the mark and its colours, the water and surge
-  flags, the reference, the note, remove — all of it, in the same order.
-
-### Fixed
-
-- The Tools tab tests reached the sidebar the way the old text strip worked,
-  so they had been failing since the icon rail replaced it.
 
 ## v0.40.0 — 2026-09-12
 
