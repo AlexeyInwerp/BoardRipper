@@ -2870,10 +2870,48 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   }, [pdfFileName, syncTransform, scheduleTierRender]);
 
 
+  /** Re-seed the pinch baseline from whichever two pointers are tracked now.
+   *
+   *  The baseline has to follow the *pair*, not just the count. A third finger,
+   *  or one of two being cancelled and replaced, changes which two pointers
+   *  `values()` yields while the recorded start distance and start zoom still
+   *  describe the old pair — the next move then computes a ratio between two
+   *  unrelated distances and the page leaps. Seeding on every membership
+   *  change costs one call per pointerdown/up and removes the whole class. */
+  const seedPinch = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const pts = [...activeTouchesRef.current.values()];
+    if (pts.length < 2) { pinchStartDistRef.current = 0; return; }
+    const dx = pts[1].x - pts[0].x;
+    const dy = pts[1].y - pts[0].y;
+    pinchStartDistRef.current = Math.hypot(dx, dy) || 0;
+    pinchStartZoomRef.current = zoomRef.current;
+    const rect = container.getBoundingClientRect();
+    pinchMidRef.current = {
+      x: (pts[0].x + pts[1].x) / 2 - rect.left,
+      y: (pts[0].y + pts[1].y) / 2 - rect.top,
+    };
+  }, []);
+
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     const container = containerRef.current;
     if (!container) return;
-    container.setPointerCapture(e.pointerId);
+    // `isPrimary` marks the first finger of a touch sequence, so it is also
+    // where an id left behind by a capture loss or a cancel we never saw can
+    // be dropped. Without this self-heal one missing pointerup leaves the map
+    // at two entries for good: every later move takes the pinch branch, the
+    // drag branch is never reached, and panning is simply dead.
+    if (e.pointerType === 'touch' && e.isPrimary) activeTouchesRef.current.clear();
+    // setPointerCapture throws NotFoundError when the pointer is no longer
+    // active — which happens for real: iOS cancels a touch between the event
+    // being queued and this handler running. Uncaught, the throw aborted the
+    // rest of this function, so the finger was never registered while its
+    // eventual pointerup still ran the delete. With two fingers down and only
+    // one registered the viewer takes the drag branch and pans off one finger
+    // in the middle of a pinch. Capture is an optimisation here; the
+    // bookkeeping below is not, and must happen either way.
+    try { container.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
     activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     pdfStore.switchTo(pdfFileName);
 
@@ -2887,30 +2925,24 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       lastMouseRef.current = { x: e.clientX, y: e.clientY };
     }
 
-    if (activeTouchesRef.current.size === 2) {
-      // Start pinch — cancel any single-finger drag
+    if (activeTouchesRef.current.size >= 2) {
+      // A pinch begins, or its pair changed. Either way the single-finger drag
+      // is over and the baseline is stale.
       isDraggingRef.current = false;
       wasDragRef.current = false;
-      const pts = [...activeTouchesRef.current.values()];
-      const dx = pts[1].x - pts[0].x;
-      const dy = pts[1].y - pts[0].y;
-      pinchStartDistRef.current = Math.sqrt(dx * dx + dy * dy);
-      pinchStartZoomRef.current = zoomRef.current;
-      const rect = container.getBoundingClientRect();
-      pinchMidRef.current = {
-        x: (pts[0].x + pts[1].x) / 2 - rect.left,
-        y: (pts[0].y + pts[1].y) / 2 - rect.top,
-      };
+      seedPinch();
     }
-  }, [pdfFileName]);
+  }, [pdfFileName, seedPinch]);
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     const prev = activeTouchesRef.current.get(e.pointerId);
     if (!prev) return;
     activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-    // Two-finger pinch zoom
-    if (activeTouchesRef.current.size === 2) {
+    // Pinch zoom. `>= 2` deliberately: with `=== 2`, resting a third finger on
+    // the screen — easy to do while holding a tablet — matched neither branch
+    // and the page stopped responding until every finger was lifted.
+    if (activeTouchesRef.current.size >= 2) {
       const pts = [...activeTouchesRef.current.values()];
       const dx = pts[1].x - pts[0].x;
       const dy = pts[1].y - pts[0].y;
@@ -3077,9 +3109,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
     const wasPinching = activeTouchesRef.current.size >= 2;
     activeTouchesRef.current.delete(e.pointerId);
-    if (activeTouchesRef.current.size < 2) {
-      pinchStartDistRef.current = 0;
-    }
+    // Lifting one of three fingers leaves a pinch running on a different pair.
+    seedPinch();
 
     // Pinch ended — schedule crisp re-render at final zoom level
     if (wasPinching && activeTouchesRef.current.size < 2) {
@@ -3113,10 +3144,15 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     }
     velocityRef.current = { x: 0, y: 0 };
 
-    if (!wasDrag && e.button === 0 && e.pointerType !== 'touch') {
+    // A tap looks up the word under it — on a finger too. Touch was excluded
+    // because a tap used to arrive at the end of gestures that were not taps;
+    // `wasDrag` and the single-pointer test are what make it safe, and without
+    // it the PDF's one real interaction is unreachable on a tablet.
+    const wasTap = !wasDrag && !wasPinching && activeTouchesRef.current.size === 0;
+    if (wasTap && (e.pointerType === 'touch' || e.button === 0)) {
       handleTextClickRef.current(e);
     }
-  }, [scheduleTierRender, syncTransform]);
+  }, [scheduleTierRender, syncTransform, seedPinch]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -3670,7 +3706,19 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        onPointerCancel={(e) => { activeTouchesRef.current.delete(e.pointerId); isDraggingRef.current = false; wasDragRef.current = false; }}
+        onPointerCancel={(e) => {
+          activeTouchesRef.current.delete(e.pointerId);
+          seedPinch();
+          isDraggingRef.current = false;
+          wasDragRef.current = false;
+        }}
+        // Capture can be lost without a pointerup — iOS takes it back when the
+        // system interrupts a gesture. The id would then stay in the map and,
+        // at two entries, wedge the viewer into a permanent pinch with no pan.
+        onLostPointerCapture={(e) => {
+          activeTouchesRef.current.delete(e.pointerId);
+          seedPinch();
+        }}
         onPointerLeave={(e) => { activeTouchesRef.current.delete(e.pointerId); isDraggingRef.current = false; wasDragRef.current = false; }}
         onDoubleClick={handleTextDblClick}
         onContextMenu={handleContextMenu}

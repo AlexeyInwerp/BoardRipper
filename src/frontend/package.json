@@ -23,7 +23,8 @@
     "test:unit": "vitest run",
     "postinstall": "patch-package",
     "build:desktop-webapp": "vite build --base ./",
-    "test:electron": "npx playwright test --config playwright.electron.config.ts"
+    "test:electron": "npx playwright test --config playwright.electron.config.ts",
+    "test:webkit": "WEBKIT=1 playwright test"
   },
   "dependencies": {
     "@pixi/react": "^8.0.5",

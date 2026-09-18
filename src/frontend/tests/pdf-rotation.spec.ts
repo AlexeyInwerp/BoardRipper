@@ -20,10 +20,18 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const SAMPLES = path.resolve(__dirname, '../../../samples');
 
+/** Prefer a real board PDF when one happens to be present — it exercises the
+ *  render path on the kind of document users open. Fall back to the generated
+ *  two-page fixture so the spec actually runs on a clean checkout instead of
+ *  skipping, which is how this file stayed green while the viewer was broken
+ *  on tablets. */
 function firstSamplePdf(): string | null {
-  if (!fs.existsSync(SAMPLES)) return null;
-  const pdf = fs.readdirSync(SAMPLES).find(f => f.toLowerCase().endsWith('.pdf'));
-  return pdf ? path.join(SAMPLES, pdf) : null;
+  if (fs.existsSync(SAMPLES)) {
+    const pdf = fs.readdirSync(SAMPLES).find(f => f.toLowerCase().endsWith('.pdf'));
+    if (pdf) return path.join(SAMPLES, pdf);
+  }
+  const fixture = path.resolve(__dirname, 'fixtures/two-page-text.pdf');
+  return fs.existsSync(fixture) ? fixture : null;
 }
 
 /** Read the main page canvas's CSS-pixel height/width ratio. */
