@@ -292,7 +292,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
           aria-pressed={sidebarOpen}
           title={sidebarOpen ? 'Hide board panel (Layers · Info · Search · Worklist)' : 'Show board panel (Layers · Info · Search · Worklist)'}
         >
-          <IconLayoutSidebarRight size={16} />
+          <IconLayoutSidebarRight size={18} stroke={1.75} />
         </button>
       </div>
       {/* Overlay controls. The handle sits at the RIGHT end, where the Classic

@@ -184,7 +184,7 @@ export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied }: Boa
             data-title="Info"
             aria-label="Info"
           >
-            <IconInfoCircle size={14} />
+            <IconInfoCircle size={16} />
             {activeTab === 'info' && <span className="icon-tab-caption">Info</span>}
           </button>
           <button
@@ -194,7 +194,7 @@ export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied }: Boa
             data-title={hasLayers ? 'Layers' : 'View'}
             aria-label={hasLayers ? 'Layers' : 'View'}
           >
-            {hasLayers ? <IconStack2 size={14} /> : <IconEye size={14} />}
+            {hasLayers ? <IconStack2 size={16} /> : <IconEye size={16} />}
             {activeTab === 'layers' && <span className="icon-tab-caption">{hasLayers ? 'Layers' : 'View'}</span>}
           </button>
           <button
@@ -204,7 +204,7 @@ export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied }: Boa
             data-title="Search"
             aria-label="Search"
           >
-            <IconSearch size={14} />
+            <IconSearch size={16} />
             {activeTab === 'search' && <span className="icon-tab-caption">Search</span>}
           </button>
           {showRevisionsTab && (
@@ -221,7 +221,7 @@ export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied }: Boa
                     : 'Suspicious overlapping components detected'
               }
             >
-              <IconVersions size={14} />
+              <IconVersions size={16} />
               {activeTab === 'revisions' && <span className="icon-tab-caption">Revisions</span>}
               {(hasGhosts || hasBomClusters) && <span className="tab-badge">!</span>}
             </button>
@@ -233,7 +233,7 @@ export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied }: Boa
             aria-label="Worklist"
             data-title="Worklist"
           >
-            <IconChecklist size={14} />
+            <IconChecklist size={16} />
             {activeTab === 'worklist' && <span className="icon-tab-caption">Worklist</span>}
           </button>
         </div>

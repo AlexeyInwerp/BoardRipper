@@ -20,6 +20,9 @@
 - **The top bar is one row.** The sidebar button is a full-height, darker
   corner cell that continues into the activity rail below it, the global search
   spans the bar from top edge to bottom edge, and the bar's icons are one size.
+  The board panel's own sidebar follows: its tabs and the ☰ toggle are one
+  flat 40 px row with the same darker corner cell, instead of a floating chip
+  over the tab strip.
 
 ### Selected part's pin labels no longer overlap
 
