@@ -176,6 +176,7 @@ export const SETTINGS_INDEX: IndexEntry[] = [
   F('system', 'performance', 'textFastMode', 'Text fast mode (experimental)', 'Draw board text on a 2D overlay instead of in-scene text objects — faster on dense boards. Experimental: report rendering glitches.'),
   F('system', 'performance', 'smoothZoom', 'Smooth wheel zoom', 'Animated cursor-anchored zoom'),
   F('system', 'performance', 'cap60Fps', 'Cap to 60 FPS', 'Limit the renderer to 60 frames per second. Disable to let the ticker run at the display refresh rate (120/144/240 Hz) — smoother but more CPU/GPU work'),
+  F('system', 'performance', 'touchPerformanceMode', 'Touch device performance mode', 'On a tablet: 60 FPS cap, no edge smoothing, 1.5× render resolution ceiling for the board. Board text keeps full resolution. No effect on a mouse or trackpad machine'),
   F('system', 'performance', 'labelAtlasResolution', 'Label Atlas Resolution', 'Pixel multiplier for the BitmapFont atlases used by pin/net/part labels. Higher = sharper labels at deep zoom; texture memory grows ~quadratically. Default 8. Triggers a scene rebuild.'),
   F('system', 'performance', 'hideTextDuringZoom', 'Hide Text During Zoom', 'Temporarily hide all text labels while zooming or panning for smoother performance. Labels reappear when interaction stops'),
   F('system', 'performance', 'showPadVertices', '[Debug] Pad Vertex Crosshairs', 'Draw magenta crosshair markers at each pin\'s exact coordinate from the board file. Useful for verifying parser accuracy'),

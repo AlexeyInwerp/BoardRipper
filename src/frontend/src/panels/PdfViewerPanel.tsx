@@ -27,9 +27,13 @@ import { renderSettingsStore, isPdfWatermarkText, getActiveWatermarkFilter } fro
 import { invertScrollBindings, scrollSwapTooltip, useBareScrollAction } from '../store/scroll-mode';
 import { databankStore } from '../store/databank-store';
 import { showSidebarTab } from '../components/Sidebar.utils';
+import { isTouchPrimary } from '../device-profile';
 
 const DRAG_THRESHOLD = 3;
-const TOUCH_PINCH_FACTOR = 2;       // amplify touch-screen pinch (pointer events)
+const TOUCH_PINCH_FACTOR = 1;       // 1:1 with the fingers — see note below
+// A factor above 1 makes the page run ahead of the pinch and snap back when
+// the fingers stop, which reads as the view jumping. The board had the same
+// bug as pixi-viewport's `pinch({percent: 2})`. Keep both at 1.
 const TRACKPAD_PINCH_SPEED = 0.01;  // trackpad pinch sensitivity (10× faster than mouse wheel)
 const MOUSE_WHEEL_SPEED = 0.001;    // mouse wheel zoom sensitivity
 const LINE_HEIGHT_RATIO = 1.2;
@@ -152,13 +156,26 @@ export function loadPdfQuality(): PdfRenderQuality {
     const raw = localStorage.getItem(PDF_QUALITY_KEY) as PdfRenderQuality | null;
     if (raw && raw in QUALITY_CONFIGS) return raw;
   } catch { /* ignore */ }
-  return 'high';
+  // A tablet gets 'medium'. 'high' budgets 120 MP of cached page bitmaps plus
+  // 72 MP of tiles — roughly 750 MB of ImageBitmap backing store — which is a
+  // desktop figure, and the usual brake does not apply: Safari does not
+  // implement `navigator.deviceMemory`, so applyDeviceMemoryScaling sees
+  // `undefined` and scales nothing. An explicit choice in Settings still wins,
+  // because this is only the default for a profile that has never set one.
+  return isTouchPrimary() ? 'medium' : 'high';
 }
 
 /** Scale cache limits by device memory (navigator.deviceMemory).
  *  Low-RAM devices (≤2GB) get halved pixel budgets to prevent OOM. */
 function applyDeviceMemoryScaling(cfg: PdfQualityConfig): PdfQualityConfig {
   const mem = (navigator as { deviceMemory?: number }).deviceMemory;
+  // Unknown memory on a touch device means Safari on an iPad, where the tab's
+  // real ceiling is far below the machine's RAM and an over-budget cache is
+  // killed rather than swapped. Treat it as the 2 GB case.
+  if (mem === undefined && isTouchPrimary()) {
+    return { ...cfg, cacheMaxEntries: Math.max(4, Math.round(cfg.cacheMaxEntries * 0.5)),
+             cacheMaxPixels: Math.round(cfg.cacheMaxPixels * 0.5) };
+  }
   if (!mem || mem >= 4) return cfg; // 4GB+ or unknown — use full config
   const scale = mem <= 2 ? 0.5 : 0.75;
   return {
@@ -2777,6 +2794,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
   }, [pdfFileName, isLoaded, syncTransform, scheduleTierRender, flashScrubber, markGestureActive]);
 
+  // --- Touch pinch-to-zoom state ---
+  const activeTouchesRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchStartDistRef = useRef(0);
+  const pinchStartZoomRef = useRef(1);
+  const pinchMidRef = useRef({ x: 0, y: 0 });
+
   // --- Safari trackpad pinch via gesture* events ---
   // Mac Safari emits gesture* events for trackpad pinch. The global handler in
   // browser-zoom-block.ts preventDefaults gesture events at window level to
@@ -2785,6 +2808,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   // Bubble-phase panel handlers fire before the window block and consume the
   // event with stopPropagation, so the global net stays a fallback for
   // gestures outside the panel (toolbar, sidebar).
+  //
+  // iPadOS Safari, however, fires gesture* for a two-finger TOUCH pinch as
+  // well — on top of the full pointer-event stream the touch pinch below
+  // already runs on. Two zoom integrators, each anchored to its own start
+  // snapshot, then write zoomRef/panRef on alternating events and the page
+  // lurches. So: any finger on the glass ⇒ this path stands down. A Mac
+  // trackpad has no touch pointers, which is exactly the case this is for.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -2793,6 +2823,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     let mid = { x: 0, y: 0 };
 
     const onGestureStart = (e: GestureEvent) => {
+      if (activeTouchesRef.current.size > 0) {
+        log.ui.log(`pdf touch: ignoring gesturestart — ${activeTouchesRef.current.size} fingers down, ` +
+          `the pointer-event pinch owns this gesture`);
+        return;
+      }
       pdfStore.switchTo(pdfFileName);
       startZoom = zoomRef.current;
       const rect = container.getBoundingClientRect();
@@ -2803,6 +2838,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     };
 
     const onGestureChange = (e: GestureEvent) => {
+      if (activeTouchesRef.current.size > 0) return;   // touch pinch — see above
       const minZoom = renderSettingsStore.settings.pdfEnableBoundaries ? 1 : 0.5;
       const newZoom = Math.max(minZoom, Math.min(startZoom * e.scale, 10));
       const ratio = newZoom / zoomRef.current;
@@ -2817,6 +2853,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     };
 
     const onGestureEnd = (e: GestureEvent) => {
+      if (activeTouchesRef.current.size > 0) return;   // touch pinch — see above
       scheduleTierRender();
       e.preventDefault();
       e.stopPropagation();
@@ -2832,11 +2869,6 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     };
   }, [pdfFileName, syncTransform, scheduleTierRender]);
 
-  // --- Touch pinch-to-zoom state ---
-  const activeTouchesRef = useRef<Map<number, { x: number; y: number }>>(new Map());
-  const pinchStartDistRef = useRef(0);
-  const pinchStartZoomRef = useRef(1);
-  const pinchMidRef = useRef({ x: 0, y: 0 });
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     const container = containerRef.current;

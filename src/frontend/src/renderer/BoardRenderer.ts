@@ -24,6 +24,7 @@ import { themeStore, hexToInt } from '../store/themes';
 import { looksLikeMouseWheel } from '../store/scroll-mode';
 import { contextMenuStore } from '../store/context-menu-store';
 import { resizeModeStore } from '../store/resize-mode-store';
+import { boardAntialias, boardMaxFps, boardPixelRatio } from '../device-profile';
 import { viewCommands, type PanDirection, type ZoomDirection } from '../store/view-commands';
 import { selectionSetStore } from '../store/selection-set-store';
 import { partCompareStore } from '../store/part-compare-store';
@@ -442,6 +443,13 @@ export class BoardRenderer {
   /** Pointer travel past which a gesture is a drag, not a click. Matches
    *  pixi-viewport's own `threshold` so the two agree about what a click is. */
   private static readonly CLICK_DRAG_TOLERANCE_PX = 5;
+  /** Same test for a finger. A contact patch wanders as it settles and lifts:
+   *  a tap a user would swear was stationary routinely travels 8-10 CSS px, so
+   *  the mouse threshold would reject ordinary taps. pixi-viewport's own 5 px
+   *  threshold still gates every gesture whose moves it actually saw, and this
+   *  one only ever decides the cases it did not — so relaxing it cannot make
+   *  the board *more* click-happy during a pan. */
+  private static readonly TOUCH_CLICK_DRAG_TOLERANCE_PX = 12;
   private static readonly CYCLE_TOLERANCE_PX = 6;
   /** Guard window: a same-spot repeat click's advance waits this long so a
    *  double-click can cancel it. Longer than the browser's dblclick dispatch,
@@ -462,6 +470,30 @@ export class BoardRenderer {
    *  a listener installed at init and therefore ahead of any per-gesture
    *  handler that might swallow the events. */
   private pointerTravelPx = 0;
+  /** Touch pointer ids currently on the glass. The renderer keeps its own
+   *  record for the same reason it keeps `pointerTravelPx`: what a gesture
+   *  *was* cannot be recovered from what pixi-viewport believes it saw. */
+  private activeTouchIds = new Set<number>();
+  /** True once two or more fingers have been down during the gesture in
+   *  progress, and until the next gesture begins.
+   *
+   *  pixi-viewport does clear its own `clickedAvailable` when a second pointer
+   *  arrives — but its InputManager routes `pointercancel` straight into
+   *  `up()`, indistinguishably from a release. iPadOS hands a two-finger
+   *  gesture to its own recogniser freely and cancels the pointers it took, so
+   *  the first finger's cancel arrives as "a release, with no other pointer
+   *  registered, that never moved" and the viewport emits `clicked` in the
+   *  middle of a pinch. No distance test can catch that one: at cancel time
+   *  the finger has barely travelled. Only the fact that the gesture was
+   *  multi-touch identifies it. */
+  private gestureWasMultiTouch = false;
+  /** True when a `pointercancel` landed during the gesture in progress — the
+   *  browser took the gesture over, which is never a tap. */
+  private gestureWasCancelled = false;
+  /** Pointer type of the gesture in progress, for the click/drag threshold. */
+  private gestureIsTouch = false;
+  /** Bound capture-phase pointerup/pointercancel tracker. */
+  private boundPointerRelease: ((e: PointerEvent) => void) | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private containerEl: HTMLDivElement;
   /** Canvas2D "Text fast mode" label overlay — lazily created by
@@ -1357,8 +1389,8 @@ export class BoardRenderer {
         background: COLORS.background,
         width: this.containerEl.clientWidth || 1,
         height: this.containerEl.clientHeight || 1,
-        antialias: true,
-        resolution: window.devicePixelRatio || 1,
+        antialias: boardAntialias(renderSettingsStore.settings.touchPerformanceMode),
+        resolution: boardPixelRatio(renderSettingsStore.settings.touchPerformanceMode),
         autoDensity: true,
         powerPreference: 'high-performance',
         ...(RENDERER_PREFERENCE ? { preference: RENDERER_PREFERENCE } : {}),
@@ -1372,7 +1404,8 @@ export class BoardRenderer {
     }
 
     this.containerEl.appendChild(this.app.canvas as HTMLCanvasElement);
-    this.app.ticker.maxFPS = renderSettingsStore.settings.cap60Fps ? 60 : 0;
+    this.app.ticker.maxFPS = boardMaxFps(renderSettingsStore.settings.cap60Fps,
+      renderSettingsStore.settings.touchPerformanceMode);
     this.app.ticker.remove(this.app.render, this.app);
 
     // --- Recreate Viewport ---
@@ -1529,8 +1562,8 @@ export class BoardRenderer {
       background: COLORS.background,
       width: this.containerEl.clientWidth,
       height: this.containerEl.clientHeight,
-      antialias: true,
-      resolution: window.devicePixelRatio || 1,
+      antialias: boardAntialias(renderSettingsStore.settings.touchPerformanceMode),
+      resolution: boardPixelRatio(renderSettingsStore.settings.touchPerformanceMode),
       autoDensity: true,
       powerPreference: 'high-performance',
       ...(RENDERER_PREFERENCE ? { preference: RENDERER_PREFERENCE } : {}),
@@ -1549,7 +1582,8 @@ export class BoardRenderer {
     this.containerEl.appendChild(this.app.canvas as HTMLCanvasElement);
     this.initialized = true;
 
-    this.app.ticker.maxFPS = renderSettingsStore.settings.cap60Fps ? 60 : 0;
+    this.app.ticker.maxFPS = boardMaxFps(renderSettingsStore.settings.cap60Fps,
+      renderSettingsStore.settings.touchPerformanceMode);
 
     // Remove the TickerPlugin's auto-render so we control when GPU work happens.
     // The ticker still fires our callbacks; we call app.render() only when needsRender is set.
@@ -1676,18 +1710,56 @@ export class BoardRenderer {
     // multiple stop-propagation paths; reading the down-time modifier from
     // a capture-phase listener is the most reliable signal.
     this.boundShiftCapture = (e: PointerEvent) => {
-      if (e.button === 0) {
-        this.lastPointerShift = e.shiftKey;
-        this.lastPointerClient = { x: e.clientX, y: e.clientY };
-        this.pointerTravelPx = 0;
-        // A new gesture starts clean. The drag-zoom latch is set from a
-        // pointerup handler that can run *after* pixi emits 'clicked', in
-        // which case it would otherwise sit armed and swallow the next real
-        // click instead of the drag it was meant for.
-        this.dragZoomConsumedClick = false;
+      if (e.button !== 0) return;
+      if (e.pointerType === 'touch') {
+        // `isPrimary` marks the first finger of a multi-touch sequence, so it
+        // is also the point at which any id left behind by a cancel the
+        // renderer never saw can be dropped. Without this self-heal one lost
+        // pointerup would make every later tap look like a second finger.
+        if (e.isPrimary) this.activeTouchIds.clear();
+        this.activeTouchIds.add(e.pointerId);
       }
+      if (this.activeTouchIds.size > 1) {
+        // Second finger of a pinch. The gesture is no longer a tap, and its
+        // travel must keep being measured from where the FIRST finger landed
+        // — re-anchoring here would reset the drag test mid-pinch and hand
+        // handleClick a gesture that looks stationary.
+        this.gestureWasMultiTouch = true;
+        // One line per pinch, not per move. This is the only record of what a
+        // tablet gesture actually was — Chromium headless does not reproduce
+        // iPadOS's pointer-cancel behaviour, so the Debug panel is where that
+        // gets read back off the real device.
+        log.ui.log(`touch: ${this.activeTouchIds.size} fingers — gesture is a pinch, not a tap`);
+        return;
+      }
+      this.gestureWasMultiTouch = false;
+      this.gestureWasCancelled = false;
+      this.gestureIsTouch = e.pointerType === 'touch';
+      this.lastPointerShift = e.shiftKey;
+      this.lastPointerClient = { x: e.clientX, y: e.clientY };
+      this.pointerTravelPx = 0;
+      // A new gesture starts clean. The drag-zoom latch is set from a
+      // pointerup handler that can run *after* pixi emits 'clicked', in
+      // which case it would otherwise sit armed and swallow the next real
+      // click instead of the drag it was meant for.
+      this.dragZoomConsumedClick = false;
     };
     this.containerEl.addEventListener('pointerdown', this.boundShiftCapture, { capture: true });
+
+    // Window + capture so it stays ahead of PixiJS (which listens on the
+    // canvas) and of anything that took pointer capture — the latch has to be
+    // set before `clicked` is emitted, and `clicked` comes out of the very
+    // same release.
+    this.boundPointerRelease = (e: PointerEvent) => {
+      if (e.type === 'pointercancel') {
+        this.gestureWasCancelled = true;
+        log.ui.log(`touch: pointercancel id=${e.pointerId} type=${e.pointerType} ` +
+          `— browser took the gesture over; any click it produces is stale`);
+      }
+      this.activeTouchIds.delete(e.pointerId);
+    };
+    window.addEventListener('pointerup', this.boundPointerRelease, { capture: true });
+    window.addEventListener('pointercancel', this.boundPointerRelease, { capture: true });
 
     // Window + capture, installed once here: per-gesture move handlers (the
     // drag-to-zoom loop) are added on pointerdown and therefore always later
@@ -1840,6 +1912,18 @@ export class BoardRenderer {
     let gestureAnchor = { x: 0, y: 0 };
     this.boundGestureStart = (ev: Event) => {
       const e = ev as GestureEvent;
+      // iPadOS Safari fires the WebKit gesture* events for a two-finger TOUCH
+      // pinch as well as for a trackpad one, and the touch pinch is already
+      // handled — by pixi-viewport's pinch plugin, off the pointer events.
+      // Running both drives one scale from two independent start snapshots,
+      // which is what makes a tablet pinch jump. Fingers on the glass ⇒ not
+      // ours; let it bubble to the global block in browser-zoom-block.ts so
+      // the browser still does not page-zoom.
+      if (this.activeTouchIds.size > 0) {
+        log.ui.log(`touch: ignoring ${ev.type} — ${this.activeTouchIds.size} fingers down, ` +
+          `the pinch plugin owns this gesture`);
+        return;
+      }
       ev.preventDefault();
       ev.stopPropagation();
       gestureStartScale = this.viewport.scale.x;
@@ -1848,6 +1932,7 @@ export class BoardRenderer {
     };
     this.boundGestureChange = (ev: Event) => {
       const e = ev as GestureEvent;
+      if (this.activeTouchIds.size > 0) return;   // touch pinch — see above
       ev.preventDefault();
       ev.stopPropagation();
       const target = Math.max(0.001, Math.min(10, gestureStartScale * e.scale));
@@ -3613,7 +3698,11 @@ export class BoardRenderer {
     }
     this.viewport
       .drag({ wheel: s.twoFingerPan })
-      .pinch({ percent: 2 })
+      // percent: 1 makes the plugin's per-event `(1 - old/new) * percent * scale`
+      // a first-order match for a multiplicative zoom, i.e. the board tracks
+      // the fingers 1:1. The former 2 doubled every step, so the view ran
+      // ahead of the pinch and snapped back — the "jumps" on a touch screen.
+      .pinch({ percent: 1 })
       .wheel({
         smooth: s.wheelSmooth,
         percent: 0.3,
@@ -3828,7 +3917,7 @@ export class BoardRenderer {
 
       // Live-sync FPS cap — toggling Performance & Debug → Cap to 60 FPS takes
       // effect without a scene rebuild. PixiJS treats maxFPS = 0 as uncapped.
-      const targetMax = cur.cap60Fps ? 60 : 0;
+      const targetMax = boardMaxFps(cur.cap60Fps, cur.touchPerformanceMode);
       if (this.app?.ticker && this.app.ticker.maxFPS !== targetMax) {
         this.app.ticker.maxFPS = targetMax;
       }
@@ -6254,8 +6343,25 @@ export class BoardRenderer {
     // `dragZoomActive` covers the click pixi emits *during* the drag; the
     // travel test covers one emitted at release, for gestures whose moves were
     // hidden from pixi by some other handler.
-    if (this.dragZoomActive ||
-        this.pointerTravelPx > BoardRenderer.CLICK_DRAG_TOLERANCE_PX) {
+    const dragTol = this.gestureIsTouch
+      ? BoardRenderer.TOUCH_CLICK_DRAG_TOLERANCE_PX
+      : BoardRenderer.CLICK_DRAG_TOLERANCE_PX;
+    if (this.dragZoomActive || this.pointerTravelPx > dragTol) {
+      this.lastPointerShift = false;
+      this.clickCycle = null;
+      this.clearPendingCycleAdvance();
+      return;
+    }
+    // A gesture that ever had two fingers on it is a pinch, and one the
+    // browser cancelled was taken over by its own recogniser. Neither is a
+    // tap, and neither is distinguishable by distance — see the field
+    // comments on `gestureWasMultiTouch`. The flags are deliberately NOT
+    // cleared here: they are cleared when the next gesture starts, because a
+    // pinch releases one finger at a time and pixi-viewport can emit its
+    // stale `clicked` on either release.
+    if (this.gestureWasMultiTouch || this.gestureWasCancelled) {
+      log.ui.log(`touch: swallowed a stale click (multiTouch=${this.gestureWasMultiTouch} ` +
+        `cancelled=${this.gestureWasCancelled} travel=${Math.round(this.pointerTravelPx)}px)`);
       this.lastPointerShift = false;
       this.clickCycle = null;
       this.clearPendingCycleAdvance();
@@ -6871,6 +6977,11 @@ export class BoardRenderer {
     if (this.boundPointerTravel) {
       window.removeEventListener('pointermove', this.boundPointerTravel, true);
       this.boundPointerTravel = null;
+    }
+    if (this.boundPointerRelease) {
+      window.removeEventListener('pointerup', this.boundPointerRelease, true);
+      window.removeEventListener('pointercancel', this.boundPointerRelease, true);
+      this.boundPointerRelease = null;
     }
     if (this.boundShiftCapture) {
       this.containerEl.removeEventListener('pointerdown', this.boundShiftCapture, true);

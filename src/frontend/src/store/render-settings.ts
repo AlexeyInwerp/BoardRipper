@@ -253,6 +253,14 @@ export interface RenderSettings {
    *  display refresh rate (120/144/240 Hz) — smoother but more CPU/GPU work. */
   cap60Fps: boolean;
 
+  /** Spend less GPU on the board **when the primary pointer is a finger** —
+   *  60 fps instead of the panel's 120, no MSAA, and a 1.5× ceiling on the
+   *  render resolution. No effect whatsoever on a mouse/trackpad machine, so
+   *  it is safe to leave on. Board text is untouched: the Canvas2D label
+   *  overlay keeps the full device pixel ratio. See `device-profile.ts` for
+   *  why all three costs matter together on a tile-based tablet GPU. */
+  touchPerformanceMode: boolean;
+
   /** Show the per-phase frame-time overlay on the board canvas. Same toggle
    *  as the small "i" button at the bottom-left of each board panel. */
   showPerfOverlay: boolean;
@@ -642,6 +650,7 @@ export const DEFAULTS: RenderSettings = {
   hideTextDuringZoom: true,
   labelAtlasResolution: 8,
   cap60Fps: false,
+  touchPerformanceMode: true,
   showPerfOverlay: false,
 
   circleLabelMinScreenPx: 8,
