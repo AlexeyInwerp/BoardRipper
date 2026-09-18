@@ -47,13 +47,15 @@ export default defineConfig({
         // deliberately not here: it needs CDP multi-touch, which is Chromium's.
         testMatch: /(.*\.webkit\.spec\.ts|pdf-touch\.spec\.ts)/,
       }]
-    : [{
-        name: 'chromium',
-        use: { ...devices['Desktop Chrome'] },
-        // `.webkit.spec.ts` files drive WebKit-only behaviour (gesture events,
-        // WebKit's pointer-cancel timing) and are meaningless under Chromium.
-        testIgnore: /.*\.webkit\.spec\.ts/,
-      }],
+    : undefined,
+  // No project for the default run: naming one means giving it a `use`, and
+  // spreading a device descriptor there changes the whole suite out from under
+  // itself — `devices['Desktop Chrome']` ships a *Windows* user agent, which
+  // flips `isMac` in keyboard-shortcuts.ts and fails a hundred specs that
+  // expect ⌘. Top-level `testIgnore` gets the same result while leaving every
+  // other setting exactly as it was. `.webkit.spec.ts` files drive WebKit-only
+  // behaviour and are meaningless under Chromium.
+  testIgnore: WEBKIT ? undefined : /.*\.webkit\.spec\.ts/,
   webServer: {
     command: `npx vite --port ${VITE_PORT} --strictPort`,
     port: VITE_PORT,

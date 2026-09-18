@@ -132,6 +132,70 @@ test.describe('touch input', () => {
     expect(await selectedPart(page)).not.toBeNull();
   });
 
+  /** A finger wanders. How far it may wander and still count as a tap is
+   *  decided in two places that must agree: pixi-viewport suppresses its own
+   *  `clicked` past `viewport.threshold`, and handleClick rejects past its own
+   *  tolerance — so the looser one is never consulted unless the other is set
+   *  to match. Measured before they were aligned: a tap that moved 8 px, which
+   *  is an ordinary tap on a tablet, selected nothing 5 times out of 5. */
+  test('a tap may wander like a finger; a drag still reads as a drag', async ({ page }) => {
+    const c = await load(page);
+    const cdp = await page.context().newCDPSession(page);
+    await page.evaluate(() =>
+      (window as unknown as { __boardStore: { selectPart(i: number | null): void } })
+        .__boardStore.selectPart(null));
+
+    const tapWith = async (travel: number) => {
+      await page.evaluate(() =>
+        (window as unknown as { __boardStore: { selectPart(i: number | null): void } })
+          .__boardStore.selectPart(null));
+      await touch(cdp, 'touchStart', [c]);
+      if (travel) {
+        await touch(cdp, 'touchMove', [{ x: c.x + travel, y: c.y }]);
+        await page.waitForTimeout(16);
+      }
+      await touch(cdp, 'touchEnd', []);
+      await page.waitForTimeout(250);
+      return selectedPart(page);
+    };
+
+    expect(await tapWith(0), 'a still tap').not.toBeNull();
+    expect(await tapWith(8), 'a tap that wandered 8 px').not.toBeNull();
+    expect(await tapWith(40), 'a 40 px drag').toBeNull();
+  });
+
+  /** The click-cycle is a claim about the *current* selection — "you are
+   *  looking at stack[i], click again for the next". It only means anything
+   *  while that claim holds. It used to survive the selection being cleared
+   *  from anywhere else (a part picked in the Net List, an MCP select_part, a
+   *  programmatic deselect), and a click back at the same spot then took the
+   *  "same spot again" branch — which, on a stack of one, does nothing at all.
+   *  The part was unclickable until the user clicked somewhere else first. */
+  test('a part stays clickable after the selection is cleared from outside the board', async ({ page }) => {
+    const c = await load(page);
+    const cdp = await page.context().newCDPSession(page);
+    const clear = () => page.evaluate(() =>
+      (window as unknown as { __boardStore: { selectPart(i: number | null): void } })
+        .__boardStore.selectPart(null));
+    const tap = async () => {
+      await touch(cdp, 'touchStart', [c]);
+      await touch(cdp, 'touchEnd', []);
+      await page.waitForTimeout(250);
+      return selectedPart(page);
+    };
+
+    await clear();
+    const first = await tap();
+    expect(first).not.toBeNull();
+
+    // Twice, because the failure repeated: the spot stayed dead click after
+    // click until the camera or the click point moved.
+    for (let i = 0; i < 2; i++) {
+      await clear();
+      expect(await tap(), `re-select attempt ${i + 1}`).toBe(first);
+    }
+  });
+
   test('a tap right after a pinch still selects — the guard does not stay armed', async ({ page }) => {
     const c = await load(page);
     const cdp = await page.context().newCDPSession(page);

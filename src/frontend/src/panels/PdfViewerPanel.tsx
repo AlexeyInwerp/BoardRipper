@@ -36,6 +36,10 @@ const TOUCH_PINCH_FACTOR = 1;       // 1:1 with the fingers — see note below
 // bug as pixi-viewport's `pinch({percent: 2})`. Keep both at 1.
 const TRACKPAD_PINCH_SPEED = 0.01;  // trackpad pinch sensitivity (10× faster than mouse wheel)
 const MOUSE_WHEEL_SPEED = 0.001;    // mouse wheel zoom sensitivity
+/** Largest |deltaY| one ctrlKey wheel event may zoom by. A trackpad pinch
+ *  step stays well under it; a mouse notch (100–200) does not. See the note at
+ *  the use site. */
+const PINCH_STEP_CAP = 90;
 const LINE_HEIGHT_RATIO = 1.2;
 const NIGHT_MODE_KEY = 'boardripper-pdf-nightmode';
 const CLEAN_CONTRAST_KEY = 'boardripper-pdf-clean-contrast';
@@ -2652,9 +2656,21 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         const cssH = pageCssHRef.current;
         const minZoom = renderSettingsStore.settings.pdfEnableBoundaries ? 1 : 0.5;
 
-        // Trackpad pinch has small deltaY values — use higher sensitivity
+        // Trackpad pinch has small deltaY values — use higher sensitivity.
+        //
+        // `isTrackpadPinch` is really "ctrlKey", and a mouse wheel held with
+        // Ctrl is the browser's standard zoom gesture, so it lands here too —
+        // with a deltaY two orders of magnitude larger than a pinch step.
+        // Measured: one notch took the page from 100% to 739%. Capping the
+        // step bounds that without having to guess the device: every real
+        // pinch event is far below the cap, and a mouse notch now zooms by
+        // about the same ~2.4x the board gives for Ctrl+wheel, which is the
+        // deliberate "Ctrl = coarse zoom" behaviour documented there.
         const speed = isTrackpadPinch ? TRACKPAD_PINCH_SPEED : MOUSE_WHEEL_SPEED;
-        const zoomFactor = Math.exp(-e.deltaY * speed);
+        const step = isTrackpadPinch
+          ? Math.max(-PINCH_STEP_CAP, Math.min(PINCH_STEP_CAP, e.deltaY))
+          : e.deltaY;
+        const zoomFactor = Math.exp(-step * speed);
         const oldZoom = zoomRef.current;
         const newZoom = Math.max(minZoom, Math.min(oldZoom * zoomFactor, 10));
         const ratio = newZoom / oldZoom;

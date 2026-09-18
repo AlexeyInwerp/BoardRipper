@@ -435,7 +435,16 @@ export class BoardRenderer {
    *  `key` is the ordered set of part indices under the anchor; `index` is the
    *  current position in the smallest-first stack. Reset to null on pointer
    *  move so the next click starts fresh at the smallest part. */
-  private clickCycle: { x: number; y: number; key: string; index: number } | null = null;
+  private clickCycle: {
+    x: number; y: number; key: string; index: number;
+    /** What the cycle last put in the store. The cycle is a claim about the
+     *  *current* selection — "you are looking at stack[index], click again for
+     *  the next one" — so it only means anything while that claim still holds.
+     *  Anything else that changes the selection (a part picked in the Net List,
+     *  an MCP `select_part`, a programmatic clear) makes the next click at the
+     *  same spot a fresh one, not a step through a stack the user has left. */
+    selectedPartIndex: number | null;
+  } | null = null;
   /** Pending deferred cycle advance — a same-spot repeat click schedules the
    *  advance so a following double-click (PDF lookup) can cancel it. */
   private pendingCycleAdvance: ReturnType<typeof setTimeout> | null = null;
@@ -460,7 +469,7 @@ export class BoardRenderer {
   /** Bound window-capture pointermove tracker — see `pointerTravelPx`. */
   private boundPointerTravel: ((e: PointerEvent) => void) | null = null;
   /** How far the pointer has moved from where the current gesture started, in
-   *  CSS px (Chebyshev-ish |dx|+|dy|). Reset on every pointerdown.
+   *  CSS px (straight-line distance). Reset on every pointerdown.
    *
    *  pixi-viewport suppresses its own `clicked` after 5 px of movement, but
    *  only when its InputManager actually *sees* the pointermoves — and the
@@ -470,10 +479,20 @@ export class BoardRenderer {
    *  a listener installed at init and therefore ahead of any per-gesture
    *  handler that might swallow the events. */
   private pointerTravelPx = 0;
-  /** Touch pointer ids currently on the glass. The renderer keeps its own
-   *  record for the same reason it keeps `pointerTravelPx`: what a gesture
-   *  *was* cannot be recovered from what pixi-viewport believes it saw. */
-  private activeTouchIds = new Set<number>();
+  /** Touch pointers currently on the glass, with their last position. The
+   *  renderer keeps its own record for the same reason it keeps
+   *  `pointerTravelPx`: what a gesture *was* cannot be recovered from what
+   *  pixi-viewport believes it saw. The positions are what `installTouchPinch`
+   *  runs on. */
+  private activeTouchIds = new Map<number, { x: number; y: number }>();
+  /** The two pointers a pinch is running on, and the state it started from.
+   *  `startDist` and `startScale` describe that *pair*: if either pointer
+   *  changes the gesture is re-seeded, never continued against a stale
+   *  baseline. */
+  private pinch: {
+    a: number; b: number; startDist: number; startScale: number;
+    lastMidX: number; lastMidY: number;
+  } | null = null;
   /** True once two or more fingers have been down during the gesture in
    *  progress, and until the next gesture begins.
    *
@@ -494,6 +513,8 @@ export class BoardRenderer {
   private gestureIsTouch = false;
   /** Bound capture-phase pointerup/pointercancel tracker. */
   private boundPointerRelease: ((e: PointerEvent) => void) | null = null;
+  /** Bound capture-phase pointermove that drives the two-finger pinch. */
+  private boundTouchPinchMove: ((e: PointerEvent) => void) | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private containerEl: HTMLDivElement;
   /** Canvas2D "Text fast mode" label overlay — lazily created by
@@ -1416,6 +1437,7 @@ export class BoardRenderer {
     });
     this.applyViewportPlugins();
     this.installShiftWheelHandler();
+    this.installTouchPinch();
     this.installDragZoomHandler();
     this.viewport.on('moved', () => {
       this.needsRender = true;
@@ -1597,6 +1619,7 @@ export class BoardRenderer {
 
     this.applyViewportPlugins();
     this.installShiftWheelHandler();
+    this.installTouchPinch();
     this.installDragZoomHandler();
 
     // Viewport pan/zoom/decelerate → mark dirty so we render
@@ -1717,7 +1740,7 @@ export class BoardRenderer {
         // renderer never saw can be dropped. Without this self-heal one lost
         // pointerup would make every later tap look like a second finger.
         if (e.isPrimary) this.activeTouchIds.clear();
-        this.activeTouchIds.add(e.pointerId);
+        this.activeTouchIds.set(e.pointerId, { x: e.clientX, y: e.clientY });
       }
       if (this.activeTouchIds.size > 1) {
         // Second finger of a pinch. The gesture is no longer a tap, and its
@@ -1725,6 +1748,7 @@ export class BoardRenderer {
         // — re-anchoring here would reset the drag test mid-pinch and hand
         // handleClick a gesture that looks stationary.
         this.gestureWasMultiTouch = true;
+        this.seedPinch();
         // One line per pinch, not per move. This is the only record of what a
         // tablet gesture actually was — Chromium headless does not reproduce
         // iPadOS's pointer-cancel behaviour, so the Debug panel is where that
@@ -1735,6 +1759,16 @@ export class BoardRenderer {
       this.gestureWasMultiTouch = false;
       this.gestureWasCancelled = false;
       this.gestureIsTouch = e.pointerType === 'touch';
+      // pixi-viewport decides click-vs-drag on its own `threshold` (a plain
+      // public field, default 5 px) and suppresses `clicked` past it — so the
+      // renderer's matching tolerance in handleClick is never even consulted
+      // unless this agrees. Measured before this line: a tap that wandered
+      // 8 px selected nothing, 0 times out of 5, which is an ordinary tap on
+      // a tablet. The two thresholds must be the same number or they disagree
+      // about what a click is.
+      this.viewport.threshold = this.gestureIsTouch
+        ? BoardRenderer.TOUCH_CLICK_DRAG_TOLERANCE_PX
+        : BoardRenderer.CLICK_DRAG_TOLERANCE_PX;
       this.lastPointerShift = e.shiftKey;
       this.lastPointerClient = { x: e.clientX, y: e.clientY };
       this.pointerTravelPx = 0;
@@ -1757,6 +1791,11 @@ export class BoardRenderer {
           `— browser took the gesture over; any click it produces is stale`);
       }
       this.activeTouchIds.delete(e.pointerId);
+      // Lifting one of three fingers leaves a pinch running on a different
+      // pair; dropping to one ends it.
+      if (this.pinch && (e.pointerId === this.pinch.a || e.pointerId === this.pinch.b)) {
+        this.seedPinch();
+      }
     };
     window.addEventListener('pointerup', this.boundPointerRelease, { capture: true });
     window.addEventListener('pointercancel', this.boundPointerRelease, { capture: true });
@@ -1767,7 +1806,11 @@ export class BoardRenderer {
     this.boundPointerTravel = (e: PointerEvent) => {
       const down = this.lastPointerClient;
       if (!down) return;
-      const d = Math.abs(e.clientX - down.x) + Math.abs(e.clientY - down.y);
+      // Euclidean, not a Manhattan sum: the tolerance is a distance in CSS px
+      // and pixi-viewport's own threshold is per-axis, so summing the axes
+      // made a diagonal tap count as ~1.4x its real travel and rejected taps
+      // both thresholds considered stationary.
+      const d = Math.hypot(e.clientX - down.x, e.clientY - down.y);
       if (d > this.pointerTravelPx) this.pointerTravelPx = d;
     };
     window.addEventListener('pointermove', this.boundPointerTravel, { capture: true });
@@ -3698,11 +3741,22 @@ export class BoardRenderer {
     }
     this.viewport
       .drag({ wheel: s.twoFingerPan })
-      // percent: 1 makes the plugin's per-event `(1 - old/new) * percent * scale`
-      // a first-order match for a multiplicative zoom, i.e. the board tracks
-      // the fingers 1:1. The former 2 doubled every step, so the view ran
-      // ahead of the pinch and snapped back — the "jumps" on a touch screen.
-      .pinch({ percent: 1 })
+      // The plugin is registered but does nothing: `installTouchPinch` owns the
+      // gesture. Its formula cannot be tuned into correctness — it adds
+      // `(1 - old/new) * percent * scale` per event, which is a first-order
+      // approximation of a multiplicative zoom, so the total depends on how
+      // many pointermove events the browser happened to deliver. Measured on
+      // one board: the same 4x finger spread came out as 1.8x zoom over three
+      // move events and 2.7x over eight. That is the "pinch is inconsistent"
+      // report — a flick and a slow spread over the same distance land
+      // somewhere different — and no `percent` fixes it.
+      //
+      // It stays registered because the *drag* plugin stands down only while a
+      // pinch plugin exists (`checkButtons`), and `plugins.get('pinch', true)`
+      // returns null for a paused one — pausing it would hand two-finger
+      // gestures back to drag. `percent: 0` with `noDrag` leaves an inert
+      // placeholder that still holds the slot.
+      .pinch({ percent: 0, noDrag: true })
       .wheel({
         smooth: s.wheelSmooth,
         percent: 0.3,
@@ -3764,6 +3818,94 @@ export class BoardRenderer {
       e.stopPropagation();
     };
     this.containerEl.addEventListener('wheel', this.boundShiftWheel, { capture: true, passive: false });
+  }
+
+  /** Set an absolute scale while holding one screen point still.
+   *
+   *  `zoomAtScreen` takes an incremental wheel delta; a pinch knows the scale
+   *  it wants outright (start scale times the finger-distance ratio) and must
+   *  not route through a delta, because that is exactly the accumulation the
+   *  plugin's formula got wrong. Screen coordinates are container CSS px, the
+   *  same space `viewport.toWorld` works in here. */
+  private setScaleAtScreen(screenX: number, screenY: number, targetScale: number): void {
+    const s = Math.max(0.001, Math.min(10, targetScale));
+    const before = this.viewport.toWorld(screenX, screenY);
+    this.viewport.scale.set(s, s);
+    const after = this.viewport.toWorld(screenX, screenY);
+    this.viewport.x += (after.x - before.x) * this.viewport.scale.x;
+    this.viewport.y += (after.y - before.y) * this.viewport.scale.y;
+  }
+
+  /** Seed (or re-seed) the pinch from whichever two touch pointers are down.
+   *
+   *  The baseline describes a *pair*. A third finger landing, or one of two
+   *  being cancelled and replaced, changes which pointers the gesture runs on
+   *  while `startDist` still describes the old ones — the next move would then
+   *  divide two unrelated distances and the board would leap. */
+  private seedPinch(): void {
+    const ids = [...this.activeTouchIds.keys()];
+    if (ids.length < 2) { this.pinch = null; return; }
+    const [a, b] = ids;
+    const pa = this.activeTouchIds.get(a)!;
+    const pb = this.activeTouchIds.get(b)!;
+    const dist = Math.hypot(pb.x - pa.x, pb.y - pa.y);
+    if (dist < 1) { this.pinch = null; return; }
+    const rect = this.containerEl.getBoundingClientRect();
+    this.pinch = {
+      a, b, startDist: dist, startScale: Math.abs(this.viewport.scale.x),
+      lastMidX: (pa.x + pb.x) / 2 - rect.left,
+      lastMidY: (pa.y + pb.y) / 2 - rect.top,
+    };
+  }
+
+  /** Two-finger pinch: zoom and pan, owned here rather than by pixi-viewport.
+   *
+   *  Scale is `startScale * (dist / startDist)` — a function of where the
+   *  fingers are *now*, not of how many events got there, so a flick and a
+   *  slow spread over the same distance land on the same zoom and a pinch in
+   *  followed by a pinch out returns to where it started. The midpoint is held
+   *  still while scaling and then carries the pan, so the board stays under
+   *  the fingers.
+   *
+   *  Capture phase on the container: the pinch plugin is inert (see
+   *  `applyViewportPlugins`) and the drag plugin stands down at two pointers,
+   *  so nothing here needs to stop propagation — pixi-viewport still sees the
+   *  moves and keeps its own click/drag bookkeeping honest. */
+  private installTouchPinch(): void {
+    if (this.boundTouchPinchMove) {
+      this.containerEl.removeEventListener('pointermove', this.boundTouchPinchMove, true);
+    }
+    this.boundTouchPinchMove = (e: PointerEvent) => {
+      if (e.pointerType !== 'touch') return;
+      const rec = this.activeTouchIds.get(e.pointerId);
+      if (!rec) return;
+      rec.x = e.clientX;
+      rec.y = e.clientY;
+      const p = this.pinch;
+      if (!p || (e.pointerId !== p.a && e.pointerId !== p.b)) return;
+      const pa = this.activeTouchIds.get(p.a);
+      const pb = this.activeTouchIds.get(p.b);
+      if (!pa || !pb) return;
+
+      const dist = Math.hypot(pb.x - pa.x, pb.y - pa.y);
+      if (dist < 1) return;
+      const rect = this.containerEl.getBoundingClientRect();
+      const midX = (pa.x + pb.x) / 2 - rect.left;
+      const midY = (pa.y + pb.y) / 2 - rect.top;
+
+      this.setScaleAtScreen(midX, midY, p.startScale * (dist / p.startDist));
+      // Two-finger pan: the midpoint's own travel since the last event. Taken
+      // after the scale so it is a plain screen translation.
+      this.viewport.x += midX - p.lastMidX;
+      this.viewport.y += midY - p.lastMidY;
+      p.lastMidX = midX;
+      p.lastMidY = midY;
+
+      this.viewport.emit('moved', { viewport: this.viewport, type: 'pinch' });
+      this.needsRender = true;
+      this.netLinesDirty = true;
+    };
+    this.containerEl.addEventListener('pointermove', this.boundTouchPinchMove, { capture: true });
   }
 
   /** Mouse-centered zoom at a screen point using the same formula the
@@ -6394,12 +6536,18 @@ export class BoardRenderer {
       const tol = BoardRenderer.CYCLE_TOLERANCE_PX / Math.abs(this.viewport.scale.x);
       const key = stack.map(h => h.partIndex).join(',');
       const cyc = this.clickCycle;
+      // The selection test is load-bearing, not belt-and-braces. Without it,
+      // clearing the selection from anywhere but the board left the cycle
+      // pointing at the same spot, and a click there took the "same spot
+      // again" branch — which, on a stack of one, does nothing at all. The
+      // part became unclickable until the user clicked somewhere else first.
       const sameSpot = !!cyc && cyc.key === key &&
+        cyc.selectedPartIndex === boardStore.selection.partIndex &&
         Math.abs(cyc.x - world.x) <= tol && Math.abs(cyc.y - world.y) <= tol;
 
       if (!sameSpot) {
         this.clearPendingCycleAdvance();
-        this.clickCycle = { x: world.x, y: world.y, key, index: 0 };
+        this.clickCycle = { x: world.x, y: world.y, key, index: 0, selectedPartIndex: stack[0].partIndex };
         this.selectStackEntry(stack[0]);
         return;
       }
@@ -6413,6 +6561,7 @@ export class BoardRenderer {
           const c = this.clickCycle;
           if (!c || c.key !== key) return;
           c.index = (c.index + 1) % stack.length;
+          c.selectedPartIndex = stack[c.index].partIndex;
           this.selectStackEntry(stack[c.index]);
         }, BoardRenderer.CYCLE_DBL_GUARD_MS);
       }
@@ -6982,6 +7131,10 @@ export class BoardRenderer {
       window.removeEventListener('pointerup', this.boundPointerRelease, true);
       window.removeEventListener('pointercancel', this.boundPointerRelease, true);
       this.boundPointerRelease = null;
+    }
+    if (this.boundTouchPinchMove) {
+      this.containerEl.removeEventListener('pointermove', this.boundTouchPinchMove, true);
+      this.boundTouchPinchMove = null;
     }
     if (this.boundShiftCapture) {
       this.containerEl.removeEventListener('pointerdown', this.boundShiftCapture, true);
