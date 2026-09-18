@@ -80,6 +80,15 @@
 - The Tools tab tests reached the sidebar the way the old text strip worked,
   so they had been failing since the icon rail replaced it.
 
+### Maintainers
+
+- The frontend image stage builds on the host's architecture instead of under
+  emulation. Its output is the same JavaScript for every target, and the
+  emulated path was a coin flip: esbuild's install step runs its own native
+  binary to check it, and that segfaults under QEMU — it failed this release
+  once on dependencies that had not changed since the last one. Multi-arch
+  builds are also about six times faster for that stage.
+
 ## v0.41.0 — 2026-09-14
 
 ### A fresh install that shows something

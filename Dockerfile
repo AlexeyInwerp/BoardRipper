@@ -1,5 +1,15 @@
 # Stage 1: Build frontend
-FROM node:20-alpine AS frontend
+#
+# Pinned to the BUILD host's arch, like the backend stage below. The output is
+# `dist/` — JavaScript, CSS and HTML, identical for every target — so there is
+# nothing to gain from running this stage under QEMU, and one thing to lose:
+# esbuild's postinstall validates its native binary by executing it, and that
+# binary SIGSEGVs under emulation. It killed the v0.42.0 release at
+# `npm ci` (`vite-node/node_modules/esbuild`, signal SIGSEGV) on a build whose
+# dependencies had not changed since the release before it, so the emulated
+# path was always a coin flip. Building natively also halves the multi-arch
+# build: one npm ci + vite build instead of one per target platform.
+FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend
 WORKDIR /app/frontend
 COPY src/frontend/package*.json ./
 # patches/ MUST land before `npm ci`: the postinstall hook runs patch-package,
