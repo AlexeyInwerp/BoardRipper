@@ -1748,6 +1748,7 @@ export class BoardRenderer {
         // — re-anchoring here would reset the drag test mid-pinch and hand
         // handleClick a gesture that looks stationary.
         this.gestureWasMultiTouch = true;
+        this.clearHoverState();
         this.seedPinch();
         // One line per pinch, not per move. This is the only record of what a
         // tablet gesture actually was — Chromium headless does not reproduce
@@ -1912,6 +1913,23 @@ export class BoardRenderer {
     // far faster than the display refreshes; only the latest event per frame
     // is processed (audit A1).
     this.boundHover = (e: PointerEvent) => {
+      // A finger that is gesturing is not hovering. Every hover runs a
+      // hitTest plus a traceHitTest, and both pointers of a pinch deliver
+      // moves — measured on a 3369-part / 39319-trace Allegro board: 90 hover
+      // hit-tests during one pinch, and the gesture ran at a median of 30 fps
+      // instead of 60. There is no cursor to follow: the tooltip would be
+      // under the fingers and the lit net changes every frame.
+      //
+      // A single *resting* finger is still a hover — tapping a pin to read its
+      // net and diode value is the main reason to touch a pin at all — so the
+      // test is the same one handleClick uses for a tap: one pointer, and
+      // travel within the touch tolerance. `pointerTravelPx` is a running
+      // maximum, so once a gesture has moved, hover stays off for the rest of
+      // it rather than flickering back on when the finger pauses.
+      if (e.pointerType === 'touch' && !this.touchIsResting()) {
+        this.clearHoverState();
+        return;
+      }
       this.lastHoverEvent = e;
       if (this.hoverRafId !== null) return;           // already scheduled this frame
       this.hoverRafId = requestAnimationFrame(() => {
@@ -6240,6 +6258,27 @@ export class BoardRenderer {
   }
 
   /** Update hover net and redraw selection overlay if ambient dim needs it */
+  /** One finger, and it has not travelled past what counts as a tap. */
+  private touchIsResting(): boolean {
+    return this.activeTouchIds.size <= 1
+      && this.pointerTravelPx <= BoardRenderer.TOUCH_CLICK_DRAG_TOLERANCE_PX;
+  }
+
+  /** Drop everything hover owns, and any hover scheduled for the next frame.
+   *  Called when a touch turns into a gesture: whatever the resting finger had
+   *  lit would otherwise stay lit for the whole pinch, and a lit net is
+   *  re-drawn on every zoom frame. */
+  private clearHoverState(): void {
+    if (this.hoverRafId !== null) { cancelAnimationFrame(this.hoverRafId); this.hoverRafId = null; }
+    this.lastHoverEvent = null;
+    if (this.hoverKey !== null || this.hoverNet !== null
+        || this.hoverPartIndex !== null || this.hoverPinIndex !== null) {
+      this.hideTooltip();
+      this.setHoverPin(null, null);
+      this.setHoverNet(null);
+    }
+  }
+
   private setHoverNet(net: string | null) {
     if (net === this.hoverNet) return;
     this.hoverNet = net;
