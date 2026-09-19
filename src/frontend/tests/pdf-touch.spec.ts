@@ -113,6 +113,52 @@ test.describe('PDF touch', () => {
     expect(await transform(page)).not.toBe(before);
   });
 
+  /** A pinch must leave the content under the fingers where it was.
+   *
+   *  Two mistakes hid behind the same symmetric test. The midpoint was frozen
+   *  at the second pointerdown — correct only for the textbook pinch where
+   *  both fingers move equally and oppositely, which nobody does; park one
+   *  finger and spread the other and the page slid 140 px away from the finger
+   *  that never moved. And once the midpoint tracked, anchoring the scale on
+   *  the *new* midpoint double-counted its travel by (1 - ratio) per event,
+   *  leaving 24 px of drift across one gesture. Both fingers stay put exactly
+   *  when pan₁ = mid₀ - ratio·(mid₀ - pan₀) + (mid₁ - mid₀).
+   *
+   *  The asymmetric case is the load-bearing one: a symmetric pinch passes
+   *  against a frozen midpoint, which is how this survived.
+   */
+  test('a pinch keeps the content under the fingers, however they move', async ({ page }) => {
+    const { box } = await openPdf(page);
+    expect(await view(page)).toEqual({ x: 0, y: 0, scale: 1 });
+
+    const anchorPt = { x: box.x + box.w * 0.35, y: box.y + box.h * 0.45 };
+    const other = { x: box.x + box.w * 0.65, y: box.y + box.h * 0.45 };
+
+    // The page point currently under the finger that will not move.
+    const v0 = await view(page);
+    const pagePt = {
+      x: (anchorPt.x - box.x - v0.x) / v0.scale,
+      y: (anchorPt.y - box.y - v0.y) / v0.scale,
+    };
+
+    await pointer(page, 'pointerdown', 1, anchorPt);
+    await pointer(page, 'pointerdown', 2, other);
+    for (let i = 1; i <= 16; i++) {
+      await pointer(page, 'pointermove', 2, { x: other.x + i * 12, y: other.y });
+    }
+    await page.waitForTimeout(80);
+
+    const v1 = await view(page);
+    expect(v1.scale, 'the pinch should have zoomed in').toBeGreaterThan(1.5);
+    const onScreen = box.x + v1.x + pagePt.x * v1.scale;
+    expect(Math.abs(onScreen - anchorPt.x),
+      `content drifted ${(onScreen - anchorPt.x).toFixed(1)}px from a stationary finger`)
+      .toBeLessThan(2);
+
+    await pointer(page, 'pointerup', 1, anchorPt);
+    await pointer(page, 'pointerup', 2, { x: other.x + 192, y: other.y });
+  });
+
   test('a tap looks up the word under it — on a finger, not only a mouse', async ({ page }) => {
     const { box } = await openPdf(page);
     const devHooks = await page.evaluate(

@@ -1090,6 +1090,25 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       }
     }
 
+    // Diagnostic, at most one line per gesture (`clampLoggedRef` is cleared on
+    // pointerdown). "Panning moves a bit and stops" is what clamping looks
+    // like from the outside, and clamping is also the correct behaviour when
+    // the page already fits — so the only way to tell a bug from working as
+    // designed is to know which axis clamped and against what. Reproducing
+    // this needs a real iPad: Playwright's WebKit is the Mac port, reports
+    // `maxTouchPoints: 0`, and injects no multi-touch, so the whole pointer
+    // stream here is synthetic and pans 1:1 at every UI scale.
+    const clamped = x !== panRef.current.x || y !== panRef.current.y;
+    if (clamped && !clampLoggedRef.current) {
+      clampLoggedRef.current = true;
+      log.pdf.log('pan clamped', {
+        from: { x: Math.round(panRef.current.x), y: Math.round(panRef.current.y) },
+        to: { x: Math.round(x), y: Math.round(y) },
+        zoom: +zoom.toFixed(3), containerW, containerH,
+        pageW: Math.round(containerW * zoom), pageH: Math.round(cssH * zoom),
+        singlePage,
+      });
+    }
     panRef.current = { x, y };
   }, [pdfFileName]);
 
@@ -2195,8 +2214,21 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         let existing = adjMap.get(pageNum);
 
         if (existing && existing.tier === tier) {
-          // Already rendered at correct tier — just reposition (committed-zoom-scaled)
-          existing.canvas.style.top = `${yOffset * committedZoomRef.current}px`;
+          // Already rendered at the right tier — reposition it. Width and
+          // height go with the offset: all three are committed-zoom-scaled, so
+          // updating only `top` leaves the page at the scale it had when the
+          // tier was last rendered while the main page moves on. The tier
+          // changes on most zoom steps, which is why this is a hazard rather
+          // than a standing bug — but a saturated tier (the `medium` preset
+          // caps at 6, and a tablet defaults to `medium`) holds it still while
+          // the zoom keeps going.
+          const zCommit = committedZoomRef.current;
+          const cached = getPageCache(pageCacheKey(pdfFileName, pageNum, tier, cleanMode));
+          if (cached) {
+            existing.canvas.style.width = `${cached.cssW * zCommit}px`;
+            existing.canvas.style.height = `${cached.cssH * zCommit}px`;
+          }
+          existing.canvas.style.top = `${yOffset * zCommit}px`;
           continue;
         }
 
@@ -2815,6 +2847,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const pinchStartDistRef = useRef(0);
   const pinchStartZoomRef = useRef(1);
   const pinchMidRef = useRef({ x: 0, y: 0 });
+  /** One "pan clamped" line per gesture, not per move. */
+  const clampLoggedRef = useRef(false);
 
   // --- Safari trackpad pinch via gesture* events ---
   // Mac Safari emits gesture* events for trackpad pinch. The global handler in
@@ -2918,6 +2952,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     // be dropped. Without this self-heal one missing pointerup leaves the map
     // at two entries for good: every later move takes the pinch branch, the
     // drag branch is never reached, and panning is simply dead.
+    clampLoggedRef.current = false;
     if (e.pointerType === 'touch' && e.isPrimary) activeTouchesRef.current.clear();
     // setPointerCapture throws NotFoundError when the pointer is no longer
     // active — which happens for real: iOS cancels a touch between the event
@@ -2970,11 +3005,36 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         const minZoom = renderSettingsStore.settings.pdfEnableBoundaries ? 1 : 0.5;
         const newZoom = Math.max(minZoom, Math.min(pinchStartZoomRef.current * scale, 10));
         const ratio = newZoom / oldZoom;
-        const mid = pinchMidRef.current;
+
+        // Anchor on where the fingers are NOW, and carry the midpoint's own
+        // travel into the pan — the same two steps BoardRenderer.
+        // installTouchPinch does, and the reason the board tracks the fingers
+        // while this did not. The midpoint used to be frozen at the second
+        // pointerdown, which is only correct for the textbook pinch where both
+        // fingers move by equal and opposite amounts. Nobody pinches like
+        // that: anchor one finger and spread the other — the everyday gesture —
+        // and the midpoint travels half the distance the moving finger does.
+        // Measured before this change: the page point under the *stationary*
+        // finger slid 140 px away from it during one such pinch.
+        const container = containerRef.current;
+        const rect = container ? container.getBoundingClientRect() : null;
+        const mid = rect
+          ? { x: (pts[0].x + pts[1].x) / 2 - rect.left, y: (pts[0].y + pts[1].y) / 2 - rect.top }
+          : pinchMidRef.current;
+        const last = pinchMidRef.current;
+
+        // The scale is anchored on the PREVIOUS midpoint and the new one's
+        // travel is then added as a plain translation. Anchoring on the new
+        // midpoint instead looks equivalent and is not: it double-counts the
+        // travel by a factor of (1 - ratio), which compounds over a gesture's
+        // worth of events. Both fingers stay over the content they started on
+        // exactly when pan₁ = mid₀ - ratio·(mid₀ - pan₀) + (mid₁ - mid₀),
+        // which is what this is.
         panRef.current = {
-          x: mid.x - ratio * (mid.x - panRef.current.x),
-          y: mid.y - ratio * (mid.y - panRef.current.y),
+          x: last.x - ratio * (last.x - panRef.current.x) + (mid.x - last.x),
+          y: last.y - ratio * (last.y - panRef.current.y) + (mid.y - last.y),
         };
+        pinchMidRef.current = mid;
         zoomRef.current = newZoom;
         syncTransform();
         // Skip expensive PDF re-render during active pinch — CSS transform is enough.
@@ -3723,6 +3783,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={(e) => {
+          // iPadOS cancels pointers when its own gesture recogniser claims the
+          // touch, and that is invisible from any desktop engine — this line
+          // is how the device tells us whether it is happening.
+          log.pdf.log('pointercancel', { id: e.pointerId, type: e.pointerType,
+            stillDown: activeTouchesRef.current.size - 1 });
           activeTouchesRef.current.delete(e.pointerId);
           seedPinch();
           isDraggingRef.current = false;
@@ -3732,6 +3797,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         // system interrupts a gesture. The id would then stay in the map and,
         // at two entries, wedge the viewer into a permanent pinch with no pan.
         onLostPointerCapture={(e) => {
+          log.pdf.log('lostpointercapture', { id: e.pointerId, type: e.pointerType,
+            stillDown: activeTouchesRef.current.size - 1 });
           activeTouchesRef.current.delete(e.pointerId);
           seedPinch();
         }}

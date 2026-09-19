@@ -3911,9 +3911,15 @@ export class BoardRenderer {
       const midX = (pa.x + pb.x) / 2 - rect.left;
       const midY = (pa.y + pb.y) / 2 - rect.top;
 
-      this.setScaleAtScreen(midX, midY, p.startScale * (dist / p.startDist));
-      // Two-finger pan: the midpoint's own travel since the last event. Taken
-      // after the scale so it is a plain screen translation.
+      // Scale about the PREVIOUS midpoint, then translate by the new one's
+      // travel. Anchoring on the current midpoint instead looks equivalent and
+      // is not: it double-counts the travel by (1 - ratio) per event, which
+      // compounds across a gesture. Both fingers stay over the content they
+      // started on exactly when pan₁ = mid₀ - ratio·(mid₀ - pan₀) + (mid₁ - mid₀).
+      // Invisible in a textbook pinch where both fingers move equally and
+      // oppositely — the midpoint never moves — and plainly visible in the
+      // everyday one where a finger is parked and the other spreads.
+      this.setScaleAtScreen(p.lastMidX, p.lastMidY, p.startScale * (dist / p.startDist));
       this.viewport.x += midX - p.lastMidX;
       this.viewport.y += midY - p.lastMidY;
       p.lastMidX = midX;
