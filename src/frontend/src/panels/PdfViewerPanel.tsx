@@ -2815,11 +2815,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       if (effectiveAction === 'pan') {
         // Omnidirectional multi-page scrolling. Two-finger scroll moves freely
         // in X and Y. syncTransform → clampPan handles all boundary clamping.
-        const cssH = pageCssHRef.current;
-        if (cssH === 0) return;
-        const zoom = zoomRef.current;
-        const pageH = cssH * zoom;
-        const containerH = container.clientHeight;
+        // Bail on an unmeasured page: flipPagesForPan needs a real page height
+        // to know where a boundary is, and clampPan needs one to bound Y.
+        if (pageCssHRef.current === 0) return;
 
         const oldPan = panRef.current;
         const newX = oldPan.x - e.deltaX;
