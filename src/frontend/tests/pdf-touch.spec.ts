@@ -21,6 +21,10 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PDF = path.resolve(here, 'fixtures/two-page-text.pdf');
+/** 16 pages, because a paging bug cannot show itself inside a document whose
+ *  every page is already in the rendered window. Both fixtures come from
+ *  fixtures/make-test-pdf.mjs. */
+const LONG_PDF = path.resolve(here, 'fixtures/many-page-text.pdf');
 
 type Pt = { x: number; y: number };
 
@@ -68,6 +72,67 @@ async function pointer(page: Page, type: string, id: number, p: Pt, kind = 'touc
 }
 
 test.describe('PDF touch', () => {
+  /** Scrolling with a finger must turn pages, the way scrolling with a wheel
+   *  does. The flip lived only in the wheel handler, so a finger panned past
+   *  the bottom of the current page for ever: the pan kept growing, the page
+   *  indicator never moved, and since only `currentPage ± 1` is rendered,
+   *  everything past the neighbour was blank paper. Measured before the fix —
+   *  fourteen swipes, pan at −11648 px, page still 1.
+   *
+   *  The ink check is the point. Asserting the page number alone would have
+   *  passed on a viewer showing a white rectangle with the right label.
+   */
+  test('swiping through a long document keeps turning pages and never goes blank',
+    async ({ page }) => {
+      await page.goto('/');
+      await expect(page.getByTestId('toolbar')).toBeVisible({ timeout: 20000 });
+      await page.getByTestId('file-input').setInputFiles(LONG_PDF);
+      await expect(page.locator('.pdf-canvas-container')).toBeVisible({ timeout: 20000 });
+      await expect(page.locator('.pdf-page-wrapper canvas').first()).toBeVisible({ timeout: 20000 });
+      await page.waitForTimeout(1500);
+
+      const b = (await page.locator('.pdf-canvas-container').boundingBox())!;
+      const from = { x: b.x + b.width / 2, y: b.y + b.height * 0.75 };
+      const distance = b.height * 0.8;
+
+      /** Fraction of the rendered page that is not white. Blank paper is 0. */
+      const ink = () => page.evaluate(() => {
+        const w = document.querySelector('.pdf-page-wrapper');
+        const main = w ? [...w.children].find(e => e.tagName === 'CANVAS' && !e.className) : null;
+        if (!(main instanceof HTMLCanvasElement) || !main.width) return -1;
+        const c = document.createElement('canvas');
+        c.width = 60; c.height = 60;
+        const g = c.getContext('2d')!;
+        g.drawImage(main, 0, 0, 60, 60);
+        const d = g.getImageData(0, 0, 60, 60).data;
+        let dark = 0;
+        for (let i = 0; i < d.length; i += 4) if (d[i] < 200) dark++;
+        return dark / 3600;
+      });
+      const pageNo = () => page.locator('.pdf-page-input').first().inputValue();
+
+      expect(await pageNo()).toBe('1');
+      expect(await ink(), 'page 1 should have text on it').toBeGreaterThan(0);
+
+      for (let swipe = 1; swipe <= 10; swipe++) {
+        await pointer(page, 'pointerdown', 1, from);
+        for (let i = 1; i <= 16; i++) {
+          await pointer(page, 'pointermove', 1, { x: from.x, y: from.y - (distance * i) / 16 });
+        }
+        await pointer(page, 'pointerup', 1, { x: from.x, y: from.y - distance });
+        await page.waitForTimeout(500);
+        expect(await ink(), `blank page after swipe ${swipe}`).toBeGreaterThan(0);
+      }
+
+      // Past page 2 is the meaningful line, and it does not depend on the
+      // viewport: a stuck counter sits at 1, and 1 ± 1 is the whole set of
+      // pages such a viewer can draw. How much further ten swipes get depends
+      // on how tall the panel is, so asserting a specific page would only make
+      // this brittle.
+      expect(Number(await pageNo()), 'the page counter should have advanced').toBeGreaterThan(2);
+    });
+
+
   test('a pointer whose capture is lost does not wedge the viewer into a permanent pinch', async ({ page }) => {
     const { box } = await openPdf(page);
     const a = { x: box.x + box.w * 0.4, y: box.y + box.h * 0.5 };

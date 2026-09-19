@@ -1033,6 +1033,64 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
    *  unrestricted. Page-flip thresholds in the wheel handler still fire as the
    *  user crosses them; this only removes the position clamp that was
    *  occasionally locking users at first/last-page Y or page-fits-X. */
+  /** Continuous mode: when the pan has carried the current page far enough off
+   *  screen, adopt the neighbour as the current page and rebase the pan by one
+   *  page height. Returns the rebased y.
+   *
+   *  This used to be inline in the wheel handler and nowhere else, so a finger
+   *  could pan past the bottom of the current page for ever: the pan kept
+   *  growing, the page indicator never moved, and since only `currentPage ± 1`
+   *  is rendered, everything past the neighbour was blank paper. Measured on
+   *  the 16-page fixture before the fix — fourteen swipes, pan at −11648 px,
+   *  page still 1, nothing drawn below page 2.
+   *
+   *  It loops. One wheel notch can only ever cross one boundary, but a swipe
+   *  is most of a screen and a fling is several, so flipping once per gesture
+   *  would leave the same hole a page further down.
+   */
+  const flipPagesForPan = useCallback((y: number): number => {
+    const container = containerRef.current;
+    const cssH = pageCssHRef.current;
+    if (!container || cssH <= 0) return y;
+    if (pdfStore.isDocSinglePage(pdfFileName)) return y;
+
+    const pageH = cssH * zoomRef.current;
+    if (pageH <= 0) return y;
+    const containerH = container.clientHeight;
+    const total = pdfStore.getDocPageCount(pdfFileName);
+
+    // Bounded: `total` crossings is the most any pan can need, and a bound
+    // means a degenerate pageH can never spin here.
+    for (let guard = 0; guard < total; guard++) {
+      const curPage = pdfStore.getDocCurrentPage(pdfFileName);
+      let next: number;
+      if (y + pageH < containerH / 2 && curPage < total) next = curPage + 1;
+      else if (y > containerH / 2 && curPage > 1) next = curPage - 1;
+      else break;
+
+      skipResetRef.current = true;
+      ++tileRenderIdRef.current;
+      if (tierDebounceRef.current) { clearTimeout(tierDebounceRef.current); tierDebounceRef.current = null; }
+      if (crispTimerRef.current) { clearTimeout(crispTimerRef.current); crispTimerRef.current = null; }
+      for (const c of tileContainerRef.current.values()) c.style.display = 'none';
+      // Tiled mode: hold the already-rendered neighbour as a backdrop until the
+      // new page's tiles arrive. Full-page mode blits from cache instantly.
+      if (shouldUseTilesRef.current()) {
+        const adj = adjCanvasMapRef.current.get(next);
+        if (adj) {
+          adj.canvas.style.top = '0px';
+          adj.canvas.dataset.transitionBackdrop = '1';
+          wrapperRef.current?.querySelectorAll('canvas[data-transition-backdrop]')
+            .forEach(c => { if (c !== adj.canvas) c.remove(); });
+        }
+      }
+      pdfStore.goToPage(next);
+      y += next > curPage ? pageH : -pageH;
+      flashScrubber();
+    }
+    return y;
+  }, [pdfFileName, flashScrubber]);
+
   const clampPan = useCallback(() => {
     if (!renderSettingsStore.settings.pdfEnableBoundaries) return;
 
@@ -2767,46 +2825,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         const newX = oldPan.x - e.deltaX;
         let newY = oldPan.y - e.deltaY;
 
-        const curPage = pdfStore.getDocCurrentPage(pdfFileName);
-        const total = pdfStore.getDocPageCount(pdfFileName);
-
-        if (!noFlip && newY + pageH < containerH / 2 && curPage < total) {
-          skipResetRef.current = true;
-          ++tileRenderIdRef.current;
-          if (tierDebounceRef.current) { clearTimeout(tierDebounceRef.current); tierDebounceRef.current = null; }
-          if (crispTimerRef.current) { clearTimeout(crispTimerRef.current); crispTimerRef.current = null; }
-          for (const c of tileContainerRef.current.values()) c.style.display = 'none';
-          // In tiled mode: reposition the adjacent canvas as backdrop until tiles render.
-          // In full-page mode: renderPage blits from cache instantly, no backdrop needed.
-          if (shouldUseTilesRef.current()) {
-            const adj = adjCanvasMapRef.current.get(curPage + 1);
-            if (adj) {
-              adj.canvas.style.top = '0px';
-              adj.canvas.dataset.transitionBackdrop = '1';
-              wrapperRef.current?.querySelectorAll('canvas[data-transition-backdrop]').forEach(c => { if (c !== adj.canvas) c.remove(); });
-            }
-          }
-          pdfStore.goToPage(curPage + 1);
-          newY += pageH;
-          flashScrubber();
-        } else if (!noFlip && newY > containerH / 2 && curPage > 1) {
-          skipResetRef.current = true;
-          ++tileRenderIdRef.current;
-          if (tierDebounceRef.current) { clearTimeout(tierDebounceRef.current); tierDebounceRef.current = null; }
-          if (crispTimerRef.current) { clearTimeout(crispTimerRef.current); crispTimerRef.current = null; }
-          for (const c of tileContainerRef.current.values()) c.style.display = 'none';
-          if (shouldUseTilesRef.current()) {
-            const adj = adjCanvasMapRef.current.get(curPage - 1);
-            if (adj) {
-              adj.canvas.style.top = '0px';
-              adj.canvas.dataset.transitionBackdrop = '1';
-              wrapperRef.current?.querySelectorAll('canvas[data-transition-backdrop]').forEach(c => { if (c !== adj.canvas) c.remove(); });
-            }
-          }
-          pdfStore.goToPage(curPage - 1);
-          newY -= pageH;
-          flashScrubber();
-        }
+        // One implementation of the flip, shared with the touch-drag path —
+        // see flipPagesForPan. `noFlip` is single-page layout, which the
+        // helper reads for itself.
+        if (!noFlip) newY = flipPagesForPan(newY);
 
         panRef.current = { x: newX, y: newY };
         syncTransform();
@@ -2840,7 +2862,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     container.addEventListener('wheel', handleWheel, { passive: false });
     return () => container.removeEventListener('wheel', handleWheel);
 
-  }, [pdfFileName, isLoaded, syncTransform, scheduleTierRender, flashScrubber, markGestureActive]);
+  }, [pdfFileName, isLoaded, syncTransform, scheduleTierRender, flashScrubber, markGestureActive, flipPagesForPan]);
 
   // --- Touch pinch-to-zoom state ---
   const activeTouchesRef = useRef<Map<number, { x: number; y: number }>>(new Map());
@@ -3068,9 +3090,15 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     }
     lastDragTimeRef.current = now;
 
-    panRef.current = { x: panRef.current.x + dxm, y: panRef.current.y + dym };
+    // Panning with a finger crosses page boundaries exactly the way scrolling
+    // does; without this it ran off the bottom of the current page into blank
+    // paper and never came back.
+    panRef.current = {
+      x: panRef.current.x + dxm,
+      y: flipPagesForPan(panRef.current.y + dym),
+    };
     syncTransform();
-  }, [syncTransform]);
+  }, [syncTransform, flipPagesForPan]);
 
   /** Find the word + its page-space rect under a click. Shared by single & double click. */
   const hitTestWord = useCallback((e: React.MouseEvent): { word: string; rect: { x: number; y: number; w: number; h: number }; pageIndex: number; itemIndex: number } | null => {
