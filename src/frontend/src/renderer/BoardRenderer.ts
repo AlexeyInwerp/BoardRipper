@@ -3916,9 +3916,11 @@ export class BoardRenderer {
       // is not: it double-counts the travel by (1 - ratio) per event, which
       // compounds across a gesture. Both fingers stay over the content they
       // started on exactly when pan₁ = mid₀ - ratio·(mid₀ - pan₀) + (mid₁ - mid₀).
-      // Invisible in a textbook pinch where both fingers move equally and
-      // oppositely — the midpoint never moves — and plainly visible in the
-      // everyday one where a finger is parked and the other spreads.
+      // Invisible only while the two fingers' movements cancel exactly
+      // (mid = (f1 + f2) / 2 is constant iff Δf1 = -Δf2), which is a knife
+      // edge rather than a description of how anyone pinches — the error
+      // grows with however much the midpoint drifts, and a parked finger is
+      // simply the extreme of that, not a special case.
       this.setScaleAtScreen(p.lastMidX, p.lastMidY, p.startScale * (dist / p.startDist));
       this.viewport.x += midX - p.lastMidX;
       this.viewport.y += midY - p.lastMidY;

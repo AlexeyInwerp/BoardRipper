@@ -116,16 +116,20 @@ test.describe('PDF touch', () => {
   /** A pinch must leave the content under the fingers where it was.
    *
    *  Two mistakes hid behind the same symmetric test. The midpoint was frozen
-   *  at the second pointerdown — correct only for the textbook pinch where
-   *  both fingers move equally and oppositely, which nobody does; park one
-   *  finger and spread the other and the page slid 140 px away from the finger
-   *  that never moved. And once the midpoint tracked, anchoring the scale on
-   *  the *new* midpoint double-counted its travel by (1 - ratio) per event,
-   *  leaving 24 px of drift across one gesture. Both fingers stay put exactly
-   *  when pan₁ = mid₀ - ratio·(mid₀ - pan₀) + (mid₁ - mid₀).
+   *  at the second pointerdown, which holds only while the two fingers'
+   *  movements cancel exactly — mid = (f1 + f2) / 2 is constant iff
+   *  Δf1 = -Δf2. That is a knife edge: whenever one finger moves further or
+   *  faster than the other, or the hand drifts, the midpoint moves with it and
+   *  the anchor goes stale by half the difference. And once the midpoint
+   *  tracked, anchoring the scale on the *new* midpoint double-counted its
+   *  travel by (1 - ratio) per event, leaving 24 px of drift across one
+   *  gesture. Both fingers stay put exactly when
+   *  pan₁ = mid₀ - ratio·(mid₀ - pan₀) + (mid₁ - mid₀).
    *
-   *  The asymmetric case is the load-bearing one: a symmetric pinch passes
-   *  against a frozen midpoint, which is how this survived.
+   *  The test parks one finger because that is the *largest* midpoint drift
+   *  for a given spread, not because it is the typical gesture — it puts the
+   *  error where a 2 px tolerance can see it. A perfectly symmetric pinch is
+   *  the one case a frozen midpoint survives, which is how this went unnoticed.
    */
   test('a pinch keeps the content under the fingers, however they move', async ({ page }) => {
     const { box } = await openPdf(page);

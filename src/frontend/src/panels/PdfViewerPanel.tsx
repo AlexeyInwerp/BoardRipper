@@ -3006,16 +3006,16 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         const newZoom = Math.max(minZoom, Math.min(pinchStartZoomRef.current * scale, 10));
         const ratio = newZoom / oldZoom;
 
-        // Anchor on where the fingers are NOW, and carry the midpoint's own
-        // travel into the pan — the same two steps BoardRenderer.
-        // installTouchPinch does, and the reason the board tracks the fingers
-        // while this did not. The midpoint used to be frozen at the second
-        // pointerdown, which is only correct for the textbook pinch where both
-        // fingers move by equal and opposite amounts. Nobody pinches like
-        // that: anchor one finger and spread the other — the everyday gesture —
-        // and the midpoint travels half the distance the moving finger does.
-        // Measured before this change: the page point under the *stationary*
-        // finger slid 140 px away from it during one such pinch.
+        // Track the midpoint and carry its own travel into the pan — the same
+        // two steps BoardRenderer.installTouchPinch does. The midpoint used to
+        // be frozen at the second pointerdown, which holds only while the two
+        // fingers' movements cancel exactly: mid = (f1 + f2) / 2 is constant
+        // iff Δf1 = -Δf2. Moving both fingers at once is ordinary; moving them
+        // at matched speed and distance about a stationary centre is a knife
+        // edge, and anything off it — one finger faster than the other, the
+        // whole hand drifting, one finger resting — moves the midpoint by half
+        // the difference. Measured on the extreme of that (one finger parked):
+        // the page point under the stationary finger slid 140 px away from it.
         const container = containerRef.current;
         const rect = container ? container.getBoundingClientRect() : null;
         const mid = rect
