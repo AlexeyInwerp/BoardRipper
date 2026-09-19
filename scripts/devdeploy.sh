@@ -50,6 +50,15 @@ command -v sshpass >/dev/null || { echo "sshpass not installed (brew install ssh
 PW="$(awk -F': ' '/^ssh pw:/{print $2}' "$CONF")"
 [ -n "$PW" ] || { echo "no 'ssh pw:' line in $CONF" >&2; exit 1; }
 
+# One password attempt per connection, never the client default of three.
+# Same lesson as scripts/ftp-check.sh: a credential that has gone stale must
+# fail once and stop, because a burst of refusals is what turns a wrong
+# password into an auto-block on the host — and then the credential looks
+# broken when it is not. Password auth only: without this, ssh offers every
+# key in the agent first and each offer is another attempt in DSM's ledger.
+SSH_OPTS=(-o ConnectTimeout=20 -o NumberOfPasswordPrompts=1
+          -o PreferredAuthentications=password -o PubkeyAuthentication=no)
+
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -67,13 +76,13 @@ ls -lh "$TMP/boardripper-dev.tar.gz" | awk '{print "[dev] " $5}'
 
 # -O: legacy SCP protocol. DSM has no working SFTP subsystem for this user.
 echo "[dev] Uploading…"
-sshpass -p "$PW" scp -O -o ConnectTimeout=20 \
+sshpass -p "$PW" scp -O "${SSH_OPTS[@]}" \
   "$TMP/boardripper-dev.tar.gz" "$HOST_ALIAS:/tmp/boardripper-dev.tar.gz"
-sshpass -p "$PW" scp -O -o ConnectTimeout=20 \
+sshpass -p "$PW" scp -O "${SSH_OPTS[@]}" \
   "$REPO_ROOT/scripts/devdeploy-remote.sh" "$HOST_ALIAS:/tmp/devdeploy-remote.sh"
 
 echo "[dev] Redeploying on the NAS…"
-sshpass -p "$PW" ssh -o ConnectTimeout=20 "$HOST_ALIAS" \
+sshpass -p "$PW" ssh "${SSH_OPTS[@]}" "$HOST_ALIAS" \
   "chmod +x /tmp/devdeploy-remote.sh && /bin/bash /tmp/devdeploy-remote.sh '$PW'"
 
 echo "[dev] $URL"
