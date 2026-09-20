@@ -3,7 +3,7 @@ import { log } from './log-store';
 import { Emitter } from './emitter';
 import { isLiteBuild } from './build-mode';
 import { folderLibrary, folderPickMode, captureDroppedFolder } from './folder-library';
-import type { CapturedDrop, FolderLibraryState, FolderScan, ScanProgress } from './folder-library';
+import type { CapturedDrop, FolderLibraryState, FolderScan, PickResult, ScanProgress } from './folder-library';
 export { captureDroppedFolder };
 export type { CapturedDrop };
 import { libraryCache } from './library-cache';
@@ -2252,6 +2252,14 @@ class DatabankStore extends Emitter {
     }
     if (this.folderMode) {
       if (trackProgress) loadProgressStore.setPhase('Reading', `Local folder "${this._folderState.kind === 'none' ? '' : this._folderState.rootName}"`);
+      // A reload keeps the handle but not the grant — Chromium revokes it
+      // when the last tab of the origin closes. Opening a file is a user
+      // gesture, which is exactly what requestPermission needs, so ask for
+      // it here rather than making the user find a button first. Ids are a
+      // hash of the path, so the row still resolves after the rescan.
+      if (!folderLibrary.readable && folderLibrary.canReconnect) {
+        await this.reconnectFolderLibrary();
+      }
       const local = await folderLibrary.getFile(file);
       if (trackProgress) loadProgressStore.pushLog(`Read ${local.size.toLocaleString()} bytes from the local folder`);
       return local;
@@ -2454,12 +2462,12 @@ class DatabankStore extends Emitter {
    *  browser needs the `webkitdirectory` input, which only the UI can open —
    *  callers check `folderPickMode` and route to `adoptFolderFiles`.
    *  Must run inside a user gesture. */
-  async pickLibraryFolder(): Promise<boolean> {
-    if (folderPickMode() !== 'handle') return false;
-    const scan = await folderLibrary.pickDirectory(this._folderProgress);
-    if (!scan) { this._scanStatus = null; this.notify(); return false; }
-    this._applyFolderScan(scan);
-    return true;
+  async pickLibraryFolder(): Promise<PickResult> {
+    if (folderPickMode() !== 'handle') return { ok: false, reason: 'unsupported' };
+    const res = await folderLibrary.pickDirectory(this._folderProgress);
+    if (!res.ok) { this._scanStatus = null; this.notify(); return res; }
+    this._applyFolderScan(res.scan);
+    return res;
   }
 
   /** The `webkitdirectory` path: adopt the FileList the input produced. */
@@ -2493,7 +2501,7 @@ class DatabankStore extends Emitter {
    *  the reload, then rescan. Must run inside a user gesture. */
   async reconnectFolderLibrary(): Promise<boolean> {
     const scan = await folderLibrary.reconnect(this._folderProgress);
-    if (!scan) { this.notify(); return false; }
+    if (!scan) { this.notify(); return false; }   // callers report; see below
     this._applyFolderScan(scan);
     return true;
   }

@@ -75,6 +75,38 @@ Two rules worth keeping:
   answers with whichever registered first. Board# grouping then happens
   client-side through `apple-boards.ts`, which the build already carries.
 
+### Permission, and how it becomes permanent
+
+A handle survives a reload in IndexedDB; **the grant does not**. Chromium
+revokes it when the last tab of the origin closes, so `queryPermission`
+answering `prompt` on the next visit is normal, not a failure. What brings it
+back is `requestPermission()` **in a user gesture** — one prompt, no second
+trip through the picker.
+
+So the app never dead-ends on it:
+
+- restore lists the library from the persisted index either way;
+- the chip shows `needs permission` with a **Reconnect** button;
+- and opening a file *is* a user gesture, so `fetchFileBuffer` re-requests on
+  the spot and then opens the board. Path-hashed ids are what makes that
+  work — the row the user clicked still resolves after the rescan.
+
+Permanent access, in the user's hands, two ways (both Chromium's own
+mechanics, [documented here](https://developer.chrome.com/blog/persistent-permissions-for-the-file-system-access-api)):
+
+- **"Allow on every visit"** in the three-way prompt, which only appears for a
+  handle the origin held before;
+- **installing the app** — "installed apps will automatically persist
+  permissions once the user grants access", with no prompt at all. The lite
+  build already ships the manifest and service worker, so this is a click in
+  the browser menu.
+
+Deny or dismiss more than three times and Chromium stops offering the
+three-way prompt for that origin.
+
+The empty state says both of these; the Reconnect button repeats it in its
+tooltip.
+
 A folder **dropped on the window** takes the same path (`captureDroppedFolder`
 in `App.tsx`'s `handleDrop`, called before the first await): Chromium's
 `getAsFileSystemHandle` when the drop carries one, otherwise the

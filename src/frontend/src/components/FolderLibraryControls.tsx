@@ -15,6 +15,19 @@ import { showSidebarTab } from './Sidebar.utils';
  * dialog. Both land in the same store call.
  */
 
+/** A scan that finds nothing looks exactly like a scan that did not run, so
+ *  it says so; a scan that found something confirms it in the same place. */
+function reportScan(rootName: string, count: number): void {
+  if (count > 0) {
+    boardStore.addToast(`Library: ${rootName} — ${count} file${count === 1 ? '' : 's'}`, 'info');
+  } else {
+    boardStore.addToast(
+      `No boards or PDFs in "${rootName}". Pick the folder that holds them, or one above it.`,
+      'error',
+    );
+  }
+}
+
 /** Shared by the empty state and the chip: opens whichever picker this
  *  browser has. Returns a ref to attach to the hidden input. */
 function useFolderPicker(testId: string) {
@@ -33,15 +46,38 @@ function useFolderPicker(testId: string) {
     if (busy) return;
     if (databankStore.folderPickMode === 'handle') {
       setBusy(true);
+      let res;
       try {
-        await databankStore.pickLibraryFolder();
-        return;
-      } catch {
-        // The picker exists but this context is not allowed to use it —
-        // `file://` most of all. The input works everywhere; fall through to
-        // it rather than leaving a button that does nothing.
+        res = await databankStore.pickLibraryFolder();
       } finally {
         setBusy(false);
+      }
+      if (res.ok) {
+        reportScan(res.scan.rootName, res.scan.files.length);
+        return;
+      }
+      switch (res.reason) {
+        case 'cancelled':
+          // A cancel and a folder the browser refuses to open arrive as the
+          // same AbortError, and the browser shows nothing of its own for
+          // the second. Saying which folders are off limits is the only way
+          // the user can tell those apart.
+          boardStore.addToast(
+            'No folder opened. Note that browsers refuse some folders outright — ' +
+            'your home folder, Desktop, Documents and the system folders. Pick the ' +
+            'folder your boards are in, or one below it.',
+            'info',
+          );
+          return;
+        case 'fallback':
+        case 'unsupported':
+          break;   // the input below can do it
+        default:
+          boardStore.addToast(
+            `Could not read that folder: ${res.error instanceof Error ? res.error.message : 'unknown error'}`,
+            'error',
+          );
+          return;
       }
     }
     inputRef.current?.click();
@@ -53,6 +89,7 @@ function useFolderPicker(testId: string) {
     setBusy(true);
     try {
       await databankStore.adoptFolderFiles(list);
+      reportScan(databankStore.folderState.kind === 'none' ? '' : databankStore.folderState.rootName, databankStore.files.length);
     } catch (err) {
       boardStore.addToast(`Could not read that folder: ${err instanceof Error ? err.message : String(err)}`, 'error');
     } finally {
@@ -129,6 +166,14 @@ export function FolderLibraryEmptyState() {
           then asks for the folder again.
         </div>
       )}
+      {mode === 'handle' && (
+        <div className="folder-lib-empty-note">
+          The browser keeps access only until the last tab closes. Pick
+          <em> Allow on every visit</em> when it asks, or install BoardRipper
+          (browser menu ▸ Install) — an installed app keeps the folder for
+          good and is never asked again.
+        </div>
+      )}
     </div>
   );
 }
@@ -166,8 +211,19 @@ export function FolderLibraryChip() {
             className="library-scan-btn"
             data-testid="reconnect-library-folder"
             disabled={working}
-            onClick={() => run(() => databankStore.reconnectFolderLibrary())}
-            title="Grant read access to this folder again"
+            onClick={() => run(async () => {
+              const ok = await databankStore.reconnectFolderLibrary();
+              if (ok) reportScan(folderState.rootName, databankStore.files.length);
+              else boardStore.addToast(
+                'The browser did not restore access to that folder. Choose it again to reconnect.',
+                'error',
+              );
+            })}
+            title={
+              'Grant access to this folder again. Chromium drops the grant when the last tab ' +
+              'closes — pick "Allow on every visit" in the prompt, or install BoardRipper ' +
+              '(browser menu ▸ Install), and it will not ask again.'
+            }
           >
             <IconPlugConnected size={13} /> Reconnect
           </button>

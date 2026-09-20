@@ -12,7 +12,7 @@ const DIST_PORT = process.env.LITE_DIST_PORT ? Number(process.env.LITE_DIST_PORT
 
 export default defineConfig({
   testDir: './tests',
-  testMatch: /web-lite\.spec\.ts/,
+  testMatch: /(web-lite|folder-library-handle)\.spec\.ts/,
   timeout: 30000,
   retries: 0,
   use: {

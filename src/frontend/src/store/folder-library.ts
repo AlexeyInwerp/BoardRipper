@@ -126,6 +126,13 @@ export type FolderLibraryState =
   | { kind: 'active'; rootName: string; mode: 'handle' | 'input' }
   | { kind: 'detached'; rootName: string; reason: 'permission' | 'repick' };
 
+/** Why a pick produced no library. `cancelled` is the user's own doing (and
+ *  also how the browser reports a folder it refuses to open); `fallback`
+ *  means: use the `webkitdirectory` input instead. */
+export type PickResult =
+  | { ok: true; scan: FolderScan }
+  | { ok: false; reason: 'cancelled' | 'blocked' | 'fallback' | 'unsupported' | 'error'; error?: unknown };
+
 export interface FolderScan {
   rootName: string;
   files: DatabankFile[];
@@ -388,32 +395,55 @@ class FolderLibrary {
   get readable(): boolean { return this._state.kind === 'active'; }
   /** True when a rescan of the same folder is possible without a new pick. */
   get rescannable(): boolean { return this._state.kind === 'active' && this._state.mode === 'handle'; }
+  /** True when a live handle is held but its grant is not: one
+   *  `requestPermission()` in a user gesture brings the folder back, with no
+   *  second trip through the picker. */
+  get canReconnect(): boolean { return this._state.kind === 'detached' && this._rootHandle !== null; }
 
   // ── Picking ──
 
   /** Chromium: open the directory picker. Must run in a user gesture.
-   *  Returns null when the user dismissed the dialog, and THROWS when the
-   *  browser refused the call — the two are different outcomes for the
-   *  caller, which falls back to the `webkitdirectory` input on a refusal
-   *  (a `file://` page is the case that matters: the method is there and
-   *  the call is rejected). */
-  async pickDirectory(onProgress?: (p: ScanProgress) => void): Promise<FolderScan | null> {
+   *
+   *  Every way this ends is named, because a picker that hands nothing back
+   *  is indistinguishable from a broken app: the browser **refuses whole
+   *  folders** (your home directory, Desktop, Documents, `/` and the system
+   *  tree are on Chromium's block list) and the refusal arrives as the same
+   *  `AbortError` a cancel does, so the outcome has to be reported rather
+   *  than swallowed. `fallback` means the method exists but this context may
+   *  not call it — a `file://` page — and the caller should use the
+   *  `webkitdirectory` input instead. */
+  async pickDirectory(onProgress?: (p: ScanProgress) => void): Promise<PickResult> {
     const picker = directoryPicker();
-    if (!picker) return null;
+    if (!picker) return { ok: false, reason: 'unsupported' };
     let handle: FsDirectoryHandle;
     try {
       handle = await picker({ id: 'boardripper-library', mode: 'read' });
     } catch (err) {
-      if ((err as DOMException)?.name === 'AbortError') return null;
-      log.scan.warn('directory picker refused, falling back to the folder input:', err);
-      throw err;
+      const name = (err as DOMException)?.name;
+      if (name === 'AbortError') {
+        log.scan.log('directory picker: dismissed (a cancel, or a folder the browser will not open)');
+        return { ok: false, reason: 'cancelled' };
+      }
+      if (name === 'SecurityError' || name === 'NotAllowedError') {
+        log.scan.warn('directory picker: refused by the browser:', err);
+        return { ok: false, reason: 'fallback', error: err };
+      }
+      log.scan.warn('directory picker failed:', err);
+      return { ok: false, reason: 'error', error: err };
     }
-    const scan = await this.scanHandle(handle, onProgress);
-    await writeStored({
-      key: RECORD_KEY, handle, rootName: scan.rootName, mode: 'handle',
-      files: scan.files, tree: scan.tree, savedAt: Date.now(),
-    });
-    return scan;
+    try {
+      const scan = await this.scanHandle(handle, onProgress);
+      await writeStored({
+        key: RECORD_KEY, handle, rootName: scan.rootName, mode: 'handle',
+        files: scan.files, tree: scan.tree, savedAt: Date.now(),
+      });
+      return { ok: true, scan };
+    } catch (err) {
+      // A folder that cannot be walked (permission withdrawn mid-scan, an
+      // unreadable mount) is a failure of ours to report, not of the pick.
+      log.scan.error('reading the picked folder failed:', err);
+      return { ok: false, reason: 'error', error: err };
+    }
   }
 
   /** Everything else: adopt the `FileList` from a `webkitdirectory` input. */
