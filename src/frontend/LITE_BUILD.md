@@ -34,6 +34,49 @@ built file from `file://` and asserts zero external loads + a rendered board.
 Trade-off vs. the hosted build: main-thread board parse (fine — board files are
 small), and Dockview pop-out windows don't work from a single file.
 
+## The library: a folder on this machine
+
+The lite and offline builds have no server, so their library is a folder the
+browser is pointed at — `src/store/folder-library.ts`, a third producer for
+`databankStore._files` next to the Go backend and Electron IPC. Everything
+downstream (Library panel, Board#/Folders trees, open-by-id, the IndexedDB
+board cache) is source-agnostic and reused unchanged.
+
+Two APIs, feature-detected by `folderPickMode()`:
+
+| | Chromium | everything else |
+|---|---|---|
+| picker | `showDirectoryPicker()` | `<input type="file" webkitdirectory>` |
+| after a reload | handle comes back from IndexedDB, permission usually intact | `File` objects cannot be revived |
+| reads | fresh from disk on every open | the `File` handed over at pick time |
+| rescan | yes, same folder | re-pick |
+
+Firefox, Safari, **iOS Safari 18.4+** and `file://` are all on the input path.
+It is also the fallback when the picker exists but the context is not allowed
+to use it (a `file://` page): `pickDirectory` throws on a refusal and returns
+null only on the user's own cancel, so the UI can tell them apart.
+
+**The index is persisted separately from the bytes.** Both modes store the
+scanned `DatabankFile[]` + folder tree in IndexedDB
+(`boardripper-folder-library`), so the library lists on the next visit either
+way. In input mode it comes back `detached` — browsable and searchable, and
+opening a file asks for the folder again. That is what makes it usable on a
+tablet, where the page is discarded from memory constantly.
+
+Two rules worth keeping:
+
+- **File ids are a hash of the relative path**, not the position in the walk.
+  Recent files, worklists and session restore all persist ids; one file added
+  at the front must not renumber everything behind it.
+- **Scanning does not parse boards** — extension sniff plus the filename board
+  number, same as the Electron producer. Board# grouping then happens
+  client-side through `apple-boards.ts`, which the build already carries.
+
+Not ported (and not planned here): the board reference DB, PDF full-text
+search, OBD, dedup, sync. UI entry points: the Library tab (empty state →
+**Choose a folder**, chip above the status bar for rescan/change/forget) and
+the home page's open card.
+
 ## Local preview / test
 
     npm run serve:lite        # dist-lite/ at http://localhost:18086/boardripper/web/
