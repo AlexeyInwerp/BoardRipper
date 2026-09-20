@@ -193,3 +193,67 @@ test('the folder index survives a reload, and says so when the bytes do not', as
 
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+test('after a reload, opening a board asks for the folder and then opens it', async ({ page }) => {
+  const root = makeLibraryFixture();
+  // Input mode is what Firefox, Safari and the iPad get. Chromium has a
+  // directory picker and would re-pick through that instead (a dialog
+  // Playwright cannot answer), so take it away and test the path these
+  // browsers really run.
+  await page.addInitScript(() => {
+    delete (window as unknown as Record<string, unknown>).showDirectoryPicker;
+  });
+  await page.goto('.');
+  await page.waitForLoadState('networkidle');
+  await openLibrary(page);
+  await page.getByTestId('folder-library-input').setInputFiles(root);
+  await expect(page.getByTestId('folder-library-chip')).toContainText(path.basename(root));
+
+  await page.reload();
+  await page.waitForLoadState('networkidle');
+  await openLibrary(page);
+  await expect(page.getByTestId('folder-library-chip')).toContainText('index only');
+
+  // The dead end this replaces: the board was unopenable and the message
+  // said "reconnect", which an input-mode library can never do — there is
+  // no handle to re-request. A double-click is a user gesture, so it can
+  // ask for the folder itself and carry on with the board that was asked
+  // for. Playwright answers the dialog the way a user would.
+  page.on('filechooser', (chooser) => { void chooser.setFiles(root); });
+  await page.locator('[data-library-tab="folders"]').click();
+  await page.locator('.library-tree').getByText('loose-board.bvr').first().dblclick();
+
+  await expect(page.getByTestId('statusbar')).toContainText('Components:', { timeout: 20000 });
+  await expect(page.getByTestId('folder-library-chip')).not.toContainText('index only');
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('a re-pick the user dismisses reports it, and does not leave the open hanging', async ({ page }) => {
+  const root = makeLibraryFixture();
+  await page.goto('.');
+  await page.waitForLoadState('networkidle');
+  await openLibrary(page);
+  await page.getByTestId('folder-library-input').setInputFiles(root);
+  await expect(page.getByTestId('folder-library-chip')).toContainText(path.basename(root));
+
+  // Dismissing the dialog is the common case, and the open that started it
+  // awaits a promise: every exit from the pick has to settle that promise
+  // or the board is stuck loading with nothing on screen and no message.
+  await page.addInitScript(() => {
+    (window as unknown as Record<string, unknown>).showDirectoryPicker = async () => {
+      throw new DOMException('The user aborted a request.', 'AbortError');
+    };
+  });
+  await page.reload();
+  await page.waitForLoadState('networkidle');
+  await openLibrary(page);
+  await page.locator('[data-library-tab="folders"]').click();
+  await page.locator('.library-tree').getByText('loose-board.bvr').first().dblclick();
+
+  await expect(page.locator('.toast-container')).toContainText(/No folder opened/i, { timeout: 5000 });
+  // Still usable: the index is there and the folder can be chosen again.
+  await expect(page.getByTestId('change-library-folder')).toBeEnabled();
+
+  fs.rmSync(root, { recursive: true, force: true });
+});

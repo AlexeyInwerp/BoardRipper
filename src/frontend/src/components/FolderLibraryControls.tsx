@@ -34,16 +34,61 @@ function useFolderPicker(testId: string) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // `webkitdirectory` is not a React prop — set it on the element itself.
-  useEffect(() => {
-    const el = inputRef.current;
+
+  // A pick the STORE started (an open whose folder is gone) has to be
+  // awaited by it, so the dialog's outcome is bridged back through a pending
+  // resolver. Every exit from `pick` settles it — a promise left hanging
+  // would freeze the open it belongs to.
+  const pendingRef = useRef<((ok: boolean) => void) | null>(null);
+  const settle = useCallback((ok: boolean) => {
+    const resolve = pendingRef.current;
+    pendingRef.current = null;
+    resolve?.(ok);
+  }, []);
+  const settleRef = useRef(settle);
+  settleRef.current = settle;
+  // Stable identity so the ref callback can add and remove the same one.
+  const onNativeCancel = useRef(() => settleRef.current(false)).current;
+
+  // Everything the input needs that React cannot express is done in the ref
+  // callback, NOT in a mount effect: these components render `null` until
+  // they have something to show (the chip only exists once a folder does),
+  // so an effect with `[]` fires while the element is absent and never
+  // again — which left the chip's input without `webkitdirectory` and
+  // opened a FILE dialog where a folder dialog belongs.
+  //   - `webkitdirectory`/`directory`: not React props.
+  //   - `cancel`: no React handler exists; it is how a dismissed dialog
+  //     tells a waiting open to stop waiting.
+  const attachInput = useCallback((el: HTMLInputElement | null) => {
+    const prev = inputRef.current;
+    if (prev) prev.removeEventListener('cancel', onNativeCancel);
+    inputRef.current = el;
     if (!el) return;
     el.setAttribute('webkitdirectory', '');
     el.setAttribute('directory', '');
+    el.addEventListener('cancel', onNativeCancel);
   }, []);
 
+  const onInputChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const list = e.target.files;
+    if (!list || list.length === 0) { settle(false); return; }
+    setBusy(true);
+    let ok = false;
+    try {
+      ok = await databankStore.adoptFolderFiles(list);
+      reportScan(databankStore.folderState.kind === 'none' ? '' : databankStore.folderState.rootName, databankStore.files.length);
+    } catch (err) {
+      boardStore.addToast(`Could not read that folder: ${err instanceof Error ? err.message : String(err)}`, 'error');
+    } finally {
+      setBusy(false);
+      // Let the same folder be picked again (change events need a new value).
+      e.target.value = '';
+      settle(ok);
+    }
+  }, [settle]);
+
   const pick = useCallback(async () => {
-    if (busy) return;
+    if (busy) return false;
     if (databankStore.folderPickMode === 'handle') {
       setBusy(true);
       let res;
@@ -54,7 +99,8 @@ function useFolderPicker(testId: string) {
       }
       if (res.ok) {
         reportScan(res.scan.rootName, res.scan.files.length);
-        return;
+        settle(true);
+        return true;
       }
       switch (res.reason) {
         case 'cancelled':
@@ -68,40 +114,30 @@ function useFolderPicker(testId: string) {
             'folder your boards are in, or one below it.',
             'info',
           );
-          return;
+          settle(false);
+          return false;
         case 'fallback':
         case 'unsupported':
-          break;   // the input below can do it
+          break;   // the input below can do it, and settles when it closes
         default:
           boardStore.addToast(
             `Could not read that folder: ${res.error instanceof Error ? res.error.message : 'unknown error'}`,
             'error',
           );
-          return;
+          settle(false);
+          return false;
       }
     }
+    // Settles from the input's own change / cancel events. EVERY path out of
+    // `pick` has to settle: an open waiting on a re-pick hangs for ever
+    // otherwise, which is worse than the dead end it replaced.
     inputRef.current?.click();
-  }, [busy]);
-
-  const onInputChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const list = e.target.files;
-    if (!list || list.length === 0) return;
-    setBusy(true);
-    try {
-      await databankStore.adoptFolderFiles(list);
-      reportScan(databankStore.folderState.kind === 'none' ? '' : databankStore.folderState.rootName, databankStore.files.length);
-    } catch (err) {
-      boardStore.addToast(`Could not read that folder: ${err instanceof Error ? err.message : String(err)}`, 'error');
-    } finally {
-      setBusy(false);
-      // Let the same folder be picked again (change events need a new value).
-      e.target.value = '';
-    }
-  }, []);
+    return false;
+  }, [busy, settle]);
 
   const input = (
     <input
-      ref={inputRef}
+      ref={attachInput}
       type="file"
       multiple
       hidden
@@ -110,7 +146,7 @@ function useFolderPicker(testId: string) {
     />
   );
 
-  return { pick, busy, input };
+  return { pick, busy, input, pendingRef };
 }
 
 /** Standalone "hand over a folder" button — the home page's front door.
@@ -181,8 +217,19 @@ export function FolderLibraryEmptyState() {
 /** The one-line folder control above the stats bar, once a folder is known. */
 export function FolderLibraryChip() {
   const { folderState, files } = useDatabank();
-  const { pick, busy, input } = useFolderPicker('folder-library-input-chip');
+  const { pick, busy, input, pendingRef } = useFolderPicker('folder-library-input-chip');
   const [working, setWorking] = useState(false);
+
+  // The chip is mounted for as long as a folder is known, which is exactly
+  // when an open can find itself without one. It lends the store its dialog.
+  useEffect(() => {
+    databankStore.setFolderRepickHandler(() => new Promise<boolean>((resolve) => {
+      pendingRef.current = resolve;
+      boardStore.addToast('Choose the library folder again to open this file.', 'info');
+      void pick();
+    }));
+    return () => databankStore.setFolderRepickHandler(null);
+  }, [pick, pendingRef]);
 
   if (folderState.kind === 'none') return null;
 

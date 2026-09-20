@@ -399,6 +399,10 @@ class FolderLibrary {
    *  `requestPermission()` in a user gesture brings the folder back, with no
    *  second trip through the picker. */
   get canReconnect(): boolean { return this._state.kind === 'detached' && this._rootHandle !== null; }
+  /** True when the folder can only come back through the picker: it was read
+   *  with the `webkitdirectory` input, whose `File`s cannot be revived and
+   *  which leaves no handle to ask permission for. */
+  get needsRepick(): boolean { return this._state.kind === 'detached' && this._rootHandle === null; }
 
   // ── Picking ──
 
@@ -544,10 +548,14 @@ class FolderLibrary {
     };
     opts?.onIndex?.(stored);
 
-    if (rec.mode !== 'handle' || !rec.handle) return stored;
+    if (rec.mode !== 'handle' || !rec.handle) {
+      log.scan.log(`folder library: restored "${rec.rootName}" (${rec.files.length} files, mode=input) — no handle was stored, so the folder has to be chosen again before anything opens`);
+      return stored;
+    }
 
     this._rootHandle = rec.handle;
     const perm = (await rec.handle.queryPermission?.({ mode: 'read' })) ?? 'prompt';
+    log.scan.log(`folder library: restored "${rec.rootName}" (${rec.files.length} files, mode=handle, permission=${perm})`);
     if (perm !== 'granted') return stored;
 
     // Permission survived. Walk it again — the folder may have changed while
@@ -568,8 +576,20 @@ class FolderLibrary {
 
   /** Chromium re-grant. Must run in a user gesture. */
   async reconnect(onProgress?: (p: ScanProgress) => void): Promise<FolderScan | null> {
-    if (!this._rootHandle) return null;
-    const perm = (await this._rootHandle.requestPermission?.({ mode: 'read' })) ?? 'denied';
+    if (!this._rootHandle) {
+      log.scan.warn('reconnect: no stored handle — this library came from the folder input');
+      return null;
+    }
+    let perm: PermissionState | 'denied';
+    try {
+      perm = (await this._rootHandle.requestPermission?.({ mode: 'read' })) ?? 'denied';
+    } catch (err) {
+      // Chromium throws here when there is no transient activation left, and
+      // that is a bug on our side, not the user's — say which it was.
+      log.scan.error('reconnect: requestPermission threw:', err);
+      return null;
+    }
+    log.scan.log(`reconnect: the browser answered "${perm}"`);
     if (perm !== 'granted') return null;
     return this.rescan(onProgress);
   }
@@ -588,11 +608,14 @@ class FolderLibrary {
   async getFile(row: DatabankFile): Promise<File> {
     const entry = this._entries.get(row.id);
     if (!entry) {
-      throw new Error(
-        this._state.kind === 'detached'
-          ? `"${row.filename}" needs the folder again — reconnect the library folder to open it`
-          : `"${row.filename}" is not in the local folder index`,
-      );
+      if (this._state.kind === 'detached') {
+        // Two different dead ends, and telling the user the wrong one is
+        // worse than saying nothing: only a handle can be re-granted.
+        throw new Error(this._rootHandle
+          ? `"${row.filename}" needs access to the library folder again — use Reconnect`
+          : `"${row.filename}" needs the folder again. It was read with the file picker, which the browser cannot reopen by itself — choose the folder once more.`);
+      }
+      throw new Error(`"${row.filename}" is not in the local folder index`);
     }
     if (entry.file) return entry.file;
     if (entry.handle) return entry.handle.getFile();

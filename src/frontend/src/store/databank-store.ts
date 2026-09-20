@@ -501,6 +501,10 @@ class DatabankStore extends Emitter {
   private _electronMode = false;
   /** Local-folder library (lite / offline builds) — see folder-library.ts. */
   private _folderState: FolderLibraryState = { kind: 'none' };
+  /** Set by the folder-library UI, which owns the hidden `webkitdirectory`
+   *  input — the store cannot open a file dialog by itself. Lets an open
+   *  that is missing its folder ask for it instead of failing. */
+  private _folderRepick: (() => Promise<boolean>) | null = null;
   /** Set of file IDs currently in the pdf_donors list. Loaded at startup
    *  and refreshed after every add/remove. */
   private _donorIds = new Set<number>();
@@ -2252,13 +2256,21 @@ class DatabankStore extends Emitter {
     }
     if (this.folderMode) {
       if (trackProgress) loadProgressStore.setPhase('Reading', `Local folder "${this._folderState.kind === 'none' ? '' : this._folderState.rootName}"`);
-      // A reload keeps the handle but not the grant — Chromium revokes it
-      // when the last tab of the origin closes. Opening a file is a user
-      // gesture, which is exactly what requestPermission needs, so ask for
-      // it here rather than making the user find a button first. Ids are a
-      // hash of the path, so the row still resolves after the rescan.
-      if (!folderLibrary.readable && folderLibrary.canReconnect) {
-        await this.reconnectFolderLibrary();
+      // A reload keeps the index but not the access, and which kind of
+      // access is missing depends on how the folder arrived:
+      //
+      //   handle (picker) — the handle is still in IndexedDB, only the grant
+      //     was revoked when the last tab closed. requestPermission brings it
+      //     back, and it needs a user gesture — which this click is.
+      //   input (webkitdirectory) — a `File` cannot be revived and there is
+      //     no handle to ask about, so the folder must be chosen again. Also
+      //     a gesture, so the picker can open right here.
+      //
+      // Either way the user clicked a board and gets that board; ids are a
+      // hash of the path, so the row survives the rescan that follows.
+      if (!folderLibrary.readable) {
+        if (folderLibrary.canReconnect) await this.reconnectFolderLibrary();
+        else if (this._folderRepick) await this._folderRepick();
       }
       const local = await folderLibrary.getFile(file);
       if (trackProgress) loadProgressStore.pushLog(`Read ${local.size.toLocaleString()} bytes from the local folder`);
@@ -2416,6 +2428,11 @@ class DatabankStore extends Emitter {
   // Everything downstream — the Library panel, the Board#/Folders trees,
   // open-by-id, the IndexedDB board cache — is source-agnostic and reused
   // unchanged; these methods only fill the same fields _electronScan does.
+
+  /** Register the "choose the folder again" gesture (see `_folderRepick`). */
+  setFolderRepickHandler(fn: (() => Promise<boolean>) | null): void {
+    this._folderRepick = fn;
+  }
 
   /** How this browser can hand over a folder: Chromium's directory picker,
    *  a `webkitdirectory` input, or not at all. */
