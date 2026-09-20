@@ -19,7 +19,11 @@ import (
 	"time"
 )
 
-const dockerSocket = "/var/run/docker.sock"
+// dockerSocket is the Engine API endpoint this process talks to. A var, not a
+// const, only so the Docker-backed orchestration test can point it at a
+// non-standard socket (Colima, Rancher, a rootless daemon) — nothing at
+// runtime rewrites it.
+var dockerSocket = "/var/run/docker.sock"
 
 // Docker Engine API version. Resolved lazily from `GET /_ping` so we speak
 // whatever the local daemon supports — Synology DSM 7's bundled Container
@@ -484,6 +488,166 @@ func (u *Updater) tagPrevious() error {
 	return nil
 }
 
+// buildSwapScript renders the shell the orchestrator container runs: stop the
+// old container, recreate it on the new image, health-check it, and roll back
+// if the check fails. Extracted from orchestrateSwap so the generated script
+// can be asserted on directly (health_probe_test.go).
+func buildSwapScript(self *containerInfo, newImage string) string {
+	createBody := buildCreateBody(self, newImage)
+	bodyJSON, _ := json.Marshal(createBody)
+	connectScript := networkConnectScript(self)
+
+	// Shell script for the orchestrator to execute. self.Name and self.ID
+	// come in via $BR_NAME / $BR_ID environment variables (set on the
+	// orchestrator container's Env), NOT via string interpolation into the
+	// script body. Docker constrains container names to a safe charset
+	// today, but interpolating user-controllable identifiers into a bash
+	// heredoc is brittle — if a future Docker release widens the allowed
+	// chars (or if a malicious image relabels the container at runtime),
+	// shell injection becomes possible. Env vars sidestep this entirely.
+	//
+	// The two parameters that DO need interpolation — dockerAPI() and the
+	// container-create body JSON — are both produced by this binary, not
+	// derived from user input, so they remain inline.
+	return fmt.Sprintf(`#!/bin/sh
+set -e
+SOCK="/var/run/docker.sock"
+API="http://localhost/%s"
+
+# Helper: Docker API via curl
+dapi() { curl -sf --unix-socket "$SOCK" "$@"; }
+
+# curl is the only way to speak HTTP over a unix socket here (busybox wget
+# cannot), and it is installed at run time from the Alpine CDN. When that
+# install fails the swap must say so: chaining it with && instead left a
+# silent no-op that looks exactly like an update that "did nothing".
+if ! command -v curl >/dev/null 2>&1; then
+  echo "[orchestrator] FATAL: curl could not be installed in the orchestrator container (no network access to the Alpine CDN?). Nothing was changed — the running container is untouched."
+  exit 1
+fi
+
+echo "[orchestrator] Stopping $BR_NAME..."
+dapi -X POST "$API/containers/$BR_ID/stop?t=10" >/dev/null 2>&1 || true
+sleep 2
+
+echo "[orchestrator] Removing leftovers from a previous swap if they exist..."
+dapi -X DELETE "$API/containers/$BR_NAME-old?force=true" >/dev/null 2>&1 || true
+dapi -X DELETE "$API/containers/$BR_NAME-failed?force=true" >/dev/null 2>&1 || true
+
+echo "[orchestrator] Renaming $BR_NAME → $BR_NAME-old..."
+dapi -X POST "$API/containers/$BR_ID/rename?name=$BR_NAME-old" >/dev/null
+
+echo "[orchestrator] Creating new container $BR_NAME with image %s..."
+CREATE_BODY=$(cat <<'ENDJSON'
+%s
+ENDJSON
+)
+RESP=$(dapi -X POST -H "Content-Type: application/json" -d "$CREATE_BODY" "$API/containers/create?name=$BR_NAME")
+NEW_ID=$(echo "$RESP" | sed -n 's/.*"Id":"\([^"]*\)".*/\1/p')
+if [ -z "$NEW_ID" ]; then
+  echo "[orchestrator] FAIL: create returned: $RESP — rolling back"
+  dapi -X POST "$API/containers/$BR_ID/rename?name=$BR_NAME" >/dev/null 2>&1 || true
+  dapi -X POST "$API/containers/$BR_ID/start" >/dev/null 2>&1 || true
+  exit 1
+fi
+
+# Issue #21: reattach any additional user-defined networks (beyond the primary,
+# attached at create) before start, so the app is reachable on every network the
+# instant it comes up. Empty when the container had <=1 network or host mode.
+%s
+echo "[orchestrator] Starting new container $NEW_ID..."
+START_CODE=$(dapi -o /dev/null -w "%%{http_code}" -X POST "$API/containers/$NEW_ID/start")
+if [ "$START_CODE" != "204" ] && [ "$START_CODE" != "304" ]; then
+  echo "[orchestrator] FAIL: start returned $START_CODE — rolling back"
+  dapi -X DELETE "$API/containers/$NEW_ID?force=true" >/dev/null 2>&1 || true
+  dapi -X POST "$API/containers/$BR_ID/rename?name=$BR_NAME" >/dev/null 2>&1 || true
+  dapi -X POST "$API/containers/$BR_ID/start" >/dev/null 2>&1 || true
+  exit 1
+fi
+
+echo "[orchestrator] Resolving health-probe endpoints..."
+NEW_IP=""
+ipattempts=0
+while [ -z "$NEW_IP" ] && [ $ipattempts -lt 10 ]; do
+  # Every IPAddress in the inspect JSON — .NetworkSettings.IPAddress (default
+  # bridge) and .NetworkSettings.Networks.<name>.IPAddress (user-defined) —
+  # first non-empty wins. grep -o, not a greedy sed: the JSON is one line, so
+  # a greedy match yields only the LAST field, which is the empty top-level
+  # one on some topologies.
+  NEW_IP=$(dapi "$API/containers/$NEW_ID/json" 2>/dev/null \
+    | grep -o '"IPAddress":"[^"]*"' | cut -d'"' -f4 | grep -v '^$' | head -1)
+  [ -z "$NEW_IP" ] && sleep 1
+  ipattempts=$((ipattempts + 1))
+done
+
+# Candidate health endpoints, every one tried each poll round. None of them is
+# reachable in every topology, which is why there is a list rather than a pick:
+#   - container IP    — only from a network the orchestrator shares with it.
+#                       Docker DROPs traffic between two bridge networks, so on
+#                       a Compose install (every DSM Container Manager
+#                       "project") this is unreachable from the default bridge.
+#   - host gateway    — only when a port is published on 0.0.0.0, or when the
+#                       app runs on the host network (no container IP at all).
+#   - container name  — only on a user-defined network the orchestrator joined.
+GW=$(ip route 2>/dev/null | awk '/^default/{print $3; exit}')
+URLS=""
+[ -n "$NEW_IP" ] && URLS="http://$NEW_IP:$BR_PORT/api/health"
+if [ -n "$GW" ]; then
+  if [ -n "$BR_HOSTPORT" ]; then
+    URLS="$URLS http://$GW:$BR_HOSTPORT/api/health"
+  else
+    URLS="$URLS http://$GW:$BR_PORT/api/health"
+  fi
+fi
+URLS="$URLS http://$BR_NAME:$BR_PORT/api/health"
+echo "[orchestrator] Polling up to 120s:$(for u in $URLS; do printf ' %%s' "$u"; done)"
+# Wall-clock deadline, not a round count: each candidate can burn its full
+# 2s timeout, so "30 rounds" was anywhere between 60s and four minutes
+# depending on how many endpoints hang rather than refuse.
+deadline=$(( $(date +%%s) + 120 ))
+ok=0
+while [ "$(date +%%s)" -lt "$deadline" ]; do
+  for u in $URLS; do
+    if wget -q -O - --timeout=2 "$u" 2>/dev/null | grep -q '"status":"ok"'; then
+      ok=1
+      echo "[orchestrator] Health check passed via $u"
+      break
+    fi
+  done
+  if [ "$ok" = "1" ]; then break; fi
+  sleep 2
+done
+
+if [ "$ok" = "1" ]; then
+  echo "[orchestrator] Removing old container."
+  dapi -X DELETE "$API/containers/$BR_NAME-old?force=true" >/dev/null 2>&1 || true
+  echo "[orchestrator] Done."
+  exit 0
+fi
+
+echo "[orchestrator] WARN: health check failed after 120s — rolling back to previous container."
+echo "[orchestrator] Last 50 log lines from the container that failed its health check:"
+dapi "$API/containers/$NEW_ID/logs?stdout=1&stderr=1&tail=50" 2>/dev/null | tr -d '\000-\010\013\014\016-\037' || true
+dapi -X POST "$API/containers/$NEW_ID/stop?t=5" >/dev/null 2>&1 || true
+# Keep the failed container (renamed) rather than deleting it: it is the only
+# record of WHY the new version would not serve, and the next update removes it
+# first. Deleting it is what left an unreachable install with nothing to report.
+dapi -X DELETE "$API/containers/$BR_NAME-failed?force=true" >/dev/null 2>&1 || true
+if ! dapi -X POST "$API/containers/$NEW_ID/rename?name=$BR_NAME-failed" >/dev/null 2>&1; then
+  dapi -X DELETE "$API/containers/$NEW_ID?force=true" >/dev/null 2>&1 || true
+fi
+dapi -X POST "$API/containers/$BR_ID/rename?name=$BR_NAME" >/dev/null 2>&1 || true
+dapi -X POST "$API/containers/$BR_ID/start" >/dev/null 2>&1 || true
+echo "[orchestrator] Rollback complete — previous container restarted; the failed one is kept as $BR_NAME-failed."
+exit 1
+`,
+		dockerAPI(),       // API= path version
+		newImage,          // create-log line: human-readable image reference
+		string(bodyJSON),  // CREATE_BODY heredoc (JSON produced by this binary, not user-derived)
+		connectScript,     // post-create network reattach (issue #21); "" for single-network/host
+	)
+}
+
 // orchestrateRestart launches a lightweight Alpine container that:
 // 1. Stops the current container
 // 2. Renames it to -old
@@ -501,6 +665,16 @@ func (u *Updater) orchestrateRestart(m *Manifest) error {
 		return fmt.Errorf("cannot identify self: %w", err)
 	}
 
+	return u.orchestrateSwap(self, m)
+}
+
+// orchestrateSwap is orchestrateRestart minus the self-discovery step: given a
+// description of the container to replace, it builds and launches the
+// orchestrator. Split out so the swap can be driven against a real Docker
+// daemon in a test (TestOrchestratorSwap_* in orchestration_docker_test.go)
+// without the test process having to BE a container.
+func (u *Updater) orchestrateSwap(self *containerInfo, m *Manifest) error {
+	logFn := u.logProgress
 	logFn(fmt.Sprintf("Self container: name=%s id=%s image=%s restart=%s", self.Name, shortID(self.ID), self.Image, self.Restart), "info")
 	logFn(fmt.Sprintf("Mounts: %d, env vars: %d, port bindings: %d", len(self.Mounts), len(self.Env), len(self.Ports)), "info")
 	netNames := make([]string, len(self.Networks))
@@ -549,119 +723,7 @@ func (u *Updater) orchestrateRestart(m *Manifest) error {
 	// container stays reachable on the user's reverse-proxy network and owned by
 	// Docker Compose. Networks beyond the first are reconnected post-create via
 	// networkConnectScript (Docker's create only honors one EndpointsConfig).
-	createBody := buildCreateBody(self, newImage)
-	bodyJSON, _ := json.Marshal(createBody)
-	connectScript := networkConnectScript(self)
-
-	// Shell script for the orchestrator to execute. self.Name and self.ID
-	// come in via $BR_NAME / $BR_ID environment variables (set on the
-	// orchestrator container's Env), NOT via string interpolation into the
-	// script body. Docker constrains container names to a safe charset
-	// today, but interpolating user-controllable identifiers into a bash
-	// heredoc is brittle — if a future Docker release widens the allowed
-	// chars (or if a malicious image relabels the container at runtime),
-	// shell injection becomes possible. Env vars sidestep this entirely.
-	//
-	// The two parameters that DO need interpolation — dockerAPI() and the
-	// container-create body JSON — are both produced by this binary, not
-	// derived from user input, so they remain inline.
-	script := fmt.Sprintf(`#!/bin/sh
-set -e
-SOCK="/var/run/docker.sock"
-API="http://localhost/%s"
-
-# Helper: Docker API via curl
-dapi() { curl -sf --unix-socket "$SOCK" "$@"; }
-
-echo "[orchestrator] Stopping $BR_NAME..."
-dapi -X POST "$API/containers/$BR_ID/stop?t=10" >/dev/null 2>&1 || true
-sleep 2
-
-echo "[orchestrator] Removing old -old container if exists..."
-dapi -X DELETE "$API/containers/$BR_NAME-old?force=true" >/dev/null 2>&1 || true
-
-echo "[orchestrator] Renaming $BR_NAME → $BR_NAME-old..."
-dapi -X POST "$API/containers/$BR_ID/rename?name=$BR_NAME-old" >/dev/null
-
-echo "[orchestrator] Creating new container $BR_NAME with image %s..."
-CREATE_BODY=$(cat <<'ENDJSON'
-%s
-ENDJSON
-)
-RESP=$(dapi -X POST -H "Content-Type: application/json" -d "$CREATE_BODY" "$API/containers/create?name=$BR_NAME")
-NEW_ID=$(echo "$RESP" | sed -n 's/.*"Id":"\([^"]*\)".*/\1/p')
-if [ -z "$NEW_ID" ]; then
-  echo "[orchestrator] FAIL: create returned: $RESP — rolling back"
-  dapi -X POST "$API/containers/$BR_ID/rename?name=$BR_NAME" >/dev/null 2>&1 || true
-  dapi -X POST "$API/containers/$BR_ID/start" >/dev/null 2>&1 || true
-  exit 1
-fi
-
-# Issue #21: reattach any additional user-defined networks (beyond the primary,
-# attached at create) before start, so the app is reachable on every network the
-# instant it comes up. Empty when the container had <=1 network or host mode.
-%s
-echo "[orchestrator] Starting new container $NEW_ID..."
-START_CODE=$(dapi -o /dev/null -w "%%{http_code}" -X POST "$API/containers/$NEW_ID/start")
-if [ "$START_CODE" != "204" ] && [ "$START_CODE" != "304" ]; then
-  echo "[orchestrator] FAIL: start returned $START_CODE — rolling back"
-  dapi -X DELETE "$API/containers/$NEW_ID?force=true" >/dev/null 2>&1 || true
-  dapi -X POST "$API/containers/$BR_ID/rename?name=$BR_NAME" >/dev/null 2>&1 || true
-  dapi -X POST "$API/containers/$BR_ID/start" >/dev/null 2>&1 || true
-  exit 1
-fi
-
-echo "[orchestrator] Resolving new container IP for healthcheck..."
-NEW_IP=""
-ipattempts=0
-while [ -z "$NEW_IP" ] && [ $ipattempts -lt 10 ]; do
-  # Pick the first non-empty IPAddress field — covers both the default bridge
-  # (.NetworkSettings.IPAddress) and user-defined networks
-  # (.NetworkSettings.Networks.<name>.IPAddress).
-  NEW_IP=$(dapi "$API/containers/$NEW_ID/json" 2>/dev/null \
-    | sed -n 's/.*"IPAddress":"\([^"]*\)".*/\1/p' | grep -v '^$' | head -1)
-  [ -z "$NEW_IP" ] && sleep 1
-  ipattempts=$((ipattempts + 1))
-done
-if [ -z "$NEW_IP" ]; then
-  echo "[orchestrator] WARN: could not resolve new container IP after 10s — falling back to name lookup (only works on user-defined networks)"
-  NEW_IP="$BR_NAME"
-fi
-echo "[orchestrator] Polling http://$NEW_IP:8080/api/health (60s timeout)..."
-i=0
-ok=0
-while [ $i -lt 30 ]; do
-  # wget is available in busybox/alpine; using IP avoids needing the container
-  # name to resolve on the default bridge network (DNS by name is only
-  # automatic on user-defined networks).
-  if wget -q -O - --timeout=2 "http://$NEW_IP:8080/api/health" 2>/dev/null | grep -q '"status":"ok"'; then
-    ok=1
-    break
-  fi
-  sleep 2
-  i=$((i + 1))
-done
-
-if [ "$ok" = "1" ]; then
-  echo "[orchestrator] Health check passed — removing old container."
-  dapi -X DELETE "$API/containers/$BR_NAME-old?force=true" >/dev/null 2>&1 || true
-  echo "[orchestrator] Done."
-  exit 0
-fi
-
-echo "[orchestrator] WARN: health check failed after 60s — rolling back to previous container."
-dapi -X POST "$API/containers/$NEW_ID/stop?t=5" >/dev/null 2>&1 || true
-dapi -X DELETE "$API/containers/$NEW_ID?force=true" >/dev/null 2>&1 || true
-dapi -X POST "$API/containers/$BR_ID/rename?name=$BR_NAME" >/dev/null 2>&1 || true
-dapi -X POST "$API/containers/$BR_ID/start" >/dev/null 2>&1 || true
-echo "[orchestrator] Rollback complete — previous container restarted."
-exit 1
-`,
-		dockerAPI(),       // API= path version
-		newImage,          // create-log line: human-readable image reference
-		string(bodyJSON),  // CREATE_BODY heredoc (JSON produced by this binary, not user-derived)
-		connectScript,     // post-create network reattach (issue #21); "" for single-network/host
-	)
+	script := buildSwapScript(self, newImage)
 
 	client := dockerClient()
 
@@ -671,15 +733,37 @@ exit 1
 	// pipeline audit: any future widening of Docker's container-name charset
 	// (or a malicious image relabeling its container) would otherwise become a
 	// shell-injection vector inside a Docker-socket-privileged container.
+	appPort := appListenPort(self.Env)
+	hostPort := publishedHostPort(self.Ports, appPort)
+	logFn(fmt.Sprintf("Health probe targets: container port %s, published host port %q, networks to join: %d",
+		appPort, hostPort, len(orchestratorNetworks(self))), "info")
+
+	binds := []string{"/var/run/docker.sock:/var/run/docker.sock"}
+	cmd := "apk add --no-cache curl >/dev/null 2>&1 || true\n" + script
+	// The orchestrator auto-removes, so its console log dies with it — which is
+	// exactly what made a rollback on somebody else's NAS undiagnosable. Tee the
+	// whole run into the app's own data dir instead, where the user can read it
+	// after the fact (the rolled-back container serves the same directory).
+	if src := dataDirSource(self.Mounts, self.Env); src != "" {
+		binds = append(binds, src+":"+orchLogMountPath)
+		// The closing brace must follow a newline, not a ";" — the script's own
+		// last line already ends in one, and `exit 1\n ; }` is a syntax error
+		// that kills the whole swap before the first API call (measured: the
+		// orchestrator exited instantly and the container was never touched).
+		cmd = "{ " + cmd + "\n} 2>&1 | tee " + orchLogMountPath + "/" + orchLogFileName
+	}
+
 	orchBody := map[string]interface{}{
 		"Image": orchImage,
-		"Cmd":   []string{"sh", "-c", "apk add --no-cache curl >/dev/null 2>&1 && " + script},
+		"Cmd":   []string{"sh", "-c", cmd},
 		"Env": []string{
 			"BR_NAME=" + self.Name,
 			"BR_ID=" + self.ID,
+			"BR_PORT=" + appPort,
+			"BR_HOSTPORT=" + hostPort,
 		},
 		"HostConfig": map[string]interface{}{
-			"Binds":     []string{"/var/run/docker.sock:/var/run/docker.sock"},
+			"Binds":     binds,
 			"AutoRemove": true,
 		},
 	}
@@ -717,6 +801,30 @@ exit 1
 	}
 	json.NewDecoder(createResp.Body).Decode(&created)
 	logFn(fmt.Sprintf("Orchestrator created: id=%s", shortID(created.ID)), "info")
+
+	// Join the app's own networks BEFORE starting, so the health probe can
+	// reach the new container by IP (and by name). The orchestrator keeps its
+	// default-bridge attachment — it needs egress for `apk add curl`, and a
+	// Compose network may be `internal: true`.
+	for _, n := range orchestratorNetworks(self) {
+		connBody, _ := json.Marshal(map[string]interface{}{"Container": created.ID})
+		connReq, _ := http.NewRequest("POST",
+			"http://docker/"+dockerAPI()+"/networks/"+n.ID+"/connect", bytes.NewReader(connBody))
+		connReq.Header.Set("Content-Type", "application/json")
+		connResp, cerr := client.Do(connReq)
+		if cerr != nil {
+			logFn(fmt.Sprintf("WARN: orchestrator could not join network %s (%v) — health probe falls back to the published host port", n.Name, cerr), "info")
+			continue
+		}
+		body, _ := io.ReadAll(io.LimitReader(connResp.Body, 512))
+		connResp.Body.Close()
+		if connResp.StatusCode >= 400 {
+			logFn(fmt.Sprintf("WARN: orchestrator could not join network %s (HTTP %d: %s) — health probe falls back to the published host port",
+				n.Name, connResp.StatusCode, strings.TrimSpace(string(body))), "info")
+			continue
+		}
+		logFn(fmt.Sprintf("Orchestrator joined network %s for the health probe", n.Name), "info")
+	}
 
 	// Start the orchestrator
 	logFn("Starting orchestrator container...", "info")
@@ -810,6 +918,109 @@ func bindsFromMounts(mounts []mount) []string {
 // exclusive with user-defined network attachments.
 func isExclusiveNetMode(mode string) bool {
 	return mode == "host" || mode == "none" || strings.HasPrefix(mode, "container:")
+}
+
+// Where the app's data dir is bind-mounted inside the orchestrator, and the
+// file the orchestrator's console log is teed into. The orchestrator container
+// auto-removes itself, so without this the only record of a failed swap is a
+// console log that no longer exists by the time anyone looks.
+const (
+	orchLogMountPath = "/brlog"
+	orchLogFileName  = "update-orchestrator.log"
+)
+
+// appListenPort reports the port the server listens on INSIDE the container,
+// read from the container's own PORT env (main.go's default is 8080). The
+// health probe used to hardcode 8080, which silently fails on any install that
+// sets PORT.
+func appListenPort(env []string) string {
+	for _, e := range env {
+		if v, ok := strings.CutPrefix(e, "PORT="); ok {
+			v = strings.TrimSpace(v)
+			if v != "" && isNumericPort(v) {
+				return v
+			}
+		}
+	}
+	return "8080"
+}
+
+func isNumericPort(s string) bool {
+	if len(s) == 0 || len(s) > 5 {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// publishedHostPort returns the host port the app's container port is published
+// on, or "" when it isn't published in a way the orchestrator can reach. A
+// binding on 127.0.0.1 counts as unreachable: the orchestrator probes the host
+// via the default gateway (the docker0 address), which a loopback-only
+// publication does not answer on.
+func publishedHostPort(ports map[string][]portBinding, appPort string) string {
+	for _, key := range []string{appPort + "/tcp", appPort} {
+		for _, b := range ports[key] {
+			if b.HostPort == "" {
+				continue
+			}
+			if b.HostIP == "" || b.HostIP == "0.0.0.0" || b.HostIP == "::" {
+				return b.HostPort
+			}
+		}
+	}
+	return ""
+}
+
+// orchestratorNetworks lists the networks the orchestrator must join to be able
+// to reach the new container by IP. Docker DROPs traffic between two bridge
+// networks, so an orchestrator left on the default bridge cannot health-check a
+// container on a Compose network — which is every DSM Container Manager
+// "project" install, and why those rolled back on every single update while a
+// plain `docker run` install (default bridge, same network) updated fine.
+//
+// Exclusive modes (host/none/container:) have no joinable network; the gateway
+// probe covers those instead.
+func orchestratorNetworks(self *containerInfo) []containerNetwork {
+	if isExclusiveNetMode(self.NetworkMode) {
+		return nil
+	}
+	var out []containerNetwork
+	for _, n := range self.Networks {
+		// The orchestrator is already on the default bridge (it needs it to
+		// reach the Alpine CDN for curl); re-connecting would 403.
+		if n.Name == "bridge" {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// dataDirSource returns the host path backing the container's data directory,
+// or "" if it has none (or it is read-only). The destination comes from the
+// container's own DATA_DIR env — an install is free to mount it somewhere other
+// than /data, and the orchestrator log should follow the data, not a constant.
+func dataDirSource(mounts []mount, env []string) string {
+	dest := "/data"
+	for _, e := range env {
+		if v, ok := strings.CutPrefix(e, "DATA_DIR="); ok && strings.HasPrefix(v, "/") {
+			dest = strings.TrimRight(v, "/")
+			if dest == "" {
+				dest = "/data"
+			}
+		}
+	}
+	for _, m := range mounts {
+		if m.Destination == dest && m.RW && m.Source != "" {
+			return m.Source
+		}
+	}
+	return ""
 }
 
 // filterStaleAliases drops the auto-injected short container-ID alias that
