@@ -72,6 +72,11 @@ Two rules worth keeping:
   number, same as the Electron producer. Board# grouping then happens
   client-side through `apple-boards.ts`, which the build already carries.
 
+A folder **dropped on the window** takes the same path (`captureDroppedFolder`
+in `App.tsx`'s `handleDrop`, called before the first await): Chromium's
+`getAsFileSystemHandle` when the drop carries one, otherwise the
+`webkitGetAsEntry` tree walk every browser supports.
+
 Not ported (and not planned here): the board reference DB, PDF full-text
 search, OBD, dedup, sync. UI entry points: the Library tab (empty state →
 **Choose a folder**, chip above the status bar for rescan/change/forget) and
