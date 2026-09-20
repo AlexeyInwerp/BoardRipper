@@ -103,7 +103,10 @@ export default defineConfig(({ mode }) => {
       }),
     ],
     define: {
-      __APP_VERSION__: JSON.stringify(pkg.version),
+      // BR_VERSION_SUFFIX marks a build that is not a release — e.g.
+      // `BR_VERSION_SUFFIX=-beta.1 npm run build:lite`. Unset in every normal
+      // and released build, so the version string is exactly package.json's.
+      __APP_VERSION__: JSON.stringify(pkg.version + (process.env.BR_VERSION_SUFFIX ?? '')),
     },
     build: {
       // Separate output dirs so the backend-free bundles never collide with the

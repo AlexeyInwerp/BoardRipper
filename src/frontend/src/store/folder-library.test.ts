@@ -20,11 +20,44 @@ beforeAll(() => {
   } as unknown as Parameters<typeof registerFormat>[0]);
 });
 
-/** A `File` as the scan reads it — only these four fields are touched. */
-function fakeFile(relPath: string, size = 1234): File {
+/** A `File` as the scan reads it: four fields, plus a header for the sniff
+ *  that ambiguous extensions go through. */
+function fakeFile(relPath: string, size = 1234, header = ''): File {
   const name = relPath.slice(relPath.lastIndexOf('/') + 1);
-  return { name, size, lastModified: 1_700_000_000_000, webkitRelativePath: relPath } as unknown as File;
+  return {
+    name, size, lastModified: 1_700_000_000_000, webkitRelativePath: relPath,
+    slice: () => ({ arrayBuffer: async () => new TextEncoder().encode(header).buffer }),
+  } as unknown as File;
 }
+
+describe('an extension two formats claim', () => {
+  // `.brd` is Apple BRD, Allegro and EAGLE; detectByExtension answers with
+  // whichever registered first, which labelled all 29 Allegro boards in the
+  // local corpus "BDV". Only the header settles it.
+  beforeAll(() => {
+    const stub = (id: string, magic: string) => ({
+      id, name: id, extensions: ['.dup'],
+      detect: (h: Uint8Array) => new TextDecoder().decode(h.slice(0, magic.length)) === magic,
+      parse: () => { throw new Error('not used'); },
+    } as unknown as Parameters<typeof registerFormat>[0]);
+    registerFormat(stub('FIRST', 'AAAA'));
+    registerFormat(stub('SECOND', 'BBBB'));
+  });
+
+  it('is decided by the file header, not by registration order', async () => {
+    const scan = await folderLibrary.adoptFileList([
+      fakeFile('L/one.dup', 10, 'BBBBrest'),
+      fakeFile('L/two.dup', 10, 'AAAArest'),
+    ]);
+    expect(scan!.files.map(f => f.format_id)).toEqual(['SECOND', 'FIRST']);
+  });
+
+  it('falls back to the extension when the header cannot be read', async () => {
+    const unreadable = { ...fakeFile('L/three.dup'), slice: () => { throw new Error('nope'); } } as unknown as File;
+    const scan = await folderLibrary.adoptFileList([unreadable]);
+    expect(scan!.files[0].format_id).toBe('FIRST');
+  });
+});
 
 describe('row building', () => {
   it('classifies by extension and lifts the board number out of the name', () => {

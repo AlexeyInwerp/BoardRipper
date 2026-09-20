@@ -30,7 +30,7 @@
  */
 
 import type { DatabankFile, FolderNode } from './databank-store';
-import { detectByExtension, getAllExtensions } from '../parsers/registry';
+import { detectByExtension, detectFormat, getAllExtensions, getAllFormats, getFileExtension } from '../parsers/registry';
 import { extractBoardNumberFromFilename } from './board-number';
 import { log } from './log-store';
 
@@ -190,9 +190,46 @@ function allocId(relPath: string, used: Set<number>): number {
   return id;
 }
 
+/** Extensions more than one registered format claims — `.brd` alone is
+ *  Apple BRD, Allegro and EAGLE. For these the extension says nothing, so the
+ *  scan reads a header and asks the same content detector a real open uses;
+ *  every other file is named by its extension for free. Without this the
+ *  Library labelled all 29 Allegro/Apple boards in the sample corpus "BDV",
+ *  because that format is simply registered first. */
+function ambiguousExtensions(): Set<string> {
+  const seen = new Set<string>();
+  const dupes = new Set<string>();
+  for (const fmt of getAllFormats()) {
+    for (const ext of fmt.extensions) {
+      if (seen.has(ext)) dupes.add(ext);
+      seen.add(ext);
+    }
+  }
+  return dupes;
+}
+
+/** Enough for every registered detector: the magics sit at offset 0 and the
+ *  text sniffs (EAGLE's XML, GenCAD vs Mentor) look at the first lines. */
+const SNIFF_BYTES = 8192;
+
+async function resolveFormatId(file: File, ambiguous: Set<string>): Promise<string> {
+  if (!ambiguous.has(getFileExtension(file.name))) {
+    return detectByExtension(file.name)?.id ?? '';
+  }
+  try {
+    const head = new Uint8Array(await file.slice(0, SNIFF_BYTES).arrayBuffer());
+    const byContent = detectFormat(head);
+    if (byContent) return byContent.id;
+  } catch {
+    // Unreadable header (a cloud placeholder, a permission blip) — fall back
+    // to the extension rather than dropping the row.
+  }
+  return detectByExtension(file.name)?.id ?? '';
+}
+
 /** One index row. `fullPath` is Electron-only and deliberately absent here —
  *  a browser never sees an absolute path. */
-function makeRow(id: number, relPath: string, name: string, size: number, lastModified: number, type: 'board' | 'pdf'): DatabankFile {
+function makeRow(id: number, relPath: string, name: string, size: number, lastModified: number, type: 'board' | 'pdf', formatId?: string): DatabankFile {
   const boardNumber = type === 'board' ? (extractBoardNumberFromFilename(name) ?? '') : '';
   return {
     id,
@@ -206,7 +243,7 @@ function makeRow(id: number, relPath: string, name: string, size: number, lastMo
     board_number: boardNumber,
     manufacturer: '',
     model: '',
-    format_id: type === 'board' ? (detectByExtension(name)?.id ?? '') : '',
+    format_id: type === 'board' ? (formatId ?? detectByExtension(name)?.id ?? '') : '',
     part_count: null,
     net_count: null,
     donor_pool: false,
@@ -392,6 +429,7 @@ class FolderLibrary {
     const rows: DatabankFile[] = [];
     const entries = new Map<number, Entry>();
     const used = new Set<number>();
+    const ambiguous = ambiguousExtensions();
     let scanned = 0;
     let lastYield = performance.now();
 
@@ -404,7 +442,8 @@ class FolderLibrary {
       const type = classify(file.name, boardExts);
       if (type) {
         const id = allocId(rel, used);
-        rows.push(makeRow(id, rel, file.name, file.size, file.lastModified, type));
+        const fmt = type === 'board' ? await resolveFormatId(file, ambiguous) : '';
+        rows.push(makeRow(id, rel, file.name, file.size, file.lastModified, type, fmt));
         entries.set(id, { path: rel, file });
       }
       if (performance.now() - lastYield > YIELD_MS) {
@@ -538,6 +577,7 @@ class FolderLibrary {
     const rows: DatabankFile[] = [];
     const entries = new Map<number, Entry>();
     const used = new Set<number>();
+    const ambiguous = ambiguousExtensions();
     let scanned = 0;
     let lastYield = performance.now();
 
@@ -561,7 +601,8 @@ class FolderLibrary {
             continue;
           }
           const id = allocId(rel, used);
-          rows.push(makeRow(id, rel, child.name, meta.size, meta.lastModified, type));
+          const fmt = type === 'board' ? await resolveFormatId(meta, ambiguous) : '';
+          rows.push(makeRow(id, rel, child.name, meta.size, meta.lastModified, type, fmt));
           entries.set(id, { path: rel, handle: child });
         }
         if (performance.now() - lastYield > YIELD_MS) {
@@ -583,6 +624,7 @@ class FolderLibrary {
     const rows: DatabankFile[] = [];
     const entries = new Map<number, Entry>();
     const used = new Set<number>();
+    const ambiguous = ambiguousExtensions();
     let scanned = 0;
     let lastYield = performance.now();
 
@@ -613,7 +655,8 @@ class FolderLibrary {
           const file = await getFile(child);
           if (!file) { log.scan.warn(`folder scan: cannot read ${rel}`); continue; }
           const id = allocId(rel, used);
-          rows.push(makeRow(id, rel, child.name, file.size, file.lastModified, type));
+          const fmt = type === 'board' ? await resolveFormatId(file, ambiguous) : '';
+          rows.push(makeRow(id, rel, child.name, file.size, file.lastModified, type, fmt));
           entries.set(id, { path: rel, file });
         }
         if (performance.now() - lastYield > YIELD_MS) {
