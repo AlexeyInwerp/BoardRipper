@@ -306,7 +306,11 @@ class FolderLibrary {
   // ── Picking ──
 
   /** Chromium: open the directory picker. Must run in a user gesture.
-   *  Returns null when the user dismissed the dialog. */
+   *  Returns null when the user dismissed the dialog, and THROWS when the
+   *  browser refused the call — the two are different outcomes for the
+   *  caller, which falls back to the `webkitdirectory` input on a refusal
+   *  (a `file://` page is the case that matters: the method is there and
+   *  the call is rejected). */
   async pickDirectory(onProgress?: (p: ScanProgress) => void): Promise<FolderScan | null> {
     const picker = directoryPicker();
     if (!picker) return null;
@@ -314,9 +318,9 @@ class FolderLibrary {
     try {
       handle = await picker({ id: 'boardripper-library', mode: 'read' });
     } catch (err) {
-      // AbortError = the user closed the dialog; anything else is worth a line.
-      if ((err as DOMException)?.name !== 'AbortError') log.scan.warn('folder pick failed:', err);
-      return null;
+      if ((err as DOMException)?.name === 'AbortError') return null;
+      log.scan.warn('directory picker refused, falling back to the folder input:', err);
+      throw err;
     }
     const scan = await this.scanHandle(handle, onProgress);
     await writeStored({

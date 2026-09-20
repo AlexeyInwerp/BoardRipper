@@ -35,12 +35,14 @@ function useFolderPicker(testId: string) {
       setBusy(true);
       try {
         await databankStore.pickLibraryFolder();
-      } catch (err) {
-        boardStore.addToast(`Could not read that folder: ${err instanceof Error ? err.message : String(err)}`, 'error');
+        return;
+      } catch {
+        // The picker exists but this context is not allowed to use it —
+        // `file://` most of all. The input works everywhere; fall through to
+        // it rather than leaving a button that does nothing.
       } finally {
         setBusy(false);
       }
-      return;
     }
     inputRef.current?.click();
   }, [busy]);
