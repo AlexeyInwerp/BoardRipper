@@ -91,6 +91,15 @@ So the app never dead-ends on it:
   the spot and then opens the board. Path-hashed ids are what makes that
   work — the row the user clicked still resolves after the rescan.
 
+A click on a board is itself a user gesture, so an open that finds its
+folder gone asks for it and then continues — `requestPermission` where a
+handle exists, the picker where it does not (`setFolderRepickHandler`; the
+store owns no dialog). Two rules keep that honest: every path out of `pick`
+settles the promise the open is waiting on, including the input's native
+`cancel` event, and the input's `webkitdirectory` attribute is set in its
+**ref callback** — a mount effect fires while the chip is still `null` and
+never again, which silently turns its folder dialog into a file dialog.
+
 Permanent access, in the user's hands, two ways (both Chromium's own
 mechanics, [documented here](https://developer.chrome.com/blog/persistent-permissions-for-the-file-system-access-api)):
 
