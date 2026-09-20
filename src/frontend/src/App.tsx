@@ -45,7 +45,7 @@ import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { getAllExtensions, getFileExtension } from './parsers';
 import { themeStore } from './store/themes';
 import { updateStore } from './store/update-store';
-import { databankStore } from './store/databank-store';
+import { databankStore, captureDroppedFolder } from './store/databank-store';
 
 // Every Dockview panel is wrapped in a PanelErrorBoundary so one bad board
 // file / render-time throw in a single panel can't white-screen the whole app
@@ -187,7 +187,26 @@ function App() {
     dragCounter.current = 0;
     setDragOver(false);
 
+    // A dropped FOLDER becomes the library in the backend-free builds (the
+    // Docker build's Go scanner owns the library there). Captured here and
+    // nowhere later: DataTransferItems are neutered the moment this handler
+    // yields, so `webkitGetAsEntry` / `getAsFileSystemHandle` have to be
+    // called before the first await.
+    const droppedFolder = databankStore.folderLibrarySupported
+      ? captureDroppedFolder(e.dataTransfer)
+      : null;
+
     const files = e.dataTransfer.files;
+    if (droppedFolder) {
+      const ok = await databankStore.adoptDroppedFolder(droppedFolder);
+      if (ok) {
+        showSidebarTab('library');
+        boardStore.addToast(`Library folder: ${databankStore.libraryPath}`, 'info');
+      } else {
+        boardStore.addToast('Could not read that folder.', 'error');
+      }
+      return;
+    }
     if (!files || files.length === 0) return;
 
     // Update-bundle drop takes priority over board/PDF dispatch. If the user

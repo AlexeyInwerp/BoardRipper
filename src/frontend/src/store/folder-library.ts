@@ -54,6 +54,55 @@ interface FsDirectoryHandle {
   requestPermission?(descriptor: { mode: 'read' | 'readwrite' }): Promise<PermissionState>;
 }
 
+/** The pre-File-System-Access drag-and-drop tree API. Still the only way to
+ *  read a dropped folder in Firefox and Safari, and lib.dom's own
+ *  `FileSystemDirectoryEntry` types are awkward enough (callback-based,
+ *  `readEntries` batching) that a local shape is clearer. */
+interface DropFileEntry {
+  isFile: true;
+  isDirectory: false;
+  name: string;
+  file(onSuccess: (f: File) => void, onError?: (e: unknown) => void): void;
+}
+
+interface DropDirectoryEntry {
+  isFile: false;
+  isDirectory: true;
+  name: string;
+  createReader(): { readEntries(cb: (entries: DropEntry[]) => void, onError?: (e: unknown) => void): void };
+}
+
+type DropEntry = DropFileEntry | DropDirectoryEntry;
+
+/** What a drop hands over, captured synchronously — `DataTransferItem`s are
+ *  neutered the moment the drop handler yields. */
+export interface CapturedDrop {
+  handle: Promise<FsDirectoryHandle | null> | null;
+  entry: DropDirectoryEntry | null;
+}
+
+/** Must be called INSIDE the drop handler, before any `await`. Returns null
+ *  when the drop contains no folder. */
+export function captureDroppedFolder(dt: DataTransfer): CapturedDrop | null {
+  const items = dt.items;
+  if (!items) return null;
+  for (const item of Array.from(items)) {
+    if (item.kind !== 'file') continue;
+    const withHandle = item as DataTransferItem & { getAsFileSystemHandle?: () => Promise<FsDirectoryHandle | FsFileHandle | null> };
+    // Cast through unknown: lib.dom types this as FileSystemEntry, whose
+    // directory branch does not carry createReader.
+    const legacy = (item.webkitGetAsEntry?.() ?? null) as unknown as DropEntry | null;
+    // webkitGetAsEntry is the only synchronous way to know it IS a directory;
+    // the handle (Chromium) is what makes it persist, so take both.
+    if (!legacy || !legacy.isDirectory) continue;
+    const handle = typeof withHandle.getAsFileSystemHandle === 'function'
+      ? withHandle.getAsFileSystemHandle().then(h => (h && h.kind === 'directory' ? h : null)).catch(() => null)
+      : null;
+    return { handle, entry: legacy };
+  }
+  return null;
+}
+
 type DirectoryPicker = (opts?: { id?: string; mode?: 'read' | 'readwrite' }) => Promise<FsDirectoryHandle>;
 
 function directoryPicker(): DirectoryPicker | null {
@@ -373,6 +422,28 @@ class FolderLibrary {
     return scan;
   }
 
+  /** A folder dropped on the window. Chromium's handle is preferred when the
+   *  drop carried one — it persists and can be rescanned; otherwise the
+   *  entry tree is walked, which every browser supports. */
+  async adoptDrop(captured: CapturedDrop, onProgress?: (p: ScanProgress) => void): Promise<FolderScan | null> {
+    const handle = captured.handle ? await captured.handle : null;
+    if (handle) {
+      const scan = await this.scanHandle(handle, onProgress);
+      await writeStored({
+        key: RECORD_KEY, handle, rootName: scan.rootName, mode: 'handle',
+        files: scan.files, tree: scan.tree, savedAt: Date.now(),
+      });
+      return scan;
+    }
+    if (!captured.entry) return null;
+    const scan = await this.scanEntryTree(captured.entry, onProgress);
+    await writeStored({
+      key: RECORD_KEY, rootName: scan.rootName, mode: 'input',
+      files: scan.files, tree: scan.tree, savedAt: Date.now(),
+    });
+    return scan;
+  }
+
   /** Re-walk the folder behind a live handle (Chromium only). */
   async rescan(onProgress?: (p: ScanProgress) => void): Promise<FolderScan | null> {
     if (!this._rootHandle) return null;
@@ -504,6 +575,58 @@ class FolderLibrary {
     await walk(root, '');
     this._rootHandle = root;
     return this.commit(rows, entries, root.name, 'handle', started);
+  }
+
+  private async scanEntryTree(root: DropDirectoryEntry, onProgress?: (p: ScanProgress) => void): Promise<FolderScan> {
+    const started = performance.now();
+    const boardExts = boardExtensions();
+    const rows: DatabankFile[] = [];
+    const entries = new Map<number, Entry>();
+    const used = new Set<number>();
+    let scanned = 0;
+    let lastYield = performance.now();
+
+    /** readEntries returns a BATCH (100 in Chromium), not the directory —
+     *  it has to be called until it answers with an empty array. */
+    const readAll = (dir: DropDirectoryEntry): Promise<DropEntry[]> => new Promise((resolve) => {
+      const reader = dir.createReader();
+      const all: DropEntry[] = [];
+      const next = () => reader.readEntries(
+        (batch) => { if (batch.length === 0) resolve(all); else { all.push(...batch); next(); } },
+        () => resolve(all),
+      );
+      next();
+    });
+
+    const getFile = (e: DropFileEntry): Promise<File | null> =>
+      new Promise(resolve => e.file(resolve, () => resolve(null)));
+
+    const walk = async (dir: DropDirectoryEntry, prefix: string): Promise<void> => {
+      for (const child of await readAll(dir)) {
+        if (scanned >= MAX_ENTRIES) return;
+        if (child.name.startsWith('.')) continue;
+        const rel = prefix ? `${prefix}/${child.name}` : child.name;
+        if (child.isDirectory) { await walk(child, rel); continue; }
+        scanned++;
+        const type = classify(child.name, boardExts);
+        if (type) {
+          const file = await getFile(child);
+          if (!file) { log.scan.warn(`folder scan: cannot read ${rel}`); continue; }
+          const id = allocId(rel, used);
+          rows.push(makeRow(id, rel, child.name, file.size, file.lastModified, type));
+          entries.set(id, { path: rel, file });
+        }
+        if (performance.now() - lastYield > YIELD_MS) {
+          onProgress?.({ scanned, matched: rows.length, current: rel });
+          await new Promise(r => setTimeout(r, 0));
+          lastYield = performance.now();
+        }
+      }
+    };
+
+    await walk(root, '');
+    this._rootHandle = null;
+    return this.commit(rows, entries, root.name, 'input', started);
   }
 
   private commit(rows: DatabankFile[], entries: Map<number, Entry>, rootName: string, mode: 'handle' | 'input', started: number): FolderScan {

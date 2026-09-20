@@ -2,8 +2,10 @@ import { lookupBoard } from './apple-boards';
 import { log } from './log-store';
 import { Emitter } from './emitter';
 import { isLiteBuild } from './build-mode';
-import { folderLibrary, folderPickMode } from './folder-library';
-import type { FolderLibraryState, FolderScan, ScanProgress } from './folder-library';
+import { folderLibrary, folderPickMode, captureDroppedFolder } from './folder-library';
+import type { CapturedDrop, FolderLibraryState, FolderScan, ScanProgress } from './folder-library';
+export { captureDroppedFolder };
+export type { CapturedDrop };
 import { libraryCache } from './library-cache';
 import { libraryLoadStore } from './library-load-store';
 import { updateStore } from './update-store';
@@ -2463,6 +2465,16 @@ class DatabankStore extends Emitter {
   /** The `webkitdirectory` path: adopt the FileList the input produced. */
   async adoptFolderFiles(list: FileList | File[]): Promise<boolean> {
     const scan = await folderLibrary.adoptFileList(list, this._folderProgress);
+    if (!scan) { this._scanStatus = null; this.notify(); return false; }
+    this._applyFolderScan(scan);
+    return true;
+  }
+
+  /** A folder dropped on the window becomes the library. The caller must
+   *  have captured it synchronously in the drop handler
+   *  (`captureDroppedFolder`) — `DataTransferItem`s do not survive an await. */
+  async adoptDroppedFolder(captured: CapturedDrop): Promise<boolean> {
+    const scan = await folderLibrary.adoptDrop(captured, this._folderProgress);
     if (!scan) { this._scanStatus = null; this.notify(); return false; }
     this._applyFolderScan(scan);
     return true;

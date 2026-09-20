@@ -473,12 +473,25 @@ class UpdateStore extends Emitter {
           log.update.log(`Update applied: ${flag.fromVersion} → ${post}`);
         } else {
           // Backend reports the same version we started from. Could be a
-          // legitimate rollback (orchestrator's 60 s healthcheck failed
-          // and it restored the previous container), or the orchestrator
-          // never reached the swap. Either way the user is on the old
-          // version — softer wording, since the user already knows the
-          // headline ("update did not take") from the version string.
+          // legitimate rollback (the orchestrator's health probe never got
+          // an answer and it restored the previous container), or the
+          // orchestrator never reached the swap. Either way the user is on
+          // the old version — softer wording, since the user already knows
+          // the headline ("update did not take") from the version string.
           log.update.warn(`Still on ${flag.fromVersion} after restart — orchestrator likely rolled back. Check Debug → updater logs.`);
+          // ...and say so where the user is actually looking. A silent
+          // return to the old version reads as "the update button does
+          // nothing", which is how the DSM Container Manager health-probe
+          // bug reached us (2026-09-20) — the two artefacts named here are
+          // what a report of it needs. Dynamic import: update-store is the
+          // lower-level module and must not take a static dependency on
+          // the board store.
+          const { boardStore } = await import('./board-store');
+          boardStore.addToast(
+            `Update rolled back — still on ${fmtVersion(flag.fromVersion)}. The new version never answered its health check. ` +
+            `Details: update-orchestrator.log in the data folder, plus the container kept as "<name>-failed".`,
+            'error', undefined, 15000,
+          );
         }
         clearRestartFlag();
         return;
