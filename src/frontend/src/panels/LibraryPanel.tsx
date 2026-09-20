@@ -16,6 +16,7 @@ import { log } from '../store/log-store';
 import { fetchWithCloudRetry, readCloudError, formatCloudErrorToast } from '../store/fetch-with-cloud-retry';
 import { ObdSection } from '../components/ObdSection';
 import { showSidebarTab } from '../components/Sidebar.utils';
+import { FolderLibraryChip, FolderLibraryEmptyState } from '../components/FolderLibraryControls';
 
 /** Persisted tree expansion state — survives tab switches and page reloads.
  *  Closing a parent keeps children's keys in the Set so re-opening restores them. */
@@ -143,7 +144,7 @@ export function LibraryPanel() {
     files, folderTree, folderTreeLoading, scanStatus, viewMode, selectedFileId,
     selectedFileDetail, loadStatus, loadError,
     autoPdf, backendAvailable,
-    libraryPath, electronMode,
+    libraryPath, localLibrary, folderState,
     browseMode, browseResult, browsing,
     stats, filesComplete, loading,
     filesVersion,
@@ -152,6 +153,10 @@ export function LibraryPanel() {
     pendingPdfSearch,
   } = useDatabank();
   const libraryLoad = useLibraryLoad();
+  // The local-folder library replaces the server one in the backend-free
+  // builds. `supported` is a build/browser fact; the state check keeps the
+  // controls visible for a folder picked before a browser update.
+  const folderLibraryUi = databankStore.folderLibrarySupported || folderState.kind !== 'none';
   void donorIds; // consumed by FileDetailPane and ContextMenu via databankStore.isDonor
 
   // Tree groupings are O(N) at 100k entries — only compute the one the user
@@ -436,20 +441,20 @@ export function LibraryPanel() {
   // When the user switches to a tab that needs the full file list, hydrate
   // it now (no-op if already complete). Idempotent and coalesced upstream.
   useEffect(() => {
-    if (electronMode || filesComplete) return;
+    if (localLibrary || filesComplete) return;
     if (viewMode === 'history') return;
     databankStore.fetchFiles();
-  }, [viewMode, filesComplete, electronMode]);
+  }, [viewMode, filesComplete, localLibrary]);
 
   // Fetch folder tree only the first time the user opens the Folders tab
   // in database mode. For Electron mode the tree is built during _electronScan
   // and folderTree is already populated — no fetch needed.
   useEffect(() => {
-    if (electronMode) return;
+    if (localLibrary) return;
     if (viewMode !== 'folders' || browseMode !== 'database') return;
     if (folderTree) return;
     databankStore.fetchTree();
-  }, [viewMode, browseMode, folderTree, electronMode]);
+  }, [viewMode, browseMode, folderTree, localLibrary]);
 
   const handleSetViewMode = useCallback((mode: ViewMode, focusInput = true) => {
     databankStore.setViewMode(mode);
@@ -573,6 +578,12 @@ export function LibraryPanel() {
       }
     } catch (err) {
       log.ui.error('Failed to open file:', err);
+      // A local-folder library whose index outlived its file access fails
+      // here and nowhere else — the Debug panel is not where the user is
+      // looking, so say it where they clicked.
+      if (databankStore.folderMode) {
+        boardStore.addToast(err instanceof Error ? err.message : `Could not open "${file.filename}"`, 'error');
+      }
     }
     // `files` is intentionally absent: the binding lookup goes through
     // `databankStore.fileById` (always current). Re-creating this callback
@@ -1291,6 +1302,8 @@ export function LibraryPanel() {
           <div className="library-empty">
             Failed to load library{loadError ? `: ${loadError.message}` : '.'} Open the Debug panel for details.
           </div>
+        ) : folderLibraryUi && files.length === 0 ? (
+          <FolderLibraryEmptyState />
         ) : !backendAvailable && files.length === 0 ? (
           <div className="library-empty">
             Library will appear once the backend is reachable.
@@ -1374,6 +1387,7 @@ export function LibraryPanel() {
       {/* Status bar — pinned at the bottom (single row; expands while an
        *  operation is pending or on click). Scan/index actions live under
        *  Settings ▸ Library; the gear icon jumps there. */}
+      {folderLibraryUi && <FolderLibraryChip />}
       {statsBar}
     </div>
   );

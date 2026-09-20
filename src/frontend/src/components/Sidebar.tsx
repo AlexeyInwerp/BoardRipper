@@ -5,7 +5,6 @@ import { SettingsPanel } from '../panels/SettingsPanel';
 import { ToolsPanel } from '../panels/ToolsPanel';
 import { PanelErrorBoundary } from './PanelErrorBoundary';
 import { DebugPanel } from '../panels/DebugPanel';
-import { isLiteBuild } from '../store/build-mode';
 import {
   MIN_WIDTH,
   MAX_WIDTH_RATIO,
@@ -190,11 +189,9 @@ export function Sidebar() {
             preserves React state (scroll, expanded folders, search query)
             across tab switches. The panel that's not active just renders
             with display:none and contributes no layout. */}
-        {!isLiteBuild() && (
-          <div style={{ display: activeTab === 'library' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
-            <LibraryPanel />
-          </div>
-        )}
+        <div style={{ display: activeTab === 'library' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
+          <LibraryPanel />
+        </div>
         <div style={{ display: activeTab === 'tools' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
           <PanelErrorBoundary label="Tools">
             <ToolsPanel />

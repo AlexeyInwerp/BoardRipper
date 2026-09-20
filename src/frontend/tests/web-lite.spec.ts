@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -67,8 +68,9 @@ test('backend-only UI is absent', async ({ page }) => {
   await page.waitForLoadState('networkidle');
   // Self-update badge — gated off in the lite build.
   await expect(page.getByTestId('update-badge')).toHaveCount(0);
-  // Library sidebar tab — filtered out of the TABS registry.
-  await expect(page.locator('[data-sidebar-tab="library"]')).toHaveCount(0);
+  // The Library tab STAYS: the lite build has no server library, but it does
+  // have the local-folder one (store/folder-library.ts).
+  await expect(page.locator('[data-sidebar-tab="library"]')).toHaveCount(1);
   // Backend settings tabs — filtered out of TAB_ORDER (sidebar opens on the
   // Settings tab by default in the lite build, so the pills are rendered).
   await expect(page.locator('[data-settings-tab="integrations"]')).toHaveCount(0);
@@ -115,4 +117,79 @@ test('sample board opens from the bundled file (relative base) and stays network
   await expect(page.getByTestId('statusbar')).toContainText('Components: 52', { timeout: 60000 });
   expect(api).toEqual([]);
   expect(bad, `failed requests: ${bad.join(', ')}`).toEqual([]);
+});
+
+// ── Local-folder library ─────────────────────────────────────────────────
+// The lite build's library is a folder this browser was pointed at. Chromium
+// would use showDirectoryPicker() — a native dialog Playwright cannot drive —
+// so these drive the `webkitdirectory` input every other browser uses, which
+// is the same store call and the same scan.
+
+/** Show the Library panel. Clicking the rail destination that is already
+ *  active HIDES the panel (that is the contract), and the lite build now
+ *  boots on Library — so click only when it is not already showing. */
+async function openLibrary(page: Page) {
+  const panel = page.locator('.library-panel');
+  if (!(await panel.isVisible())) await page.locator('[data-sidebar-tab="library"]').click();
+  await expect(panel).toBeVisible();
+}
+
+/** A throwaway folder with two boards in a subdirectory and one file that is
+ *  neither a board nor a PDF. */
+function makeLibraryFixture(): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'br-lib-'));
+  fs.mkdirSync(path.join(root, 'macbook'));
+  fs.copyFileSync(TEST_BVR1, path.join(root, 'macbook', '820-00281.bvr'));
+  fs.copyFileSync(TEST_BVR1, path.join(root, 'loose-board.bvr'));
+  fs.writeFileSync(path.join(root, 'readme.txt'), 'not a board');
+  return root;
+}
+
+test('a picked folder becomes the library, and opens boards from it', async ({ page }) => {
+  const api = trackApi(page);
+  const root = makeLibraryFixture();
+  await page.goto('.');
+  await page.waitForLoadState('networkidle');
+
+  await openLibrary(page);
+  await expect(page.getByTestId('pick-library-folder')).toBeVisible();
+
+  await page.getByTestId('folder-library-input').setInputFiles(root);
+
+  // Two boards indexed, the .txt ignored.
+  const chip = page.getByTestId('folder-library-chip');
+  await expect(chip).toContainText(path.basename(root));
+  await expect(chip.locator('.folder-lib-chip-count')).toHaveText('2');
+
+  // The board opens from the folder — no /api anywhere on the way. Folders
+  // view: the root is expanded, so the board sitting at the root is one
+  // double-click away without walking the Board# groupings.
+  await page.locator('[data-library-tab="folders"]').click();
+  await page.locator('.library-tree').getByText('loose-board.bvr').first().dblclick();
+  await expect(page.getByTestId('statusbar')).toContainText('Components:', { timeout: 20000 });
+  expect(api, `unexpected /api calls: ${api.join(', ')}`).toEqual([]);
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('the folder index survives a reload, and says so when the bytes do not', async ({ page }) => {
+  const root = makeLibraryFixture();
+  await page.goto('.');
+  await page.waitForLoadState('networkidle');
+  await openLibrary(page);
+  await page.getByTestId('folder-library-input').setInputFiles(root);
+  await expect(page.getByTestId('folder-library-chip')).toContainText(path.basename(root));
+
+  await page.reload();
+  await page.waitForLoadState('networkidle');
+  await openLibrary(page);
+
+  // A webkitdirectory FileList cannot be revived, so the index comes back
+  // detached: the library still lists, and opening asks for the folder.
+  const chip = page.getByTestId('folder-library-chip');
+  await expect(chip).toContainText(path.basename(root));
+  await expect(chip).toContainText('index only');
+  await expect(page.getByTestId('change-library-folder')).toHaveText(/Choose folder/);
+
+  fs.rmSync(root, { recursive: true, force: true });
 });

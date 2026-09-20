@@ -1,5 +1,6 @@
 import { databankStore } from '../store/databank-store';
 import { createStoreHook } from './createStoreHook';
+import type { FolderLibraryState } from '../store/folder-library';
 import type { DatabankFile, FileDetail, FolderNode, ScanStatus, SearchResult, ViewMode, DatabankStats, BrowseResult, RecentItem, LoadStatus, PdfIndexProgress, PdfIndexStats, DedupProgress, DedupStats } from '../store/databank-store';
 
 // `metadataTree`/`modelTree` are deliberately NOT in the snapshot. Including
@@ -30,6 +31,10 @@ interface DatabankSnapshot {
   backendAvailable: boolean;
   libraryPath: string | null;
   electronMode: boolean;
+  /** Local-folder library state (lite / offline builds). */
+  folderState: FolderLibraryState;
+  /** The index is local (Electron IPC or a picked folder) — no backend. */
+  localLibrary: boolean;
   verboseScan: boolean;
   showPreviews: boolean;
   stats: DatabankStats | null;
@@ -67,6 +72,8 @@ export const useDatabank = createStoreHook<DatabankSnapshot>(databankStore, () =
   backendAvailable: databankStore.backendAvailable,
   libraryPath: databankStore.libraryPath,
   electronMode: databankStore.electronMode,
+  folderState: databankStore.folderState,
+  localLibrary: databankStore.localLibrary,
   verboseScan: databankStore.verboseScan,
   showPreviews: databankStore.showPreviews,
   stats: databankStore.stats,

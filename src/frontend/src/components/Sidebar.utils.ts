@@ -46,13 +46,15 @@ export interface SidebarTabDef {
 }
 
 /** The one registry of destinations. Label, icon and rail group live together
- *  so adding a tab is one entry; the lite build simply has no Library. */
-export const TABS: readonly SidebarTabDef[] = ([
+ *  so adding a tab is one entry. The lite build keeps Library: it has no
+ *  server-backed library, but it does have the local-folder one
+ *  (`store/folder-library.ts`), which fills the same panel. */
+export const TABS: readonly SidebarTabDef[] = [
   { id: 'library',  label: 'Library',  icon: IconBooks,      group: 'top' },
   { id: 'tools',    label: 'Tools',    icon: IconCalculator, group: 'top' },
   { id: 'debug',    label: 'Debug',    icon: IconBug,        group: 'bottom' },
   { id: 'settings', label: 'Settings', icon: IconSettings,   group: 'bottom' },
-] as SidebarTabDef[]).filter(t => !(isLiteBuild() && t.id === 'library'));
+] as SidebarTabDef[];
 
 export const TAB_LABELS: Readonly<Record<SidebarTab, string>> = Object.fromEntries(
   TABS.map(t => [t.id, t.label]),
@@ -93,9 +95,10 @@ function loadSide(): SidebarSide {
   return readKey(SIDEBAR_SIDE_KEY) === 'right' ? 'right' : 'left';
 }
 
-/** Lite build has no Library tab — anything pointing at it lands on Settings. */
+/** Every build has all four tabs now; kept as the one place to redirect a
+ *  destination that a future build type drops. */
 function coerceTab(tab: SidebarTab): SidebarTab {
-  return (isLiteBuild() && tab === 'library') ? 'settings' : tab;
+  return tab;
 }
 
 function loadTab(): SidebarTab {
@@ -270,8 +273,6 @@ export function toggleLibrarySidebar(): void {
   //   hidden (any stage)                 → open with library tab
   //   open on a non-library tab          → switch to library tab
   //   open on library tab                → hide the panel
-  // Lite build has no library tab — degrade to a plain sidebar toggle.
-  if (isLiteBuild()) { toggleSidebar(); return; }
   if (getSidebarStage() !== 'open' || state.activeTab !== 'library') {
     showSidebarTab('library');
   } else {

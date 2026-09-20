@@ -2,6 +2,8 @@ import { lookupBoard } from './apple-boards';
 import { log } from './log-store';
 import { Emitter } from './emitter';
 import { isLiteBuild } from './build-mode';
+import { folderLibrary, folderPickMode } from './folder-library';
+import type { FolderLibraryState, FolderScan, ScanProgress } from './folder-library';
 import { libraryCache } from './library-cache';
 import { libraryLoadStore } from './library-load-store';
 import { updateStore } from './update-store';
@@ -495,6 +497,8 @@ class DatabankStore extends Emitter {
   private _backendAvailable = true; // assume yes until first failure
   private _libraryPath: string | null = null;
   private _electronMode = false;
+  /** Local-folder library (lite / offline builds) — see folder-library.ts. */
+  private _folderState: FolderLibraryState = { kind: 'none' };
   /** Set of file IDs currently in the pdf_donors list. Loaded at startup
    *  and refreshed after every add/remove. */
   private _donorIds = new Set<number>();
@@ -547,6 +551,12 @@ class DatabankStore extends Emitter {
   get backendAvailable() { return this._backendAvailable; }
   get libraryPath() { return this._libraryPath; }
   get electronMode() { return this._electronMode; }
+  get folderState(): FolderLibraryState { return this._folderState; }
+  /** True once a local folder has been picked (or its index restored). */
+  get folderMode(): boolean { return this._folderState.kind !== 'none'; }
+  /** The library index came from this machine, not from an HTTP backend:
+   *  no /api endpoints to stream, no tree to fetch, no server-side scan. */
+  get localLibrary(): boolean { return this._electronMode || this.folderMode; }
   get recentItems() { return this._recentItems; }
   get historyDepth() { return this._historyDepth; }
   get favoritePaths() { return this._favoritePaths; }
@@ -819,6 +829,13 @@ class DatabankStore extends Emitter {
 
   /** Safely fetch JSON from the backend, returning null if unavailable. */
   private async apiFetch<T>(url: string, init?: RequestInit): Promise<T | null> {
+    // No backend, no request. Every caller already treats null as "not
+    // available", but a fired-and-failed request is not the same as no
+    // request: the lite build asserts zero /api traffic, and on Electron
+    // without the sidecar these resolve against file:// for nothing. The
+    // per-call hasBackend() guards elsewhere stay — this is the backstop for
+    // the ones that slip through (fetchFileDetail on every file click).
+    if (!hasBackend()) return null;
     const method = init?.method ?? 'GET';
     // During the post-update settle window the proxy → new container handoff
     // routinely produces 502/503 for a few seconds; treat those as expected
@@ -917,6 +934,10 @@ class DatabankStore extends Emitter {
       // hides backend surfaces via isLiteBuild) never spins or fires dead
       // /api calls.
       if (isLiteBuild()) {
+        // Not nothing, though: a folder the user handed over earlier is
+        // restored from IndexedDB — the index immediately, the bytes too
+        // when the browser kept the permission (Chromium).
+        await this.restoreFolderLibrary();
         this._loadStatus = 'loaded';
         this.notify();
         return;
@@ -2227,6 +2248,12 @@ class DatabankStore extends Emitter {
         ? `Backend → browser via /api/files/path (${(file.size / 1024 / 1024).toFixed(2)} MB)`
         : 'Reading from local library mount (Electron IPC)');
     }
+    if (this.folderMode) {
+      if (trackProgress) loadProgressStore.setPhase('Reading', `Local folder "${this._folderState.kind === 'none' ? '' : this._folderState.rootName}"`);
+      const local = await folderLibrary.getFile(file);
+      if (trackProgress) loadProgressStore.pushLog(`Read ${local.size.toLocaleString()} bytes from the local folder`);
+      return local;
+    }
     if (!hasBackend()) {
       const result = await window.electronAPI!.readLibraryFile(file.path);
       if (trackProgress) loadProgressStore.pushLog(`Read ${result.buffer.byteLength.toLocaleString()} bytes from Electron`);
@@ -2370,6 +2397,123 @@ class DatabankStore extends Emitter {
       added: result.files.length, updated: 0, deleted: 0, errors: 0,
       duration_ms: result.duration_ms,
     };
+    this.notify();
+  }
+
+  // ── Local-folder library (lite / offline builds) ──
+  //
+  // A third producer for _files, after the Go backend and Electron IPC.
+  // Everything downstream — the Library panel, the Board#/Folders trees,
+  // open-by-id, the IndexedDB board cache — is source-agnostic and reused
+  // unchanged; these methods only fill the same fields _electronScan does.
+
+  /** How this browser can hand over a folder: Chromium's directory picker,
+   *  a `webkitdirectory` input, or not at all. */
+  get folderPickMode() { return folderPickMode(); }
+
+  /** True where a local folder makes sense: the backend-free browser builds.
+   *  Electron has its own native picker and the Docker build has the Go
+   *  scanner, so neither offers this. */
+  get folderLibrarySupported(): boolean {
+    return !hasBackend() && !isElectron() && folderPickMode() !== 'none';
+  }
+
+  private _applyFolderScan(scan: FolderScan, opts: { complete?: boolean } = {}): void {
+    this._setFiles(scan.files, { complete: opts.complete ?? true, signature: null });
+    this._folderTree = scan.tree;
+    this._folderState = folderLibrary.state;
+    this._libraryPath = scan.rootName;
+    const boards = scan.files.reduce((n, f) => n + (f.file_type === 'board' ? 1 : 0), 0);
+    this._stats = {
+      boards,
+      pdfs: scan.files.length - boards,
+      bindings: 0,
+      db_size_bytes: 0,
+      last_file_scan_at: Math.floor(Date.now() / 1000),
+    };
+    this._scanStatus = {
+      running: false, scanned: scan.files.length, total: scan.files.length,
+      added: scan.files.length, updated: 0, deleted: 0, errors: 0,
+      duration_ms: scan.durationMs,
+    };
+    this.notify();
+  }
+
+  private _folderProgress = (p: ScanProgress): void => {
+    this._scanStatus = {
+      running: true, scanned: p.scanned, total: 0, added: p.matched,
+      updated: 0, deleted: 0, errors: 0, duration_ms: 0,
+      phase: 'Scanning folder', last_file: p.current,
+    };
+    this.notify();
+  };
+
+  /** Hand over a folder. Chromium opens the directory picker; every other
+   *  browser needs the `webkitdirectory` input, which only the UI can open —
+   *  callers check `folderPickMode` and route to `adoptFolderFiles`.
+   *  Must run inside a user gesture. */
+  async pickLibraryFolder(): Promise<boolean> {
+    if (folderPickMode() !== 'handle') return false;
+    const scan = await folderLibrary.pickDirectory(this._folderProgress);
+    if (!scan) { this._scanStatus = null; this.notify(); return false; }
+    this._applyFolderScan(scan);
+    return true;
+  }
+
+  /** The `webkitdirectory` path: adopt the FileList the input produced. */
+  async adoptFolderFiles(list: FileList | File[]): Promise<boolean> {
+    const scan = await folderLibrary.adoptFileList(list, this._folderProgress);
+    if (!scan) { this._scanStatus = null; this.notify(); return false; }
+    this._applyFolderScan(scan);
+    return true;
+  }
+
+  /** Re-walk the same folder (Chromium only — an input-mode library has no
+   *  live handle and has to be re-picked). */
+  async rescanFolderLibrary(): Promise<boolean> {
+    const scan = await folderLibrary.rescan(this._folderProgress);
+    if (!scan) { this.notify(); return false; }
+    this._applyFolderScan(scan);
+    return true;
+  }
+
+  /** Chromium: re-grant read permission to a folder whose handle survived
+   *  the reload, then rescan. Must run inside a user gesture. */
+  async reconnectFolderLibrary(): Promise<boolean> {
+    const scan = await folderLibrary.reconnect(this._folderProgress);
+    if (!scan) { this.notify(); return false; }
+    this._applyFolderScan(scan);
+    return true;
+  }
+
+  /** Restore the persisted index at boot. Silent: it never prompts, so a
+   *  browser that dropped the permission lands in `detached` — the library
+   *  lists, and opening a file asks for the folder. */
+  async restoreFolderLibrary(): Promise<boolean> {
+    if (!this.folderLibrarySupported) return false;
+    try {
+      const scan = await folderLibrary.restore({
+        onIndex: (stored) => this._applyFolderScan(stored),
+        onProgress: this._folderProgress,
+      });
+      if (!scan) return false;
+      this._applyFolderScan(scan);
+      return true;
+    } catch (err) {
+      log.scan.warn('folder library: restore failed:', err);
+      return false;
+    }
+  }
+
+  /** Forget the folder entirely — index, handle and all. */
+  async forgetFolderLibrary(): Promise<void> {
+    await folderLibrary.forget();
+    this._folderState = folderLibrary.state;
+    this._setFiles([], { complete: true, signature: null });
+    this._folderTree = null;
+    this._scanStatus = null;
+    this._stats = null;
+    this._libraryPath = null;
     this.notify();
   }
 }

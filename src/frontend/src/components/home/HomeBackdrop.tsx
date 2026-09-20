@@ -12,6 +12,7 @@ import { renderSettingsStore, type RenderSettings } from '../../store/render-set
 import { themeStore, ACCENT_PRESETS } from '../../store/themes';
 import { isHdrCapable, onHdrCapabilityChange, rungForIntensity } from '../../renderer/hdr-selection-outline';
 import { InterfaceScaleSlider } from '../InterfaceScaleSlider';
+import { FolderLibraryOpenButton } from '../FolderLibraryControls';
 import { ReleaseNotes } from '../ReleaseNotes';
 import {
   isAutoSwitchLinked,
@@ -275,6 +276,7 @@ function LiteOpenCard() {
         <button type="button" className="home-open-btn home-open-btn-primary" onClick={openPicker} data-testid="home-open-btn">
           <IconUpload size={18} stroke={1.75} /> Open a board or PDF
         </button>
+        <FolderLibraryOpenButton className="home-open-btn" />
         <button type="button" className="home-open-btn" onClick={openSample} disabled={busy} data-testid="home-sample-btn" title={SAMPLE_BOARD.label}>
           {busy ? 'Loading…' : 'Try a sample board'}
         </button>
@@ -1082,7 +1084,39 @@ function compactNumber(n: number): string {
 }
 
 function LibraryStats() {
-  const { stats, scanStatus, libraryPath, backendAvailable, pdfIndexStats } = useDatabank();
+  const { stats, scanStatus, libraryPath, backendAvailable, pdfIndexStats, folderState } = useDatabank();
+
+  // Backend-free builds: the library is a folder this browser was pointed at.
+  if (databankStore.folderLibrarySupported || folderState.kind !== 'none') {
+    if (folderState.kind === 'none') {
+      return (
+        <p className="home-card-empty">
+          No library folder yet.{' '}
+          <FolderLibraryOpenButton className="home-settings-link">
+            Choose a folder →
+          </FolderLibraryOpenButton>
+        </p>
+      );
+    }
+    return (
+      <div className="home-stats">
+        <div className="home-stats-row">
+          <span><strong>{compactNumber(stats?.boards ?? 0)}</strong> boards</span>
+          <span><strong>{compactNumber(stats?.pdfs ?? 0)}</strong> PDFs</span>
+        </div>
+        <div className="home-stats-path" title={folderState.rootName}>
+          folder <code>{folderState.rootName}</code>
+          {folderState.kind === 'detached' && (
+            folderState.reason === 'permission'
+              ? ' — needs permission again'
+              : ' — index only until the folder is picked again'
+          )}
+        </div>
+        {scanStatus?.running && <div className="home-stats-scanning">Reading folder…</div>}
+      </div>
+    );
+  }
+
   if (!backendAvailable) {
     return (
       <p className="home-card-empty">
@@ -1159,12 +1193,10 @@ function QuickSettings() {
         </div>
       </div>
 
-      {!isLiteBuild() && (
-        <div className="home-quick-section">
-          <h3 className="home-quick-section-title">Library</h3>
-          <LibraryStats />
-        </div>
-      )}
+      <div className="home-quick-section">
+        <h3 className="home-quick-section-title">Library</h3>
+        <LibraryStats />
+      </div>
 
       <button type="button" className="home-settings-link" onClick={openSettings}>
         Open full Settings →

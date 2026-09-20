@@ -9265,3 +9265,76 @@ body {
 .resize-mode-banner-done:hover { filter: brightness(1.15); }
 .resize-mode-banner-done:focus-visible { outline: 2px solid var(--bg-primary); outline-offset: 2px; }
 @media (max-width: 700px) { .resize-mode-banner-text { display: none; } }
+
+/* ── Local-folder library (lite / offline builds) ────────────────────────
+   The chip sits between the file list and the status bar; the empty state
+   replaces the list until a folder has been handed over. */
+.folder-lib-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  min-height: 24px;
+}
+.folder-lib-chip.detached {
+  color: var(--text-muted, var(--text-secondary));
+}
+.folder-lib-chip-icon {
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+.folder-lib-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.folder-lib-chip-count {
+  flex-shrink: 0;
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+.folder-lib-chip-state {
+  flex-shrink: 0;
+  font-style: italic;
+  opacity: 0.8;
+}
+.folder-lib-chip-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.folder-lib-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.folder-lib-empty-title {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.folder-lib-empty-text,
+.folder-lib-empty-note {
+  font-size: 11px;
+  line-height: 1.5;
+  max-width: 34ch;
+}
+.folder-lib-empty-note {
+  margin-top: 10px;
+  opacity: 0.75;
+}
+.library-empty-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

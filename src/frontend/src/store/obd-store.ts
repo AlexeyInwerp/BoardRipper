@@ -4,6 +4,11 @@ import { log } from './log-store';
 import { updateStore } from './update-store';
 import { isLiteBuild } from './build-mode';
 import { databankStore } from './databank-store';
+import { extractBoardNumberFromFilename } from './board-number';
+
+// Re-exported for the existing callers; the implementation lives in a leaf
+// module so the local-folder library can share it without an import cycle.
+export { extractBoardNumberFromFilename };
 
 // Mirrors the backend Match shape.
 export interface ObdMatch {
@@ -348,29 +353,6 @@ export const obdStore = new ObdStore();
 // state without going through React. Mirrors the boardStore convention.
 if (typeof window !== 'undefined') {
   (window as { __obdStore?: ObdStore }).__obdStore = obdStore;
-}
-
-/** Extract a recognisable board number from a board file's name. Covers the
- *  patterns OBD's catalogue actually uses (Apple 820-NNNNN/3-4-digit suffix,
- *  iP* iphone codes, generic alphanumerics with dashes). Returns the first
- *  match — multi-variant disambiguation happens upstream via the match
- *  endpoint's substring fuzz. */
-export function extractBoardNumberFromFilename(fileName: string): string | null {
-  if (!fileName) return null;
-  const stem = fileName.replace(/\.[^.]+$/, '');
-  const patterns = [
-    /\b(820-\d{4,5})\b/i,
-    /\b(LA-\w{4,6})\b/i,
-    /\b(DA0?\w{4,8})\b/i,
-    /\b(NM-\w{3,6})\b/i,
-    /\b(60[A-Z0-9]{6,})\b/i,
-    /\b(iP\d+[a-z_]+)\b/i,
-  ];
-  for (const re of patterns) {
-    const m = stem.match(re);
-    if (m) return m[1];
-  }
-  return null;
 }
 
 /** Build a (netName) → ObdNet[] lookup map from all variants currently loaded
