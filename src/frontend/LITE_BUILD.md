@@ -69,7 +69,10 @@ Two rules worth keeping:
   Recent files, worklists and session restore all persist ids; one file added
   at the front must not renumber everything behind it.
 - **Scanning does not parse boards** — extension sniff plus the filename board
-  number, same as the Electron producer. Board# grouping then happens
+  number, same as the Electron producer. The one exception is an extension
+  several formats claim (`.brd` is Apple BRD, Allegro *and* EAGLE): those get
+  an 8 KB header read through `detectFormat`, since `detectByExtension`
+  answers with whichever registered first. Board# grouping then happens
   client-side through `apple-boards.ts`, which the build already carries.
 
 A folder **dropped on the window** takes the same path (`captureDroppedFolder`
