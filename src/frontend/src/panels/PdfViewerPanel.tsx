@@ -2870,6 +2870,30 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   /** One "pan clamped" line per gesture, not per move. */
   const clampLoggedRef = useRef(false);
 
+  /** Who is driving zoom and pan right now.
+   *
+   *  iPadOS delivers one two-finger pinch as **two** streams — pointer events
+   *  and WebKit's `gesture*` events — and which of them is complete varies:
+   *  when the engine claims the gesture for its own recogniser it may never
+   *  dispatch the second finger's `pointerdown` at all. Exactly one stream may
+   *  own a gesture, and the hand-off has to be explicit in **both** directions.
+   *
+   *  It used to be one-directional: the gesture path stood down whenever a
+   *  finger was registered, but nothing ever told the pointer path that a
+   *  gesture had started. With one finger registered and the other claimed by
+   *  the engine, `activeTouchesRef.size` stayed 1 — so the gesture path zoomed
+   *  about the two-finger midpoint while the single-finger drag path panned
+   *  along finger one, from the same gesture, on interleaved events. That is
+   *  both "zooms sometimes properly, sometimes around the edge" (the visible
+   *  anchor is a mixture of the two) and a scroll that fights itself. */
+  const gestureOwnerRef = useRef<'none' | 'pointer' | 'gesture'>('none');
+  /** WebKit has no `gesturecancel`, so a claimed gesture that simply stops
+   *  arriving would own the viewer for ever. */
+  const gestureReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** `seedPinch` is declared below the gesture effect; the effect only calls it
+   *  when an event fires, so a ref is enough to bridge the order. */
+  const seedPinchRef = useRef<() => void>(() => {});
+
   // --- Safari trackpad pinch via gesture* events ---
   // Mac Safari emits gesture* events for trackpad pinch. The global handler in
   // browser-zoom-block.ts preventDefaults gesture events at window level to
@@ -2890,32 +2914,84 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     if (!container) return;
 
     let startZoom = 1;
-    let mid = { x: 0, y: 0 };
+    // Tracked, not frozen: on iPadOS `GestureEvent.clientX/Y` is the midpoint
+    // between two moving fingers and travels with them, so a midpoint fixed at
+    // gesturestart is stale from the second event on — the same bug the
+    // pointer pinch had, and the reason this path anchored in the wrong place
+    // whenever it was the one driving.
+    let lastMid = { x: 0, y: 0 };
+
+    /** Release the claim, and hand a still-pressed finger back to the drag
+     *  path so a pinch can be followed by a scroll without lifting off. */
+    const releaseGesture = () => {
+      if (gestureReleaseTimerRef.current) {
+        clearTimeout(gestureReleaseTimerRef.current);
+        gestureReleaseTimerRef.current = null;
+      }
+      if (gestureOwnerRef.current !== 'gesture') return;
+      gestureOwnerRef.current = 'none';
+      const pts = [...activeTouchesRef.current.values()];
+      if (pts.length >= 2) {
+        seedPinchRef.current();
+      } else if (pts.length === 1) {
+        isDraggingRef.current = true;
+        wasDragRef.current = false;
+        velocityRef.current = { x: 0, y: 0 };
+        lastDragTimeRef.current = performance.now();
+        dragStartRef.current = { x: pts[0].x, y: pts[0].y };
+        lastMouseRef.current = { x: pts[0].x, y: pts[0].y };
+      }
+    };
+    /** WebKit fires no gesturecancel; a claim that stops arriving must lapse. */
+    const armRelease = () => {
+      if (gestureReleaseTimerRef.current) clearTimeout(gestureReleaseTimerRef.current);
+      gestureReleaseTimerRef.current = setTimeout(releaseGesture, 400);
+    };
 
     const onGestureStart = (e: GestureEvent) => {
-      if (activeTouchesRef.current.size > 0) {
-        log.ui.log(`pdf touch: ignoring gesturestart — ${activeTouchesRef.current.size} fingers down, ` +
-          `the pointer-event pinch owns this gesture`);
+      // A complete pointer pair is the better stream — it carries both finger
+      // positions, so it can anchor on the real midpoint and keep both fingers
+      // on their content. Only claim the gesture when the pointer path has not.
+      if (activeTouchesRef.current.size >= 2) {
+        log.pdf.log('gesturestart ignored — the pointer pinch owns this gesture',
+          { fingers: activeTouchesRef.current.size });
         return;
       }
+      gestureOwnerRef.current = 'gesture';
+      // The engine has just told us this is a two-finger gesture. Whatever the
+      // one registered finger had started is not a scroll.
+      isDraggingRef.current = false;
+      wasDragRef.current = false;
+      cancelAnimationFrame(inertiaRafRef.current);
+      velocityRef.current = { x: 0, y: 0 };
+
       pdfStore.switchTo(pdfFileName);
       startZoom = zoomRef.current;
       const rect = container.getBoundingClientRect();
-      mid = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-      log.ui.log('pdf gesturestart (Safari pinch)', { scale: e.scale });
+      lastMid = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      log.pdf.log('gesture pinch claimed', { scale: e.scale, fingers: activeTouchesRef.current.size });
+      armRelease();
       e.preventDefault();
       e.stopPropagation();
     };
 
     const onGestureChange = (e: GestureEvent) => {
-      if (activeTouchesRef.current.size > 0) return;   // touch pinch — see above
+      if (gestureOwnerRef.current !== 'gesture') return;
+      armRelease();
       const minZoom = renderSettingsStore.settings.pdfEnableBoundaries ? 1 : 0.5;
       const newZoom = Math.max(minZoom, Math.min(startZoom * e.scale, 10));
       const ratio = newZoom / zoomRef.current;
+      const rect = container.getBoundingClientRect();
+      const mid = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      // Scale about the previous midpoint, then translate by the new one's
+      // travel — pan₁ = mid₀ - ratio·(mid₀ - pan₀) + (mid₁ - mid₀). Same rule
+      // as the pointer pinch; anchoring on the new midpoint double-counts its
+      // travel by (1 - ratio) per event.
       panRef.current = {
-        x: mid.x - ratio * (mid.x - panRef.current.x),
-        y: mid.y - ratio * (mid.y - panRef.current.y),
+        x: lastMid.x - ratio * (lastMid.x - panRef.current.x) + (mid.x - lastMid.x),
+        y: lastMid.y - ratio * (lastMid.y - panRef.current.y) + (mid.y - lastMid.y),
       };
+      lastMid = mid;
       zoomRef.current = newZoom;
       syncTransform();
       e.preventDefault();
@@ -2923,7 +2999,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     };
 
     const onGestureEnd = (e: GestureEvent) => {
-      if (activeTouchesRef.current.size > 0) return;   // touch pinch — see above
+      if (gestureOwnerRef.current !== 'gesture') return;
+      releaseGesture();
       scheduleTierRender();
       e.preventDefault();
       e.stopPropagation();
@@ -2936,6 +3013,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       container.removeEventListener('gesturestart', onGestureStart as EventListener);
       container.removeEventListener('gesturechange', onGestureChange as EventListener);
       container.removeEventListener('gestureend', onGestureEnd as EventListener);
+      if (gestureReleaseTimerRef.current) clearTimeout(gestureReleaseTimerRef.current);
+      gestureOwnerRef.current = 'none';
     };
   }, [pdfFileName, syncTransform, scheduleTierRender]);
 
@@ -2963,6 +3042,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       y: (pts[0].y + pts[1].y) / 2 - rect.top,
     };
   }, []);
+  seedPinchRef.current = seedPinch;
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     const container = containerRef.current;
@@ -2998,7 +3078,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
     if (activeTouchesRef.current.size >= 2) {
       // A pinch begins, or its pair changed. Either way the single-finger drag
-      // is over and the baseline is stale.
+      // is over and the baseline is stale. A complete pointer pair also takes
+      // the gesture back from WebKit's own stream: it knows both finger
+      // positions, so it can anchor on the real midpoint.
+      gestureOwnerRef.current = 'pointer';
       isDraggingRef.current = false;
       wasDragRef.current = false;
       seedPinch();
@@ -3008,7 +3091,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     const prev = activeTouchesRef.current.get(e.pointerId);
     if (!prev) return;
+    // Keep the position current either way — releaseGesture hands the drag
+    // back from wherever the finger actually is.
     activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    // WebKit's gesture recogniser owns this one. Neither branch below may run:
+    // with one finger registered and the other claimed by the engine, the drag
+    // branch would pan along that finger while the gesture path zoomed.
+    if (gestureOwnerRef.current === 'gesture') return;
 
     // Pinch zoom. `>= 2` deliberately: with `=== 2`, resting a third finger on
     // the screen — easy to do while holding a tablet — matched neither branch
@@ -3213,6 +3302,23 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     activeTouchesRef.current.delete(e.pointerId);
     // Lifting one of three fingers leaves a pinch running on a different pair.
     seedPinch();
+    // The pointer claim lasts exactly as long as the fingers do. A gesture
+    // claim is WebKit's to end (gestureend, or the lapse timer).
+    if (gestureOwnerRef.current === 'pointer' && activeTouchesRef.current.size === 0) {
+      gestureOwnerRef.current = 'none';
+    }
+    // A finger that is still down after a pinch should go on scrolling rather
+    // than wait to be lifted and re-placed.
+    if (wasPinching && activeTouchesRef.current.size === 1
+        && gestureOwnerRef.current !== 'gesture') {
+      const rest = [...activeTouchesRef.current.values()][0];
+      isDraggingRef.current = true;
+      wasDragRef.current = false;
+      velocityRef.current = { x: 0, y: 0 };
+      lastDragTimeRef.current = performance.now();
+      dragStartRef.current = { x: rest.x, y: rest.y };
+      lastMouseRef.current = { x: rest.x, y: rest.y };
+    }
 
     // Pinch ended — schedule crisp re-render at final zoom level
     if (wasPinching && activeTouchesRef.current.size < 2) {
@@ -3223,28 +3329,38 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     isDraggingRef.current = false;
     wasDragRef.current = false;
 
-    // Inertia: continue panning with decaying velocity
-    if (wasDrag && pdfInertiaRef.current) {
-      const v = velocityRef.current;
-      const speed = Math.sqrt(v.x * v.x + v.y * v.y);
-      if (speed > 0.5) {
-        cancelAnimationFrame(inertiaRafRef.current);
-        const friction = 0.93;
-        const animate = () => {
-          velocityRef.current.x *= friction;
-          velocityRef.current.y *= friction;
-          if (Math.abs(velocityRef.current.x) < 0.2 && Math.abs(velocityRef.current.y) < 0.2) return;
-          panRef.current = {
-            x: panRef.current.x + velocityRef.current.x,
-            y: panRef.current.y + velocityRef.current.y,
-          };
-          syncTransform();
-          inertiaRafRef.current = requestAnimationFrame(animate);
-        };
-        inertiaRafRef.current = requestAnimationFrame(animate);
-      }
-    }
+    // Inertia: continue panning with decaying velocity.
+    //
+    // The velocity lives in a LOCAL, not in `velocityRef`. It used to read the
+    // ref inside the loop while `velocityRef.current = {x:0,y:0}` ran below —
+    // synchronously, before the first `requestAnimationFrame` callback could
+    // fire. So every run decayed zero, failed the < 0.2 test on its first
+    // frame and returned: inertia never moved the page once, on any platform.
+    // Nobody notices with a mouse, where releasing a drag is *meant* to stop
+    // dead; on a touch screen a flick that goes nowhere is most of what
+    // "scrolling is broken" means.
+    const v = velocityRef.current;
     velocityRef.current = { x: 0, y: 0 };
+    if (wasDrag && pdfInertiaRef.current && Math.hypot(v.x, v.y) > 0.5) {
+      cancelAnimationFrame(inertiaRafRef.current);
+      const friction = 0.93;
+      let vx = v.x, vy = v.y;
+      const animate = () => {
+        vx *= friction;
+        vy *= friction;
+        if (Math.abs(vx) < 0.2 && Math.abs(vy) < 0.2) return;
+        // A fling is a scroll and turns pages like one. Without this the drag
+        // flips correctly and its own deceleration then glides straight past
+        // the next boundary onto blank paper.
+        panRef.current = {
+          x: panRef.current.x + vx,
+          y: flipPagesForPan(panRef.current.y + vy),
+        };
+        syncTransform();
+        inertiaRafRef.current = requestAnimationFrame(animate);
+      };
+      inertiaRafRef.current = requestAnimationFrame(animate);
+    }
 
     // A tap looks up the word under it — on a finger too. Touch was excluded
     // because a tap used to arrive at the end of gestures that were not taps;
@@ -3254,7 +3370,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     if (wasTap && (e.pointerType === 'touch' || e.button === 0)) {
       handleTextClickRef.current(e);
     }
-  }, [scheduleTierRender, syncTransform, seedPinch]);
+  }, [scheduleTierRender, syncTransform, seedPinch, flipPagesForPan]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -3385,7 +3501,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       if (detail.direction === 'right') dx = -stepX;
       if (detail.direction === 'up')    dy = +stepY;
       if (detail.direction === 'down')  dy = -stepY;
-      panRef.current = { x: panRef.current.x + dx, y: panRef.current.y + dy };
+      // Keyboard panning is the same continuous scroll as the wheel and the
+      // finger, so it crosses page boundaries the same way.
+      panRef.current = { x: panRef.current.x + dx, y: flipPagesForPan(panRef.current.y + dy) };
       syncTransform();
     };
     window.addEventListener('pdf-pan', panHandler as EventListener);
@@ -3422,7 +3540,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       window.removeEventListener('pdf-pan', panHandler as EventListener);
       window.removeEventListener('pdf-zoom', zoomHandler as EventListener);
     };
-  }, [handleFitWidth, props.api, syncTransform, scheduleTierRender]);
+  }, [handleFitWidth, props.api, syncTransform, scheduleTierRender, flipPagesForPan]);
 
   const handleAddBookmark = useCallback(() => {
     pdfStore.switchTo(pdfFileName);
@@ -3813,9 +3931,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           // touch, and that is invisible from any desktop engine — this line
           // is how the device tells us whether it is happening.
           log.pdf.log('pointercancel', { id: e.pointerId, type: e.pointerType,
-            stillDown: activeTouchesRef.current.size - 1 });
+            stillDown: activeTouchesRef.current.size - 1,
+            owner: gestureOwnerRef.current });
           activeTouchesRef.current.delete(e.pointerId);
           seedPinch();
+          if (gestureOwnerRef.current === 'pointer' && activeTouchesRef.current.size === 0) {
+            gestureOwnerRef.current = 'none';
+          }
           isDraggingRef.current = false;
           wasDragRef.current = false;
         }}
@@ -3824,9 +3946,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         // at two entries, wedge the viewer into a permanent pinch with no pan.
         onLostPointerCapture={(e) => {
           log.pdf.log('lostpointercapture', { id: e.pointerId, type: e.pointerType,
-            stillDown: activeTouchesRef.current.size - 1 });
+            stillDown: activeTouchesRef.current.size - 1,
+            owner: gestureOwnerRef.current });
           activeTouchesRef.current.delete(e.pointerId);
           seedPinch();
+          if (gestureOwnerRef.current === 'pointer' && activeTouchesRef.current.size === 0) {
+            gestureOwnerRef.current = 'none';
+          }
         }}
         onPointerLeave={(e) => { activeTouchesRef.current.delete(e.pointerId); isDraggingRef.current = false; wasDragRef.current = false; }}
         onDoubleClick={handleTextDblClick}

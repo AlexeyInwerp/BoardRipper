@@ -228,6 +228,129 @@ test.describe('PDF touch', () => {
     await pointer(page, 'pointerup', 2, { x: other.x + 192, y: other.y });
   });
 
+  /** A flick has to carry after the finger lifts.
+   *
+   *  Inertia had never run once, on any platform: the loop decayed
+   *  `velocityRef` while `velocityRef.current = {x:0,y:0}` ran synchronously
+   *  below it, before the first `requestAnimationFrame` callback could fire —
+   *  so the first frame always failed the `< 0.2` test and returned. With a
+   *  mouse nobody notices, because releasing a drag is *meant* to stop dead;
+   *  on a touch screen a flick that goes nowhere is most of what "scrolling is
+   *  broken" means. And once it does carry, it has to turn pages like any
+   *  other scroll, or it glides past the next boundary onto blank paper.
+   *
+   *  The assertion is that the page advances *after the finger is up* —
+   *  checking ink alone passes against a dead inertia, since the drag itself
+   *  already flips correctly.
+   */
+  test('a flick carries after the finger lifts, and keeps turning pages', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.getByTestId('toolbar')).toBeVisible({ timeout: 20000 });
+    await page.getByTestId('file-input').setInputFiles(LONG_PDF);
+    await expect(page.locator('.pdf-page-wrapper canvas').first()).toBeVisible({ timeout: 20000 });
+    await page.waitForTimeout(1500);
+
+    const b = (await page.locator('.pdf-canvas-container').boundingBox())!;
+    const from = { x: b.x + b.width / 2, y: b.y + b.height * 0.8 };
+
+    const ink = () => page.evaluate(() => {
+      const w = document.querySelector('.pdf-page-wrapper');
+      const main = w ? [...w.children].find(e => e.tagName === 'CANVAS' && !e.className) : null;
+      if (!(main instanceof HTMLCanvasElement) || !main.width) return -1;
+      const c = document.createElement('canvas');
+      c.width = 60; c.height = 60;
+      const g = c.getContext('2d')!;
+      g.drawImage(main, 0, 0, 60, 60);
+      const d = g.getImageData(0, 0, 60, 60).data;
+      let dark = 0;
+      for (let i = 0; i < d.length; i += 4) if (d[i] < 200) dark++;
+      return dark / 3600;
+    });
+
+    const pageNo = async () => Number(await page.locator('.pdf-page-input').first().inputValue());
+
+    await pointer(page, 'pointerdown', 1, from);
+    for (let i = 1; i <= 6; i++) {
+      await pointer(page, 'pointermove', 1, { x: from.x, y: from.y - i * 60 });
+    }
+    await pointer(page, 'pointerup', 1, { x: from.x, y: from.y - 360 });
+
+    const atLift = await pageNo();
+    await page.waitForTimeout(1800);        // let the deceleration run out
+    const settled = await pageNo();
+
+    expect(settled, 'the flick should carry past where the finger let go')
+      .toBeGreaterThan(atLift);
+    expect(await ink(), 'the page the flick settled on should be drawn')
+      .toBeGreaterThan(0);
+  });
+
+  /** The iPadOS shape, and the one neither stream can handle alone.
+   *
+   *  A two-finger pinch there arrives as BOTH a pointer stream and WebKit's
+   *  `gesture*` stream, and when the engine claims the gesture for its own
+   *  recogniser the second finger's `pointerdown` may never be dispatched. So
+   *  `activeTouchesRef.size` stays 1: the gesture path zoomed about the
+   *  two-finger midpoint while the single-finger drag path panned along finger
+   *  one, from the same gesture, on interleaved events. Exactly one stream may
+   *  own a gesture, and the hand-off has to be explicit in both directions —
+   *  it used to exist in one.
+   *
+   *  `gesturestart` is dispatched as a MouseEvent carrying a `scale`: a real
+   *  GestureEvent cannot be synthesised (see touch-webkit.webkit.spec.ts), and
+   *  the handlers read only `type`, `clientX/Y` and `scale`.
+   */
+  test('a gesture claimed while one finger is registered does not also drag', async ({ page }) => {
+    const { box } = await openPdf(page);
+    const at = { x: box.x + box.w * 0.5, y: box.y + box.h * 0.5 };
+
+    const gesture = (type: string, scale: number, p: { x: number; y: number }) =>
+      page.evaluate(({ type, scale, p }) => {
+        const el = document.querySelector('.pdf-canvas-container')!;
+        const e = new MouseEvent(type, { clientX: p.x, clientY: p.y, bubbles: true, cancelable: true });
+        Object.defineProperty(e, 'scale', { value: scale });
+        Object.defineProperty(e, 'rotation', { value: 0 });
+        el.dispatchEvent(e);
+      }, { type, scale, p });
+
+    // One finger registers; the engine then claims the gesture.
+    await pointer(page, 'pointerdown', 1, at);
+    await gesture('gesturestart', 1, at);
+
+    const before = await view(page);
+
+    // The registered finger keeps moving — as it does in a real pinch — while
+    // the gesture reports a scale. Only the zoom may result.
+    for (let i = 1; i <= 10; i++) {
+      await pointer(page, 'pointermove', 1, { x: at.x, y: at.y - i * 12 });
+      await gesture('gesturechange', 1 + i * 0.15, at);
+    }
+    await page.waitForTimeout(80);
+
+    const during = await view(page);
+    expect(during.scale, 'the gesture should have zoomed').toBeGreaterThan(1.5);
+
+    // The anchor is the gesture midpoint, which never moved here, so the page
+    // point under it must not move either. If the drag path had also run, the
+    // pan would carry the finger's 120 px of travel on top.
+    const pagePt = { x: (at.x - box.x - before.x) / before.scale, y: (at.y - box.y - before.y) / before.scale };
+    const nowY = box.y + during.y + pagePt.y * during.scale;
+    expect(Math.abs(nowY - at.y),
+      `content drifted ${(nowY - at.y).toFixed(1)}px from a stationary anchor`).toBeLessThan(3);
+
+    // …and once the gesture ends, the finger that is still down scrolls again.
+    await gesture('gestureend', 1 + 10 * 0.15, at);
+    await page.waitForTimeout(50);
+    const beforePan = await view(page);
+    for (let i = 1; i <= 8; i++) {
+      await pointer(page, 'pointermove', 1, { x: at.x, y: at.y - 120 - i * 12 });
+    }
+    await page.waitForTimeout(80);
+    expect((await view(page)).y, 'a finger still down after a pinch should scroll')
+      .not.toBe(beforePan.y);
+    await pointer(page, 'pointerup', 1, { x: at.x, y: at.y - 216 });
+  });
+
   test('a tap looks up the word under it — on a finger, not only a mouse', async ({ page }) => {
     const { box } = await openPdf(page);
     const devHooks = await page.evaluate(
