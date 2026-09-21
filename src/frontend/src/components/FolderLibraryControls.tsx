@@ -197,9 +197,12 @@ export function FolderLibraryEmptyState() {
       </button>
       {mode === 'input' && (
         <div className="folder-lib-empty-note">
-          This browser reads the folder once per visit. The list of files is
-          remembered, so the library is still here after a reload — opening one
-          then asks for the folder again.
+          Your browser will call this an <em>upload</em> and may ask you to
+          confirm it. Nothing is uploaded — that is just the only wording it
+          has for “let this page read these files”, and they are read here in
+          this tab. This browser cannot remember a folder between visits, so
+          it asks once per visit; boards you have already opened come back
+          without it.
         </div>
       )}
       {mode === 'handle' && (
@@ -225,7 +228,10 @@ export function FolderLibraryChip() {
   useEffect(() => {
     databankStore.setFolderRepickHandler(() => new Promise<boolean>((resolve) => {
       pendingRef.current = resolve;
-      boardStore.addToast('Choose the library folder again to open this file.', 'info');
+      boardStore.addToast(
+        'Choose the library folder again to open this file. Your browser may call it an upload — nothing leaves this machine.',
+        'info',
+      );
       void pick();
     }));
     return () => databankStore.setFolderRepickHandler(null);

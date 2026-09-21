@@ -257,3 +257,41 @@ test('a re-pick the user dismisses reports it, and does not leave the open hangi
 
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+test('a board opened once reopens after a reload without asking for the folder', async ({ page }) => {
+  const root = makeLibraryFixture();
+  let chooserOpened = 0;
+  page.on('filechooser', (chooser) => { chooserOpened++; void chooser.setFiles(root); });
+  // Input mode — Firefox, Safari, the iPad — where the folder cannot be
+  // persisted at all and the browser calls the dialog an "upload".
+  await page.addInitScript(() => {
+    delete (window as unknown as Record<string, unknown>).showDirectoryPicker;
+  });
+  await page.goto('.');
+  await page.waitForLoadState('networkidle');
+  await openLibrary(page);
+  await page.getByTestId('folder-library-input').setInputFiles(root);
+  await page.locator('[data-library-tab="folders"]').click();
+  await page.locator('.library-tree').getByText('loose-board.bvr').first().dblclick();
+  await expect(page.getByTestId('statusbar')).toContainText('Components:', { timeout: 20000 });
+
+  await page.reload();
+  await page.waitForLoadState('networkidle');
+  // A board was open, so the session-restore prompt is up. Discard it: this
+  // test is about opening a board FROM THE LIBRARY without the folder, not
+  // about session restore (which has always come back from the same cache).
+  await page.getByTestId('session-discard').click();
+  await openLibrary(page);
+  await page.locator('[data-library-tab="folders"]').click();
+  const before = chooserOpened;
+  await page.locator('.library-tree').getByText('loose-board.bvr').first().dblclick();
+
+  // The parsed board is still in IndexedDB, keyed on name:size:lastModified,
+  // and the index carries all three — so it opens with no file access and
+  // no dialog. This is what stops "hand over the folder" being a per-run
+  // ritual on the browsers that cannot remember one.
+  await expect(page.getByTestId('statusbar')).toContainText('Components:', { timeout: 20000 });
+  expect(chooserOpened, 'reopening a cached board must not ask for the folder').toBe(before);
+
+  fs.rmSync(root, { recursive: true, force: true });
+});

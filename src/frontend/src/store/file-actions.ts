@@ -4,6 +4,42 @@ import { databankStore, type DatabankFile } from './databank-store';
 import { ensurePdfPanel, ensureBoardPanel } from './dockview-api';
 import { loadBoardWithAscSiblings } from './asc-open';
 import { log } from './log-store';
+import { boardCache } from './board-cache';
+import { folderLibrary } from './folder-library';
+
+/**
+ * Open a local-folder file from what is already in the browser, without
+ * touching the folder.
+ *
+ * This is what keeps a backend-free library from asking for the folder on
+ * every run. The parsed-board cache and the PDF byte cache are keyed on
+ * `name:size:lastModified`, and the folder index carries all three — so a
+ * board opened once reopens for good, even when the folder itself is out of
+ * reach (Safari and the iPad cannot persist a directory handle at all, and
+ * Chromium drops the grant when the last tab closes).
+ *
+ * Only used while the folder is NOT readable: with access in hand, reading
+ * the file is cheap and cannot serve a stale copy.
+ */
+export async function openFolderFileFromCache(file: DatabankFile): Promise<boolean> {
+  if (!databankStore.folderMode || folderLibrary.readable) return false;
+  const ms = file.mod_time_ms ?? file.mod_time * 1000;
+
+  if (file.file_type === 'board') {
+    const opened = await boardStore.loadFromCache(file.filename, file.size, ms);
+    if (!opened) return false;
+    const tabId = boardStore.activeTabId;
+    if (tabId != null) ensureBoardPanel(tabId, boardStore.activeTab?.fileName ?? file.filename);
+    log.ui.log(`opened "${file.filename}" from the board cache — the folder was not needed`);
+    return true;
+  }
+
+  const bytes = await boardCache.getPdfBytes(file.filename, file.size, ms);
+  if (!bytes) return false;
+  await openPdfFiles([new File([bytes], file.filename, { lastModified: ms })]);
+  log.ui.log(`opened "${file.filename}" from the PDF cache — the folder was not needed`);
+  return true;
+}
 
 /**
  * Open one or more PDF files: register, auto-bind, load into pdf.js, create panels.
@@ -94,6 +130,10 @@ export async function openLibraryFileById(
   const file =
     databankStore.fileById(fileId) ?? (await databankStore.fetchFileRows([fileId]))[0];
   if (!file) throw new Error(`file id ${fileId} not in the library index`);
+  // A cached copy opens with no folder access at all — try that first.
+  if (await openFolderFileFromCache(file)) {
+    return { name: boardStore.activeTab?.fileName ?? file.filename, file_type: file.file_type };
+  }
   const fileObj = await databankStore.fetchFileBuffer(file);
 
   if (file.file_type === 'board') {

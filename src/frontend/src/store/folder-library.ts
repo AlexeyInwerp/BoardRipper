@@ -246,6 +246,7 @@ function makeRow(id: number, relPath: string, name: string, size: number, lastMo
     file_type: type,
     size,
     mod_time: Math.floor(lastModified / 1000),
+    mod_time_ms: lastModified,
     scan_time: Math.floor(Date.now() / 1000),
     board_number: boardNumber,
     manufacturer: '',

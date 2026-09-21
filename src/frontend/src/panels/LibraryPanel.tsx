@@ -8,7 +8,7 @@ import type { PdfIndexFailedEntry } from '../pdf/pdf-index-client';
 import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
 import { ensurePdfPanel, ensureBoardPanel } from '../store/dockview-api';
-import { loadLibraryBoard } from '../store/file-actions';
+import { loadLibraryBoard, openFolderFileFromCache } from '../store/file-actions';
 import { loadBoardWithAscSiblings } from '../store/asc-open';
 import { lookupBoard } from '../store/apple-boards';
 import { IconStack2, IconHistory, IconFolder, IconHash, IconPin, IconPinFilled, IconSettings, IconChevronsUp, IconChevronDown, IconDatabase, IconDeviceDesktop, IconCheck, IconFileText } from '@tabler/icons-react';
@@ -491,6 +491,10 @@ export function LibraryPanel() {
     databankStore.selectFile(file.id);
     databankStore.addToHistory(file);
     try {
+      // A board or PDF that is already cached opens without the folder —
+      // which is the difference between "pick the folder again" once per
+      // session and once per file.
+      if (await openFolderFileFromCache(file)) return;
       const fileObj = await databankStore.fetchFileBuffer(file);
       if (file.file_type === 'board') {
         // Split .asc deliveries open as one board — see loadLibraryBoard.

@@ -58,6 +58,11 @@ export interface DatabankFile {
   /** Hex content hash shared by byte-identical duplicates. Omitted/absent for
    *  unique-size singletons (the dedup pass only hashes size-collisions). */
   content_hash?: string;
+  /** Millisecond mtime, written only by the local-folder producer. `mod_time`
+   *  is seconds, and the parsed-board cache is keyed on `File.lastModified`,
+   *  which is milliseconds — rounding would miss the cache on every file
+   *  whose mtime is not a whole second. */
+  mod_time_ms?: number;
 }
 
 /** Live progress of a "Find duplicates" content-hash pass. */
