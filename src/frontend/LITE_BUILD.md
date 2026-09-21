@@ -100,6 +100,17 @@ settles the promise the open is waiting on, including the input's native
 **ref callback** — a mount effect fires while the chip is still `null` and
 never again, which silently turns its folder dialog into a file dialog.
 
+**Most opens need no access at all.** `openFolderFileFromCache` tries the
+parsed-board cache and the PDF byte cache first (keyed `name:size:lastModified`,
+all three in the index — hence `mod_time_ms` on folder rows), and only while
+the folder is unreadable. So on Safari and the iPad, where no handle can ever
+be persisted, the folder is asked for once per visit and only for a board that
+has not been opened before.
+
+The **"upload"** wording users see is the browser's own and comes only from the
+`webkitdirectory` input; the directory picker says "Open". The empty state says
+so up front in that mode.
+
 Permanent access, in the user's hands, two ways (both Chromium's own
 mechanics, [documented here](https://developer.chrome.com/blog/persistent-permissions-for-the-file-system-access-api)):
 
