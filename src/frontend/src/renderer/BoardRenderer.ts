@@ -515,6 +515,10 @@ export class BoardRenderer {
   private boundPointerRelease: ((e: PointerEvent) => void) | null = null;
   /** Bound capture-phase pointermove that drives the two-finger pinch. */
   private boundTouchPinchMove: ((e: PointerEvent) => void) | null = null;
+  /** Which stream owns the gesture in progress — see `boundGestureStart`. */
+  private gestureOwner: 'none' | 'pointer' | 'gesture' = 'none';
+  private gestureReleaseTimer: ReturnType<typeof setTimeout> | null = null;
+  private boundGestureEnd: ((e: Event) => void) | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private containerEl: HTMLDivElement;
   /** Canvas2D "Text fast mode" label overlay — lazily created by
@@ -1797,6 +1801,9 @@ export class BoardRenderer {
       if (this.pinch && (e.pointerId === this.pinch.a || e.pointerId === this.pinch.b)) {
         this.seedPinch();
       }
+      if (this.gestureOwner === 'pointer' && this.activeTouchIds.size === 0) {
+        this.gestureOwner = 'none';
+      }
     };
     window.addEventListener('pointerup', this.boundPointerRelease, { capture: true });
     window.addEventListener('pointercancel', this.boundPointerRelease, { capture: true });
@@ -1970,44 +1977,74 @@ export class BoardRenderer {
     // the global gesture-block in browser-zoom-block.ts as a fallback for
     // gestures over non-canvas UI (toolbar, sidebar) without it stomping ours.
     let gestureStartScale = 1;
+    // Tracked, not frozen: on iPadOS `GestureEvent.clientX/Y` is the midpoint
+    // between two moving fingers and travels with them, so an anchor fixed at
+    // gesturestart is stale from the second event on. Same rule as the pointer
+    // pinch — scale about the previous anchor, then translate by its travel.
     let gestureAnchor = { x: 0, y: 0 };
+
+    /** Give the gesture back. A finger still on the glass resumes whichever
+     *  path owns it: two go back to `installTouchPinch`, one back to drag. */
+    const releaseGesture = () => {
+      if (this.gestureReleaseTimer) { clearTimeout(this.gestureReleaseTimer); this.gestureReleaseTimer = null; }
+      if (this.gestureOwner !== 'gesture') return;
+      this.gestureOwner = 'none';
+      this.viewport.plugins.resume('drag');
+      if (this.activeTouchIds.size >= 2) this.seedPinch();
+    };
+    /** WebKit fires no gesturecancel, so a claim that stops arriving lapses. */
+    const armGestureRelease = () => {
+      if (this.gestureReleaseTimer) clearTimeout(this.gestureReleaseTimer);
+      this.gestureReleaseTimer = setTimeout(releaseGesture, 400);
+    };
+    this.boundGestureEnd = () => releaseGesture();
+
     this.boundGestureStart = (ev: Event) => {
       const e = ev as GestureEvent;
-      // iPadOS Safari fires the WebKit gesture* events for a two-finger TOUCH
-      // pinch as well as for a trackpad one, and the touch pinch is already
-      // handled — by pixi-viewport's pinch plugin, off the pointer events.
-      // Running both drives one scale from two independent start snapshots,
-      // which is what makes a tablet pinch jump. Fingers on the glass ⇒ not
-      // ours; let it bubble to the global block in browser-zoom-block.ts so
-      // the browser still does not page-zoom.
-      if (this.activeTouchIds.size > 0) {
+      // iPadOS fires the WebKit gesture* events for a two-finger TOUCH pinch
+      // as well as for a trackpad one, so both streams describe one gesture
+      // and exactly one may own it. A complete pointer pair is the better
+      // stream — it knows both finger positions — so it wins; but with only
+      // one finger registered (the engine can claim the gesture before the
+      // second `pointerdown` is ever dispatched) this path takes over, and
+      // then pixi-viewport's drag plugin must not pan along that one finger
+      // while this zooms. That half was missing: the stand-down ran in one
+      // direction only.
+      if (this.activeTouchIds.size >= 2) {
         log.ui.log(`touch: ignoring ${ev.type} — ${this.activeTouchIds.size} fingers down, ` +
-          `the pinch plugin owns this gesture`);
+          `the pointer pinch owns this gesture`);
         return;
       }
       ev.preventDefault();
       ev.stopPropagation();
+      this.gestureOwner = 'gesture';
+      this.pinch = null;
+      this.viewport.plugins.pause('drag');
       gestureStartScale = this.viewport.scale.x;
       const rect = this.containerEl.getBoundingClientRect();
       gestureAnchor = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      armGestureRelease();
     };
     this.boundGestureChange = (ev: Event) => {
       const e = ev as GestureEvent;
-      if (this.activeTouchIds.size > 0) return;   // touch pinch — see above
+      if (this.gestureOwner !== 'gesture') return;
       ev.preventDefault();
       ev.stopPropagation();
-      const target = Math.max(0.001, Math.min(10, gestureStartScale * e.scale));
-      const before = this.viewport.toWorld(gestureAnchor.x, gestureAnchor.y);
-      this.viewport.scale.set(target, target);
-      const after = this.viewport.toWorld(gestureAnchor.x, gestureAnchor.y);
-      this.viewport.x += (after.x - before.x) * this.viewport.scale.x;
-      this.viewport.y += (after.y - before.y) * this.viewport.scale.y;
+      armGestureRelease();
+      const rect = this.containerEl.getBoundingClientRect();
+      const anchor = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      this.setScaleAtScreen(gestureAnchor.x, gestureAnchor.y,
+        Math.max(0.001, Math.min(10, gestureStartScale * e.scale)));
+      this.viewport.x += anchor.x - gestureAnchor.x;
+      this.viewport.y += anchor.y - gestureAnchor.y;
+      gestureAnchor = anchor;
       this.viewport.emit('moved', { viewport: this.viewport, type: 'pinch' });
       this.needsRender = true;
       this.netLinesDirty = true;
     };
     this.containerEl.addEventListener('gesturestart', this.boundGestureStart, { passive: false });
     this.containerEl.addEventListener('gesturechange', this.boundGestureChange, { passive: false });
+    this.containerEl.addEventListener('gestureend', this.boundGestureEnd, { passive: false });
 
     this.unsubscribeBoard = boardStore.subscribe(() => this.onBoardUpdate());
     this.unsubscribeSettings = renderSettingsStore.subscribe(() => this.onSettingsUpdate());
@@ -3869,6 +3906,7 @@ export class BoardRenderer {
     const dist = Math.hypot(pb.x - pa.x, pb.y - pa.y);
     if (dist < 1) { this.pinch = null; return; }
     const rect = this.containerEl.getBoundingClientRect();
+    this.gestureOwner = 'pointer';
     this.pinch = {
       a, b, startDist: dist, startScale: Math.abs(this.viewport.scale.x),
       lastMidX: (pa.x + pb.x) / 2 - rect.left,
@@ -3899,6 +3937,7 @@ export class BoardRenderer {
       if (!rec) return;
       rec.x = e.clientX;
       rec.y = e.clientY;
+      if (this.gestureOwner === 'gesture') return;   // WebKit owns this one
       const p = this.pinch;
       if (!p || (e.pointerId !== p.a && e.pointerId !== p.b)) return;
       const pa = this.activeTouchIds.get(p.a);
@@ -7183,6 +7222,11 @@ export class BoardRenderer {
       this.containerEl.removeEventListener('pointermove', this.boundTouchPinchMove, true);
       this.boundTouchPinchMove = null;
     }
+    if (this.boundGestureEnd) {
+      this.containerEl.removeEventListener('gestureend', this.boundGestureEnd);
+      this.boundGestureEnd = null;
+    }
+    if (this.gestureReleaseTimer) { clearTimeout(this.gestureReleaseTimer); this.gestureReleaseTimer = null; }
     if (this.boundShiftCapture) {
       this.containerEl.removeEventListener('pointerdown', this.boundShiftCapture, true);
       this.boundShiftCapture = null;

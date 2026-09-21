@@ -52,6 +52,18 @@ async function openBoard(page: Page) {
  *  synthesis path is not. A MouseEvent named `gesturestart` carries every
  *  field the handlers read (`type`, `clientX/Y`, `scale`), so this exercises
  *  the dispatch exactly; it just is not the engine's own event object. */
+/** One synthetic gesture event at a client point. See trackpadPinch for why
+ *  this is a MouseEvent carrying `scale` rather than a real GestureEvent. */
+async function gestureOn(page: Page, type: string, scale: number, at: { x: number; y: number }) {
+  await page.evaluate(({ type, scale, at }) => {
+    const el = document.querySelector('.board-panel-canvas')!;
+    const e = new MouseEvent(type, { clientX: at.x, clientY: at.y, bubbles: true, cancelable: true });
+    Object.defineProperty(e, 'scale', { value: scale });
+    Object.defineProperty(e, 'rotation', { value: 0 });
+    el.dispatchEvent(e);
+  }, { type, scale, at });
+}
+
 async function trackpadPinch(page: Page, scale: number) {
   await page.evaluate((s) => {
     const el = document.querySelector('.board-panel-canvas')!;
@@ -88,6 +100,17 @@ async function fingersDown(page: Page, n: number) {
   }, n);
 }
 
+/** Move one already-registered synthetic pointer. */
+async function movePointer(page: Page, id: number, to: { x: number; y: number }) {
+  await page.evaluate(({ id, to }) => {
+    const el = document.querySelector('.board-panel-canvas')!;
+    el.dispatchEvent(new PointerEvent('pointermove', {
+      pointerId: id, pointerType: 'touch', isPrimary: true,
+      clientX: to.x, clientY: to.y, buttons: 1, bubbles: true, cancelable: true,
+    }));
+  }, { id, to });
+}
+
 test.describe('WebKit / iPadOS', () => {
   test('the engine really does ship gesture events — the premise of the stand-down rule', async ({ page }) => {
     await page.goto('/');
@@ -110,6 +133,36 @@ test.describe('WebKit / iPadOS', () => {
     // The pointer-event pinch owns this gesture. Two zoom integrators writing
     // one scale from two start snapshots is what makes a tablet pinch jump.
     expect(await zoomPct(page)).toBe(before);
+  });
+
+  /** The iPadOS shape: WebKit claims the gesture while only ONE finger has
+   *  been registered as a pointer — the second `pointerdown` may never be
+   *  dispatched. The gesture path then has to zoom AND stop pixi-viewport's
+   *  drag plugin panning along that one finger. The stand-down used to run in
+   *  one direction only (gesture defers to fingers, nothing defers to the
+   *  gesture), and with `size > 0` as the test a single finger also silenced
+   *  the zoom entirely — so that gesture panned and did not zoom. */
+  test('a gesture claimed with one finger down zooms, and nothing pans along it', async ({ page }) => {
+    await openBoard(page);
+    const r = (await page.locator('.board-panel-canvas').boundingBox())!;
+    const at = { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+
+    await fingersDown(page, 1);               // one finger registers
+    await page.waitForTimeout(80);
+    const before = await zoomPct(page);
+
+    // The engine claims it, then reports a growing scale while that one finger
+    // keeps moving — as it does in a real pinch.
+    await gestureOn(page, 'gesturestart', 1, at);
+    for (let i = 1; i <= 8; i++) {
+      await movePointer(page, 100, { x: at.x, y: at.y - i * 14 });
+      await gestureOn(page, 'gesturechange', 1 + i * 0.12, at);
+      await page.waitForTimeout(12);
+    }
+    await page.waitForTimeout(200);
+
+    expect(await zoomPct(page), 'the claimed gesture should zoom').toBeGreaterThan(before);
+    await gestureOn(page, 'gestureend', 1.96, at);
   });
 
   test('the board renders under WebKit at all', async ({ page }) => {
