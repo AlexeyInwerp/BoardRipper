@@ -4691,6 +4691,23 @@ body {
   background: #fff;
 }
 
+/* The one element every pointer event in the PDF viewer targets. Above the
+ * wrapper (which is its own stacking context via `contain`), below the
+ * scrubber (z 40). Plain and persistent on purpose: nothing under a finger is
+ * ever added, removed, hidden or transformed — see the JSX comment in
+ * PdfViewerPanel. */
+.pdf-touch-surface {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  /* Transparent, but it must still hit-test — `background: transparent` does. */
+  background: transparent;
+}
+
 .pdf-page-wrapper {
   position: relative;
   flex-shrink: 0;

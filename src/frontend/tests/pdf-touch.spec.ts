@@ -57,12 +57,13 @@ async function view(page: Page): Promise<{ x: number; y: number; scale: number }
   return { x: Number(tr?.[1] ?? 0), y: Number(tr?.[2] ?? 0), scale: Number(sc?.[1] ?? 1) };
 }
 
-/** Synthetic pointers, dispatched at the container. Playwright can inject one
- *  touch at most, and these cases are all about what happens with two or three
- *  — or with one that never reports its release. */
+/** Synthetic pointers, dispatched at the touch surface — the one element every
+ *  real pointer event targets. Playwright can inject one touch at most, and
+ *  these cases are all about what happens with two or three — or with one that
+ *  never reports its release. */
 async function pointer(page: Page, type: string, id: number, p: Pt, kind = 'touch') {
   await page.evaluate(({ type, id, p, kind }) => {
-    const el = document.querySelector('.pdf-canvas-container')!;
+    const el = document.querySelector('.pdf-touch-surface')!;
     el.dispatchEvent(new PointerEvent(type, {
       pointerId: id, pointerType: kind, isPrimary: id === 1,
       clientX: p.x, clientY: p.y, button: 0, buttons: type === 'pointerup' ? 0 : 1,
@@ -143,7 +144,7 @@ test.describe('PDF touch', () => {
     await pointer(page, 'pointerdown', 1, a);
     await pointer(page, 'pointerdown', 2, b);
     await page.evaluate(() => {
-      const el = document.querySelector('.pdf-canvas-container')!;
+      const el = document.querySelector('.pdf-touch-surface')!;
       for (const id of [1, 2]) {
         el.dispatchEvent(new PointerEvent('lostpointercapture', {
           pointerId: id, pointerType: 'touch', bubbles: true,
@@ -228,6 +229,74 @@ test.describe('PDF touch', () => {
     await pointer(page, 'pointerup', 2, { x: other.x + 192, y: other.y });
   });
 
+  /** Every touch must land on the same element, wherever the finger is.
+   *
+   *  On the iPad a drag or pinch that started over page 1 worked and one that
+   *  started over page 2 did nothing, and the only difference between them
+   *  was the touch target: page 1 is the main <canvas>, page 2 is a
+   *  `pointer-events: none` neighbour that fell through to the container — an
+   *  `overflow: hidden` scroll container carrying the UI-scale `zoom`. In
+   *  tiled mode the main canvas is `visibility: hidden`, so there everything
+   *  fell through. Chromium treats the two targets alike, which is why no
+   *  fixture ever showed it; this pins the invariant instead, so the
+   *  asymmetry cannot come back.
+   */
+  test('a touch anywhere in the panel targets the touch surface', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.getByTestId('toolbar')).toBeVisible({ timeout: 20000 });
+    await page.getByTestId('file-input').setInputFiles(LONG_PDF);
+    await expect(page.locator('.pdf-page-wrapper canvas').first()).toBeVisible({ timeout: 20000 });
+    await page.waitForTimeout(1200);
+
+    const b = (await page.locator('.pdf-canvas-container').boundingBox())!;
+    const targets = await page.evaluate(({ x, ys }) =>
+      ys.map(y => document.elementFromPoint(x, y)?.className ?? null),
+      { x: b.x + b.width / 2, ys: [b.y + 100, b.y + b.height * 0.5, b.y + b.height * 0.95] });
+    // Top of page 1, somewhere in the middle, and down where page 2 (or blank
+    // paper below a short page) sits: one target for all of them.
+    for (const t of targets) expect(t).toBe('pdf-touch-surface');
+  });
+
+  /** The same scenario driven by the browser's own hit-testing, since the
+   *  synthetic pointers elsewhere in this file choose their target for it. */
+  test('real touches over page 2 pan and zoom like touches over page 1', async ({ page, browserName }) => {
+    test.skip(browserName !== 'chromium', 'multi-touch injection is CDP, Chromium only');
+    await page.goto('/');
+    await expect(page.getByTestId('toolbar')).toBeVisible({ timeout: 20000 });
+    await page.getByTestId('file-input').setInputFiles(LONG_PDF);
+    await expect(page.locator('.pdf-page-wrapper canvas').first()).toBeVisible({ timeout: 20000 });
+    await page.waitForTimeout(1200);
+
+    const cdp = await page.context().newCDPSession(page);
+    const touch = (type: string, pts: Pt[]) => cdp.send('Input.dispatchTouchEvent', {
+      type, touchPoints: pts.map((q, i) => ({ x: q.x, y: q.y, id: i })),
+    });
+    const b = (await page.locator('.pdf-canvas-container').boundingBox())!;
+    // Page 1 is fitted to width; page 2 begins one page-height down. Aim well
+    // below the first page for the second point.
+    const onPage2 = { x: b.x + b.width / 2, y: b.y + b.height * 0.9 };
+
+    const y0 = (await view(page)).y;
+    await touch('touchStart', [onPage2]);
+    for (let i = 1; i <= 10; i++) await touch('touchMove', [{ x: onPage2.x, y: onPage2.y - i * 15 }]);
+    await touch('touchEnd', []);
+    await page.waitForTimeout(600);
+    expect((await view(page)).y, 'a drag that starts over page 2 should pan').not.toBe(y0);
+
+    const zoomBefore = await page.locator('.pdf-zoom-info').first().textContent();
+    await touch('touchStart', [{ x: onPage2.x - 40, y: onPage2.y }]);
+    await touch('touchStart', [{ x: onPage2.x - 40, y: onPage2.y }, { x: onPage2.x + 40, y: onPage2.y }]);
+    for (let i = 1; i <= 10; i++) {
+      const d = 40 + i * 8;
+      await touch('touchMove', [{ x: onPage2.x - d, y: onPage2.y }, { x: onPage2.x + d, y: onPage2.y }]);
+    }
+    await touch('touchEnd', [{ x: onPage2.x - 120, y: onPage2.y }]);
+    await touch('touchEnd', []);
+    await page.waitForTimeout(800);
+    expect(await page.locator('.pdf-zoom-info').first().textContent(),
+      'a pinch over page 2 should zoom').not.toBe(zoomBefore);
+  });
+
   /** A flick has to carry after the finger lifts.
    *
    *  Inertia had never run once, on any platform: the loop decayed
@@ -306,7 +375,7 @@ test.describe('PDF touch', () => {
 
     const gesture = (type: string, scale: number, p: { x: number; y: number }) =>
       page.evaluate(({ type, scale, p }) => {
-        const el = document.querySelector('.pdf-canvas-container')!;
+        const el = document.querySelector('.pdf-touch-surface')!;
         const e = new MouseEvent(type, { clientX: p.x, clientY: p.y, bubbles: true, cancelable: true });
         Object.defineProperty(e, 'scale', { value: scale });
         Object.defineProperty(e, 'rotation', { value: 0 });

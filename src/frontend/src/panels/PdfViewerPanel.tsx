@@ -701,6 +701,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const highlightRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  /** The one element every pointer event targets — see the JSX comment. */
+  const touchSurfaceRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const renderTaskRef = useRef<{ cancel: () => void } | null>(null);
@@ -3062,7 +3064,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     // one registered the viewer takes the drag branch and pans off one finger
     // in the middle of a pinch. Capture is an optimisation here; the
     // bookkeeping below is not, and must happen either way.
-    try { container.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
+    try { (touchSurfaceRef.current ?? container).setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
     activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     pdfStore.switchTo(pdfFileName);
 
@@ -3923,6 +3925,24 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       <div
         className="pdf-canvas-container"
         ref={containerRef}
+        style={{ cursor: isDraggingRef.current ? 'grabbing' : 'crosshair', filter: nightMode ? 'invert(1)' : undefined }}
+      >
+      {/* Every touch lands here, and only here. Without this layer the target
+          of a touch depended on what happened to be under the finger: page 1
+          is the main <canvas>, page 2 is a `pointer-events: none` neighbour
+          that falls through to the container itself — an `overflow: hidden`
+          scroll container carrying the UI-scale `zoom` — and in tiled mode the
+          main canvas is `visibility: hidden` so everything falls through. On
+          iPadOS a drag or pinch that started over page 1 worked and one that
+          started over page 2 did nothing, and that asymmetry was the only
+          difference between them. Chromium treats both targets alike, which is
+          why no fixture ever showed it. A plain, persistent, untransformed div
+          with `touch-action: none` on the target itself removes the question:
+          nothing under the finger is ever added, removed, hidden or moved. */}
+      <div
+        className="pdf-touch-surface"
+        data-testid="pdf-touch-surface"
+        ref={touchSurfaceRef}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -3954,11 +3974,18 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             gestureOwnerRef.current = 'none';
           }
         }}
-        onPointerLeave={(e) => { activeTouchesRef.current.delete(e.pointerId); isDraggingRef.current = false; wasDragRef.current = false; }}
+        // A mouse that leaves the panel ends its drag. A captured touch cannot
+        // leave, so a touch "leave" is only ever spurious — and killing a
+        // gesture on it is exactly the failure this layer exists to prevent.
+        onPointerLeave={(e) => {
+          if (e.pointerType === 'touch') return;
+          activeTouchesRef.current.delete(e.pointerId);
+          isDraggingRef.current = false;
+          wasDragRef.current = false;
+        }}
         onDoubleClick={handleTextDblClick}
         onContextMenu={handleContextMenu}
-        style={{ cursor: isDraggingRef.current ? 'grabbing' : 'crosshair', filter: nightMode ? 'invert(1)' : undefined }}
-      >
+      />
         {glyphLoading && <div className="pdf-glyph-loading">Parsing fonts...</div>}
         <div
           ref={wrapperRef}
