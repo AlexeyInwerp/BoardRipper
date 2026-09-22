@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>PDF Search Slots</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Mockup: the PDF search field keeps a typed search and a board lookup side by side, with a lock, a history and a recentre rule.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root {
+  color-scheme: light dark;
+  --page-bg: #f7f8fa; --page-panel: #ffffff; --page-fg: #14161c; --page-muted: #59606e;
+  --page-rule: #dee2ea; --page-accent: #1f6fd0; --page-bad: #b4232f; --page-good: #1a7a4c; --page-keep: #6b4ea8;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --page-bg: #0b0d12; --page-panel: #12151d; --page-fg: #e6e8ee; --page-muted: #99a1b0;
+    --page-rule: #1e2331; --page-accent: #64a8ff; --page-bad: #ff7b85; --page-good: #56d39a; --page-keep: #b79cf0;
+  }
+}
+:root[data-theme="dark"] {
+  --page-bg: #0b0d12; --page-panel: #12151d; --page-fg: #e6e8ee; --page-muted: #99a1b0;
+  --page-rule: #1e2331; --page-accent: #64a8ff; --page-bad: #ff7b85; --page-good: #56d39a; --page-keep: #b79cf0;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page-bg); color: var(--page-fg); font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif; font-size: 15px; line-height: 1.6; }
+main { max-width: 1180px; margin: 0 auto; padding: 40px clamp(16px, 4vw, 40px) 80px; }
+h1 { font-size: 27px; font-weight: 600; margin: 0 0 6px; letter-spacing: -0.015em; text-wrap: balance; }
+h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--page-muted); margin: 0 0 14px; padding-bottom: 7px; border-bottom: 1px solid var(--page-rule); }
+h3 { font-size: 17px; font-weight: 600; margin: 0 0 4px; letter-spacing: -0.01em; }
+p { margin: 0 0 12px; max-width: 68ch; }
+.lede { color: var(--page-muted); font-size: 16px; max-width: 68ch; margin-bottom: 4px; }
+.stamp { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px; color: var(--page-muted); letter-spacing: 0.03em; margin: 0 0 30px; }
+section { margin-bottom: 46px; }
+code, kbd { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 0.88em; }
+kbd { border: 1px solid var(--page-rule); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--page-panel); }
+ol.findings { margin: 0 0 8px; padding: 0; list-style: none; display: grid; gap: 1px; background: var(--page-rule); border: 1px solid var(--page-rule); border-radius: 6px; overflow: hidden; counter-reset: f; }
+ol.findings li { counter-increment: f; background: var(--page-panel); padding: 11px 14px 11px 44px; position: relative; font-size: 14px; }
+ol.findings li::before { content: counter(f, decimal-leading-zero); position: absolute; left: 14px; top: 12px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--page-muted); }
+.findings b { font-weight: 600; }
+.why { color: var(--page-muted); }
+.rail { display: flex; gap: 26px; align-items: flex-start; overflow-x: auto; padding-bottom: 10px; }
+.slab { flex: 0 0 auto; }
+.slab-head { margin-bottom: 10px; max-width: 420px; }
+.slab-head .tag { display: inline-block; font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--page-accent); margin-bottom: 2px; }
+.slab-head .tag.drop { color: var(--page-bad); }
+.slab-head p { font-size: 13px; color: var(--page-muted); margin: 2px 0 0; max-width: 420px; }
+table.rules { border-collapse: collapse; width: 100%; max-width: 760px; font-size: 14px; }
+table.rules th, table.rules td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--page-rule); }
+table.rules th { font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--page-muted); }
+.sw { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: -2px; margin-right: 5px; border: 1px solid rgba(0,0,0,0.25); }
+
+/* ── SPECIMENS: BoardRipper's dark tokens (index.css :root) and the real
+   .pdf-toolbar / .pdf-search-bar metrics, reproduced. ─────────────────── */
+.app {
+  --bg-primary: #08080c; --bg-secondary: #0f0f18; --bg-tertiary: #0c1424;
+  --text-primary: #e0e0e0; --text-secondary: #a0a0b0; --accent: #4a9eff; --accent-fg: #fff; --border: #1a1a28;
+  --find: rgba(255, 255, 68, 0.30); --lookup: rgba(100, 200, 255, 0.28); --active: rgba(255, 170, 0, 0.55);
+  --find-ink: #ffff44; --lookup-ink: #64c8ff;
+  width: 500px; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text-primary); font-size: 11px; line-height: 1.4; overflow: hidden;
+  box-shadow: 0 10px 30px -18px rgba(0,0,0,0.8); position: relative;
+}
+.app.narrow { width: 320px; }
+.app * { box-sizing: border-box; }
+.tb { display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: var(--bg-tertiary); border-bottom: 1px solid var(--border); height: 35px; }
+.tbtn { background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-primary); padding: 2px 8px; border-radius: 3px; font-size: 11px; height: 26px; display: inline-flex; align-items: center; white-space: nowrap; }
+.tbtn.dim { color: var(--text-secondary); }
+.fname { font-size: 11px; color: var(--text-secondary); max-width: 72px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sep { width: 1px; height: 18px; background: var(--border); }
+.sb { display: flex; align-items: center; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 3px; height: 24px; overflow: hidden; flex: 1; min-width: 0; }
+.sb .in { flex: 1; min-width: 92px; height: 22px; padding: 2px 6px; display: flex; align-items: center; gap: 5px; color: var(--text-primary); white-space: nowrap; overflow: hidden; }
+.sb .in.ph { color: var(--text-secondary); }
+.sb .in .caret { width: 1px; height: 13px; background: var(--text-primary); }
+.cnt { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--text-secondary); padding: 0 4px; white-space: nowrap; }
+.nav { color: var(--text-secondary); padding: 0 4px; font-size: 8px; line-height: 22px; }
+.lock { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-secondary); border-right: 1px solid var(--border); flex: none; }
+.lock.on { color: var(--accent); background: rgba(74,158,255,0.14); }
+.lock svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+/* the two slots — the input is the Find slot; the Lookup slot is a chip */
+.slot { display: inline-flex; align-items: center; height: 22px; gap: 4px; padding: 0 6px 0 5px; white-space: nowrap; border-left: 1px solid var(--border); flex: none; }
+.slot .q { max-width: 80px; overflow: hidden; text-overflow: ellipsis; }
+.slot .g { width: 7px; height: 7px; transform: rotate(45deg); background: var(--lookup-ink); flex: none; opacity: 0.8; }
+.slot .x { color: var(--text-secondary); font-size: 10px; margin-left: 2px; }
+.slot .new { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; box-shadow: 0 0 0 3px rgba(74,158,255,0.25); }
+.sb .in.act, .slot.act { box-shadow: inset 0 -2px 0 var(--accent); }
+.sb .in.act .cnt, .slot.act .cnt { color: var(--text-primary); }
+.sb.focus { border-color: var(--accent); }
+/* page fragment */
+.pg { height: 150px; background: #14151b; position: relative; overflow: hidden; }
+.paper { position: absolute; left: 14px; top: 10px; right: 14px; bottom: -20px; background: #f4f2ea; color: #1b1b1b; font-family: 'IBM Plex Mono', monospace; font-size: 10px; line-height: 1.75; padding: 10px 12px; box-shadow: 0 0 0 1px #000 inset; }
+.paper .l { white-space: pre; }
+m { font-style: normal; padding: 0 1px; border-radius: 1px; }
+m.f { background: var(--find); box-shadow: 0 0 0 1px rgba(200,190,0,0.35); }
+m.l { background: var(--lookup); box-shadow: 0 0 0 1px rgba(40,140,220,0.35); }
+m.a { background: var(--active); box-shadow: 0 0 0 1.5px #ff8800; }
+.paper .net { color: #3a5a8a; } .paper .ref { font-weight: 600; }
+/* history dropdown */
+.dd { position: absolute; left: 232px; top: 33px; width: 230px; background: #0f0f18; border: 1px solid var(--border); border-radius: 3px; box-shadow: 0 8px 20px -8px #000; z-index: 3; font-size: 11px; }
+.dd .h { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-bottom: 1px solid #171722; }
+.dd .h.on { background: rgba(74,158,255,0.18); }
+.dd .h .q { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dd .h .cnt { padding: 0; }
+.dd .h .ago { color: var(--text-secondary); font-size: 10px; }
+.dd .hint { padding: 3px 8px; color: var(--text-secondary); font-size: 10px; border-top: 1px solid #171722; }
+.dd .lbl { padding: 3px 8px 1px; color: var(--text-secondary); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; }
+.viewport { position: absolute; inset: 0; pointer-events: none; }
+.viewport .edge { position: absolute; left: 14px; right: 14px; top: 10px; bottom: 10px; border: 1px dashed rgba(100,200,255,0.5); }
+.viewport .lab { position: absolute; right: 18px; bottom: 12px; font-size: 9px; color: #64c8ff; font-family: 'IBM Plex Mono', monospace; }
+.viewport .margin { position: absolute; left: 30px; right: 30px; top: 24px; bottom: 24px; border: 1px dotted rgba(255,170,0,0.7); }
+</style></head>
+<body><main>
+
+<h1>PDF search: a typed search and a board lookup, side by side</h1>
+<p class="lede">You search a PDF for <code>10UF 25V</code> and walk its twelve hits. You double-click a capacitor on the board to see where it sits in the schematic. Today that second action erases the first: the field now says <code>C7301</code>, the twelve hits are gone, and the position in them with it.</p>
+<p class="stamp">2026-09-22 · mockup for the search-slots feature · companion to the report in this session</p>
+
+<section>
+<h2>What goes wrong today</h2>
+<ol class="findings">
+  <li><b>One field, two writers.</b> <span class="why">Your typing and the board's double-click write the same <code>searchQuery</code>. <code>triggerFollowPdf(part, force=true)</code> is the double-click path; <code>force</code> is what lets it overwrite a search you typed. A single click already defers to a typed search — only the double-click does not.</span></li>
+  <li><b>Nothing remembers where you were.</b> <span class="why">There is no search history anywhere in the app, and <code>activeMatchIndex</code> lives on the document, so a new query resets it. "3 of 12" cannot be recovered without retyping and stepping.</span></li>
+  <li><b>"In view" is too generous.</b> <span class="why">At 300 % zoom and up, a hit with any pixel inside the viewport counts as visible, so the viewer only blinks it and does not move. A hit half off the right edge stays half off the right edge.</span></li>
+</ol>
+</section>
+
+<section>
+<h2>The bar, state by state</h2>
+<div class="rail">
+
+  <div class="slab">
+    <div class="slab-head"><span class="tag drop">Today</span><h3>The lookup replaced the search</h3><p>After the double-click on C7301. The 10UF hits are unmarked and the counter is the lookup's.</p></div>
+    <div class="app">
+      <div class="tb"><span class="fname">820-02016 schematic.pdf</span><span class="sep"></span><span class="tbtn dim">‹</span><span class="cnt">14 / 96</span><span class="tbtn dim">›</span><span class="sep"></span>
+        <div class="sb"><div class="in">C7301</div><span class="nav">▲</span><span class="cnt">1/2</span><span class="nav">▼</span></div></div>
+      <div class="pg"><div class="paper">
+        <div class="l"><span class="ref"><m class="a">C7301</m></span>  10UF 25V 0402        <span class="ref">C7302</span>  10UF 25V 0402</div>
+        <div class="l"><span class="net">PP3V3_S5</span> ─┤├─ GND             <span class="net">PPBUS_G3H</span> ─┤├─ GND</div>
+        <div class="l"><span class="ref">U7300</span>  PMU  pin 14 ── <span class="net">PP1V8_S0</span></div>
+        <div class="l"><span class="ref">C7305</span>  0.1UF 6.3V 0201     <span class="ref">C7306</span>  10UF 25V 0402</div>
+        <div class="l"><span class="ref">R7310</span>  10K 1%   <span class="net">SMC_RESET_L</span></div>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="slab">
+    <div class="slab-head"><span class="tag">Proposal · A</span><h3>Find stays, Lookup joins as a chip</h3><p>The input is the <b>Find</b> slot, as today. The lookup gets a chip after the counter, with its own count. The accent underline marks which slot the arrows and Enter drive. Both slots are marked on the page.</p></div>
+    <div class="app">
+      <div class="tb"><span class="fname">820-02016 schematic.pdf</span><span class="sep"></span><span class="tbtn dim">‹</span><span class="cnt">14 / 96</span><span class="tbtn dim">›</span><span class="sep"></span>
+        <div class="sb focus"><span class="lock"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/></svg></span><div class="in act">10UF 25V<span class="caret"></span><span style="flex:1"></span><span class="cnt">3/12</span></div>
+          <span class="slot"><span class="g"></span><span class="q">C7301</span><span class="cnt">1/2</span><span class="x">×</span></span>
+          <span class="nav">▲</span><span class="nav">▼</span></div></div>
+      <div class="pg"><div class="paper">
+        <div class="l"><span class="ref"><m class="l">C7301</m></span>  <m class="a">10UF 25V</m> 0402        <span class="ref">C7302</span>  <m class="f">10UF 25V</m> 0402</div>
+        <div class="l"><span class="net">PP3V3_S5</span> ─┤├─ GND             <span class="net">PPBUS_G3H</span> ─┤├─ GND</div>
+        <div class="l"><span class="ref">U7300</span>  PMU  pin 14 ── <span class="net">PP1V8_S0</span></div>
+        <div class="l"><span class="ref">C7305</span>  0.1UF 6.3V 0201     <span class="ref">C7306</span>  <m class="f">10UF 25V</m> 0402</div>
+        <div class="l"><span class="ref">R7310</span>  10K 1%   <span class="net">SMC_RESET_L</span></div>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="slab">
+    <div class="slab-head"><span class="tag">Proposal · B</span><h3>Lock open: the double-click takes over</h3><p>Today's behaviour, kept for the case where the lookup is what you want next: the chip becomes active, the view jumps to C7301, the Find slot keeps its 3/12 and its yellow marks. Click the input, or press <kbd>⌘F</kbd>, to go back to Find at 3/12.</p></div>
+    <div class="app">
+      <div class="tb"><span class="fname">820-02016 schematic.pdf</span><span class="sep"></span><span class="tbtn dim">‹</span><span class="cnt">14 / 96</span><span class="tbtn dim">›</span><span class="sep"></span>
+        <div class="sb"><span class="lock"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/></svg></span><div class="in">10UF 25V<span style="flex:1"></span><span class="cnt">3/12</span></div>
+          <span class="slot act"><span class="g"></span><span class="q">C7301</span><span class="cnt">1/2</span><span class="x">×</span></span>
+          <span class="nav">▲</span><span class="nav">▼</span></div></div>
+      <div class="pg"><div class="paper">
+        <div class="l"><span class="ref"><m class="a">C7301</m></span>  <m class="f">10UF 25V</m> 0402        <span class="ref">C7302</span>  <m class="f">10UF 25V</m> 0402</div>
+        <div class="l"><span class="net">PP3V3_S5</span> ─┤├─ GND             <span class="net">PPBUS_G3H</span> ─┤├─ GND</div>
+        <div class="l"><span class="ref">U7300</span>  PMU  pin 14 ── <span class="net">PP1V8_S0</span></div>
+        <div class="l"><span class="ref">C7305</span>  0.1UF 6.3V 0201     <span class="ref">C7306</span>  <m class="f">10UF 25V</m> 0402</div>
+        <div class="l"><span class="ref">R7310</span>  10K 1%   <span class="net">SMC_RESET_L</span></div>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="slab">
+    <div class="slab-head"><span class="tag">Proposal · C</span><h3>Lock closed: the double-click only updates the chip</h3><p>You double-clicked U7300 on the board. The chip now says U7300 with a fresh-dot, its hits are marked in cyan, but Find stays active and the view does not move. Click the chip when you are ready.</p></div>
+    <div class="app">
+      <div class="tb"><span class="fname">820-02016 schematic.pdf</span><span class="sep"></span><span class="tbtn dim">‹</span><span class="cnt">14 / 96</span><span class="tbtn dim">›</span><span class="sep"></span>
+        <div class="sb"><span class="lock on"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span><div class="in act">10UF 25V<span style="flex:1"></span><span class="cnt">3/12</span></div>
+          <span class="slot"><span class="new"></span><span class="q">U7300</span><span class="cnt">2</span><span class="x">×</span></span>
+          <span class="nav">▲</span><span class="nav">▼</span></div></div>
+      <div class="pg"><div class="paper">
+        <div class="l"><span class="ref">C7301</span>  <m class="a">10UF 25V</m> 0402        <span class="ref">C7302</span>  <m class="f">10UF 25V</m> 0402</div>
+        <div class="l"><span class="net">PP3V3_S5</span> ─┤├─ GND             <span class="net">PPBUS_G3H</span> ─┤├─ GND</div>
+        <div class="l"><span class="ref"><m class="l">U7300</m></span>  PMU  pin 14 ── <span class="net">PP1V8_S0</span></div>
+        <div class="l"><span class="ref">C7305</span>  0.1UF 6.3V 0201     <span class="ref">C7306</span>  <m class="f">10UF 25V</m> 0402</div>
+        <div class="l"><span class="ref">R7310</span>  10K 1%   <span class="net">SMC_RESET_L</span></div>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="slab">
+    <div class="slab-head"><span class="tag">Proposal · D</span><h3>History under the field</h3><p>Focusing an empty field, or <kbd>↓</kbd> in it, lists the last twenty typed searches for this PDF with their hit count and where you left off. <kbd>Enter</kbd> restores query and position. Lookups are not history — the board is their history.</p></div>
+    <div class="app">
+      <div class="tb"><span class="fname">820-02016 schematic.pdf</span><span class="sep"></span><span class="tbtn dim">‹</span><span class="cnt">14 / 96</span><span class="tbtn dim">›</span><span class="sep"></span>
+        <div class="sb focus"><span class="lock"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/></svg></span><div class="in ph act">Search<span class="caret" style="background:#a0a0b0"></span></div>
+          <span class="slot"><span class="g"></span><span class="q">C7301</span><span class="cnt">1/2</span><span class="x">×</span></span>
+          <span class="nav">▲</span><span class="nav">▼</span></div></div>
+      <div class="dd">
+        <div class="lbl">Recent in this PDF</div>
+        <div class="h on"><span class="q">10UF 25V</span><span class="cnt">3/12</span><span class="ago">2 min</span></div>
+        <div class="h"><span class="q">0.1UF 6.3V</span><span class="cnt">40</span><span class="ago">9 min</span></div>
+        <div class="h"><span class="q">PP3V3_S5</span><span class="cnt">7</span><span class="ago">1 h</span></div>
+        <div class="h"><span class="q">SMC_RESET_L@U7300</span><span class="cnt">1</span><span class="ago">yesterday</span></div>
+        <div class="hint">↑↓ pick · Enter restore · ⌫ forget</div>
+      </div>
+      <div class="pg"><div class="paper">
+        <div class="l"><span class="ref"><m class="l">C7301</m></span>  10UF 25V 0402        <span class="ref">C7302</span>  10UF 25V 0402</div>
+        <div class="l"><span class="net">PP3V3_S5</span> ─┤├─ GND             <span class="net">PPBUS_G3H</span> ─┤├─ GND</div>
+        <div class="l"><span class="ref">U7300</span>  PMU  pin 14 ── <span class="net">PP1V8_S0</span></div>
+        <div class="l"><span class="ref">C7305</span>  0.1UF 6.3V 0201     <span class="ref">C7306</span>  10UF 25V 0402</div>
+        <div class="l"><span class="ref">R7310</span>  10K 1%   <span class="net">SMC_RESET_L</span></div>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="slab">
+    <div class="slab-head"><span class="tag">Proposal · E</span><h3>Narrow panel</h3><p>The chip drops its text and keeps the count; the query lives in its tooltip. The lock and the arrows never go.</p></div>
+    <div class="app narrow">
+      <div class="tb"><span class="fname" style="max-width:56px">820-02016…</span><span class="sep"></span>
+        <div class="sb"><span class="lock"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/></svg></span><div class="in act">10UF 25V<span style="flex:1"></span><span class="cnt">3/12</span></div>
+          <span class="slot"><span class="g"></span><span class="cnt">1/2</span></span>
+          <span class="nav">▲</span><span class="nav">▼</span></div></div>
+      <div class="pg"><div class="paper">
+        <div class="l"><span class="ref"><m class="l">C7301</m></span>  <m class="a">10UF 25V</m></div>
+        <div class="l"><span class="net">PP3V3_S5</span> ─┤├─ GND</div>
+        <div class="l"><span class="ref">U7300</span>  PMU  pin 14</div>
+        <div class="l"><span class="ref">C7306</span>  <m class="f">10UF 25V</m></div>
+      </div></div>
+    </div>
+  </div>
+
+</div>
+</section>
+
+<section>
+<h2>Recentring: "in view" means all of it, with a margin</h2>
+<div class="rail">
+  <div class="slab">
+    <div class="slab-head"><span class="tag drop">Today</span><h3>Any pixel inside counts</h3><p>The hit straddles the right edge. The viewer blinks it and leaves it there.</p></div>
+    <div class="app">
+      <div class="pg" style="height:120px"><div class="paper">
+        <div class="l">                                              <span class="ref">C7302</span>  <m class="a">10UF 25V</m> 0402</div>
+        <div class="l"><span class="net">PP3V3_S5</span> ─┤├─ GND</div>
+        <div class="l"><span class="ref">U7300</span>  PMU</div>
+      </div><div class="viewport"><div class="edge"></div><span class="lab">viewport</span></div></div>
+    </div>
+  </div>
+  <div class="slab">
+    <div class="slab-head"><span class="tag">Proposal</span><h3>Inside the dotted band, or move</h3><p>A hit counts as visible only when its whole box lies inside the viewport minus a 10 % margin (the dotted band). Otherwise the view centres on it. The move goes through <code>syncTransform → clampPan</code>, so pan boundaries and single-page lock still hold; at a boundary the hit ends up as close to centre as the page allows.</p></div>
+    <div class="app">
+      <div class="pg" style="height:120px"><div class="paper">
+        <div class="l">                  <span class="ref">C7302</span>  <m class="a">10UF 25V</m> 0402</div>
+        <div class="l"><span class="net">PP3V3_S5</span> ─┤├─ GND</div>
+        <div class="l"><span class="ref">U7300</span>  PMU</div>
+      </div><div class="viewport"><div class="edge"></div><div class="margin"></div><span class="lab">viewport · 10 % band</span></div></div>
+    </div>
+  </div>
+</div>
+</section>
+
+<section>
+<h2>The rules behind the pictures</h2>
+<table class="rules">
+  <tr><th style="width:190px">Thing</th><th>Rule</th></tr>
+  <tr><td>Two slots</td><td><b>Find</b> is what you typed; <b>Lookup</b> is what the board sent (double-click, <kbd>⌘F</kbd> with a selection, PDF-follow). Each has its own query, hits and position. A lookup replaces the previous lookup and never Find. Clearing the field clears Find only; × on the chip clears Lookup only.</td></tr>
+  <tr><td>Active slot</td><td>Exactly one is active, marked by the accent underline. <kbd>Enter</kbd>, <kbd>Shift+Enter</kbd>, <kbd>↑</kbd> <kbd>↓</kbd>, the ▲ ▼ buttons and the <kbd>⌘F</kbd> repeat all step the active slot. Typing or clicking the field activates Find; clicking the chip activates Lookup. Activating a slot returns to its saved position, it does not restart at 1.</td></tr>
+  <tr><td>Lock</td><td>Open (default): a new lookup becomes active and the view jumps to it — today's behaviour. Closed: a new lookup fills the chip, marks its hits, shows the fresh-dot, and leaves the view alone. The lock is per PDF panel and remembered. <kbd>⌘⇧L</kbd> toggles it.</td></tr>
+  <tr><td>Colours</td><td><span class="sw" style="background:rgba(255,255,68,0.45)"></span>Find hits · <span class="sw" style="background:rgba(100,200,255,0.45)"></span>Lookup hits · <span class="sw" style="background:rgba(255,170,0,0.7)"></span>the active hit. These are the three fills the viewer already paints (<code>PdfViewerPanel.tsx:2138–2153</code>), so nothing new enters the palette; only the assignment changes.</td></tr>
+  <tr><td>History</td><td>Per PDF, last 20 <b>typed</b> searches, newest first, each with hit count and last position. Stored in <code>localStorage</code> under <code>boardripper-pdf-search-history</code>, keyed by file name. Opens on focus of an empty field or <kbd>↓</kbd> in it; <kbd>Enter</kbd> restores query <i>and</i> position; <kbd>⌫</kbd> on a row forgets it. The board's sidebar search gets the same list, keyed by board file.</td></tr>
+  <tr><td>Recentre</td><td>On step or on activation: if the hit's box is not entirely inside the viewport shrunk by 10 % on each side, centre on it at the current zoom (never zoom out; the existing 3× floor stays). Clamping is unchanged, so a locked page cannot be dragged past its edge to satisfy the rule.</td></tr>
+  <tr><td>Store shape</td><td><code>PdfSearchSlot { query, matches, groups, activeIndex, source }</code> twice on the document (<code>find</code>, <code>lookup</code>), plus <code>activeSlot</code> and <code>lookupLock</code>. <code>searchText(q,'user')</code> writes <code>find</code>; <code>lookupEntity(...)</code> writes <code>lookup</code>. The highlight painter reads both; the centring effect reads the active one.</td></tr>
+</table>
+</section>
+
+<section>
+<h2>Open</h2>
+<p>Highlighting on the <b>board</b> is not drawn here because it needs a decision first: (a) keep the PDF hits marked persistently rather than only blinking, (b) outline the parts on the board whose refdes appears among the PDF hits, or (c) both. The pictures above assume (a) — every hit of both slots stays marked while the slot is filled.</p>
+</section>
+
+</main></body></html>
