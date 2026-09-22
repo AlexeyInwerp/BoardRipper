@@ -1,5 +1,33 @@
 # BoardRipper changelog
 
+## v0.43.1 — 2026-09-22
+
+### Fixed
+
+- **An unreachable server no longer reads as an empty library.** With the
+  server down or restarting, the Library said "Library is empty — no files
+  indexed yet" and offered the scan button for as long as the request hung,
+  then switched to the unreachable notice. It now says it is loading until
+  the server has answered, and "empty" only once the file list has actually
+  come back empty.
+- **"Retrying automatically" is now true.** The unreachable notice used to
+  promise a retry that never happened; a reload was the only way back. The
+  app now retries on its own, at 2, 4, 8, 15 and then every 30 seconds, shows
+  the current interval, and offers a *Retry now* button. When the server
+  comes back the library loads without a page reload.
+- A file list that stopped before it finished, with the server otherwise
+  fine, now says so and offers a Reload instead of either a spinner or a
+  false "empty".
+
+### Maintainers
+
+- The rules behind this — waiting is not a fact, a promised action needs code
+  behind it, one transition per load — are in CLAUDE.md under status
+  messages, with a spec that samples the panel over time through three ways a
+  backend is unreachable in the field.
+- Mockup for the next search work (a typed search and a board lookup side by
+  side in the PDF search bar): `docs/specs/2026-09-22-pdf-search-slots-mockup.html`.
+
 ## v0.43.0 — 2026-09-22
 
 ### Updates on Docker Compose installs
