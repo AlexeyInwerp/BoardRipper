@@ -1,5 +1,114 @@
 # BoardRipper changelog
 
+## v0.43.0 — 2026-09-22
+
+### Updates on Docker Compose installs
+
+- **The in-app update no longer rolls back on a Compose install.** Only some
+  Docker installs were affected: any container on a user-defined network,
+  which is every `docker compose up` and every Synology Container Manager
+  *project*. A plain `docker run` on the default bridge always updated fine.
+  The health check that decides whether a new version is alive ran from a
+  helper container on the default bridge, and Docker drops traffic between
+  two bridge networks, so the check timed out and the update was undone
+  every time. The helper now joins the app's own networks and tries every
+  address that could answer: the container's IP, the host at the published
+  port, and the container name.
+- **A failed update leaves evidence.** The helper writes its console to
+  `update-orchestrator.log` in the data directory, and a rollback keeps the
+  failed container as `<name>-failed` instead of deleting it, so its log can
+  be read afterwards.
+- **One manual pull for affected installs.** An install that was rolling
+  back cannot update itself onto this fix, because the drop-to-update bundle
+  uses the same helper. Pull the image once by hand — `docker compose pull
+  && docker compose up -d`, or Container Manager ▸ project ▸ Build — and
+  in-app updates work from then on.
+
+### Touch screens
+
+Every browser on iPadOS is WebKit, Chrome included, so these apply to all of
+them.
+
+- **A pinch is a pinch.** Zooming with two fingers used to select the part
+  under the first finger, jump, and land somewhere other than where the
+  fingers were. iPadOS hands a two-finger gesture to its own recogniser and
+  cancels the first touch before the second one arrives, which the board
+  read as a tap; and both the board and the PDF viewer ran two zoom
+  handlers on the same gesture — one for trackpad gestures, one for fingers.
+  One handler owns a gesture now, a cancelled touch is never a tap, and the
+  zoom follows finger distance exactly: the same spread gives the same zoom
+  however fast the fingers move, and pinching in then out lands back where
+  it started.
+- **Both fingers stay on what they touched.** Park one finger and spread
+  the other and the page used to slide away from the finger that never
+  moved, by up to 140 px. The zoom is now anchored on the moving midpoint
+  in both viewers.
+- **A tap is a tap.** A finger wanders a few pixels on a tap that feels
+  still, so the board allows 12 px of travel for a touch against 5 px for a
+  mouse, measured as a straight line rather than the sum of the two axes,
+  which had rejected diagonal taps. A part that stopped responding to taps
+  after being deselected from the net list or a worklist responds again.
+- **Scrolling a PDF with a finger turns pages.** A drag past the bottom of
+  the page used to keep going onto blank paper; it now flips pages, and so
+  does a flick. Flick inertia had never actually run, on any platform. A
+  gentle flick carries a few pages, a hard one reaches the end of the
+  document.
+- **Every touch on a PDF lands.** A drag or pinch that began over the
+  second visible page did nothing on the iPad, because that page was not a
+  touch target. One surface now takes every touch on the panel.
+- **Tapping a word in a PDF works on touch.** It was excluded outright.
+- **A third finger does not freeze the PDF.** Resting a finger on the glass
+  while pinching, as one does when holding a tablet, matched neither the
+  pan nor the pinch path.
+- **No hover while gesturing.** Hover hit-tests ran on both fingers of a
+  pinch and halved the frame rate on a large board. A single resting finger
+  still reads a pin's net and diode value.
+- **Tablet performance mode.** On a touch device the board runs at 60 fps,
+  without multisampling and at a capped render resolution; text keeps full
+  resolution. The PDF viewer defaults to the *medium* quality preset and
+  halves its cache budgets where the browser does not report device memory,
+  which is every iPad. Settings ▸ Performance & Debug ▸ *Touch performance
+  mode*. An iPad with a keyboard and trackpad, which reports a mouse-like
+  pointer, is detected too. No effect on a desktop machine: wheel zoom,
+  hover and clicking are measured unchanged.
+- **Ctrl+wheel on a PDF zooms in steps.** One notch of a mouse wheel took
+  the page from 100 % to 739 %, because the handler took the event for a
+  trackpad pinch. One notch is now about 2.4×, the same as on the board.
+
+### Web and offline builds: a folder is the library
+
+- **Point the lite build at a folder.** The lite web build and the
+  single-file offline build had no library at all, only the file picker.
+  Choose a folder, or drop one on the window, and it is indexed in the
+  browser: the Library panel, the Board# and Folders trees, recents and
+  worklists all work as they do with a server. Nothing is uploaded anywhere.
+- **The library survives a reload.** In Chrome and Edge the folder itself is
+  remembered; opening a file after a reload asks the browser for access
+  again, in the same click, and "Allow on every visit" or installing the
+  app makes that permanent. Firefox, Safari and the iPad cannot remember a
+  folder, so there the list comes back and the folder is asked for on the
+  first open. A board opened once reopens from the cache with no folder
+  dialog at all.
+- **Choosing a folder that yields nothing says why.** The browser refuses
+  the home folder, Desktop, Documents and system folders without a word of
+  its own; the app now names them. A folder with no boards or PDFs says so.
+- **Boards are labelled by their content.** In the folder index every
+  `.brd` file was labelled BDV, because three formats claim the extension.
+  Ambiguous extensions are settled by reading the file header.
+
+### Maintainers
+
+- `scripts/devdeploy.sh` builds the working tree and ships it to the NAS dev
+  container at rd-nas:1234, the touch-screen test target; `--test` runs the
+  WebKit iPad suite against it.
+- `npm run test:webkit` runs the touch specs on WebKit with an iPad
+  descriptor. Every board PDF in the repo is proprietary, so the PDF specs
+  had been skipping on a clean checkout; two generated PDF fixtures make
+  them run.
+- `UPDATER_DOCKER_E2E=1 go test ./updater/` exercises the update helper
+  against a real Docker daemon in three topologies: Compose network, host
+  network, and a new image that never serves.
+
 ## v0.42.0 — 2026-09-18
 
 ### Worklist
