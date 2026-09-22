@@ -5577,6 +5577,9 @@ body {
 }
 
 .library-backend-warn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 8px 10px;
   background: #3a2000;
   color: #ffa940;
@@ -5584,6 +5587,19 @@ body {
   border-bottom: 1px solid #5a3000;
   flex-shrink: 0;
 }
+.library-backend-warn > span { flex: 1; min-width: 0; }
+.library-backend-retry {
+  flex: none;
+  background: transparent;
+  border: 1px solid #ffa940;
+  color: #ffa940;
+  border-radius: 3px;
+  font-size: 10px;
+  padding: 1px 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.library-backend-retry:hover { background: #ffa940; color: #3a2000; }
 
 .library-folder-bar {
   display: flex;

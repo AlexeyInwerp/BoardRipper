@@ -1,7 +1,7 @@
 import { databankStore } from '../store/databank-store';
 import { createStoreHook } from './createStoreHook';
 import type { FolderLibraryState } from '../store/folder-library';
-import type { DatabankFile, FileDetail, FolderNode, ScanStatus, SearchResult, ViewMode, DatabankStats, BrowseResult, RecentItem, LoadStatus, PdfIndexProgress, PdfIndexStats, DedupProgress, DedupStats } from '../store/databank-store';
+import type { DatabankFile, FileDetail, FolderNode, ScanStatus, SearchResult, ViewMode, DatabankStats, BrowseResult, RecentItem, LoadStatus, PdfIndexProgress, PdfIndexStats, DedupProgress, DedupStats, BackendState } from '../store/databank-store';
 
 // `metadataTree`/`modelTree` are deliberately NOT in the snapshot. Including
 // them would call the (O(N)) groupby getters on every store notify — even
@@ -29,6 +29,8 @@ interface DatabankSnapshot {
   loadStatus: LoadStatus;
   loadError: Error | null;
   backendAvailable: boolean;
+  backendState: BackendState;
+  backendRetryDelaySec: number;
   libraryPath: string | null;
   electronMode: boolean;
   /** Local-folder library state (lite / offline builds). */
@@ -70,6 +72,8 @@ export const useDatabank = createStoreHook<DatabankSnapshot>(databankStore, () =
   loadStatus: databankStore.loadStatus,
   loadError: databankStore.loadError,
   backendAvailable: databankStore.backendAvailable,
+  backendState: databankStore.backendState,
+  backendRetryDelaySec: databankStore.backendRetryDelaySec,
   libraryPath: databankStore.libraryPath,
   electronMode: databankStore.electronMode,
   folderState: databankStore.folderState,

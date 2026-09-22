@@ -143,7 +143,7 @@ export function LibraryPanel() {
   const {
     files, folderTree, folderTreeLoading, scanStatus, viewMode, selectedFileId,
     selectedFileDetail, loadStatus, loadError,
-    autoPdf, backendAvailable,
+    autoPdf, backendState, backendRetryDelaySec,
     libraryPath, localLibrary, folderState,
     browseMode, browseResult, browsing,
     stats, filesComplete, loading,
@@ -1144,10 +1144,19 @@ export function LibraryPanel() {
         </div>
       )}
 
-      {/* Backend warning (web mode only) */}
-      {!isElectron() && !backendAvailable && (
-        <div className="library-backend-warn">
-          Backend unreachable — is the BoardRipper server running? Retrying automatically.
+      {/* Backend warning (web mode only). Shown for a CONFIRMED failure only —
+          `unknown` is the first contact still in flight, and a notice there
+          would flash on every load. The promise in the text is kept by the
+          store's reconnect timer; the button skips its current wait. */}
+      {!isElectron() && backendState === 'down' && (
+        <div className="library-backend-warn" role="status">
+          <span>Backend unreachable — is the BoardRipper server running? Retrying every {backendRetryDelaySec} s.</span>
+          <button
+            className="library-backend-retry"
+            onClick={() => { void databankStore.retryBackendNow(); }}
+          >
+            Retry now
+          </button>
         </div>
       )}
 
@@ -1308,16 +1317,29 @@ export function LibraryPanel() {
           </div>
         ) : folderLibraryUi && files.length === 0 ? (
           <FolderLibraryEmptyState />
-        ) : !backendAvailable && files.length === 0 ? (
+        ) : backendState === 'down' && files.length === 0 ? (
           <div className="library-empty">
             Library will appear once the backend is reachable.
           </div>
-        ) : !filesComplete && loading && files.length === 0 ? (
-          // Stream still running (loadStatus flips to 'loaded' as soon as the
-          // essentials land, so we gate on filesComplete + loading, not
-          // loadStatus). A failed/finished stream drops `loading` and falls
-          // through to the empty message below rather than spinning forever.
+        ) : files.length === 0 && !filesComplete && (loading || backendState !== 'ok') ? (
+          // No answer yet. `filesComplete` is the only proof of an empty
+          // library — it is set by the stream's own completion, so a request
+          // that is still hanging (a NAS mid-reboot) or a first contact that
+          // has not come back reads as waiting, never as "empty". The
+          // 2026-09-22 report was the old order of these branches: with the
+          // backend silent, `loading` was still false and the panel offered
+          // "Library is empty — Open Settings to scan" until the failure came.
           <div className="library-empty">Loading library…</div>
+        ) : files.length === 0 && !filesComplete ? (
+          // The backend answered but the list stream did not finish (a torn
+          // stream, a parse error) — say that, with the way out, instead of
+          // either a spinner for ever or a false "empty".
+          <div className="library-empty">
+            <div>The library list did not finish loading.</div>
+            <button className="library-empty-action" onClick={() => { void databankStore.fetchFiles({ force: true }); }}>
+              Reload
+            </button>
+          </div>
         ) : files.length === 0 ? (
           <div className="library-empty">
             <div>Library is empty — no files indexed yet.</div>

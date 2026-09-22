@@ -33,6 +33,17 @@ export function hasBackend(): boolean {
 }
 
 
+/** `unknown` = no answer yet (render as waiting); `ok` = the last request
+ *  succeeded; `down` = the last request failed at the transport or with a
+ *  non-JSON / non-2xx answer (a proxy's 502 counts — the server behind it is
+ *  not there). */
+export type BackendState = 'unknown' | 'ok' | 'down';
+
+/** Reconnect back-off while the backend is down: quick at first (a restart
+ *  takes a few seconds), then every 30 s so a laptop left open on a dead
+ *  bookmark does not hammer anything. */
+const BACKEND_RETRY_DELAYS_MS = [2000, 4000, 8000, 15000, 30000] as const;
+
 export interface DatabankFile {
   id: number;
   path: string;
@@ -501,7 +512,14 @@ class DatabankStore extends Emitter {
   })();
   private _selectedFileDetail: FileDetail | null = null;
   private _loading = false;
-  private _backendAvailable = true; // assume yes until first failure
+  private _backendAvailable = true; // `_backendState !== 'down'` — kept for the many feature gates
+  /** What we actually know about the backend. `unknown` until the first
+   *  answer: a panel must render that as *waiting*, never as a fact ("the
+   *  library is empty") — the 2026-09-22 report was exactly that claim,
+   *  shown for the seconds a request to a rebooting NAS hangs. */
+  private _backendState: BackendState = 'unknown';
+  private _backendRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private _backendRetryDelay: number = BACKEND_RETRY_DELAYS_MS[0];
   private _libraryPath: string | null = null;
   private _electronMode = false;
   /** Local-folder library (lite / offline builds) — see folder-library.ts. */
@@ -560,6 +578,9 @@ class DatabankStore extends Emitter {
   get selectedFileDetail() { return this._selectedFileDetail; }
   get loading() { return this._loading; }
   get backendAvailable() { return this._backendAvailable; }
+  get backendState(): BackendState { return this._backendState; }
+  /** Seconds until the next automatic reconnect attempt (while `down`). */
+  get backendRetryDelaySec(): number { return Math.round(this._backendRetryDelay / 1000); }
   get libraryPath() { return this._libraryPath; }
   get electronMode() { return this._electronMode; }
   get folderState(): FolderLibraryState { return this._folderState; }
@@ -869,22 +890,79 @@ class DatabankStore extends Emitter {
         throw new Error('Expected JSON, got ' + contentType);
       }
       this._backendWarned = false;
-      if (!this._backendAvailable) {
-        this._backendAvailable = true;
-        this.notify();
-      }
+      this._setBackendState('ok');
       return await res.json();
     } catch {
       if (!this._backendWarned && !settling) {
         log.scan.warn('Backend unavailable — is the BoardRipper server running? (dev: go backend on :1336)');
         this._backendWarned = true;
       }
-      if (this._backendAvailable) {
-        this._backendAvailable = false;
-        this.notify();
-      }
+      this._setBackendState('down');
       return null;
     }
+  }
+
+  /** The one writer of `_backendState`. `down` arms the reconnect timer the
+   *  Library's notice promises ("retrying automatically" was text with no
+   *  code behind it until 2026-09-22); the first `ok` after a `down` re-runs
+   *  the startup load, because every fetch in it returned null and the store
+   *  reported `loaded` with nothing in it. `unknown → ok` does nothing: that
+   *  is the ordinary first contact. */
+  private _setBackendState(next: BackendState) {
+    const prev = this._backendState;
+    if (prev === next) return;
+    this._backendState = next;
+    this._backendAvailable = next !== 'down';
+    if (next === 'down') {
+      this._scheduleBackendRetry();
+    } else {
+      this._clearBackendRetry();
+      this._backendRetryDelay = BACKEND_RETRY_DELAYS_MS[0];
+      if (prev === 'down') {
+        log.scan.log('Backend reachable again — reloading the library');
+        this._loadStatus = 'idle';
+        void this.ensureLoaded();
+      }
+    }
+    this.notify();
+  }
+
+  private _clearBackendRetry() {
+    if (this._backendRetryTimer) { clearTimeout(this._backendRetryTimer); this._backendRetryTimer = null; }
+  }
+
+  private _scheduleBackendRetry() {
+    this._clearBackendRetry();
+    if (!hasBackend()) return;
+    this._backendRetryTimer = setTimeout(() => { void this._retryBackend(); }, this._backendRetryDelay);
+  }
+
+  /** One reconnect probe against /api/health (cheap, never touches the
+   *  library DB). Success flips the state through `_setBackendState`, which
+   *  reloads; failure backs off along BACKEND_RETRY_DELAYS_MS and re-arms. */
+  private async _retryBackend(): Promise<boolean> {
+    this._backendRetryTimer = null;
+    let ok = false;
+    try {
+      const res = await fetch('/api/health', { cache: 'no-store' });
+      ok = res.ok;
+    } catch { ok = false; }
+    if (ok) {
+      this._setBackendState('ok');
+      return true;
+    }
+    const i = (BACKEND_RETRY_DELAYS_MS as readonly number[]).indexOf(this._backendRetryDelay);
+    this._backendRetryDelay = BACKEND_RETRY_DELAYS_MS[Math.min(i + 1, BACKEND_RETRY_DELAYS_MS.length - 1)];
+    this.notify();
+    this._scheduleBackendRetry();
+    return false;
+  }
+
+  /** The notice's "Retry now" button: probe immediately instead of waiting
+   *  out the current back-off. */
+  retryBackendNow(): Promise<boolean> {
+    this._clearBackendRetry();
+    return this._retryBackend();
   }
 
   private _persistScanStatus() {
