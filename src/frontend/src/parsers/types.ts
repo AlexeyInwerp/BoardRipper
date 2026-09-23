@@ -422,6 +422,11 @@ export interface BoardData {
   /** Repair tables and notes the file drew as board text (XZZ "common
    *  problems" boards). Absent when the file carries none. */
   annotations?: BoardAnnotations;
+
+  /** Net name → what the net does, from the XZZ `===信号` glossary. Vendor
+   *  prose (Chinese on every file seen). Includes nets this board does not
+   *  carry. Absent when the file has no glossary. */
+  netDescriptions?: Map<string, string>;
 }
 
 export interface BomAlternateCluster {

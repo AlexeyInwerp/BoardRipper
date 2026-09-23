@@ -149,3 +149,36 @@ describe('parseXzzTailAnnotations — a tail carrying both encodings', () => {
     expect(t.diodes.get('C100(1)')).toMatchObject({ mv: 538 });
   });
 });
+
+describe('parseXzzTailAnnotations — ===信号 net glossary', () => {
+  const GB = { 信号: [0xD0, 0xC5, 0xBA, 0xC5], 阻值: [0xD7, 0xE8, 0xD6, 0xB5], 显示: [0xCF, 0xD4, 0xCA, 0xBE] };
+  const ascii = (s: string) => [...new TextEncoder().encode(s)];
+  /** The tail as iPhoneXSMAX Common problems lays it out: a nameless BOM
+   *  section, the glossary, then the readings — every marker and description
+   *  in GB2312, not UTF-8. */
+  function sectionedTail(): Uint8Array {
+    const bytes = [
+      ...ascii('v6v6555v6v6===\nC230_W 0.3PF_16V 01005\n'),
+      ...ascii('==='), ...GB.信号, ...ascii('\n'),
+      ...ascii('PP_VDD_MAIN='), ...GB.显示, ...ascii('\r\n'),
+      ...ascii('RAIL_A=A=B\n'),
+      ...ascii('==='), ...GB.阻值, ...ascii('\n=359=C100(1)\n'),
+    ];
+    return new Uint8Array(bytes);
+  }
+
+  it('reads NETNAME=description lines from GB2312 and splits on the first =', () => {
+    const t = parseXzzTailAnnotations(sectionedTail());
+    expect([...t.netDescriptions]).toEqual([['PP_VDD_MAIN', '显示'], ['RAIL_A', 'A=B']]);
+  });
+
+  it('does not mistake BOM or reading lines for glossary entries, and still reads the readings', () => {
+    const t = parseXzzTailAnnotations(sectionedTail());
+    expect(t.netDescriptions.has('C230_W 0.3PF_16V 01005')).toBe(false);
+    expect(t.diodes.get('C100(1)')).toMatchObject({ mv: 359 });
+  });
+
+  it('is empty when the tail has no glossary section', () => {
+    expect(parseXzzTailAnnotations(withTail('\n=359=C100(1)\n')).netDescriptions.size).toBe(0);
+  });
+});

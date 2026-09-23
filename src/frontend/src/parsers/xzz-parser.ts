@@ -1428,12 +1428,17 @@ export interface XzzTailAnnotations {
   /** Which encoding the section used, for logging. `json+legacy`: both, in
    *  one tail (35 of 138 tail-carrying files in XZZ_FORMAT.md's sample). */
   encoding: 'none' | 'legacy' | 'json' | 'json+legacy';
+  /** `===信号` net glossary: net name → a one-line description of what the
+   *  net does ("CPU到显示屏接口MIPI总线数据1"). Keyed by the file's net name,
+   *  before `netAliases` is applied. Present on either encoding. */
+  netDescriptions: Map<string, string>;
 }
 
 function emptyAnnotations(): XzzTailAnnotations {
   return {
     diodes: new Map(), diodesByAlias: new Map(),
     partAliases: new Map(), netAliases: new Map(), encoding: 'none',
+    netDescriptions: new Map(),
   };
 }
 
@@ -1473,12 +1478,16 @@ export function parseXzzTailAnnotations(raw: Uint8Array): XzzTailAnnotations {
   const jsonBytes = findJsonSection(tail);
   const json = jsonBytes ? parseXzzTailJson(jsonBytes) : null;
   const legacy = parseLegacyDiodeRecords(tail);
-  if (!json) return legacy;
-  // One tail can carry both encodings — `===阻值` records, then the JSON — and
-  // each holds readings the other does not. JSON wins a key both define.
-  for (const [key, reading] of legacy.diodes) if (!json.diodes.has(key)) json.diodes.set(key, reading);
-  if (legacy.diodes.size > 0) json.encoding = 'json+legacy';
-  return json;
+  let out = legacy;
+  if (json) {
+    // One tail can carry both encodings — `===阻值` records, then the JSON — and
+    // each holds readings the other does not. JSON wins a key both define.
+    for (const [key, reading] of legacy.diodes) if (!json.diodes.has(key)) json.diodes.set(key, reading);
+    if (legacy.diodes.size > 0) json.encoding = 'json+legacy';
+    out = json;
+  }
+  out.netDescriptions = parseNetGlossary(tail);
+  return out;
 }
 
 const ascii = (s: string) => Uint8Array.from(s, c => c.charCodeAt(0));
@@ -1512,6 +1521,30 @@ function findJsonSection(tail: Uint8Array): Uint8Array | null {
   if (brace < 0) return null;
   const end = indexOfBytes(tail, NEXT_MARKER, brace);
   return tail.subarray(brace, end < 0 ? tail.length : end);
+}
+
+/** `===信号` section: `NETNAME=description`, one per line, until the next
+ *  `===` marker. Split on the FIRST `=` — descriptions contain their own (15
+ *  of 531 lines on iPhoneXSMAX Common problems). Lines are decoded one at a
+ *  time because one tail mixes encodings: GB2312 markers and prose, UTF-8
+ *  JSON. A net listed twice keeps its last description (26 repeats on that
+ *  file, all verbatim). */
+function parseNetGlossary(tail: Uint8Array): Map<string, string> {
+  const out = new Map<string, string>();
+  let inGlossary = false;
+  let start = 0;
+  for (let i = 0; i <= tail.length; i++) {
+    if (i < tail.length && tail[i] !== 0x0a) continue;
+    const line = decodeXzzText(tail.subarray(start, i)).replace(/\r$/, '');
+    start = i + 1;
+    if (line.startsWith('===')) { inGlossary = line.slice(3).trim() === '信号'; continue; }
+    if (!inGlossary) continue;
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    const net = line.slice(0, eq).trim(), text = line.slice(eq + 1).trim();
+    if (net && text) out.set(net, text);
+  }
+  return out;
 }
 
 function parseXzzTailJson(bytes: Uint8Array): XzzTailAnnotations | null {
@@ -2935,6 +2968,19 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   // Try the `reference` key first, then the `alias` key: the two deliveries of
   // one board disagree about which of the two the binary blocks use, and after
   // the rename above `part.name` may be either.
+  // Net glossary, keyed by the name the board now uses. Descriptions of nets
+  // this file does not carry are kept: the glossary is written for the whole
+  // board and a partial file (iPhoneXSMAX Common problems: 421 of 505 present)
+  // still benefits from the rest in a search or a list.
+  const netDescriptions = new Map<string, string>();
+  for (const [net, text] of tail.netDescriptions) netDescriptions.set(tail.netAliases.get(net) ?? net, text);
+  if (netDescriptions.size > 0) {
+    const boardNets = new Set(parts.flatMap(p => p.pins.map(pin => pin.net)));
+    let onBoard = 0;
+    for (const net of netDescriptions.keys()) if (boardNets.has(net)) onBoard++;
+    log.parser.log(`[xzz tail] net glossary: ${netDescriptions.size} descriptions, ${onBoard} on a net this board has`);
+  }
+
   let diodeReference: DiodeReferenceChannel | undefined;
   if (tail.diodes.size > 0) {
     const counts = { value: 0, open: 0, none: 0 };
@@ -2963,6 +3009,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     butterflyFoldAxis: fold?.dim ?? (boardsOut && boardsOut.some(b => b.fold) ? boardsOut.find(b => b.fold)!.fold!.dim : undefined),
     diodeReference,
     ...(annotations ? { annotations } : {}),
+    ...(netDescriptions.size > 0 ? { netDescriptions } : {}),
     traces: traces.length > 0 ? traces : undefined,
     vias: vias.length > 0 ? vias : undefined,
     silkscreen: silkscreen.length > 0 ? silkscreen : undefined,

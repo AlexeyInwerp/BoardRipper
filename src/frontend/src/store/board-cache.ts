@@ -117,7 +117,8 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 // 98: XZZ top-level 0x06 TEXT blocks are now read and the repair tables that
 //     "common problems" boards draw as loose text are reconstructed into
 //     BoardData.annotations. A cached board from v97 simply has no annotations.
-const PARSER_VERSION = 98;
+// 99: XZZ `===信号` net glossary read into BoardData.netDescriptions.
+const PARSER_VERSION = 99;
 
 interface CachedBoard {
   key: string;

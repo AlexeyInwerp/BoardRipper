@@ -745,20 +745,26 @@ never XOR'd or DES'd — and sits past the net block. It carries reference
 encoding, the rename tables XZZ's own viewer uses for part designators and net
 names. None of it is geometry.
 
-There are **two encodings**, and a tail can carry both (see below).
+### Sections
+
+The tail is line-oriented and split by `===<name>` marker lines. The name is
+**GB2312**, so a UTF-8 or latin-1 dump shows it as a few "binary bytes": the
+"4 binary bytes" in encoding A below are `D7 E8 D6 B5`, 阻值, and the JSON
+banner's are `B8 BD BC D3`, 附加. A marker may carry its payload on the same
+line, so the name runs only to the first `{` or `[`.
 
 Of the 338 sample files, 138 have a tail. Its line breaks are LF on 122 and CRLF on 16.
-Section markers (`===<name>`, the name GB2312) seen, by number of files:
+Section markers seen, by number of files:
 
-| section | files | content |
-|---|---|---|
-| `===PCB附加` | 113 | encoding B, one JSON line |
-| `===阻值` | 56 | encoding A — but see below |
-| `===信号` | 12 | net glossary, `NETNAME=description` |
-| `===原理图` | 6 | the companion schematic's file name |
-| `===` (no name) | 4 | bill of materials, `REFDES VALUE PACKAGE` (3 fields on 5,637 of 5,640 lines) |
-| `===阻值表` | 3 | per-**net** readings, `NETNAME=value` |
-| `===阻值图`, `===电压`, `===RFFE` | 1 each | per-net readings; per-net voltages (`PP1V8=1.8V`); a JSON RF bus map |
+| section | files | content | read by the parser |
+|---|---|---|---|
+| `===PCB附加` | 113 | encoding B, one JSON line | yes |
+| `===阻值` | 56 | encoding A — but see below | yes |
+| `===信号` | 12 | net glossary, `NETNAME=description` | yes: `netDescriptions` |
+| `===原理图` | 6 | the companion schematic's file name | no |
+| `===` (no name) | 4 | bill of materials, `REFDES VALUE PACKAGE` (3 fields on 5,637 of 5,640 lines) | no |
+| `===阻值表` | 3 | per-**net** readings, `NETNAME=value` | no |
+| `===阻值图`, `===电压`, `===RFFE` | 1 each | per-net readings; per-net voltages (`PP1V8=1.8V`); a JSON RF bus map | no |
 
 **Encoding A pins are not all numbers.** Of the 23,821 `=value=PART(pin)` lines under
 `===阻值`, 8,833 (37 %) name a BGA pad — `N485(D9)`, `N489(AM14)`. Until PARSER_VERSION
@@ -770,6 +776,18 @@ records but 7 repeated keys). Another 685 lines under
 `===阻值` are per-net `NETNAME=value` records — the `阻值表` schema under the other
 name — and one is two such records run together on a single line.
 
+**Net glossary (`===信号`).** One `NETNAME=description` per line up to the
+next marker. The description is Chinese prose ("CPU到显示屏接口MIPI总线数据1").
+Split on the **first** `=`, because descriptions contain their own (15 of 531
+lines on iPhoneXSMAX Common problems). A net may be listed twice (26 repeats on
+that file, all word for word), and the last one wins. Decode line by line, because
+one tail can mix encodings (GB2312 markers and prose, UTF-8 JSON). The glossary is
+written for the whole board, so it names nets a partial file does not carry: 421 of
+that file's 505 described nets are in its net block, and 420 reach a parsed net.
+Surfaced as `BoardData.netDescriptions`, keyed by the net's final name (after
+`netAliases`); nothing renders it yet.
+
+There are **two encodings** of the diode readings, and a tail can carry both.
 `parseXzzTailAnnotations()` reads both encodings, by content rather than by file name:
 
 - **Legacy records** are scanned for over the whole tail, always.
