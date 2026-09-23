@@ -519,6 +519,8 @@ export class BoardRenderer {
   private gestureOwner: 'none' | 'pointer' | 'gesture' = 'none';
   private gestureReleaseTimer: ReturnType<typeof setTimeout> | null = null;
   private boundGestureEnd: ((e: Event) => void) | null = null;
+  /** Ends a gesture whoever owned it — see the body for why that matters. */
+  private endGestureOwnership: (() => void) | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private containerEl: HTMLDivElement;
   /** Canvas2D "Text fast mode" label overlay — lazily created by
@@ -1801,8 +1803,8 @@ export class BoardRenderer {
       if (this.pinch && (e.pointerId === this.pinch.a || e.pointerId === this.pinch.b)) {
         this.seedPinch();
       }
-      if (this.gestureOwner === 'pointer' && this.activeTouchIds.size === 0) {
-        this.gestureOwner = 'none';
+      if (this.activeTouchIds.size === 0 && this.gestureOwner !== 'none') {
+        this.endGestureOwnership?.();
       }
     };
     window.addEventListener('pointerup', this.boundPointerRelease, { capture: true });
@@ -1991,6 +1993,20 @@ export class BoardRenderer {
       this.gestureOwner = 'none';
       this.viewport.plugins.resume('drag');
       if (this.activeTouchIds.size >= 2) this.seedPinch();
+    };
+    this.endGestureOwnership = () => {
+      // Whoever owned it. The drag plugin is paused when WebKit's stream
+      // claims a gesture and was resumed only by releaseGesture, which bails
+      // unless the owner is still 'gesture' — so when the second finger's
+      // pointerdown arrived after the claim and seedPinch took the owner over,
+      // the plugin stayed paused for good. From then on one finger could not
+      // pan at all; two still could, because installTouchPinch pans by itself.
+      // That was the "after a few zooms, pan only works with two fingers"
+      // report. Resuming here, unconditionally, on the last finger leaving, is
+      // the invariant: no fingers ⇒ drag is live.
+      if (this.gestureReleaseTimer) { clearTimeout(this.gestureReleaseTimer); this.gestureReleaseTimer = null; }
+      this.gestureOwner = 'none';
+      this.viewport.plugins.resume('drag');
     };
     /** WebKit fires no gesturecancel, so a claim that stops arriving lapses. */
     const armGestureRelease = () => {
@@ -3906,6 +3922,10 @@ export class BoardRenderer {
     const dist = Math.hypot(pb.x - pa.x, pb.y - pa.y);
     if (dist < 1) { this.pinch = null; return; }
     const rect = this.containerEl.getBoundingClientRect();
+    if (this.gestureOwner === 'gesture' && this.gestureReleaseTimer) {
+      clearTimeout(this.gestureReleaseTimer);
+      this.gestureReleaseTimer = null;
+    }
     this.gestureOwner = 'pointer';
     this.pinch = {
       a, b, startDist: dist, startScale: Math.abs(this.viewport.scale.x),

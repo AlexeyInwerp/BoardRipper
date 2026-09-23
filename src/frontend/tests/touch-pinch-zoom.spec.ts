@@ -149,6 +149,67 @@ test.describe('board pinch', () => {
     expect(await selected(page)).toBe(subject);
   });
 
+  /** One finger must pan again after a gesture WebKit claimed early.
+   *
+   *  When a gesture is claimed by WebKit's stream the drag plugin is paused,
+   *  and it was resumed only by a release that bailed unless the owner was
+   *  still 'gesture'. If the second finger's pointerdown arrived after the
+   *  claim, seedPinch took the owner over and the plugin stayed paused for
+   *  good: from then on one finger could not pan, two still could (the pinch
+   *  handler pans by itself). That is "after a few zooms, pan only works with
+   *  two fingers". Real touches here, because it is pixi-viewport's own drag
+   *  plugin that has to move the board afterwards. */
+  test('one finger still pans after a gesture the engine claimed first', async ({ page }) => {
+    const c = await load(page);
+    const cdp = await page.context().newCDPSession(page);
+    const gesture = (type: string, scale: number) => page.evaluate(({ type, scale, c }) => {
+      const el = document.querySelector('.board-panel-canvas')!;
+      const e = new MouseEvent(type, { clientX: c.x, clientY: c.y, bubbles: true, cancelable: true });
+      Object.defineProperty(e, 'scale', { value: scale });
+      Object.defineProperty(e, 'rotation', { value: 0 });
+      el.dispatchEvent(e);
+    }, { type, scale, c });
+
+    await focus(page, SUBJECT);
+    await page.waitForTimeout(1000);
+    await clearSelection(page);
+    await tap(page, cdp, c);
+    const subject = await selected(page);
+    expect(subject).not.toBeNull();
+
+    // The iPadOS order: finger one registers, the engine claims the gesture,
+    // and only then does finger two's pointerdown arrive.
+    await touch(cdp, 'touchStart', [{ x: c.x - 40, y: c.y }]);
+    await gesture('gesturestart', 1);
+    await touch(cdp, 'touchStart', [{ x: c.x - 40, y: c.y }, { x: c.x + 40, y: c.y }]);
+    for (let i = 1; i <= 6; i++) {
+      const d = 40 + i * 6;
+      await touch(cdp, 'touchMove', [{ x: c.x - d, y: c.y }, { x: c.x + d, y: c.y }]);
+      await gesture('gesturechange', 1 + i * 0.05);
+      await page.waitForTimeout(8);
+    }
+    await touch(cdp, 'touchEnd', [{ x: c.x - 76, y: c.y }]);
+    await touch(cdp, 'touchEnd', []);
+    await gesture('gestureend', 1.3);
+    await page.waitForTimeout(300);
+
+    // Put the part back under the centre, then pan with ONE finger.
+    await focus(page, SUBJECT);
+    await page.waitForTimeout(1000);
+    await clearSelection(page);
+    const DX = 160;
+    await touch(cdp, 'touchStart', [c]);
+    for (let i = 1; i <= 16; i++) {
+      await touch(cdp, 'touchMove', [{ x: c.x + (DX * i) / 16, y: c.y }]);
+      await page.waitForTimeout(8);
+    }
+    await touch(cdp, 'touchEnd', []);
+    await page.waitForTimeout(500);
+
+    await tap(page, cdp, { x: c.x + DX, y: c.y });
+    expect(await selected(page), 'the board should have followed one finger').toBe(subject);
+  });
+
   test('the point between the fingers does not move while zooming', async ({ page }) => {
     const c = await load(page);
     const cdp = await page.context().newCDPSession(page);
