@@ -1,5 +1,16 @@
 # BoardRipper changelog
 
+## v0.43.2 — 2026-09-23
+
+### Fixed
+
+- **One finger pans the board again after a pinch.** On the iPad, after a
+  few zooms, panning only worked with two fingers. When the tablet's own
+  gesture recogniser claimed a pinch before the second finger had registered,
+  the board paused its one-finger drag for the gesture and never resumed it.
+  It now resumes the moment the last finger leaves, whichever path handled
+  the gesture.
+
 ## v0.43.1 — 2026-09-22
 
 ### Fixed
