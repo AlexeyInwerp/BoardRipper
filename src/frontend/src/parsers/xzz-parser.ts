@@ -986,7 +986,15 @@ function parsePartBlock(encBuf: Uint8Array): PartData | null {
   return { name: partName, side: 'top', pins, groupName, silkLines, value };
 }
 
-export interface TestPadData { x: number; y: number; netIndex: number; side?: 'top' | 'bottom'; }
+export interface TestPadData {
+  x: number; y: number; netIndex: number; side?: 'top' | 'bottom';
+  /** The record's own name (a pad number such as "76"), drill and first pad
+   *  record — the same fields a part's pin sub-block carries. */
+  name: string; drill: number; padAngleDeg: number;
+  padW: number; padH: number; padShape: 'round' | 'rect';
+  /** Set by the board-pack pass, like PartData.boardIndex. */
+  boardIndex?: number;
+}
 
 /** Top-level `0x09` test pad: the pin sub-block's layout (name, three pad
  *  records, 5-byte terminator, net index), then an optional
@@ -999,12 +1007,21 @@ export function parseTestPadBlock(data: Uint8Array): TestPadData | null {
   let ptr = 4; // skip pad_number
   const x = ri32(data, ptr) / XZZ_SCALE; ptr += 4;
   const y = ri32(data, ptr) / XZZ_SCALE; ptr += 4;
-  ptr += 8; // drill + pad angle
+  const drill = ru32(data, ptr) / XZZ_SCALE; ptr += 4;
+  const padAngleDeg = ru32(data, ptr) / XZZ_SCALE; ptr += 4;
   if (ptr + 4 > data.length) return null;
-  const nameLen = ru32(data, ptr); ptr += 4 + nameLen;
+  const nameLen = ru32(data, ptr); ptr += 4;
+  const name = ptr + nameLen <= data.length ? rstr(data, ptr, nameLen) : '';
+  ptr += nameLen;
+  let padW = 0, padH = 0, padShape: 'round' | 'rect' = 'rect';
+  if (ptr + 9 <= data.length) {
+    padW = ru32(data, ptr) / XZZ_SCALE;
+    padH = ru32(data, ptr + 4) / XZZ_SCALE;
+    padShape = data[ptr + 8] === 0x01 ? 'round' : 'rect';
+  }
   ptr += 27 + 5; // three (w, h, shape) pad records + terminator
   const netIndex = ptr + 4 <= data.length ? ru32(data, ptr) : 0;
-  return { x, y, netIndex };
+  return { x, y, netIndex, name, drill, padAngleDeg, padW, padH, padShape };
 }
 
 interface ViaData { x: number; y: number; outer: number; netIndex: number; mirrored?: boolean; }
@@ -1863,6 +1880,7 @@ function foldBoardPack(args: {
   const viaBoard = vias.map(v => boardAt(v.x, v.y));
   const silkBoard = silk.map(s => boardAt((s.p1.x + s.p2.x) / 2, (s.p1.y + s.p2.y) / 2));
   const tpBoard = testPads.map(tp => boardAt(tp.x, tp.y));
+  testPads.forEach((tp, i) => { tp.boardIndex = tpBoard[i]; });
   const segBoard = new Int32Array(segments.length).fill(-1);
   comps.forEach((c, ci) => { for (const si of c.segIdxs) segBoard[si] = compBoard[ci]; });
   if (seamSegs.size > 0 && boards.length > 0) for (const si of seamSegs) segBoard[si] = 0;
@@ -2268,6 +2286,16 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       }
       t.mirrored = true;
     }
+    // Test points: same single-point rule as vias. Without it, a bottom-side
+    // test point stayed at its pre-fold position with side 'top'.
+    for (const tp of testPads) {
+      const c = fold.dim === 'x' ? tp.x : tp.y;
+      const isBottom = fold.lowerIsBottom ? c < fold.axis : c > fold.axis;
+      tp.side = isBottom ? 'bottom' : 'top';
+      if (!isBottom) continue;
+      if (fold.dim === 'x') tp.x = 2 * fold.axis - tp.x;
+      else                  tp.y = 2 * fold.axis - tp.y;
+    }
     // Vias use a single point — classify by it directly.
     for (const v of viasRaw) {
       const c = fold.dim === 'x' ? v.x : v.y;
@@ -2604,7 +2632,23 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     );
   }
 
-  for (const pd of partDataList) {
+  // Test points (top-level 0x09) become single-pin parts, the way other
+  // files store their test points, so they draw, select and join their net.
+  // Name: "TP" + the record's pad number; the pad number alone ("76") would
+  // read as a part name and can collide with one. Pad numbers repeat on some
+  // files (five "1"s on iPadAir3 820-01531), so repeats get a suffix.
+  const tpSeen = new Map<string, number>();
+  const testPointParts: PartData[] = testPads.map((tp, i) => {
+    const base = `TP${tp.name || i + 1}`;
+    const n = (tpSeen.get(base) ?? 0) + 1; tpSeen.set(base, n);
+    return { name: n === 1 ? base : `${base}-${n}`, side: tp.side ?? 'top', groupName: '', silkLines: [],
+    ...(tp.boardIndex !== undefined ? { boardIndex: tp.boardIndex } : {}),
+    pins: [{ name: '1', x: tp.x, y: tp.y, netIndex: tp.netIndex, drill: tp.drill,
+      padW: tp.padW, padH: tp.padH, padAngleDeg: tp.padAngleDeg, padShape: tp.padShape }],
+    };
+  });
+
+  for (const pd of [...partDataList, ...testPointParts]) {
     if (!pd.name) continue;
     const pins: Pin[] = pd.pins.map((p, i) => {
       const raw2 = netDict.get(p.netIndex) ?? '';

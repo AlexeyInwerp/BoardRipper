@@ -120,7 +120,10 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 // 99: XZZ `===信号` net glossary read into BoardData.netDescriptions.
 // 100: cache keeps XZZ annotations + netDescriptions. XZZ diode join also tries a renamed part's original name (legacy
 //     records are keyed by it); purely numeric net aliases are not applied.
-const PARSER_VERSION = 100;
+// 101: XZZ top-level test points (0x09) become single-pin parts named TP<n>,
+//     so they draw, select and join their net; legacy-folded boards now
+//     mirror them onto the bottom side.
+const PARSER_VERSION = 101;
 
 interface CachedBoard {
   key: string;

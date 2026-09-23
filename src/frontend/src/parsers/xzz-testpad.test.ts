@@ -38,4 +38,10 @@ describe('parseTestPadBlock', () => {
   it('keeps the position', () => {
     expect(parseTestPadBlock(testPad(1))).toMatchObject({ x: 500, y: 600 });
   });
+
+  it('reads the name and first pad record, as for a pin', () => {
+    expect(parseTestPadBlock(testPad(955, 'OL'))).toMatchObject({
+      name: '76', padW: 20, padH: 20, padShape: 'round', drill: 0,
+    });
+  });
 });
