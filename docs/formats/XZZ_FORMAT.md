@@ -89,6 +89,7 @@ Block types (counts over the sample):
 - **Arc block (`0x01`)** — arc geometry on any layer: outline (28), silkscreen (17), copper (1–16). See [Arc Block](#arc-block-0x01)
 - **Line block (`0x05`)** — straight segment on any layer, same layer routing as arcs
 - **Via block (`0x02`)** (656,846). See [Via Block](#via-block-0x02)
+- **Text block (`0x06`)** (10,014) — free board text. See [Text Block](#text-block-0x06)
 
 ---
 
@@ -629,6 +630,81 @@ reading is empty on 5,960 pads and a diode value (`OL`, `375`, …) on the rest.
 number by its values), a centre point, then the two corners of a box that contains it
 (176 of 176), then `u32` (0 on 171; 3,600,000 = 360° ×10000 on four; 3,163,159 once) and `u32` (0 on 174).
 It looks like a silkscreen rectangle or ellipse given by centre and extent; unconfirmed.
+
+## Text Block (`0x06`)
+
+A top-level `0x06` is free board text — not to be confused with the `0x06`
+label sub-block inside a part body. Plaintext, never DES'd.
+
+```
+u32  layer       18, 29, 17, 1 or 21 (see below)
+i32  x, y        ×10000, same frame as every other coordinate
+u32  size        glyph height ×10000. There is no width field
+u32  unknown     not derived from size: size-40000 text carries 4000, 5000 or 100000
+u32  rotation    degrees ×10000
+u8   unknown     1–4
+u8   unknown     0 or 1
+u32  len
+char text[len]   GB2312 on files from Chinese tooling, else UTF-8
+```
+
+The same header as a part's `0x06` label sub-block. Over the 10,014 text records
+in a 338-file sample of the XZZ library (all 11 "Common problems" boards plus up
+to 12 files per second-level folder): `block_size − 30 − len` is 0 on every one,
+so nothing trails the string.
+Layers: 18 on 6,016, 29 on 2,551, 17 on 1,245, 1 on 141, 21 on 61. Rotation is
+0 on 7,303, 360° on 2,352, and otherwise 90/180/270 plus a few free angles (18°,
+30°, 210°, 225°, 359.555°) — degrees ×10000, the format's usual scale.
+
+**Encoding.** Decoded like every other string in the file (see
+[Text encoding](#text-encoding)). Of the sample's 603 non-ASCII text records, 601 are
+valid only as GB2312; the other 2 are valid as both and are GB2312 too — 芯片, which
+UTF-8 would read as `оƬ`, on the iPhone 6 and 6 Plus "Common problems" boards.
+
+**What it carries.** On most boardviews, nothing, or a few labels. On the
+"common problems" (FAQ) boards it carries a repair table — fault symptom,
+fault point, fix — drawn as loose text over a handful of ruled silkscreen
+lines, plus measured values drawn as text. iPhoneXSMAX Common problems:
+
+| layer | size (mils) | count | content |
+|---|---|---|---|
+| 17 | 4–200 | 29 | table caption, header and cells (26 Chinese, 2 net names); one 4-mil board label (`R1403_K`) |
+| 1 | 40–100 | 4 | designators inside table cells (`J3200`, `U3900`, `U2900`) |
+| 18 | 2 | 520 | diode readings (`OL`, `582`, …) at their pins |
+
+### Annotation tables
+
+The ruled lines do not delimit the text (every label on iPhoneXSMAX sits in
+one drawn column band), so `parsers/annotation-tables.ts` rebuilds the table
+from coordinates, in the file's own frame before any fold:
+
+1. **Collect** every non-Latin label, then ASCII labels inside their box set at
+   ≥ half the median non-Latin size. Size is what keeps silkscreen out of an
+   over-the-board table: on iPhone6Plus the box holds 2,204 ASCII texts, of
+   which the 83 at table size (60 mils, against 1–2 for silkscreen) belong.
+2. **Drop to notes** anything below a quarter of the median. Without this, three
+   1-mil legend labels on iPhone6Plus become a table's caption, and one 2.5-mil
+   label on iPhone6S merges its two tables into one 7-column table.
+3. **Split side by side** at an x gap of 1,500 mils. Column gaps inside a table
+   reach 900; gaps between tables run 1,532 (iPhone6S) to 4,987 — a thin
+   margin on the low side.
+4. **Rows** by an Otsu split of the vertical gaps (57–76 mils on the tables
+   measured; a fixed 67 would give the same rows).
+5. **Reject** a group whose largest row holds > 40 % of its labels (the iPhone12
+   flowchart: 24 of 31; real tables 7–32 %) or whose header has fewer than 3
+   columns (the iPhoneXS flowchart; every real table has 3 or 4). Its labels
+   become notes.
+6. **Caption** is a run of up to three lone labels at the top; the next row is
+   the header, whose x positions anchor the columns; every other label goes
+   to its nearest anchor.
+
+Measured on the 13 boards in the XZZ library that carry such text: all 11
+iPhone "Common problems" files give 1 or 2 tables (17 in all, 2–22 rows,
+3 or 4 columns) and both repair flowcharts give none.
+
+The result is `BoardData.annotations`: `tables` (caption, header, rows of
+multi-line cells, relative column weights, `rawBounds` in the pre-fold frame)
+and `notes`, the annotation-language labels no table took.
 
 ## Board Outline
 

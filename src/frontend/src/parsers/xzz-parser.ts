@@ -1,7 +1,8 @@
-import type { BoardData, Part, Pin, Nail, Point, Trace, SilkscreenPath, Pad, DiodeReading, DiodeReferenceChannel } from './types';
+import type { BoardData, BoardText, Part, Pin, Nail, Point, Trace, SilkscreenPath, Pad, DiodeReading, DiodeReferenceChannel } from './types';
 import { computeBBox, buildNets } from './types';
 import { detectXMirrorByPinDirection } from './mirror-detect';
 import { classifyComponents, pairMajors, decideSide, unionBBox, makeRegionLookup, splitSymmetricLoop, type OutlineComponent, type ComponentPair, type CopperVotes } from './xzz-boards';
+import { buildAnnotations } from './annotation-tables';
 import { log } from '../store/log-store';
 
 // =====================================================================
@@ -1042,6 +1043,27 @@ interface ViaData { x: number; y: number; outer: number; netIndex: number; mirro
  * rendering question, not a parsing one. The drill at [12..16) is populated
  * too (2.5–3 mil across this corpus) and equally unused.
  */
+/** Top-level `0x06` TEXT block, plaintext (not DES'd):
+ *    [layer:u32][x:i32][y:i32][size:u32][unknown:u32][rotation:u32]
+ *    [unknown:u8][unknown:u8][len:u32][text…]
+ *  The same header as a part's label sub-block. Rotation uses the format's
+ *  ×10000 degree convention. */
+function parseTextBlock(data: Uint8Array): BoardText | null {
+  if (data.length < 30) return null;
+  const len = ru32(data, 26);
+  if (30 + len > data.length) return null;
+  const text = decodeXzzText(data.subarray(30, 30 + len)).replace(/\0/g, '').trim();
+  if (!text) return null;
+  return {
+    text,
+    layer: ru32(data, 0),
+    x: ri32(data, 4) / XZZ_SCALE,
+    y: ri32(data, 8) / XZZ_SCALE,
+    size: ru32(data, 12) / XZZ_SCALE,
+    rotationDeg: ru32(data, 20) / 10000,
+  };
+}
+
 function parseViaBlock(data: Uint8Array): ViaData | null {
   if (data.length < 28) return null;
   const x         = ri32(data, 0)  / XZZ_SCALE;
@@ -2005,6 +2027,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   // rawTraces so the renderer's Silkscreen overlay (same toggle Allegro uses)
   // gets them with neutral styling rather than per-net trace coloring.
   const silkSegments: Segment[] = [];
+  const texts: BoardText[] = [];
 
   while (ptr + 5 <= mainEnd && ptr + 5 <= raw.length) {
     const blockType = raw[ptr]; ptr += 1;
@@ -2106,7 +2129,23 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         if (tp) testPads.push(tp);
         break;
       }
+      case 0x06: { // Text
+        const t = parseTextBlock(blockData);
+        if (t) texts.push(t);
+        break;
+      }
     }
+  }
+
+  // Reconstructed now, in the file's own frame: the fold, pack slide and mirror
+  // below exist to put copper right-side-up, and would only scramble text that
+  // the file already drew readable.
+  const annotations = buildAnnotations(texts);
+  if (annotations) {
+    log.parser.log(
+      `(pcb text) ${texts.length} text records → ${annotations.tables.length} annotation table(s)` +
+      ` [${annotations.tables.map(t => `${t.rows.length}×${t.header.length}`).join(', ')}], ${annotations.notes.length} loose note(s)`,
+    );
   }
 
   // Decide whether the part-label channel actually carries BOM values.
@@ -2923,6 +2962,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     format: 'XZZ', outline, parts, nails, nets: buildNets(parts), bounds,
     butterflyFoldAxis: fold?.dim ?? (boardsOut && boardsOut.some(b => b.fold) ? boardsOut.find(b => b.fold)!.fold!.dim : undefined),
     diodeReference,
+    ...(annotations ? { annotations } : {}),
     traces: traces.length > 0 ? traces : undefined,
     vias: vias.length > 0 ? vias : undefined,
     silkscreen: silkscreen.length > 0 ? silkscreen : undefined,

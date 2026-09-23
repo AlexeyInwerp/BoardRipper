@@ -114,7 +114,10 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 // 97: XZZ names, labels and board text decode GB2312 (with a plausibility
 //     check on strings valid as both), instead of lenient UTF-8 — Chinese and
 //     GB2312 `Ω` part values were garbled and then discarded.
-const PARSER_VERSION = 97;
+// 98: XZZ top-level 0x06 TEXT blocks are now read and the repair tables that
+//     "common problems" boards draw as loose text are reconstructed into
+//     BoardData.annotations. A cached board from v97 simply has no annotations.
+const PARSER_VERSION = 98;
 
 interface CachedBoard {
   key: string;

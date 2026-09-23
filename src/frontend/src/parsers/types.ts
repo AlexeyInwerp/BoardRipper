@@ -210,6 +210,40 @@ export interface SilkscreenPath {
   side: 'top' | 'bottom';
 }
 
+/** A free text record the file draws on the board. Coordinates and `size`
+ *  are in mils, in the file's own frame — before any fold, slide or mirror. */
+export interface BoardText {
+  text: string;
+  x: number;
+  y: number;
+  /** Glyph height as the file set it. Records carry no width. */
+  size: number;
+  layer: number;
+  rotationDeg: number;
+}
+
+/** A table the file drew as loose text over ruled lines, recovered from the
+ *  text positions (see `parsers/annotation-tables.ts`). */
+export interface AnnotationTable {
+  caption?: string;
+  /** One heading per column. */
+  header: string[];
+  /** rows → columns → lines. The lines are the file's own line breaks: one
+   *  text record each, top to bottom. An empty array is an empty cell. */
+  rows: string[][][];
+  /** Relative column widths, from the widest line drawn in each column. */
+  columnWeights: number[];
+  /** Box the table's text covers, in the same pre-fold frame as BoardText. */
+  rawBounds: BBox;
+}
+
+export interface BoardAnnotations {
+  tables: AnnotationTable[];
+  /** Annotation-language text that belongs to no table: legends, callouts,
+   *  flowchart boxes. */
+  notes: BoardText[];
+}
+
 /** Discriminator for the original copper-pad shape so the renderer can draw
  *  the right primitive. `bounds` always holds the axis-aligned envelope (used
  *  for hit-test and clipping); `shape` + `width`/`height`/`angleDeg`/
@@ -384,6 +418,10 @@ export interface BoardData {
    *  is gated independently by an OBD match existing. See
    *  `store/diode-readings.ts` for the source-merging resolver. */
   diodeReference?: DiodeReferenceChannel;
+
+  /** Repair tables and notes the file drew as board text (XZZ "common
+   *  problems" boards). Absent when the file carries none. */
+  annotations?: BoardAnnotations;
 }
 
 export interface BomAlternateCluster {
