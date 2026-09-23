@@ -86,6 +86,44 @@ test('lite build offers the offline-copy download (where the update badge was)',
   await expect(dl).toHaveAttribute('download', /boardripper-lite\.html/);
 });
 
+/** Registering the worker is not re-checking it. Browsers only re-fetch sw.js
+ *  on navigation, and an iPad tab or installed home-screen app that is resumed
+ *  never navigates — found 2026-09-23 with an iPad still on 0.40 three
+ *  releases later while the host served the current build. The app must ask
+ *  again whenever the page comes back into view. This drives the real
+ *  registration and asserts the ask happens; the scheduling rules themselves
+ *  are unit-tested in src/store/sw-update-checks.test.ts. */
+test('the page re-checks for a new service worker when it becomes visible again', async ({ page }) => {
+  await page.addInitScript(() => {
+    type W = Window & { __swUpdateCalls: number; __setVisible: (v: DocumentVisibilityState) => void };
+    const w = window as unknown as W;
+    w.__swUpdateCalls = 0;
+    const proto = ServiceWorkerRegistration.prototype;
+    const orig = proto.update;
+    proto.update = function (this: ServiceWorkerRegistration) {
+      w.__swUpdateCalls++;
+      try { return orig.call(this); } catch { return Promise.resolve(); }
+    };
+    let vis: DocumentVisibilityState = 'visible';
+    Object.defineProperty(document, 'visibilityState', { get: () => vis, configurable: true });
+    w.__setVisible = (v) => { vis = v; document.dispatchEvent(new Event('visibilitychange')); };
+  });
+  await page.goto('.');
+  await page.waitForLoadState('networkidle');
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await page.waitForTimeout(500);
+
+  const before = await page.evaluate(() => (window as unknown as { __swUpdateCalls: number }).__swUpdateCalls);
+  await page.evaluate(() => {
+    const w = window as unknown as { __setVisible: (v: DocumentVisibilityState) => void };
+    w.__setVisible('hidden');
+    w.__setVisible('visible');
+  });
+  await page.waitForTimeout(300);
+  const after = await page.evaluate(() => (window as unknown as { __swUpdateCalls: number }).__swUpdateCalls);
+  expect(after, 'coming back into view should ask the browser to re-check sw.js').toBeGreaterThan(before);
+});
+
 test('PWA manifest is linked', async ({ page }) => {
   await page.goto('.');
   await expect(page.locator('link[rel="manifest"]')).toHaveCount(1);

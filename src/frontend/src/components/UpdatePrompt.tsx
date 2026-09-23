@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
 import { boardStore } from '../store/board-store';
 import { log } from '../store/log-store';
+import { scheduleSwUpdateChecks } from '../store/sw-update-checks';
 
 /**
  * Lite (hosted PWA) build only: turns the service worker's "new version is
@@ -17,10 +18,25 @@ import { log } from '../store/log-store';
  * outside lite), but there is nothing to register elsewhere.
  */
 export function UpdatePrompt() {
+  const stopChecksRef = useRef<(() => void) | null>(null);
   const { needRefresh: [needRefresh, setNeedRefresh], updateServiceWorker } = useRegisterSW({
-    onRegisteredSW(url) { log.ui.log(`sw registered: ${url}`); },
+    onRegisteredSW(url, registration) {
+      log.ui.log(`sw registered: ${url}`);
+      // Registering is not re-checking. A page that never navigates again — a
+      // Safari tab on an iPad, an installed home-screen app that is resumed —
+      // would keep the worker it got on its first visit for ever, and this
+      // toast would never have a reason to appear. Ask again on every return
+      // to the page, on reconnect, and hourly. See sw-update-checks.ts.
+      if (!registration) return;
+      stopChecksRef.current?.();
+      stopChecksRef.current = scheduleSwUpdateChecks(registration, {
+        onError: (err) => log.ui.log('sw update check failed (offline?)', err),
+      });
+    },
     onRegisterError(err) { log.ui.warn('sw registration failed', err); },
   });
+
+  useEffect(() => () => { stopChecksRef.current?.(); stopChecksRef.current = null; }, []);
 
   useEffect(() => {
     if (!needRefresh) return;

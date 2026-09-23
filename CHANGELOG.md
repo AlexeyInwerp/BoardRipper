@@ -1,5 +1,17 @@
 # BoardRipper changelog
 
+## v0.43.3 — 2026-09-23
+
+### Fixed
+
+- **The hosted web app now notices new versions on a tablet.** It only checked
+  for an update when the page was loaded fresh, which an iPad tab or a
+  home-screen app almost never is — one was still running 0.40 three releases
+  later. It now checks every time you come back to it, when the connection
+  returns, and once an hour, and offers the usual *Reload*. A device already
+  stuck on an old version needs one real reload (or a full quit and relaunch
+  of the home-screen app) to pick this up; after that it stays current.
+
 ## v0.43.2 — 2026-09-23
 
 ### Fixed
