@@ -388,6 +388,13 @@ export class BoardRenderer {
   private selectionLabelLayer!: RenderLayer;
   /** Ghost outlines for cross-side net components (hidden side, semi-transparent + pulsing) */
   private crossSideGhostGfx!: Graphics;
+  /** Ghost outlines, baked separately from the fills because the pulse gives
+   *  the two different alphas. Sibling of crossSideGhostGfx in scene.root. */
+  private crossSideGhostOutlineGfx!: Graphics;
+  /** Signature of what crossSideGhostGfx currently holds — the ghost set plus
+   *  the settings the shapes depend on. The pulse never redraws; only a
+   *  changed signature does. */
+  private crossSideGhostBakeSig = '';
   /** Part indices currently drawn as cross-side ghosts (for ticker-driven pulse redraw) */
   // Set, not array — `.has()` is O(1) and the field is hot inside the per-pin
   // chain-mode net-line builder (R-4 in 2026-05-07-renderer.md). Ordering is
@@ -636,6 +643,10 @@ export class BoardRenderer {
   // Perf overlay accumulators (reset every ~500ms)
   private perfSamples = 0;
   private perfAccum = { lod: 0, selection: 0, netLines: 0, gpuRender: 0, frame: 0 };
+  /** Wall time of the most recent app.render(), always measured (the perf
+   *  overlay's accumulators only run while it is showing). Read by the
+   *  selection blink to decide how many full renders it may afford. */
+  private lastRenderMs = 0;
   private perfDisplay = { lod: 0, selection: 0, netLines: 0, gpuRender: 0, frame: 0 };
   private perfThrottle = 0;
 
@@ -995,12 +1006,14 @@ export class BoardRenderer {
         }
       }
       t0 = perf ? performance.now() : 0;
+      const renderStart = performance.now();
       try {
         this.app.render();
       } catch (err) {
         this.handleRenderCrash(err);
         return;
       }
+      this.lastRenderMs = performance.now() - renderStart;
       if (perf) this.perfAccum.gpuRender += performance.now() - t0;
       // After rendering a freshly-activated scene, keep rendering for a few more
       // frames so the CullerPlugin re-culls with the now-updated world transforms
@@ -1506,6 +1519,10 @@ export class BoardRenderer {
     this.crossSideGhostGfx = new Graphics();
     this.crossSideGhostGfx.zIndex = 15;
     this.crossSideGhostGfx.eventMode = 'none';
+    this.crossSideGhostOutlineGfx = new Graphics();
+    this.crossSideGhostOutlineGfx.zIndex = 15;
+    this.crossSideGhostOutlineGfx.eventMode = 'none';
+    this.crossSideGhostBakeSig = '';
     this.discoHaloGfx = new Graphics();
     this.discoHaloGfx.zIndex = 31; // just above selectionGfx (30), below netLabelLayer (35)
     this.discoHaloGfx.eventMode = 'none';
@@ -1698,6 +1715,10 @@ export class BoardRenderer {
     this.crossSideGhostGfx = new Graphics();
     this.crossSideGhostGfx.zIndex = 15; // above dim (10), below selection (30) and labels (35)
     this.crossSideGhostGfx.eventMode = 'none';
+    this.crossSideGhostOutlineGfx = new Graphics();
+    this.crossSideGhostOutlineGfx.zIndex = 15;
+    this.crossSideGhostOutlineGfx.eventMode = 'none';
+    this.crossSideGhostBakeSig = '';
     this.discoHaloGfx = new Graphics();
     this.discoHaloGfx.zIndex = 31; // just above selectionGfx (30), below netLabelLayer (35)
     this.discoHaloGfx.eventMode = 'none';
@@ -2863,6 +2884,7 @@ export class BoardRenderer {
     scene.root.addChild(scene.bottomLayer);
     scene.root.addChild(this.netDimGfx);
     scene.root.addChild(this.crossSideGhostGfx);
+    scene.root.addChild(this.crossSideGhostOutlineGfx);
     scene.root.addChild(this.netLabelLayer);
     scene.root.addChild(this.selectionGfx);
     scene.root.addChild(this.discoHaloGfx);
@@ -3086,6 +3108,7 @@ export class BoardRenderer {
       this.teardownHalo(); // detach halo from old scene's root before switching
       this.activeScene.root.removeChild(this.netDimGfx);
       this.activeScene.root.removeChild(this.crossSideGhostGfx);
+      this.activeScene.root.removeChild(this.crossSideGhostOutlineGfx);
       this.activeScene.root.removeChild(this.netLabelLayer);
       this.activeScene.root.removeChild(this.selectionGfx);
       this.activeScene.root.removeChild(this.multiHighlightGfx);
@@ -3121,6 +3144,7 @@ export class BoardRenderer {
     this.viewport.addChild(scene.root);
     scene.root.addChild(this.netDimGfx);
     scene.root.addChild(this.crossSideGhostGfx);
+    scene.root.addChild(this.crossSideGhostOutlineGfx);
     scene.root.addChild(this.netLabelLayer);
     scene.root.addChild(this.selectionGfx);
     scene.root.addChild(this.discoHaloGfx);
@@ -3207,6 +3231,7 @@ export class BoardRenderer {
       this.teardownButterfly(this.activeScene);
       this.activeScene.root.removeChild(this.netDimGfx);
       this.activeScene.root.removeChild(this.crossSideGhostGfx);
+      this.activeScene.root.removeChild(this.crossSideGhostOutlineGfx);
       this.activeScene.root.removeChild(this.netLabelLayer);
       this.activeScene.root.removeChild(this.selectionGfx);
       this.activeScene.root.removeChild(this.discoHaloGfx);
@@ -3221,6 +3246,8 @@ export class BoardRenderer {
     this.netDimGfx.clear();
     this.butterflyDimGfx.clear();
     this.crossSideGhostGfx.clear();
+    this.crossSideGhostOutlineGfx.clear();
+    this.crossSideGhostBakeSig = '';
     this.discoHaloGfx.clear();
     this.discoHaloParts = new Set();
     this.discoHaloDirty = false;
@@ -3240,6 +3267,7 @@ export class BoardRenderer {
       this.teardownHalo();
       this.activeScene.root.removeChild(this.netDimGfx);
       this.activeScene.root.removeChild(this.crossSideGhostGfx);
+      this.activeScene.root.removeChild(this.crossSideGhostOutlineGfx);
       this.activeScene.root.removeChild(this.netLabelLayer);
       this.activeScene.root.removeChild(this.selectionGfx);
       this.activeScene.root.removeChild(this.discoHaloGfx);
@@ -4451,20 +4479,49 @@ export class BoardRenderer {
       this.selectionBlinkTimer = null;
     }
     this.selectionBlinkPhase = 1;
+    // The one full pass: this is the draw of the new selection itself.
     this.renderSelection();
 
-    const blinkInterval = 250; // ms per phase
-    const totalPhases = 12;    // 12 × 250ms = 3 seconds
+    // Nothing to blink without a primary part — a net focus has none — and
+    // each phase would still force a full scene render. On a 39k-trace board
+    // that is ~35 ms a render here, twelve times over three seconds, for no
+    // visible change at all: measured at 6x throttle as a 210 ms stall every
+    // 250 ms until +3.9 s, exactly the blink window.
+    if (boardStore.selection.partIndex === null) {
+      this.selectionBlinkPhase = 0;
+      return;
+    }
 
+    const blinkInterval = 250; // ms per phase
+    // Each phase forces a full scene render — pixi has no partial redraw —
+    // so the blink costs twelve renders over three seconds. On a board where
+    // one render already exceeds two 60 Hz frames (39k traces: ~35 ms on a
+    // desktop, several hundred on an A12Z), twelve of them is the sluggish
+    // three seconds that used to follow a tap on a reference from the PDF.
+    // There the blink is a single red flash: same cue, two renders.
+    const heavyScene = this.lastRenderMs > 40;
+    const totalPhases = heavyScene ? 2 : 12;    // 12 × 250ms = 3 s, or one flash
+
+    // Every later phase redraws ONLY the primary outline. `selectionBlinkPhase`
+    // is read in exactly one place — the primary outline's colour — so that is
+    // the whole visible effect of a phase. The ticks used to call the full
+    // renderSelection(): thirteen rebuilds of every member pin of the lit net,
+    // 250 ms apart, for three seconds. On a desktop that is ~28 ms each and
+    // invisible; on an A12Z iPad in WebKit, with a 4077-pin GND lit from a PDF
+    // tap, each rebuild is several hundred ms and the twelve of them saturate
+    // the main thread for the whole window — the "tap lookup blocks pan and
+    // zoom for 5–10 s" report. For a net focus there is no primary part, so
+    // those twelve rebuilds drew nothing at all.
     const tick = (phase: number) => {
       this.selectionBlinkPhase = phase;
-      this.renderSelection();
+      this.renderSelectionPrimary();
+      this.needsRender = true;
       if (phase < totalPhases) {
         this.selectionBlinkTimer = setTimeout(() => tick(phase + 1), blinkInterval);
       } else {
         this.selectionBlinkPhase = 0;
         this.selectionBlinkTimer = null;
-        this.renderSelection();
+        this.renderSelectionPrimary();
       }
       // Flush to GPU even if ticker is paused (e.g. panel inactive during search focus)
       if (!this.app.ticker.started && !this.contextLost) {
@@ -4634,6 +4691,8 @@ export class BoardRenderer {
     this.selectionGfx.clear();
     this.butterflySelectionGfx.clear();
     this.crossSideGhostGfx.clear();
+    this.crossSideGhostOutlineGfx.clear();
+    this.crossSideGhostBakeSig = '';
     this.crossSideGhostParts = new Set();
     this.discoHaloGfx.clear();
     this.discoHaloParts = new Set();
@@ -4926,6 +4985,17 @@ export class BoardRenderer {
           }
         }
 
+        // resolvePinColor walks every pin-group rule and splits its keyword
+        // list on each call. Every pin of one net resolves to the same colour
+        // for its side, so resolve once per (net, side) per pass — on a
+        // 4077-pin rail that was 4077 identical rule walks per redraw.
+        const pinColorCache = new Map<string, number>();
+        const pinColorFor = (netName: string, side: 'top' | 'bottom'): number => {
+          const key = `${netName}|${side}`;
+          let c = pinColorCache.get(key);
+          if (c === undefined) { c = resolvePinColor(s, netName, side); pinColorCache.set(key, c); }
+          return c;
+        };
         // Pin glow + dim-redraw collectors for this net.
         for (const ref of net.pinIndices) {
           const part = this.board.parts[ref.partIndex];
@@ -4936,7 +5006,7 @@ export class BoardRenderer {
           const isBotGfx = gfx === this.butterflySelectionGfx;
 
           const isPin1 = ref.pinIndex === 0 && part.pins.length > 2;
-          const pinColor = (isPin1 && s.showPin1Marker) ? COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
+          const pinColor = (isPin1 && s.showPin1Marker) ? COLORS.pin1 : pinColorFor(pin.net, pin.side);
 
           // Affected names for label re-clone.
           if (part.side === 'bottom') affectedBotNames.add(part.name);
@@ -5687,39 +5757,72 @@ export class BoardRenderer {
    * animation. Ghosts are semi-transparent with a pulsing opacity driven by
    * netLinePulsePhase. Disco mode owns its own gfx layer (renderDiscoHalo).
    */
+  /** Cross-side ghosts: the hidden-side members of the lit net, pulsing.
+   *
+   *  The geometry is baked ONCE per (ghost set, settings) signature and the
+   *  pulse animates the two layers' `alpha` — the same A5 crossfade pattern
+   *  the net lines use. It used to clear and re-issue every ghost's outline,
+   *  fill, stroke and every pin fill on every ticker frame for as long as the
+   *  net stayed lit, when the only thing a frame changes is two alphas. A
+   *  rail like GND has members on both sides, so its ghost set is most of the
+   *  board: measured at 6x CPU throttle, ~210 ms of PixiJS `execute` per
+   *  frame, every frame, until the user selected something else — on an A12Z
+   *  iPad in WebKit that was the "tap lookup blocks pan and zoom for 5–10 s"
+   *  report, and the blink fix alone did not touch it.
+   *
+   *  Alphas are exact: the body fill was `ghostAlpha * 0.5` and the pins
+   *  `ghostAlpha`, so the fill layer bakes body at 0.5 and pins at 1 and
+   *  animates `alpha = ghostAlpha`; the outline layer bakes at 1 and animates
+   *  `alpha = outlineAlpha`. Two layers because one Graphics has one alpha. */
   private renderCrossSideGhosts() {
-    this.crossSideGhostGfx.clear();
-    if (this.crossSideGhostParts.size === 0 || !this.board) return;
-
+    if (this.crossSideGhostParts.size === 0 || !this.board) {
+      if (this.crossSideGhostBakeSig !== '') {
+        this.crossSideGhostGfx.clear();
+        this.crossSideGhostOutlineGfx.clear();
+        this.crossSideGhostBakeSig = '';
+        this.needsRender = true;
+      }
+      return;
+    }
     const s = renderSettingsStore.settings;
-    // Pulse alpha between 0.12 and 0.35
-    const pulse = (Math.sin(this.netLinePulsePhase * Math.PI * 2) + 1) / 2;
-    const ghostAlpha = 0.12 + pulse * 0.23;
-    const outlineAlpha = 0.25 + pulse * 0.35;
-    const ghostColor = 0x44ccff; // cyan tint to distinguish from normal highlights
+    const sig = `${[...this.crossSideGhostParts].join(',')}|${s.selectionWidth}|${s.pinSizeScale}`
+      + `|${this.activeScene ? 1 : 0}`;
+    if (sig !== this.crossSideGhostBakeSig) this.bakeCrossSideGhosts(sig);
 
-    const gfx = this.crossSideGhostGfx;
+    // Pulse alpha between 0.12 and 0.35 (fill) / 0.25 and 0.60 (outline).
+    const pulse = (Math.sin(this.netLinePulsePhase * Math.PI * 2) + 1) / 2;
+    this.crossSideGhostGfx.alpha = 0.12 + pulse * 0.23;
+    this.crossSideGhostOutlineGfx.alpha = 0.25 + pulse * 0.35;
+    this.needsRender = true;
+  }
+
+  private bakeCrossSideGhosts(sig: string) {
+    const fill = this.crossSideGhostGfx;
+    const outline = this.crossSideGhostOutlineGfx;
+    fill.clear();
+    outline.clear();
+    if (!this.board) { this.crossSideGhostBakeSig = ''; return; }
+    const s = renderSettingsStore.settings;
+    const ghostColor = 0x44ccff; // cyan tint to distinguish from normal highlights
 
     for (const partIndex of this.crossSideGhostParts) {
       const part = this.board.parts[partIndex];
       if (!part) continue;
 
-      drawPartOutline(gfx, part, s, 0);
-      gfx.fill({ color: ghostColor, alpha: ghostAlpha * 0.5 });
-      gfx.stroke({ width: s.selectionWidth, color: ghostColor, alpha: outlineAlpha });
+      drawPartOutline(fill, part, s, 0);
+      fill.fill({ color: ghostColor, alpha: 0.5 });
+      drawPartOutline(outline, part, s, 0);
+      outline.stroke({ width: s.selectionWidth, color: ghostColor, alpha: 1 });
 
-      // Draw pins — same shape the sprite uses, capsules included.
+      // Pins — same shape the sprite uses, capsules included.
       for (const pin of part.pins) {
         const clamp = this.activeScene?.pinRadiusClamp.get(partIndex) ?? Infinity;
         const r = Math.min(computePinRadius(s, pin.radius), clamp);
-        drawPinShape(gfx, pin, r);
+        drawPinShape(fill, pin, r);
       }
-      if (part.pins.length > 0) {
-        gfx.fill({ color: ghostColor, alpha: ghostAlpha });
-      }
+      if (part.pins.length > 0) fill.fill({ color: ghostColor, alpha: 1 });
     }
-
-    this.needsRender = true;
+    this.crossSideGhostBakeSig = sig;
   }
 
   /**

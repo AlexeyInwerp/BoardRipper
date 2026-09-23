@@ -1,5 +1,20 @@
 # BoardRipper changelog
 
+## v0.43.4 — 2026-09-23
+
+### Fixed
+
+- **Looking up a part or net from a PDF no longer freezes the board for
+  seconds on a tablet.** After a tap lookup the board used to redraw every
+  pin of the lit net thirteen times over three seconds — to blink the outline
+  of the selected part, which is the only thing the blink changes — and force
+  a full redraw of the whole board each time. On a large board that was the
+  5–10 s of unresponsive pan and zoom after tapping a reference on an iPad. A
+  net lookup no longer blinks at all (there is nothing to blink), and on a
+  board where one redraw is already expensive the part lookup flashes once.
+- The hidden-side ghosts of a lit net (the cyan pulsing outlines) are drawn
+  once and pulsed, instead of being rebuilt on every frame.
+
 ## v0.43.3 — 2026-09-23
 
 ### Fixed
