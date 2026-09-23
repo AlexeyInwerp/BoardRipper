@@ -198,7 +198,6 @@ function desDecrypt(buf: Uint8Array): Uint8Array {
 const XZZ_SCALE  = 10000;
 const OUTLINE_LAYER = 28;
 const SILKSCREEN_LAYER = 17;
-const decoder = new TextDecoder('utf-8', { fatal: false });
 
 export interface Segment { p1: Point; p2: Point; }
 
@@ -543,8 +542,43 @@ function ru32(d: Uint8Array, o: number): number {
 
 function ri32(d: Uint8Array, o: number): number { return ru32(d, o) | 0; }
 
+const strictUtf8 = new TextDecoder('utf-8', { fatal: true });
+const gb18030 = new TextDecoder('gb18030');
+
+// Non-ASCII a genuine UTF-8 string in these files is made of: Latin-1 symbols
+// (× ° ± µ), Greek (Ω μ), punctuation, letterlike and math symbols, CJK.
+const PLAUSIBLE_NON_ASCII = /[\u00a0-\u00ff\u0370-\u03ff\u2000-\u206f\u2100-\u214f\u2190-\u22ff\u3000-\u9fff\uff00-\uffef]/;
+
+function plausibleUtf8(s: string): boolean {
+  for (const ch of s) if (ch.charCodeAt(0) > 0x7f && !PLAUSIBLE_NON_ASCII.test(ch)) return false;
+  return true;
+}
+
+/** Names, labels and board text are GB2312 on files from Chinese tooling and
+ *  UTF-8 elsewhere; nothing in the file says which. A lenient UTF-8 decode
+ *  turned every Chinese glyph into U+FFFD, and isPlausiblePartValue then
+ *  rejected the whole label.
+ *
+ *  Validity alone cannot decide it. Short GB2312 runs are often valid UTF-8
+ *  too — 丝印 is `CB BF D3 A1`, which UTF-8 reads as `˿ӡ` — so "UTF-8 if it
+ *  decodes" misreads them; and genuine UTF-8 `×` (`C3 97`) is valid GB18030
+ *  as 脳, so "GB first" misreads that. The UTF-8 reading is kept only when it
+ *  is made of characters these files actually contain; otherwise GB18030
+ *  (a GB2312/GBK superset, ASCII-compatible). */
+export function decodeXzzText(bytes: Uint8Array): string {
+  let utf8: string | null = null;
+  try {
+    utf8 = strictUtf8.decode(bytes);
+  } catch {
+    // not UTF-8
+  }
+  if (utf8 !== null && plausibleUtf8(utf8)) return utf8;
+  const gb = gb18030.decode(bytes);
+  return utf8 !== null && gb.includes('\uFFFD') ? utf8 : gb;
+}
+
 function rstr(d: Uint8Array, o: number, n: number): string {
-  return decoder.decode(d.subarray(o, o + n)).replace(/\0/g, '').trim();
+  return decodeXzzText(d.subarray(o, o + n)).replace(/\0/g, '').trim();
 }
 
 function parseNetBlock(data: Uint8Array): Map<number, string> {

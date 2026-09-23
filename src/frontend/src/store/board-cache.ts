@@ -111,7 +111,10 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 // 96: XZZ tails carrying both diode encodings read both, and the JSON is found
 //     by its banner and bounded by the next section — legacy readings, JSON
 //     past 4 KB, and JSON followed by another section were each being lost.
-const PARSER_VERSION = 96;
+// 97: XZZ names, labels and board text decode GB2312 (with a plausibility
+//     check on strings valid as both), instead of lenient UTF-8 — Chinese and
+//     GB2312 `Ω` part values were garbled and then discarded.
+const PARSER_VERSION = 97;
 
 interface CachedBoard {
   key: string;

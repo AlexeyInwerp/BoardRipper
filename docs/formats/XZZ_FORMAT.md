@@ -127,11 +127,29 @@ Sequential entries, each containing:
 
 Over the sample's 314,453 names, **none** ends in (or contains) a NUL — the length is
 the terminator; `rstr`'s `replace(/\0/g, '')` is what made "null-terminated" look
-plausible. Indices run 1, 2, 3, … without gaps on 332 of 338 files. Names are ASCII
-almost everywhere, but two are GB2312 (`屏幕坐标` on `iPadAir3 … YiDianTong`, and a
-note-like name on `iPhone8 Qualcomm Common problems`); the non-fatal UTF-8 `rstr`
-turns those into U+FFFD. No entry uses index 0 (0 of 314,453), so a `netIndex` of 0
-means "no net".
+plausible. Indices run 1, 2, 3, … without gaps on 332 of 338 files. No entry uses index
+0 (0 of 314,453), so a `netIndex` of 0 means "no net".
+
+### Text encoding
+
+Every string in the file — net names, part names, footprint names, pin names, labels,
+board text — is GB2312 on files from Chinese tooling and UTF-8 elsewhere, and nothing in
+the file says which. Over the sample, the non-ASCII strings among those are: **1,090**
+valid only as GB2312, **125** valid as both, **0** valid only as UTF-8.
+
+Validity alone therefore cannot decide it. Of the 125, 118 are GB2312 that happens to be
+valid UTF-8 — 丝印 (`CB BF D3 A1`) reads as `˿ӡ`, 芯片 (`D0 BE C6 AC`) as `оƬ` — and 7
+are genuine UTF-8 `×` (`C3 97`) in footprint names on `IQOO15 Ultra-ET3211AM`, which
+GB18030 would read as 脳. `decodeXzzText` keeps the UTF-8 reading only when it is made of
+characters these files contain (ASCII, Latin-1 symbols such as × ° ±, Greek such as Ω μ,
+punctuation, math symbols, CJK), and otherwise decodes as GB18030 — right on all 125. The
+character set was chosen from this sample, so a file in another script could need it
+widened.
+
+Until PARSER_VERSION 97 every string went through a lenient UTF-8 decode. Chinese came out
+as U+FFFD, and `isPlausiblePartValue` then discarded the whole label: on DJI T40 battery
+board `PP00266604` 282 of 623 parts had a value, now 574 — 270 more are `Ω` resistor
+values, the rest part numbers annotated in Chinese (`LAD8C05 L01丝印BB`).
 
 ### Board packs — split, pair, fold
 
