@@ -599,8 +599,10 @@ is longer than `60 + nameLen`, by `u32 readingLen, char reading[readingLen]` and
 **The net index is at `24 + nameLen + 32`, not in the last 4 bytes.** 6,003 of the
 sample's 12,657 test pads carry the trailing section. Read at the structural offset, the
 net resolves on 9,405 pads and is 0 (no net) on the other 3,252 — never a dangling
-index. Read from the last 4 bytes, as `parseTestPadBlock` does, it resolves on 6,570;
-the two disagree on 2,835 pads, every one of which currently loses its net. The trailing
+index. Read from the last 4 bytes — what `parseTestPadBlock` did until
+PARSER_VERSION 94 — it resolves on 6,570; the two disagree on 2,835 pads, and every one
+of those lost its net. After the fix, iPadAir3 820-01531 YiDianTong goes from 0 of 538
+test pads with a net to 530, and the other 8 are on `NC`, which nails deliberately blank. The trailing
 reading is empty on 5,960 pads and a diode value (`OL`, `375`, …) on the rest.
 
 ## Block `0x03`

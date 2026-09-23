@@ -951,17 +951,24 @@ function parsePartBlock(encBuf: Uint8Array): PartData | null {
   return { name: partName, side: 'top', pins, groupName, silkLines, value };
 }
 
-interface TestPadData { x: number; y: number; netIndex: number; side?: 'top' | 'bottom'; }
+export interface TestPadData { x: number; y: number; netIndex: number; side?: 'top' | 'bottom'; }
 
-function parseTestPadBlock(data: Uint8Array): TestPadData | null {
+/** Top-level `0x09` test pad: the pin sub-block's layout (name, three pad
+ *  records, 5-byte terminator, net index), then an optional
+ *  `u32 len, char reading[len]`. The net index is therefore positional, not
+ *  the last 4 bytes: reading the tail returned 0 — no net — on every pad that
+ *  carries the reading section (2,835 of 12,657 in XZZ_FORMAT.md's sample).
+ *  Exported for xzz-testpad.test.ts. */
+export function parseTestPadBlock(data: Uint8Array): TestPadData | null {
   if (data.length < 16) return null;
   let ptr = 4; // skip pad_number
   const x = ri32(data, ptr) / XZZ_SCALE; ptr += 4;
   const y = ri32(data, ptr) / XZZ_SCALE; ptr += 4;
-  ptr += 8; // inner_diameter + unknown
+  ptr += 8; // drill + pad angle
   if (ptr + 4 > data.length) return null;
   const nameLen = ru32(data, ptr); ptr += 4 + nameLen;
-  const netIndex = data.length >= 4 ? ru32(data, data.length - 4) : 0;
+  ptr += 27 + 5; // three (w, h, shape) pad records + terminator
+  const netIndex = ptr + 4 <= data.length ? ru32(data, ptr) : 0;
   return { x, y, netIndex };
 }
 

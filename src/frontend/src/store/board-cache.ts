@@ -102,7 +102,10 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 //     them sat one name out of step); copper pours, which were not read at all;
 //     and components recovered from dangling routing, which add parts that
 //     simply are not present in an older cached BoardData.
-const PARSER_VERSION = 93;
+// 94: XZZ test pads read their net index at its structural offset instead of
+//     the last 4 bytes, which was 0 on every pad with a trailing reading
+//     section — the whole of some files' test pads had no net.
+const PARSER_VERSION = 94;
 
 interface CachedBoard {
   key: string;
