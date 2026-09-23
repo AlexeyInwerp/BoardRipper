@@ -645,38 +645,37 @@ label sub-block inside a part body. Plaintext, never DES'd.
 ```
 u32  layer       18, 29, 17, 1 or 21 (see below)
 i32  x, y        ×10000, same frame as every other coordinate
-u32  size        glyph height ×10000. There is no width field
-u32  unknown     not derived from size: size-40000 text carries 4000, 5000 or 100000
-u32  rotation    degrees ×10000
+u32  size?       read as text height ×10000; the table code relies on it
+u32  unknown     48 distinct values, most often 100, 2000, 4000, 100000
+u32  angle?      read as degrees ×10000 (values below)
 u8   unknown     1–4
 u8   unknown     0 or 1
 u32  len
 char text[len]   GB2312 on files from Chinese tooling, else UTF-8
 ```
 
-The same header as a part's `0x06` label sub-block. Over the 10,014 text records
+Laid out like a part's `0x06` label sub-block. Over the 10,014 text records
 in a 338-file sample of the XZZ library (all 11 "Common problems" boards plus up
 to 12 files per second-level folder): `block_size − 30 − len` is 0 on every one,
 so nothing trails the string.
-Layers: 18 on 6,016, 29 on 2,551, 17 on 1,245, 1 on 141, 21 on 61. Rotation is
-0 on 7,303, 360° on 2,352, and otherwise 90/180/270 plus a few free angles (18°,
-30°, 210°, 225°, 359.555°) — degrees ×10000, the format's usual scale.
+Layers: 18 on 6,016, 29 on 2,551, 17 on 1,245, 1 on 141, 21 on 61. The angle field
+divided by 10000 is 0 on 7,303, 360 on 2,352, 270 on 271, 180 on 59, 90 on 23, and
+18, 30, 210, 225 (twice) and 359.555 once each.
 
 **Encoding.** Decoded like every other string in the file (see
 [Text encoding](#text-encoding)). Of the sample's 603 non-ASCII text records, 601 are
 valid only as GB2312; the other 2 are valid as both and are GB2312 too — 芯片, which
 UTF-8 would read as `оƬ`, on the iPhone 6 and 6 Plus "Common problems" boards.
 
-**What it carries.** On most boardviews, nothing, or a few labels. On the
-"common problems" (FAQ) boards it carries a repair table — fault symptom,
-fault point, fix — drawn as loose text over a handful of ruled silkscreen
-lines, plus measured values drawn as text. iPhoneXSMAX Common problems:
+**What it carries.** On the "Common problems" boards it carries a repair table —
+fault symptom, fault point, fix — drawn as loose text over a handful of ruled
+silkscreen lines, plus short values drawn as text. iPhoneXSMAX Common problems:
 
 | layer | size (mils) | count | content |
 |---|---|---|---|
 | 17 | 4–200 | 29 | table caption, header and cells (26 Chinese, 2 net names); one 4-mil board label (`R1403_K`) |
 | 1 | 40–100 | 4 | designators inside table cells (`J3200`, `U3900`, `U2900`) |
-| 18 | 2 | 520 | diode readings (`OL`, `582`, …) at their pins |
+| 18 | 2 | 520 | short values (`OL`, `582`, `696`, …) |
 
 ### Annotation tables
 
@@ -687,17 +686,19 @@ from coordinates, in the file's own frame before any fold:
 1. **Collect** every non-Latin label, then ASCII labels inside their box set at
    ≥ half the median non-Latin size. Size is what keeps silkscreen out of an
    over-the-board table: on iPhone6Plus the box holds 2,204 ASCII texts, of
-   which the 83 at table size (60 mils, against 1–2 for silkscreen) belong.
+   which the 83 at table size (30 and 60 mils, against 1 for the rest) belong.
 2. **Drop to notes** anything below a quarter of the median. Without this, three
    1-mil legend labels on iPhone6Plus become a table's caption, and one 2.5-mil
    label on iPhone6S merges its two tables into one 7-column table.
 3. **Split side by side** at an x gap of 1,500 mils. Column gaps inside a table
-   reach 900; gaps between tables run 1,532 (iPhone6S) to 4,987 — a thin
-   margin on the low side.
-4. **Rows** by an Otsu split of the vertical gaps (57–76 mils on the tables
-   measured; a fixed 67 would give the same rows).
+   reach 900 (iPhone7Plus Qualcomm); gaps between tables run 1,532 (iPhone6S) to
+   4,987 (iPhoneX Qualcomm) — a thin margin on the low side.
+4. **Rows** by an Otsu split of the vertical gaps. On the 17 tables it lands at
+   43–86 mils; a fixed 67 would give different rows on two of them (iPhone8Plus
+   and iPhoneX Qualcomm).
 5. **Reject** a group whose largest row holds > 40 % of its labels (the iPhone12
-   flowchart: 24 of 31; real tables 7–32 %) or whose header has fewer than 3
+   flowchart: 24 of 31; real tables 4–39 %, the 39 % on iPhone6SP — close to the
+   limit) or whose header has fewer than 3
    columns (the iPhoneXS flowchart; every real table has 3 or 4). Its labels
    become notes.
 6. **Caption** is a run of up to three lone labels at the top; the next row is

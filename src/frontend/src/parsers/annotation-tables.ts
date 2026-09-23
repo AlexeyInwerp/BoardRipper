@@ -42,7 +42,8 @@ const TABLE_SPLIT_MILS = 1500;
 
 // Repair-flowchart files draw boxes joined by arrows, not rows: the iPhone12
 // flowchart puts 24 of 31 labels on one line, where a real table's largest
-// row holds 7-32% of its labels.
+// row holds 4-39% of its labels. The 39% (iPhone6SP's two-row table) is close
+// to this limit.
 const MAX_ROW_SHARE = 0.4;
 
 // Every real table seen has 3 or 4 columns (two templates: fault / point /
@@ -51,8 +52,8 @@ const MAX_ROW_SHARE = 0.4;
 // "table" whose header is an instruction and a designator.
 const MIN_COLUMNS = 3;
 
-// Board notes are set at designator size (1-2.5 mils); table text at 30 mils
-// and up. A quarter of the median sits inside that gap on every FAQ board
+// Board notes are set at designator size (1-2.5 mils); table text at 19.7
+// mils (iPhone6S) and up. A quarter of the median sits inside that gap on every FAQ board
 // and, being relative, assumes neither absolute size.
 const TABLE_TEXT_SHARE = 0.25;
 
@@ -71,7 +72,7 @@ const median = (v: number[]): number => {
  * Position alone cannot find the ASCII ones. Annotation text is drawn over the
  * board, so on iPhone6Plus a box around the Chinese labels holds 2,204 ASCII
  * texts, of which 83 belong to the tables. Size separates them: the tables are
- * set at 60 mils, silkscreen at 1-2. The designator cells ("U6300",
+ * set at 30 and 60 mils, everything else at 1. The designator cells ("U6300",
  * "Q3200, Q3201") are real table content and must survive.
  */
 export function collectAnnotationLabels(texts: readonly BoardText[]): BoardText[] {
@@ -96,10 +97,9 @@ export function collectAnnotationLabels(texts: readonly BoardText[]): BoardText[
  * The vertical gap that separates rows, measured from the labels themselves.
  *
  * Gaps are bimodal — jitter within a row vs. the pitch between rows — so this
- * is Otsu's method: the split minimising within-group variance. On the tables
- * of iPhone6, iPhone8 Qualcomm and iPhoneXSMAX it lands at 57-76 mils (67 on
- * iPhoneXSMAX), and a fixed 67 gives the same rows on each, so this is here to
- * avoid a tuned constant, not because one has been seen to fail.
+ * is Otsu's method: the split minimising within-group variance. Across the 17
+ * tables of the "Common problems" boards it lands at 43-86 mils, and a fixed 67
+ * would give different rows on two of them (iPhone8Plus and iPhoneX Qualcomm).
  */
 export function rowGapThreshold(gaps: readonly number[]): number {
   if (gaps.length < 2) return gaps[0] ?? 0;
