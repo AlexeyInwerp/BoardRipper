@@ -1471,7 +1471,9 @@ function parseLegacyDiodeRecords(tail: Uint8Array): XzzTailAnnotations {
   // Decode as latin1 (records are ASCII) and scan for records.
   let s = '';
   for (let i = 0; i < tail.length; i++) s += String.fromCharCode(tail[i]);
-  const rx = /=([^=\n]*)=([A-Za-z0-9_]+)\((\d+)\)/g;
+  // The pin is a pad name, not a number: BGA balls are `D9`, `AM14`. A
+  // digits-only pin dropped 8,833 of 23,821 records in XZZ_FORMAT.md's sample.
+  const rx = /=([^=\n]*)=([A-Za-z0-9_]+)\(([A-Za-z0-9_]+)\)/g;
   let m: RegExpExecArray | null;
   while ((m = rx.exec(s))) {
     const reading = classifyXzzDiode(m[1].trim());

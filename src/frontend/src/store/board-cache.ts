@@ -105,7 +105,10 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 // 94: XZZ test pads read their net index at its structural offset instead of
 //     the last 4 bytes, which was 0 on every pad with a trailing reading
 //     section — the whole of some files' test pads had no net.
-const PARSER_VERSION = 94;
+// 95: XZZ legacy diode records accept BGA pad names (`N485(D9)`), not only
+//     numeric pins — a third to three quarters of a Diode-value file's
+//     readings were being dropped.
+const PARSER_VERSION = 95;
 
 interface CachedBoard {
   key: string;

@@ -667,8 +667,12 @@ Section markers (`===<name>`, the name GB2312) seen, by number of files:
 | `===阻值图`, `===电压`, `===RFFE` | 1 each | per-net readings; per-net voltages (`PP1V8=1.8V`); a JSON RF bus map |
 
 **Encoding A pins are not all numbers.** Of the 23,821 `=value=PART(pin)` lines under
-`===阻值`, 8,833 (37 %) name a BGA pad — `N485(D9)`, `N489(AM14)`. The legacy record
-regex requires `\d+` and silently drops every one of them. Another 685 lines under
+`===阻值`, 8,833 (37 %) name a BGA pad — `N485(D9)`, `N489(AM14)`. Until PARSER_VERSION
+95 the legacy record regex required `\d+` and silently dropped every one of them; it now
+takes the same `[A-Za-z0-9_]+` as the part name, which matches exactly the old 14,988
+records plus these 8,833 and nothing else. On `iPhone14 Pro_ProMAX Boardview
+820-02588-10 820-02672-12` that is 1,007 → 3,956 readings on pins (all of its 3,963
+records but 7 repeated keys). Another 685 lines under
 `===阻值` are per-net `NETNAME=value` records — the `阻值表` schema under the other
 name — and one is two such records run together on a single line. `parseXzzTailAnnotations()`
 picks by content, not by file name: a `{` after the marker means try JSON, and
@@ -688,12 +692,12 @@ v6v6555v6v6===<4 binary bytes>\n
 …
 ```
 
-- Grammar: newline-delimited `=<value>=<partName>(<pinNumber>)`, **one record
+- Grammar: newline-delimited `=<value>=<partName>(<pinName>)`, **one record
   per pin**.
 - Value classes: integer **millivolts** (e.g. `359`), `OL` (open / infinite),
   `0` (no reading / tied to ground). A rare malformed token like `312.` is
   tolerated (trailing dot stripped).
-- Join key `PART(pinNumber)` maps 1:1 onto the parser's pins — this is why the
+- Join key `PART(pin)` maps 1:1 onto the parser's pins — this is why the
   parser now preserves the real pad number (`Pin.number`) instead of a 1-based
   index.
 

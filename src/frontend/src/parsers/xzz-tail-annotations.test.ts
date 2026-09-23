@@ -31,6 +31,14 @@ describe('parseXzzTailAnnotations — legacy record encoding', () => {
     expect(t.netAliases.size).toBe(0);
   });
 
+  it('reads BGA pad names, not only numeric pins', () => {
+    // iPhone13 boardview(Diode value): 2,675 of 3,731 records name a ball.
+    const t = parseXzzTailAnnotations(withTail('\n=711=N485(D9)\n=OL=N489(AM14)\n=359=C100(1)\n'));
+    expect(t.diodes.get('N485(D9)')).toMatchObject({ kind: 'value', mv: 711 });
+    expect(t.diodes.get('N489(AM14)')).toMatchObject({ kind: 'open' });
+    expect(t.diodes.get('C100(1)')).toMatchObject({ mv: 359 });
+  });
+
   it('is empty when the file carries no marker', () => {
     const t = parseXzzTailAnnotations(new TextEncoder().encode('XZZPCB no tail here'));
     expect(t.encoding).toBe('none');
