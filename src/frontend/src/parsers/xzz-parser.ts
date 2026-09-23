@@ -1426,7 +1426,7 @@ export interface XzzTailAnnotations {
    *  name; most boards carry none. */
   netAliases: Map<string, string>;
   /** Which encoding the section used, for logging. `json+legacy`: both, in
-   *  one tail (35 of 138 tail-carrying files in XZZ_FORMAT.md's sample). */
+   *  one tail (32 of 138 tail-carrying files in XZZ_FORMAT.md's sample). */
   encoding: 'none' | 'legacy' | 'json' | 'json+legacy';
   /** `===信号` net glossary: net name → a one-line description of what the
    *  net does ("CPU到显示屏接口MIPI总线数据1"). Keyed by the file's net name,
