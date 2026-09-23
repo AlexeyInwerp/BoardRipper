@@ -108,7 +108,10 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 // 95: XZZ legacy diode records accept BGA pad names (`N485(D9)`), not only
 //     numeric pins — a third to three quarters of a Diode-value file's
 //     readings were being dropped.
-const PARSER_VERSION = 95;
+// 96: XZZ tails carrying both diode encodings read both, and the JSON is found
+//     by its banner and bounded by the next section — legacy readings, JSON
+//     past 4 KB, and JSON followed by another section were each being lost.
+const PARSER_VERSION = 96;
 
 interface CachedBoard {
   key: string;

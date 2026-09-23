@@ -651,7 +651,7 @@ never XOR'd or DES'd — and sits past the net block. It carries reference
 encoding, the rename tables XZZ's own viewer uses for part designators and net
 names. None of it is geometry.
 
-There are **two encodings**, and a file uses one or the other.
+There are **two encodings**, and a tail can carry both (see below).
 
 Of the 338 sample files, 138 have a tail. Its line breaks are LF on 122 and CRLF on 16.
 Section markers (`===<name>`, the name GB2312) seen, by number of files:
@@ -674,9 +674,31 @@ records plus these 8,833 and nothing else. On `iPhone14 Pro_ProMAX Boardview
 820-02588-10 820-02672-12` that is 1,007 → 3,956 readings on pins (all of its 3,963
 records but 7 repeated keys). Another 685 lines under
 `===阻值` are per-net `NETNAME=value` records — the `阻值表` schema under the other
-name — and one is two such records run together on a single line. `parseXzzTailAnnotations()`
-picks by content, not by file name: a `{` after the marker means try JSON, and
-a failed JSON parse falls back to the legacy scan rather than giving up.
+name — and one is two such records run together on a single line.
+
+`parseXzzTailAnnotations()` reads both encodings, by content rather than by file name:
+
+- **Legacy records** are scanned for over the whole tail, always.
+- **The JSON document** is located by its `===PCB<GB2312>` banner and parsed from the
+  first `{` after it **to the next `===` marker**, not to the end of the tail.
+- **On a key both define, JSON wins.**
+
+Until PARSER_VERSION 96 the parser tried JSON at the first `{` within the tail's first
+4 KB and, if that parsed, returned it alone. Three things went wrong, all on real files
+(35 of the 138 tail-carrying files in the sample carry both encodings):
+
+1. Legacy records before the JSON were discarded. iPadAir3 820-01531 YiDianTong has 158,
+   and the JSON has 2; 2 readings reached the pins, now 160.
+2. JSON past the first 4 KB was never found. On iPhone14 Pro_ProMAX Boardview the JSON
+   starts 67 KB in, behind 3,963 legacy records; its 44 extra readings now arrive
+   (3,956 → 4,000).
+3. JSON followed by another section (`===原理图` and a PDF name) failed `JSON.parse` and
+   was dropped whole, rename tables included. MI 12-35100L3MOA now gets its 40 net
+   renames.
+
+Only 48 pins in the sample carry a reading in both encodings. On 44 of them the values
+differ, and the pairs read like corrections — legacy `24`, JSON `240`; pins 119/120
+swapped (iPhone13 boardview(Diode value)) — which is why JSON is preferred.
 
 ### Encoding A — legacy records
 

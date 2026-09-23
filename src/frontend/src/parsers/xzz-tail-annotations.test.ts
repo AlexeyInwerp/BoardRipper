@@ -115,3 +115,37 @@ describe('parseDiodeSection', () => {
     expect(parseDiodeSection(withTail(BANNER + json)).get('C100(1)')).toMatchObject({ mv: 359 });
   });
 });
+
+describe('parseXzzTailAnnotations — a tail carrying both encodings', () => {
+  const json = JSON.stringify({ part: [{ reference: 'C100', alias: 'C10602', pad: [{ name: '1', diode: '538' }] }] });
+
+  it('reads legacy records that precede the JSON section', () => {
+    // iPadAir3 820-01531 YiDianTong: 158 `===阻值` records, then the JSON.
+    const t = parseXzzTailAnnotations(withTail('\n=711=N485(D9)\n=359=R5(1)\n' + BANNER + json + '\n'));
+    expect(t.encoding).toBe('json+legacy');
+    expect(t.diodes.get('N485(D9)')).toMatchObject({ mv: 711 });
+    expect(t.diodes.get('R5(1)')).toMatchObject({ mv: 359 });
+    expect(t.diodes.get('C100(1)')).toMatchObject({ mv: 538 });
+    expect(t.partAliases.get('C100')).toBe('C10602');
+  });
+
+  it('lets the JSON win a key both encodings define', () => {
+    const t = parseXzzTailAnnotations(withTail('\n=OL=C100(1)\n' + BANNER + json + '\n'));
+    expect(t.diodes.get('C100(1)')).toMatchObject({ mv: 538 });
+  });
+
+  it('finds the JSON past 4 KB of legacy records', () => {
+    // iPhone13 boardview(Diode value): the JSON starts 62 KB into the tail.
+    const records = Array.from({ length: 400 }, (_, i) => `=${300 + i}=U1(${i + 1})`).join('\n');
+    const t = parseXzzTailAnnotations(withTail('\n' + records + '\n' + BANNER + json + '\n'));
+    expect(t.diodes.get('C100(1)')).toMatchObject({ mv: 538 });
+    expect(t.diodes.get('U1(400)')).toMatchObject({ mv: 699 });
+  });
+
+  it('parses the JSON when another section follows it', () => {
+    // Magic HL1NATASHAM: `===原理图` and a PDF name after the JSON line.
+    const t = parseXzzTailAnnotations(withTail(BANNER + json + '\n\n===原理图\ncircuit diagram.pdf\n'));
+    expect(t.encoding).toBe('json');
+    expect(t.diodes.get('C100(1)')).toMatchObject({ mv: 538 });
+  });
+});

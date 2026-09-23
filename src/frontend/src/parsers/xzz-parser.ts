@@ -1369,8 +1369,9 @@ export interface XzzTailAnnotations {
   /** `Net21` → `PP_VDD_MAIN`. Sparse — only the nets the author bothered to
    *  name; most boards carry none. */
   netAliases: Map<string, string>;
-  /** Which encoding the section used, for logging. */
-  encoding: 'none' | 'legacy' | 'json';
+  /** Which encoding the section used, for logging. `json+legacy`: both, in
+   *  one tail (35 of 138 tail-carrying files in XZZ_FORMAT.md's sample). */
+  encoding: 'none' | 'legacy' | 'json' | 'json+legacy';
 }
 
 function emptyAnnotations(): XzzTailAnnotations {
@@ -1393,11 +1394,11 @@ interface XzzTailJson {
   net?: Array<{ name?: string; alias?: string }>;
 }
 
-/** Parse the post-marker section in whichever of its two encodings this file
- *  uses. Both live past the XOR boundary, so neither is ever XOR'd or DES'd.
+/** Parse the post-marker section in both of its encodings. Both live past the
+ *  XOR boundary, so neither is ever XOR'd or DES'd.
  *
  *  **Legacy** (older "Middle layer diode value" companions): newline-delimited
- *  `=<value>=<partName>(<pinNumber>)` records, nothing but diode values.
+ *  `=<value>=<partName>(<pinName>)` records, nothing but diode values.
  *
  *  **JSON** (current iPhone-era deliveries, e.g. iPhone16_16Plus): a single
  *  `{"part":[…],"net":[…],"bitmap":{…}}` document after a `===PCB<gb2312>`
@@ -1406,29 +1407,55 @@ interface XzzTailJson {
  *  can ship the JSON with the rename tables and NO `pad[]` at all — that file
  *  genuinely has no diode data, and this returns empty `diodes` for it.
  *
- *  Detection is by content, not by file name: try JSON when a `{` follows the
- *  marker, else fall back to the legacy regex. */
+ *  Detection is by content, not by file name, and a tail can carry both: the
+ *  legacy records are always read, and the JSON too when its section exists. */
 export function parseXzzTailAnnotations(raw: Uint8Array): XzzTailAnnotations {
   const pos = findDiodeMarker(raw);
   if (pos < 0) return emptyAnnotations();
 
   const tail = raw.subarray(pos + DIODE_MARKER.length);
-  // The JSON body is UTF-8, but the banner between the marker and the `{` is
-  // GB2312 ("===PCB<4 high bytes>"), which would corrupt a whole-tail UTF-8
-  // decode of the prefix. Find the brace on the raw bytes, then decode only
-  // from there. 0x7b = '{'.
-  // 0x7b = '{'. Capped scan: the banner is one short line, so a brace further
-  // in than this is not a JSON document header. A legacy tail that happens to
-  // contain a brace just fails JSON.parse below and falls through.
+  const jsonBytes = findJsonSection(tail);
+  const json = jsonBytes ? parseXzzTailJson(jsonBytes) : null;
+  const legacy = parseLegacyDiodeRecords(tail);
+  if (!json) return legacy;
+  // One tail can carry both encodings — `===阻值` records, then the JSON — and
+  // each holds readings the other does not. JSON wins a key both define.
+  for (const [key, reading] of legacy.diodes) if (!json.diodes.has(key)) json.diodes.set(key, reading);
+  if (legacy.diodes.size > 0) json.encoding = 'json+legacy';
+  return json;
+}
+
+const ascii = (s: string) => Uint8Array.from(s, c => c.charCodeAt(0));
+const JSON_MARKER = ascii('===PCB');
+const NEXT_MARKER = ascii('\n===');
+
+function indexOfBytes(hay: Uint8Array, needle: Uint8Array, from = 0): number {
+  outer: for (let i = from; i + needle.length <= hay.length; i++) {
+    for (let j = 0; j < needle.length; j++) if (hay[i + j] !== needle[j]) continue outer;
+    return i;
+  }
+  return -1;
+}
+
+/** The JSON document's bytes: from the first `{` after its `===PCB<GB2312>`
+ *  banner to the next `===` marker. Bounded by the marker, not the end of the
+ *  tail, because other sections can follow it (`===原理图`, the schematic's
+ *  file name) and JSON.parse rejects the whole document over them. Located by
+ *  the banner, not by a capped scan for the first brace, because the legacy
+ *  records can come first and run far past any cap (62 KB of them on
+ *  iPhone13 boardview(Diode value)). Searched on raw bytes: the banner is
+ *  GB2312 and the body UTF-8. A tail without the banner falls back to the
+ *  first brace in its first 4 KB, the old rule. */
+function findJsonSection(tail: Uint8Array): Uint8Array | null {
+  const banner = indexOfBytes(tail, JSON_MARKER);
+  const limit = banner >= 0 ? tail.length : Math.min(tail.length, 4096);
   let brace = -1;
-  for (let i = 0; i < tail.length && i < 4096; i++) {
+  for (let i = Math.max(banner, 0); i < limit; i++) {
     if (tail[i] === 0x7b) { brace = i; break; }
   }
-  if (brace >= 0) {
-    const json = parseXzzTailJson(tail.subarray(brace));
-    if (json) return json;
-  }
-  return parseLegacyDiodeRecords(tail);
+  if (brace < 0) return null;
+  const end = indexOfBytes(tail, NEXT_MARKER, brace);
+  return tail.subarray(brace, end < 0 ? tail.length : end);
 }
 
 function parseXzzTailJson(bytes: Uint8Array): XzzTailAnnotations | null {
