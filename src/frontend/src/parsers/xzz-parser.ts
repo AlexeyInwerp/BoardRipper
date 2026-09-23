@@ -788,8 +788,8 @@ function parsePinSubBlock(data: Uint8Array, ptr: number): { pin: PinData; next: 
   // 253 pins carry a non-zero value and the annular-ring relation
   // (drill < min(padW, padH)) holds on every single one — a flag field would
   // have no reason to respect it. Values land in the 6.5–60 mil range, always
-  // on connector legs, headers and mounting pins, and never on a top-level
-  // 0x09 test pad (which is correct — probe points are surface features).
+  // on connector legs, headers and mounting pins. Top-level 0x09 test pads
+  // carry it too on some files (XZZ_FORMAT.md, "Drill diameter").
   // Reverse-engineered by Sean Johnson (@sjohnson1021) and reported with
   // Switch / PS5 / MSI evidence in issue #32; the annular-ring argument and
   // the drill-vs-flag reasoning above are his.
@@ -819,7 +819,7 @@ function parsePinSubBlock(data: Uint8Array, ptr: number): { pin: PinData; next: 
     const shapeByte = data[ptr + 8];
     padShape = shapeByte === 0x01 ? 'round' : 'rect';
   }
-  // Then 27 bytes of pad geom + 5 padding bytes, then the netIndex.
+  // Then 27 bytes of pad geom + the 5-byte record-list terminator, then the netIndex.
   const unk3Ptr = ptr;
   ptr += 32;
   const netIndex = (ptr + 4 <= data.length) ? ru32(data, ptr) : 0;
@@ -978,7 +978,8 @@ interface ViaData { x: number; y: number; outer: number; netIndex: number; mirro
  *   [16..20) u32  layer-from   (real layer index, not a flag — see below)
  *   [20..24) u32  layer-to     (ditto; always > layer-from)
  *   [24..28) u32  net index  (matches netDict)
- *   [28..32) u32  padding
+ *   [28..32) u32  text length, 0 or 1; the one-byte text is always "0"
+ *                   (XZZ_FORMAT.md "Via Block"). A 32-byte via ends here.
  *
  * Coordinate space matches the part / segment blocks.
  *

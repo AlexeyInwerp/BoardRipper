@@ -6,13 +6,14 @@
 
 ## Overview
 
-XZZ is an encrypted binary boardview format. The file contains DES-encrypted data blocks
-for parts, pins, nets, and board outline geometry. The header may be XOR-obfuscated.
+XZZ is a partly encrypted binary boardview format. Only the part blocks (which carry the
+pins) are DES-encrypted; nets, outline, traces, vias, test pads and text are plaintext.
+Everything before the `v6v6555v6v6` marker may additionally be XOR-obfuscated.
 
 | Property | Value |
 |----------|-------|
 | Extension | `.pcb` |
-| Detection | First 6 bytes = `XZZPCB` (plain or XOR-obfuscated) |
+| Detection | First 6 bytes = `XZZPCB` (plain or XOR-obfuscated); the full signature is the 11 bytes `XZZPCB V1.0` |
 | Encryption | DES (FIPS PUB 46-3), ECB mode |
 | DES key | `0xdcfc12ac00000000` (fixed, hardcoded) |
 | Coordinate unit | Internal units ÷ 10000 = mils |
@@ -37,33 +38,57 @@ Even FlexBV does not open these; the binary PADS database is left unsupported.
 
 ### Header
 
+The file is five regions in this order: header, main block stream, image block, net
+block, and — optionally — the plaintext tail after `v6v6555v6v6`.
+
 ```
-┌─────────────────────────┐
-│ 6 bytes: "XZZPCB" magic │  (may be XOR-obfuscated)
-├─────────────────────────┤
-│ Header fields            │  file metadata, block offsets
-│  (variable layout)       │
-└─────────────────────────┘
+0x00  char[11]  "XZZPCB V1.0"
+0x10  u8        XOR key; 0 = not obfuscated (see below)
+0x20  u32       main block stream start, relative to 0x20
+0x24  u32       image block start, relative to 0x20
+0x28  u32       net block start, relative to 0x20
+0x40  u32       main block stream size (a copy; see below)
 ```
+
+At the stream start sits a `u32` size, then the blocks. On all of the 338 sample files
+the image block starts exactly where the stream ends, and the net block exactly where
+the image block ends. `0x20` holds `0x20` on 337 of 338 files, which is why reading the
+stream at a hard-coded `0x44` usually works; the exception (`jianguo PRO2S-MMR500070
+YiDianTong`, 739,625) is also the one file where the size at `0x40` disagrees with the
+size at the stream start. Read the offset, then the size there — `parseXZZ` does.
 
 #### XOR Obfuscation
 
-If the first 6 bytes don't spell `XZZPCB` in plain text, the header is XOR-obfuscated:
-- XOR key = byte at offset `0x10`
-- Apply `byte ^ key` to each header byte to recover plain text
-- Verify by checking if decoded bytes 0–5 = `XZZPCB`
+If byte `0x10` is non-zero, it is a single-byte XOR key applied to **every byte before
+the `v6v6555v6v6` marker** (the whole file when there is no marker) — not just the header.
+The tail after the marker is never XORed. `parseXZZ` does exactly this. (None of the 338
+sample files is XORed — the corpus mirror stores them plain — so this is from the parser
+and files seen elsewhere, not re-measured here.)
+
+### Image Block
+
+`u32 size`, then `size` bytes of entries — `u8 type, u8 index, u8 flag, u32 w, u32 h,
+u32 nameLen, char name[nameLen]` — naming bitmap overlays by their path on the author's
+machine (GB2312, e.g. `D:\…\M1.jpg`). Empty (`size = 0`) on 190 of 338 files; the
+other 148 parse to exactly their declared size (1,325 entries). The bitmaps themselves are
+not in the file. `parseXZZ` never reads this block; it jumps to the net block by offset.
 
 ### Data Blocks
 
-After the header, the file contains sequential data blocks. Each block is DES-encrypted
-and must be decrypted before parsing.
+The main stream is a sequence of `[u8 type][u32 size][size bytes]` blocks. Only type
+`0x07` (part) is DES-encrypted; every other block is plaintext. The walk ends exactly at
+the stream's declared end on all 338 sample files — no padding or `0x00` bytes between
+blocks.
 
-Block types:
-- **Net block** — net index → net name mapping
-- **Part blocks** — component data with embedded pin sub-blocks
+Block types (counts over the sample):
+- **Part blocks (`0x07`)** — component data with embedded pin sub-blocks (561,596)
+- **Test pad block (`0x09`)** (12,657). See [Test Pad Block](#test-pad-block-0x09)
+- **`0x03`** — 36 bytes, 176 blocks in the sample, not read by the parser. See [Block `0x03`](#block-0x03)
+- `0x04` and `0x08` appear in other implementations' type tables; not one occurs in the sample.
+- **Net block** — not a main block; a separate region located by the header offset
 - **Arc block (`0x01`)** — arc geometry on any layer: outline (28), silkscreen (17), copper (1–16). See [Arc Block](#arc-block-0x01)
 - **Line block (`0x05`)** — straight segment on any layer, same layer routing as arcs
-- **Via block (`0x02`)**, **test pad block (`0x09`)**
+- **Via block (`0x02`)** (656,846). See [Via Block](#via-block-0x02)
 
 ---
 
@@ -78,8 +103,9 @@ Block types:
 
 ### Block Decryption
 
-Each data block is decrypted as a sequence of 8-byte DES blocks. Trailing bytes (< 8) are
-left as-is.
+Each **part** block's payload (after the 5-byte type/size header) is decrypted as a
+sequence of 8-byte DES blocks. Trailing bytes (< 8) are left as-is. No other block is
+encrypted: read plain, they produce the layouts below on every sample file.
 
 ---
 
@@ -91,13 +117,21 @@ Sequential entries, each containing:
 
 ```
 ┌──────────────┐
-│ u32: netSize  │  Total entry size in bytes
+│ u32: netSize  │  Total entry size in bytes, including these 8
 ├──────────────┤
 │ u32: netIndex │  Net identifier (referenced by pins)
 ├──────────────┤
-│ name bytes    │  Null-terminated string (netSize - 8 bytes)
+│ name bytes    │  netSize − 8 bytes. NOT null-terminated
 └──────────────┘
 ```
+
+Over the sample's 314,453 names, **none** ends in (or contains) a NUL — the length is
+the terminator; `rstr`'s `replace(/\0/g, '')` is what made "null-terminated" look
+plausible. Indices run 1, 2, 3, … without gaps on 332 of 338 files. Names are ASCII
+almost everywhere, but two are GB2312 (`屏幕坐标` on `iPadAir3 … YiDianTong`, and a
+note-like name on `iPhone8 Qualcomm Common problems`); the non-fatal UTF-8 `rstr`
+turns those into U+FFFD. No entry uses index 0 (0 of 314,453), so a `netIndex` of 0
+means "no net".
 
 ### Board packs — split, pair, fold
 
@@ -167,9 +201,9 @@ is not consistent (20 of 89 put the CPU in the lower half), and every
 copper-verified Apple board has its CPU on the design's top.
 
 There is **no side field** in the file. The 18 + 30 unknown header bytes of
-the part block decode to `[u32 1][i32 x][i32 y][u32 rot×10⁴][u16 1]` and a
-silkscreen label element (`[u32 style][u32 17][x][y][height][stroke][rot]
-[u8 2][u8 label-orientation]`); the pin sub-block's three pad records are
+the part block decode to `[u32 flag][i32 x][i32 y][u32 rot×10⁴][u8][u8]` and an
+ordinary `0x06` label sub-block whose first `u32` is its own size (see
+[Part Block](#part-block)); the pin sub-block's three pad records are
 identical copies; the JSON tail carries only names and diode readings.
 OpenBoardView hard-codes `mounting_side = Top`.
 
@@ -237,20 +271,37 @@ After DES decryption:
 ┌──────────────────┐
 │ u32: partSize     │
 ├──────────────────┤
-│ 18 bytes: unknown │
+│ u32: flag         │  1 (558,385 parts) or 16 (3,211)
+│ i32: x, y         │  placement origin (÷ 10000)
+│ u32: rotation     │  degrees × 10000
+│ u8, u8            │  flags: 1/0 (547,907/13,689) and 0/1 (558,297/3,299)
 ├──────────────────┤
 │ u32: groupNameLen │
 │ groupName bytes   │
 ├──────────────────┤
-│ 0x06 marker byte  │
-│ 30 bytes: unknown │
+│ 0x06 label        │  the refdes — an ordinary label sub-block:
+│  u32 size         │    size = 30 + nameLen on all 561,596 sample parts
+│  26 bytes         │    layer, x, y, size, …  (see Label Sub-Block)
+│  u32: nameLen     │
+│  partName bytes   │  Reference designator
 ├──────────────────┤
-│ u32: nameLen      │
-│ partName bytes    │  Reference designator
-├──────────────────┤
-│ Sub-blocks...     │  0x05 silk line, 0x06 label, 0x09 pin, …
+│ Sub-blocks...     │  0x09 pin, 0x05 line, 0x06 label, 0x01 arc
 └──────────────────┘
 ```
+
+The "18 unknown" bytes are placement data. `rotation` takes 0/90/180/270 and 360 (= 0),
+and non-axis-aligned values — 45, 135, 225, 315, 230, 310 — on 4,396 sample parts; 178
+are not whole degrees. `x, y` is the footprint's placement origin, which is the pin
+centroid for symmetric parts but not in general, so it is no substitute for the centroid
+the parser derives.
+
+The refdes is not a dedicated field. `parsePartBlock` reads it at "`0x06` + skip 30 →
+`nameLen`" and body labels at "size + skip 26 → `nameLen`"; those are one layout, and the
+4-byte difference is the size prefix the header copy is read past inline. Measured: the
+`u32` after the `0x06` equals `30 + nameLen` on 561,596 of 561,596 sample parts.
+
+Sub-block counts across the sample: 2,027,462 pins, 1,767,697 lines, 561,790 further
+labels, 572 arcs. `parsePartBlock` skips the arcs.
 
 ### Label Sub-Block (`0x06`) — component value
 
@@ -264,8 +315,12 @@ a body sub-block spends those on its own size prefix:
 ├──────────────────┤
 │ u32: size         │  Payload length
 ├──────────────────┤
-│ u32: layer        │  Always 17 (silkscreen) in the surveyed corpus
-│ 22 bytes: unknown │  Placement — x/y, height, flags
+│ u32: layer        │  17 on 557,851 sample labels, 18 on 3,938, 1 once
+│ i32: x, y         │
+│ u32: height       │  glyph height (÷ 10000)
+│ u32: unknown      │
+│ u32: rotation     │  degrees × 10000
+│ u8, u8            │  1–3 and 0/1; meaning unknown
 ├──────────────────┤
 │ u32: textLen      │  0 when the element carries no string
 │ text bytes        │
@@ -301,7 +356,7 @@ Within a part block, pins are encoded as typed sub-blocks:
 ┌──────────────────┐
 │ u32: pinBlockSize │
 ├──────────────────┤
-│ 4 bytes: unknown  │
+│ u32: flag         │
 ├──────────────────┤
 │ i32: x            │  Pin X position (÷ 10000 for mils)
 │ i32: y            │  Pin Y position (÷ 10000 for mils)
@@ -317,11 +372,23 @@ Within a part block, pins are encoded as typed sub-blocks:
 │                   │  copies (top/inner/bottom?); w/h ÷ 10000 for mils;
 │                   │  shape 0x01 = round, 0x02 = rect
 ├──────────────────┤
-│ 5 bytes: padding  │
+│ 5 bytes: zero     │  terminator of the pad-record list (see below)
 ├──────────────────┤
 │ u32: netIndex     │  Reference into net block
+├──────────────────┤
+│ optional:         │
+│ u32: readingLen   │  a diode reading stored on the pin,
+│ reading bytes     │  e.g. "OL", "666"
+│ u32: 0            │
 └──────────────────┘
 ```
+
+**After the net index.** On 1,711,805 of the sample's 2,027,462 pins, 8 bytes follow the
+net index: `u32 readingLen = 0` and four zero bytes. 314,332 pins end at the net index.
+On one file, `Y93-PD1818 YiDianTong`, `readingLen` is 1–3 and the string is a diode
+reading — `OL`, `666`, `0` — a third place readings can live, beside the tail sections
+and top-level test pads. `parsePinSubBlock` ignores it, which is harmless for the geometry
+because it reads positionally and stops at the net index.
 
 **Drill diameter.** This field was documented as a constant zero for a long
 time, because the boards surveyed first are SMD-only. It is a drill: non-zero
@@ -334,8 +401,11 @@ Switch / PS5 / MSI; and 32 local `.pcb` files, 415,520 pins):
   smaller than both pad dimensions — 253 non-zero readings here, zero
   inversions. A flag field has no reason to respect a physical constraint.
 - **It is sparse and it lands where through-holes live.** 0.03–0.43% of pins
-  per file, on connector legs, headers and mounting pins; never on a top-level
-  `0x09` test pad, which is right — probe points are surface features.
+  per file, on connector legs, headers and mounting pins. (This bullet used to
+  add "never on a top-level `0x09` test pad". That held for the 32-file corpus
+  but not for the 338-file sample: 1,978 test pads in 39 files carry a
+  drill — 1,486 of them on five Xbox 360 boards, the rest on MSI, DJI Mavic
+  and several phone and laptop boards — and on 1,964 of those it is smaller than the pad.)
 - **One drill spans two pad shapes on the same part.** `N2494` on
   A2442-820-02098-A carries drill 10.5 on both its 20×26 oblong pads and its
   round ones — what you would expect of a bit diameter, not of anything
@@ -360,10 +430,17 @@ keep a plain circle, because a shrunken rectangle is not a drill.
 above as three fixed chunks. They are really a terminated record list —
 `(w, h, type)` records until a `type` byte of `0x00`, then a 5-byte terminator
 — and "read the first, skip 32" is only correct because every pin carries
-exactly 3 records. That holds for all 415,520 pins here and across the issue
-#32 corpus (Sean Johnson, @sjohnson1021), so there is nothing to fix against;
-a file with 1, 2 or 4+ records
-would silently misalign the `netIndex` read rather than fail loudly.
+exactly 3 records. That holds for all 415,520 pins here, across the issue
+#32 corpus (Sean Johnson, @sjohnson1021), and for all 2,027,462 pins of the
+338-file sample, so there is nothing to fix against; a file with 1, 2 or 4+
+records would silently misalign the `netIndex` read rather than fail loudly.
+
+A caution for anyone who does switch to the terminated reading: the terminator
+test ("`u32 = 0` and next byte `= 0`") also matches a record of a **0 × 0 pad**,
+whose first nine bytes are `00000000 00000000 01`. 366 sample pins in nine files
+(`V372_71`: 295) are nameless placeholders with three 0 × 0 round records and net 0;
+a terminator scan stops on their first record, one record early. The fixed
+"three records" read handles them correctly.
 
 **Oblong pads (shape 0x01 with w ≠ h).** Shape `0x01` is not strictly a
 circle: with w ≠ h it encodes a round-capped stroke (stadium). The pen width
@@ -407,7 +484,10 @@ radius-8 dot and the renderer synthesizes the classic FlexBV 2-pin pads.
 ## Arc Block (`0x01`)
 
 Eight `u32` fields. Multi-layer files write all eight (32 bytes); older files stop after the
-six geometry fields (24 bytes), so width and net index are read only when present.
+six geometry fields (24 bytes), so width and net index are read only when present. (All
+68,558 sample arcs are 32 bytes.) The net index is not only a copper field: 23,595 of
+23,763 copper arcs and 23,967 of 44,795 non-copper arcs carry one, and every non-zero
+value resolves in the net block.
 
 ```
 ┌───────────────────┐
@@ -482,13 +562,62 @@ far off the board.
 
 ---
 
+## Line Block (`0x05`)
+
+28 bytes on all 5,131,279 sample lines: `u32 layer, i32 x1, y1, x2, y2, u32 width,
+u32 netIndex`. Layer 1–16 is copper (5,035,541), 17 silkscreen, 28 outline. The last
+field is the net index, which `parseXZZ` already reads: non-zero on 5,034,572 copper
+lines, and every non-zero value (copper or not) resolves in the net block. It reads as
+"always 0" only on outline and silkscreen lines, and on boardview-style exports that
+carry no copper at all.
+
+## Via Block (`0x02`)
+
+```
+i32  x, y
+i32  pad      annular ring diameter (÷ 10000)
+i32  drill    hole diameter
+u32  layerFrom, layerTo
+u32  netIndex
+u32  textLen  0 or 1
+char text[textLen]   always "0" when present
+```
+
+32 bytes (324,654 vias) or 33 (332,191); `textLen` accounts for the difference on all
+but one (a single 28-byte via, which stops before `textLen`). `pad ≥ drill` on every
+via, strictly greater on all but 72 — all in `PP00266604`, where the two are equal.
+`layerFrom < layerTo` on all 656,846; the net resolves on 656,843. The comment on
+`parseViaBlock` calls bytes 28–32 padding: it is `textLen`.
+
+## Test Pad Block (`0x09`)
+
+A top-level `0x09` is a test pad. It has the same layout as a part's pin sub-block —
+`u32 padNumber, i32 x, y, u32 drill, u32 padAngle, u32 nameLen, name`, three
+`(w, h, shape)` records, a 5-byte terminator, `u32 netIndex` — followed, when the block
+is longer than `60 + nameLen`, by `u32 readingLen, char reading[readingLen]` and padding.
+
+**The net index is at `24 + nameLen + 32`, not in the last 4 bytes.** 6,003 of the
+sample's 12,657 test pads carry the trailing section. Read at the structural offset, the
+net resolves on 9,405 pads and is 0 (no net) on the other 3,252 — never a dangling
+index. Read from the last 4 bytes, as `parseTestPadBlock` does, it resolves on 6,570;
+the two disagree on 2,835 pads, every one of which currently loses its net. The trailing
+reading is empty on 5,960 pads and a diode value (`OL`, `375`, …) on the rest.
+
+## Block `0x03`
+
+36 bytes, 176 blocks in the sample, not read by the parser: `u32` (17 on 169, a layer
+number by its values), a centre point, then the two corners of a box that contains it
+(176 of 176), then `u32` (0 on 171; 3,600,000 = 360° ×10000 on four; 3,163,159 once) and `u32` (0 on 174).
+It looks like a silkscreen rectangle or ellipse given by centre and extent; unconfirmed.
+
 ## Board Outline
 
-The outline is constructed from line blocks and linearised arc blocks on layer 28
-(`OUTLINE_LAYER`). Segments are chained into a polygon using a greedy nearest-neighbor algorithm:
-1. Start with segment 0
-2. For each subsequent segment, find the nearest unvisited endpoint
-3. Append the far endpoint to the chain
+The outline is built from line blocks and linearised arc blocks on layer 28
+(`OUTLINE_LAYER`). `chainByComponent` first groups segments into connected components by
+shared endpoints (`clusterSegments`), then chains each component into its own sub-path,
+separated from the next by a NaN point. A single greedy chain across the whole layer
+jumped between unrelated loops. See [Outline integrity](#outline-integrity--the-butterfly-fold-must-not-eat-the-loop)
+for duplicate removal.
 
 ---
 
@@ -502,8 +631,10 @@ The outline is constructed from line blocks and linearised arc blocks on layer 2
 
 ## Parser Notes
 
-- Side detection: part side is inferred from sub-block type bytes within the part data.
-- Pin radius defaults to 7 mils.
+- Side: `parsePartBlock` returns `'top'` for every part. The side is assigned afterwards
+  by the fold (see [Board packs](#board-packs--split-pair-fold)); the file has no side field.
+- Pin radius is half the smaller pad dimension (0.5 mil floor); a file with placeholder
+  pad geometry falls back to an 8-mil dot.
 - The DES implementation uses precomputed SP (S-box + P permutation) lookup tables and
   byte-level IP/FP permutation tables for performance.
 - BigInt is used only for one-time key schedule computation at module initialization.
@@ -518,7 +649,26 @@ never XOR'd or DES'd — and sits past the net block. It carries reference
 encoding, the rename tables XZZ's own viewer uses for part designators and net
 names. None of it is geometry.
 
-There are **two encodings**, and a file uses one or the other. `parseXzzTailAnnotations()`
+There are **two encodings**, and a file uses one or the other.
+
+Of the 338 sample files, 138 have a tail. Its line breaks are LF on 122 and CRLF on 16.
+Section markers (`===<name>`, the name GB2312) seen, by number of files:
+
+| section | files | content |
+|---|---|---|
+| `===PCB附加` | 113 | encoding B, one JSON line |
+| `===阻值` | 56 | encoding A — but see below |
+| `===信号` | 12 | net glossary, `NETNAME=description` |
+| `===原理图` | 6 | the companion schematic's file name |
+| `===` (no name) | 4 | bill of materials, `REFDES VALUE PACKAGE` (3 fields on 5,637 of 5,640 lines) |
+| `===阻值表` | 3 | per-**net** readings, `NETNAME=value` |
+| `===阻值图`, `===电压`, `===RFFE` | 1 each | per-net readings; per-net voltages (`PP1V8=1.8V`); a JSON RF bus map |
+
+**Encoding A pins are not all numbers.** Of the 23,821 `=value=PART(pin)` lines under
+`===阻值`, 8,833 (37 %) name a BGA pad — `N485(D9)`, `N489(AM14)`. The legacy record
+regex requires `\d+` and silently drops every one of them. Another 685 lines under
+`===阻值` are per-net `NETNAME=value` records — the `阻值表` schema under the other
+name — and one is two such records run together on a single line. `parseXzzTailAnnotations()`
 picks by content, not by file name: a `{` after the marker means try JSON, and
 a failed JSON parse falls back to the legacy scan rather than giving up.
 
@@ -598,6 +748,16 @@ tooltip, and in the ComponentInfo pin table; OpenBoardData provides a second,
 per-net source feeding the same surfaces (see `store/diode-readings.ts`).
 
 ---
+
+## Survey sample
+
+Figures in this document marked as coming from the "338-file sample" were measured on
+files drawn from a mirror of the XZZ library (9,131 `.pcb` files): all 11 "Common
+problems" files, plus up to 12 files per second-level folder (`Phones/iPhone`,
+`Computers/1 Laptop`, `Game Consoles/XBOX`, …), picked with a fixed seed. Totals: 561,596
+parts, 2,027,462 pins, 5,131,279 lines, 68,558 arcs, 656,846 vias, 12,657 test pads,
+10,014 text records, 314,453 net names. The files are not redistributable; every figure
+is given in full so it can be re-derived from any copy.
 
 ## Validation fixtures
 
