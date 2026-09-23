@@ -49,7 +49,12 @@ fi
 NAS_HOST="$(grep '^server:'   "$CONF" | awk '{print $2}')"
 NAS_USER="$(grep '^ssh user:' "$CONF" | awk '{print $3}')"
 NAS_PW="$(grep '^ssh pw:'     "$CONF" | awk '{print $3}')"
-NAS_SSH_PORT="${NAS_SSH_PORT:-22}"
+# No default port. `server:` in deploy.conf is an ssh alias (rd-nas) whose
+# ~/.ssh/config entry carries the real port (8022 on this Synology), and an
+# explicit `-p 22` on the command line overrides that — which is why this gate
+# reported "cannot reach NAS" on every release and the amd64 image shipped
+# unverified each time. Set NAS_SSH_PORT only to override the alias.
+NAS_SSH_PORT="${NAS_SSH_PORT:-}"
 REMOTE_TMP="${REMOTE_TMP:-/volume1/docker}"   # writable to the login user
 PORT="${SMOKE_PORT:-18344}"
 NAME="br-release-smoke"
@@ -60,7 +65,8 @@ if [[ -z "$NAS_HOST" || -z "$NAS_USER" || -z "$NAS_PW" ]]; then
 fi
 
 SSH=(sshpass -p "$NAS_PW" ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no \
-     -o PubkeyAuthentication=no -p "$NAS_SSH_PORT" "${NAS_USER}@${NAS_HOST}")
+     -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1
+     ${NAS_SSH_PORT:+-p "$NAS_SSH_PORT"} "${NAS_USER}@${NAS_HOST}")
 
 # Reachability probe — distinguishes "infra down" (exit 2) from "boot failed".
 if ! "${SSH[@]}" "echo ok" >/dev/null 2>&1; then
