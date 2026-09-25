@@ -133,8 +133,11 @@ export default defineConfig(({ mode }) => {
           maximumFileSizeToCacheInBytes: 12 * 1024 * 1024,
         },
         manifest: {
-          name: 'BoardRipper',
-          short_name: 'BoardRipper',
+          // BR_LEGACY=1 (scripts/deploy-lite.sh --legacy): the same app built
+          // for older browsers, published at /boardripper/legacy-web/ next
+          // to the main one. A different name so an iPad can install both.
+          name: process.env.BR_LEGACY ? 'BoardRipper Legacy' : 'BoardRipper',
+          short_name: process.env.BR_LEGACY ? 'BR Legacy' : 'BoardRipper',
           description: 'PCB boardview viewer & inspector — open boardview files and PDFs locally.',
           // Relative so the installed app works under a sub-path AND a web.app root.
           start_url: '.',

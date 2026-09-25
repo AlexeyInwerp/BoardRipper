@@ -104,6 +104,7 @@
   <div class="editions">
     <p><b class="ed">Full version</b> Docker / Desktop &mdash; [<a href="#docker">Docker setup</a>] | [<a href="#download">Desktop app</a>] <span class="small">self-hosted; shared library, board database, PDF search</span></p>
     <p><b class="ed">Lite version</b> Web / HTML &mdash; [<a href="https://www.ripperdoc.de/boardripper/web/"><b>Open in browser</b></a>] | [<a href="https://www.ripperdoc.de/boardripper/web/boardripper-lite.html" download>Offline HTML</a>] <span class="small">no install, nothing uploaded; 7&nbsp;MB single file</span></p>
+    <p><b class="ed">Legacy version</b> Web &mdash; [<a href="https://www.ripperdoc.de/boardripper/legacy-web/">Open in browser</a>] <span class="small">the same app for older browsers, iPadOS 15.4+; not yet confirmed on real devices &mdash; see <a href="compatibility.html">supported browsers and devices</a></span></p>
   </div>
   <hr class="stars">
   <nav>
@@ -193,7 +194,7 @@ RWTod7g2Xj9j3OAs2gvd4lM3ySDPOlKw2sTpl384PdytAPx/N/qnee+B</pre>
 <section id="runson">
 <h2>Runs on</h2>
 <p><b>Server side</b> &mdash; Docker on Linux, macOS, or Windows; or the standalone Go binary (Linux x86_64, macOS Intel/ARM, Windows x64). Runs happily on a Synology or QNAP NAS, a Raspberry Pi 5, an old laptop in a closet, or anything else that can run a container.</p>
-<p><b>Client side</b> &mdash; any modern browser (Chrome, Firefox, Safari, Edge) on any OS, including iPad and Android tablets. There&rsquo;s no per-client install &mdash; you open the URL.</p>
+<p><b>Client side</b> &mdash; any modern browser (Chrome, Firefox, Safari, Edge) on any OS, including iPad and Android tablets. There&rsquo;s no per-client install &mdash; you open the URL. Minimum versions and a list of iPads and iPhones by model: <a href="compatibility.html">supported browsers and devices</a>.</p>
 <p><b>Old hardware</b> &mdash; the rendering pipeline is GPU-accelerated WebGL, which leans on the integrated GPU rather than the CPU. Bench-tested on 3rd- and 4th-generation Intel laptops (HD 4000 / HD 4400 / HD 4600 era), frame rate sits in the 10&ndash;30&nbsp;fps range depending on the board &mdash; usable but visibly slower than a modern GPU. On those machines you may want to lower the browser zoom or window size and turn off a few of the visual extras (label tier, glyph overlay) in the Settings panel; the Debug panel surfaces frame-time so you can see what&rsquo;s slow.</p>
 </section>
 

@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BoardRipper — supported browsers and devices</title>
+<meta name="description" content="Which browsers, iPads and iPhones the BoardRipper web version runs on, the legacy build for older iPads, and how to ask for a device.">
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  html { font-size: 16px; }
+  body {
+    margin: 0;
+    background: #fff;
+    color: #000;
+    font-family: Verdana, Geneva, sans-serif;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  main {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 28px clamp(14px, 4vw, 32px) 60px;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 28px 0 8px; font-weight: bold; }
+  a { color: #0000ee; }
+  a:visited { color: #551a8b; }
+  nav { margin: 8px 0 22px; font-size: 13px; line-height: 1.9; }
+  hr.stars { border: none; text-align: center; color: #888; margin: 24px 0; letter-spacing: 6px; height: 1em; }
+  hr.stars::before { content: "* * *"; }
+  code { font-family: 'Courier New', ui-monospace, monospace; font-size: 13px; }
+  .small { color: #666; font-size: 12px; }
+  .tagline { color: #555; font-size: 12px; margin: 0; }
+  ul { padding-left: 22px; margin: 6px 0 10px; }
+  li { margin: 2px 0; }
+  .callout {
+    border: 1px solid #888;
+    background: #f9f9f9;
+    padding: 12px 14px;
+    margin: 12px 0;
+  }
+  .callout p { margin: 0 0 8px; }
+  .callout p:last-child { margin-bottom: 0; }
+  .badge {
+    border: 1px solid #888;
+    border-left: 5px solid #5865f2;
+    background: #f7f8ff;
+    padding: 8px 12px;
+    margin: 14px 0;
+  }
+  .badge p { margin: 0; }
+  .badge p + p { margin-top: 5px; }
+  .tablewrap { overflow-x: auto; margin: 8px 0 4px; }
+  table { border-collapse: collapse; margin: 8px 0; width: 100%; }
+  table th, table td { padding: 3px 14px 3px 0; vertical-align: top; font-size: 13px; text-align: left; }
+  table th { border-bottom: 1px solid #888; white-space: nowrap; }
+  table td { border-bottom: 1px solid #ddd; }
+  table tr:last-child td { border-bottom: none; }
+  table th:last-child, table td:last-child { padding-right: 0; }
+  td.v { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  tr.group td { padding-top: 12px; font-weight: bold; border-bottom: none; }
+  .ok { color: #1a7f37; font-weight: bold; }
+  .warn { color: #9a6700; font-weight: bold; }
+  .bad { color: #b42318; font-weight: bold; }
+  @media (max-width: 480px) {
+    main { padding: 20px 14px 50px; }
+    table th, table td { padding-right: 8px; font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+<h1>BoardRipper &mdash; supported browsers and devices</h1>
+<p class="tagline">Web version. Checked against v0.43.4, 2026-09-25.</p>
+<p class="tagline" style="margin-top:4px">Thanks to <b>Sebaskitten</b> on Discord for testing and helping refine the legacy iOS support.</p>
+<nav>[<a href="./">BoardRipper</a>] | [<a href="web/">Open in browser</a>] | [<a href="legacy-web/">Legacy version</a>] | [<a href="#ipad">iPads</a>] | [<a href="#legacy">Older iPads</a>] | [<a href="#improve">What could be better</a>]</nav>
+
+<p>BoardRipper runs in the browser. Nothing is installed and nothing is uploaded; the boardview files and PDFs stay on your machine. What it needs from the browser is WebGL for the board and a JavaScript engine from 2023 or newer for everything else.</p>
+
+<p>There are two web versions:</p>
+<ul>
+  <li><b><a href="web/">Main version</a></b> &mdash; <code>ripperdoc.de/boardripper/web/</code>. Browsers from 2023 on; iPadOS 16.4 and newer.</li>
+  <li><b><a href="legacy-web/">Legacy version</a></b> &mdash; <code>ripperdoc.de/boardripper/legacy-web/</code>. The same app built for older browsers, down to iPadOS 15.4. New and not yet confirmed on real devices; see <a href="#legacy">below</a>.</li>
+</ul>
+
+<h2>Browsers</h2>
+<div class="tablewrap">
+<table>
+  <tr><th>Browser</th><th>Main version</th><th>Legacy version</th><th></th></tr>
+  <tr><td>Chrome, Edge, Brave, Opera</td><td class="v">111 &mdash; March 2023</td><td class="v">111</td><td>Recommended. Can pick a folder as library and remember it.</td></tr>
+  <tr><td>Firefox</td><td class="v">114 &mdash; June 2023</td><td class="v">114</td><td>Picks a folder per session. The library index is kept, the folder is asked for again.</td></tr>
+  <tr><td>Safari (Mac)</td><td class="v">16.4 &mdash; March 2023</td><td class="v">15.4 &mdash; March 2022</td><td>Same as Firefox.</td></tr>
+  <tr><td>iPad, iPhone</td><td class="v">iOS / iPadOS 16.4</td><td class="v">iOS / iPadOS 15.4</td><td>Chrome and Firefox on iPad use Safari&rsquo;s engine, so only the iOS version matters. Device list below.</td></tr>
+  <tr><td>Android</td><td class="v">Chrome 111</td><td class="v">Chrome 111</td><td>Like desktop Chrome.</td></tr>
+</table>
+</div>
+<p class="small">Older than this, the page shows a short &ldquo;needs a newer browser&rdquo; note with the minimum versions (legacy version) or stays blank (main version, until the next release).</p>
+
+<h2 id="ipad">iPads</h2>
+<p>The iOS version is what decides it. iPads stop getting updates after a few years, so the table is by model; the last iPadOS a model can run is what it will be on.</p>
+<div class="tablewrap">
+<table>
+  <tr><th>Model</th><th>Year</th><th>Chip / RAM</th><th>Last iPadOS</th><th>BoardRipper</th></tr>
+
+  <tr class="group"><td colspan="5">iPad Pro</td></tr>
+  <tr><td>iPad Pro 11&Prime; (M4), 13&Prime; (M4)</td><td class="v">2024</td><td class="v">M4 / 8&ndash;16 GB</td><td class="v">current</td><td><span class="ok">works</span></td></tr>
+  <tr><td>iPad Pro 11&Prime; (4th), 12.9&Prime; (6th)</td><td class="v">2022</td><td class="v">M2 / 8&ndash;16 GB</td><td class="v">current</td><td><span class="ok">works</span></td></tr>
+  <tr><td>iPad Pro 11&Prime; (3rd), 12.9&Prime; (5th)</td><td class="v">2021</td><td class="v">M1 / 8&ndash;16 GB</td><td class="v">current</td><td><span class="ok">works</span></td></tr>
+  <tr><td>iPad Pro 11&Prime; (2nd), 12.9&Prime; (4th)</td><td class="v">2020</td><td class="v">A12Z / 6 GB</td><td class="v">current</td><td><span class="ok">works</span> &mdash; the iPad the touch support is tuned on</td></tr>
+  <tr><td>iPad Pro 11&Prime; (1st), 12.9&Prime; (3rd)</td><td class="v">2018</td><td class="v">A12X / 4&ndash;6 GB</td><td class="v">26</td><td><span class="ok">works</span></td></tr>
+  <tr><td>iPad Pro 10.5&Prime;, 12.9&Prime; (2nd)</td><td class="v">2017</td><td class="v">A10X / 4 GB</td><td class="v">17.7</td><td><span class="ok">works</span> &mdash; single files, no folder library</td></tr>
+  <tr><td>iPad Pro 9.7&Prime;</td><td class="v">2016</td><td class="v">A9X / 2 GB</td><td class="v">16.7</td><td><span class="warn">should work</span> &mdash; not tested on the device</td></tr>
+  <tr><td>iPad Pro 12.9&Prime; (1st)</td><td class="v">2015</td><td class="v">A9X / 4 GB</td><td class="v">16.7</td><td><span class="warn">should work</span> &mdash; not tested on the device</td></tr>
+
+  <tr class="group"><td colspan="5">iPad Air</td></tr>
+  <tr><td>iPad Air 11&Prime; / 13&Prime; (M3)</td><td class="v">2025</td><td class="v">M3 / 8 GB</td><td class="v">current</td><td><span class="ok">works</span></td></tr>
+  <tr><td>iPad Air 11&Prime; / 13&Prime; (M2)</td><td class="v">2024</td><td class="v">M2 / 8 GB</td><td class="v">current</td><td><span class="ok">works</span></td></tr>
+  <tr><td>iPad Air (5th)</td><td class="v">2022</td><td class="v">M1 / 8 GB</td><td class="v">current</td><td><span class="ok">works</span></td></tr>
+  <tr><td>iPad Air (4th)</td><td class="v">2020</td><td class="v">A14 / 4 GB</td><td class="v">current</td><td><span class="ok">works</span></td></tr>
+  <tr><td>iPad Air (3rd)</td><td class="v">2019</td><td class="v">A12 / 3 GB</td><td class="v">26</td><td><span class="ok">works</span></td></tr>
+  <tr><td>iPad Air 2</td><td class="v">2014</td><td class="v">A8X / 2 GB</td><td class="v">15.8</td><td><span class="warn">legacy version</span> &mdash; should work, not confirmed</td></tr>
+  <tr><td>iPad Air (1st)</td><td class="v">2013</td><td class="v">A7 / 1 GB</td><td class="v">12.5</td><td><span class="bad">no</span></td></tr>
+
+  <tr class="group"><td colspan="5">iPad</td></tr>
+  <tr><td>iPad (A16)</td><td class="v">2025</td><td class="v">A16 / 6 GB</td><td class="v">current</td><td><span class="ok">works</span></td></tr>
+  <tr><td>iPad (10th)</td><td class="v">2022</td><td class="v">A14 / 4 GB</td><td class="v">current</td><td><span class="ok">works</span></td></tr>
+  <tr><td>iPad (9th)</td><td class="v">2021</td><td class="v">A13 / 3 GB</td><td class="v">current</td><td><span class="ok">works</span></td></tr>
+  <tr><td>iPad (8th)</td><td class="v">2020</td><td class="v">A12 / 3 GB</td><td class="v">26</td><td><span class="ok">works</span></td></tr>
+  <tr><td>iPad (7th)</td><td class="v">2019</td><td class="v">A10 / 3 GB</td><td class="v">18.7</td><td><span class="ok">works</span></td></tr>
+  <tr><td>iPad (6th)</td><td class="v">2018</td><td class="v">A10 / 2 GB</td><td class="v">17.7</td><td><span class="ok">works</span> &mdash; single files, no folder library</td></tr>
+  <tr><td>iPad (5th)</td><td class="v">2017</td><td class="v">A9 / 2 GB</td><td class="v">16.7</td><td><span class="warn">should work</span> &mdash; not tested on the device</td></tr>
+  <tr><td>iPad (4th) and older</td><td class="v">&le; 2012</td><td class="v">A6X / 1 GB</td><td class="v">10.3</td><td><span class="bad">no</span></td></tr>
+
+  <tr class="group"><td colspan="5">iPad mini</td></tr>
+  <tr><td>iPad mini (A17 Pro)</td><td class="v">2024</td><td class="v">A17 Pro / 8 GB</td><td class="v">current</td><td><span class="ok">works</span></td></tr>
+  <tr><td>iPad mini (6th)</td><td class="v">2021</td><td class="v">A15 / 4 GB</td><td class="v">current</td><td><span class="ok">works</span></td></tr>
+  <tr><td>iPad mini (5th)</td><td class="v">2019</td><td class="v">A12 / 3 GB</td><td class="v">26</td><td><span class="ok">works</span></td></tr>
+  <tr><td>iPad mini 4</td><td class="v">2015</td><td class="v">A8 / 2 GB</td><td class="v">15.8</td><td><span class="warn">legacy version</span> &mdash; should work, not confirmed</td></tr>
+  <tr><td>iPad mini 2, 3</td><td class="v">2013&ndash;14</td><td class="v">A7 / 1 GB</td><td class="v">12.5</td><td><span class="bad">no</span></td></tr>
+</table>
+</div>
+<p class="small">&ldquo;current&rdquo; = gets iPadOS 27 (September 2026). iPadOS 26 is the last version for the 2018 iPad Pro, iPad Air 3, iPad 8 and iPad mini 5; they keep working, they just stop updating.</p>
+<p class="small"><b>Folder library</b> needs iPadOS 18.4 or newer &mdash; that is when Apple let a web page open a folder. Before that you open boards and PDFs one at a time from Files or with the Open button; everything else is the same.</p>
+<p class="small"><b>Should work</b> means every check we can do says yes, but no one has run it on that iPad. If you have one, a short note on Discord is welcome.</p>
+
+<h2>iPhones</h2>
+<div class="tablewrap">
+<table>
+  <tr><th>Model</th><th>Last iOS</th><th>BoardRipper</th></tr>
+  <tr><td>iPhone 11 and newer, iPhone SE (2nd, 3rd)</td><td class="v">current</td><td><span class="ok">works</span></td></tr>
+  <tr><td>iPhone XS, XS Max, XR</td><td class="v">18.7</td><td><span class="ok">works</span></td></tr>
+  <tr><td>iPhone 8, 8 Plus, X</td><td class="v">16.7</td><td><span class="warn">should work</span></td></tr>
+  <tr><td>iPhone 7, 6s, SE (1st)</td><td class="v">15.8</td><td><span class="warn">legacy version</span> &mdash; should work, not confirmed</td></tr>
+</table>
+</div>
+<p class="small">A phone screen is small for a board, but it works for looking up a net or a diode reading.</p>
+
+<h2 id="legacy">Older iPads: the legacy version</h2>
+<div class="callout">
+<p><b><a href="legacy-web/">ripperdoc.de/boardripper/legacy-web/</a></b> &mdash; the same BoardRipper, built so it also starts on iPadOS 15.4 to 16.3 (iPad Air 2, iPad mini 4, iPhone 7 / 6s / SE 1, and anything left on an early 16). On a current iPad it is the same as the main version.</p>
+<p>It is new and has not been run on one of those devices yet. That is what publishing it is for: if you have one, open it, load a board, and tell me what happened.</p>
+<p><b>PDF viewing may work worse than the board view.</b> The PDF engine (pdf.js) had issues on the main version too and is being worked on; judge the legacy version by the board first.</p>
+<p class="small">The version badge in the toolbar reads <code>-legacy</code>. Installed to the Home Screen it appears as &ldquo;BR Legacy&rdquo;, next to the main one if you have both. The legacy build is updated by hand for now; once it is confirmed, the same changes go into the main version and this page says so.</p>
+</div>
+
+<h2>Good to know</h2>
+<p><b>WebGL</b> &mdash; the board is drawn on the GPU. Every browser in the table has it. If it is switched off (some managed company browsers do that), the board area stays empty. In Chrome, <code>chrome://gpu</code> shows whether WebGL is on.</p>
+<p><b>Keeping the library on an iPad</b> &mdash; Safari deletes a website&rsquo;s stored data after seven days without a visit. Add BoardRipper to the Home Screen (Share &rsaquo; Add to Home Screen) and that rule does not apply; the library index and cached boards stay.</p>
+<p><b>Two-window mode</b> &mdash; board on one screen, schematic on another. Desktop browsers only.</p>
+<p><b>Old hardware</b> &mdash; tested on a 2020 iPad Pro and on 2012&ndash;2014 Intel laptops (HD 4000 era, 10&ndash;30 fps on big boards). On a 2&nbsp;GB iPad a large Allegro or TVW board may run out of memory; the common BRD, BVR, BDV, FZ and XZZ boards are small and open fine. The touch performance setting is on by default on tablets and trades some resolution for a smooth pan.</p>
+
+<h2 id="improve">What could be improved</h2>
+<ul>
+  <li><b>A message instead of a blank page</b> on a browser that is too old. The legacy version has it; the main version gets it with the next release.</li>
+  <li><b>Confirming the legacy version</b> on 2014&ndash;2018 iPads (iPadOS 15.4 to 17.7). Every check we can do says yes; nobody has held one. Reports from real devices settle it.</li>
+  <li><b>Folder library before iPadOS 18.4</b> &mdash; not possible, the browser has no way to open a folder. Updating iPadOS is the fix.</li>
+  <li><b>PDF viewer on older iOS</b> &mdash; the PDF engine (pdf.js) moves fast and its newest releases assume iOS 26. BoardRipper carries small compatibility shims so iOS 15.4 to 18 keep working, and will keep doing that.</li>
+</ul>
+
+<div class="badge">
+  <p><b>BoardRipper should run on your device and does not?</b></p>
+  <p>Tell me the device, its OS version and what you see (blank page, empty board, no PDF): Discord <b>@inwerp</b> on the <a href="https://discord.gg/BYEkKTMNNY">RipperDoc server</a>, or an issue on <a href="https://github.com/AlexeyInwerp/BoardRipper/issues/new/choose">GitHub</a>. The same device asked for by several people moves up the list.</p>
+</div>
+
+<hr class="stars">
+<p class="small">Desktop app: macOS 11 and Windows 10 or newer; the Legacy Mac build runs on macOS 10.15 Catalina. The Docker version is served from your NAS and follows the browser table above.</p>
+<p class="small"><a href="./">Back to BoardRipper</a></p>
+
+</main>
+</body>
+</html>
