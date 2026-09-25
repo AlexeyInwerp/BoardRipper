@@ -8,6 +8,7 @@ import { PdfLinks } from './pdf-links';
 import { log } from './log-store';
 import { ensureIndexed } from '../pdf/pdf-index-client';
 import { scoreLookupCandidates, type LookupCandidate, type LookupContextHit } from './pdf-lookup-score';
+import { isOfflineBuild } from './build-mode';
 
 // ES2025 shims that pdf.js calls on the main thread live in src/polyfills.ts
 // (imported first in main.tsx); the worker's copies are in the patch.
@@ -35,14 +36,24 @@ const _workerUrl = new URL(
 // watermark filter (which matches on reconstructed glyph strings) can't
 // see them. cmaps in pdfjs-dist are pre-packed .bcmap files.
 //
-// `new URL('pdfjs-dist/cmaps/', import.meta.url)` doesn't work — vite only
-// resolves bare module specifiers when the URL points at a file (e.g.
-// 'pdfjs-dist/build/pdf.worker.mjs'), not a directory. So we derive the
-// asset directory from `_workerUrl` by trimming `build/pdf.worker.mjs`.
-const _pdfjsBase = _workerUrl.replace(/build\/pdf\.worker\.mjs$/, '');
-const _cMapUrl = _pdfjsBase + 'cmaps/';
-const _standardFontDataUrl = _pdfjsBase + 'standard_fonts/';
-const _getDocOpts = { cMapUrl: _cMapUrl, cMapPacked: true, standardFontDataUrl: _standardFontDataUrl };
+// They are served at `<base>/pdfjs/{cmaps,standard_fonts,wasm}/` by the
+// `pdfjsAssets` plugin in vite.config.ts (dev middleware + emitted into every
+// build). The URLs must be ABSOLUTE: with `useWorkerFetch` the worker fetches
+// them itself, and a relative URL would resolve against the worker script in
+// `assets/`. Before 2026-09 they were derived from the worker asset's hashed
+// name and resolved to nothing in every production build. The offline single
+// file ships no directory (see the plugin) and keeps pdf.js's own fallbacks.
+const _pdfjsBase = isOfflineBuild() ? null : new URL(import.meta.env.BASE_URL + 'pdfjs/', document.baseURI).href;
+const _getDocOpts = _pdfjsBase
+  ? {
+      cMapUrl: _pdfjsBase + 'cmaps/',
+      cMapPacked: true,
+      standardFontDataUrl: _pdfjsBase + 'standard_fonts/',
+      // Switches on OpenJPEG (JPX images), the jbig2 wasm decoder and qcms
+      // (ICC colour). Without it pdf.js throws on JPX and skips ICC.
+      wasmUrl: _pdfjsBase + 'wasm/',
+    }
+  : {};
 
 let _workerReady: Promise<void> = Promise.resolve();
 // The dynamic import below makes Vite emit a SECOND, minified copy of the

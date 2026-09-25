@@ -1,4 +1,7 @@
 import { defineConfig, transformWithEsbuild, type Plugin } from 'vite'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import { viteSingleFile } from 'vite-plugin-singlefile'
@@ -34,6 +37,47 @@ function minifyPdfWorkerAsset(): Plugin {
   };
 }
 
+/**
+ * pdf.js's data files — CMaps (CJK / vendor fonts), the standard 14 fonts and
+ * the wasm decoders (OpenJPEG for JPX images, jbig2, qcms for ICC colour) —
+ * are plain files pdf.js fetches at runtime from `cMapUrl` /
+ * `standardFontDataUrl` / `wasmUrl`. They are not imports, so Vite never saw
+ * them: until 2026-09 no build shipped any of them, and the URLs were derived
+ * from the worker asset's *hashed* name and pointed at nothing. This serves
+ * `<base>/pdfjs/{cmaps,standard_fonts,wasm}/` straight from the package in
+ * dev and emits the same tree (unhashed, so pdf.js's `${url}${name}` fetches
+ * work) into the build. pdf-store.ts builds the three URLs from BASE_URL.
+ */
+function pdfjsAssets(): Plugin {
+  const pkgDir = path.dirname(fileURLToPath(import.meta.resolve('pdfjs-dist/package.json')));
+  const DIRS = ['cmaps', 'standard_fonts', 'wasm'];
+  const MIME: Record<string, string> = {
+    '.bcmap': 'application/octet-stream', '.pfb': 'application/octet-stream',
+    '.ttf': 'font/ttf', '.wasm': 'application/wasm', '.js': 'text/javascript',
+  };
+  return {
+    name: 'boardripper:pdfjs-assets',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const m = /^\/pdfjs\/(cmaps|standard_fonts|wasm)\/([\w.-]+)$/.exec(req.url?.split('?')[0] ?? '');
+        if (!m) return next();
+        const file = path.join(pkgDir, m[1], m[2]);
+        if (!fs.existsSync(file)) return next();
+        res.setHeader('Content-Type', MIME[path.extname(file)] ?? 'application/octet-stream');
+        fs.createReadStream(file).pipe(res);
+      });
+    },
+    generateBundle() {
+      for (const dir of DIRS) {
+        for (const name of fs.readdirSync(path.join(pkgDir, dir))) {
+          if (name.startsWith('LICENSE')) continue;
+          this.emitFile({ type: 'asset', fileName: `pdfjs/${dir}/${name}`, source: fs.readFileSync(path.join(pkgDir, dir, name)) });
+        }
+      }
+    },
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   // Backend-free web builds (see docs/specs/2026-07-20-boardripper-web-
@@ -57,6 +101,9 @@ export default defineConfig(({ mode }) => {
       // service worker can't register on file://.
       ...(offline ? [viteSingleFile({ removeViteModuleLoader: true })] : []),
       minifyPdfWorkerAsset(),
+      // The offline single file cannot carry a directory of fetched files;
+      // it keeps pdf.js's built-in fallbacks (system fonts, no JPX/ICC).
+      ...(offline ? [] : [pdfjsAssets()]),
       // Present in EVERY mode (disabled outside lite) so `virtual:pwa-register/
       // react` resolves for the NAS/offline/Electron builds too — the
       // UpdatePrompt component imports it and is itself gated on isLiteBuild().
@@ -78,6 +125,10 @@ export default defineConfig(({ mode }) => {
           // NOTE 'mjs': the pdf.js worker may be emitted as an .mjs asset — omit
           // it and PDF viewing could break offline.
           globPatterns: ['**/*.{js,mjs,css,html,svg,woff2,wasm}'],
+          // pdf.js's data files (2.4 MB) are fetched on demand by the PDF a
+          // user actually opens; precaching them would add that to every
+          // install for files most sessions never touch.
+          globIgnores: ['**/pdfjs/**'],
           // pdf worker + wasm can be large; lift the default precache cap.
           maximumFileSizeToCacheInBytes: 12 * 1024 * 1024,
         },
