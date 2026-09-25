@@ -11,12 +11,17 @@ import { installBrowserZoomBlock } from './store/browser-zoom-block';
 import { startMcpBridgeIfEnabled } from './store/mcp-bridge';
 import { initSessionStore } from './store/session-store';
 
-installBrowserZoomBlock();
-startMcpBridgeIfEnabled();
-initSessionStore();
+// The boot gate in index.html has already written its message into #root when
+// this is set; mounting would paint the app over it and then fail somewhere
+// deeper. Nothing below this line runs on an unsupported browser.
+if (!window.__brUnsupported) {
+  installBrowserZoomBlock();
+  startMcpBridgeIfEnabled();
+  initSessionStore();
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>
-);
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <App />
+    </StrictMode>
+  );
+}

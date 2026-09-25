@@ -79,3 +79,24 @@ if (typeof (Uint8Array as { fromBase64?: unknown }).fromBase64 !== 'function') {
     return arr;
   };
 }
+
+// Uint8Array.prototype.toHex — Chrome 136+ / Firefox 133+ / Safari 18.2+.
+// Map.prototype.getOrInsertComputed — Chrome 145+ / Safari 26.2+.
+// pdf.js 5.5 calls both on the main thread (fingerprints, bitmap cache);
+// the worker's copies are in patches/pdfjs-dist+<version>.patch. Types:
+// src/globals.d.ts.
+if (typeof Uint8Array.prototype.toHex !== 'function') {
+  Uint8Array.prototype.toHex = function () {
+    let hex = '';
+    for (let i = 0; i < this.length; i++) hex += this[i].toString(16).padStart(2, '0');
+    return hex;
+  };
+}
+if (typeof Map.prototype.getOrInsertComputed !== 'function') {
+  Map.prototype.getOrInsertComputed = function <K, V>(this: Map<K, V>, key: K, cb: (key: K) => V): V {
+    if (this.has(key)) return this.get(key)!;
+    const val = cb(key);
+    this.set(key, val);
+    return val;
+  };
+}

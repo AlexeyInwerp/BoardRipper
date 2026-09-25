@@ -9,32 +9,8 @@ import { log } from './log-store';
 import { ensureIndexed } from '../pdf/pdf-index-client';
 import { scoreLookupCandidates, type LookupCandidate, type LookupContextHit } from './pdf-lookup-score';
 
-// Polyfills for Electron (Chrome 134) — pdfjs v5.5+ uses Chrome 136+ APIs.
-// TS lib doesn't ship the Stage-3 prototype additions yet; declare them for the typechecker.
-declare global {
-  interface Uint8Array {
-    toHex(): string;
-  }
-  interface Map<K, V> {
-    getOrInsertComputed(key: K, cb: (key: K) => V): V;
-  }
-}
-
-if (typeof Uint8Array.prototype.toHex !== 'function') {
-  Uint8Array.prototype.toHex = function () {
-    let hex = '';
-    for (let i = 0; i < this.length; i++) hex += this[i].toString(16).padStart(2, '0');
-    return hex;
-  };
-}
-if (typeof Map.prototype.getOrInsertComputed !== 'function') {
-  Map.prototype.getOrInsertComputed = function <K, V>(this: Map<K, V>, key: K, cb: (key: K) => V): V {
-    if (this.has(key)) return this.get(key)!;
-    const val = cb(key);
-    this.set(key, val);
-    return val;
-  };
-}
+// ES2025 shims that pdf.js calls on the main thread live in src/polyfills.ts
+// (imported first in main.tsx); the worker's copies are in the patch.
 
 // Configure pdf.js worker.
 // In Electron (file:// protocol), try dynamic import first (sets globalThis.pdfjsWorker

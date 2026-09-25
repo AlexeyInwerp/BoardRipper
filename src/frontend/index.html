@@ -15,6 +15,36 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Boot gate. A classic script runs on every engine; the module bundle
+         below fails to PARSE on a browser older than the build target
+         (Safari < 16.4 chokes on a regex lookbehind), so nothing in it can
+         ever show a message. This checks the three things that decide
+         whether the bundle can start and writes a plain paragraph if one
+         is missing. ES5 only: no const/let, arrows or template strings.
+         main.tsx reads window.__brUnsupported and does not mount. -->
+    <script>
+      (function () {
+        var missing = [];
+        if (typeof structuredClone !== 'function') missing.push('structuredClone');
+        if (typeof OffscreenCanvas === 'undefined') missing.push('OffscreenCanvas');
+        try { new RegExp('(?<=a)b'); } catch (e) { missing.push('regular expression lookbehind'); }
+        if (!missing.length) return;
+        window.__brUnsupported = missing;
+        var root = document.getElementById('root');
+        if (!root) return;
+        document.documentElement.style.background = '#08080c';
+        root.innerHTML =
+          '<div style="max-width:560px;margin:48px auto;padding:0 20px;font:14px/1.55 Verdana,Geneva,sans-serif;color:#e0e0e0">' +
+          '<h1 style="font-size:20px;margin:0 0 12px">BoardRipper needs a newer browser</h1>' +
+          '<p>This browser is missing: <b>' + missing.join(', ') + '</b>.</p>' +
+          '<p>Minimum: Chrome or Edge 111, Firefox 114, Safari 16.4, iOS / iPadOS 16.4 (all from spring 2023). ' +
+          'On an iPad or iPhone, updating iOS is the fix &mdash; every browser there uses Safari&rsquo;s engine, Chrome included.</p>' +
+          '<p>If you think it should run on this device, tell me the device and OS version: ' +
+          '<a style="color:#4a9eff" href="https://discord.gg/BYEkKTMNNY">Discord</a> (@inwerp on the RipperDoc server) or ' +
+          '<a style="color:#4a9eff" href="https://github.com/AlexeyInwerp/BoardRipper/issues/new/choose">GitHub</a>.</p>' +
+          '</div>';
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
