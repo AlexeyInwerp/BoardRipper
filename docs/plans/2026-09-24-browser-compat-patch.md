@@ -1,5 +1,9 @@
 # Browser compatibility patch — plan (2026-09-24)
 
+**Status 2026-09-25:** all three phases are implemented on `feat/browser-compat`,
+one commit each, in this order. Phase 2 is code-complete and green on the
+suite; it still has not run on a 15.x device, which is the whole of its risk.
+
 Companion to `docs/research/2026-09-24-web-browser-compatibility.md`, which has
 the evidence. This is the work, sized. Web build only (lite + NAS SPA); the
 desktop app is untouched except where it shares the bundle.

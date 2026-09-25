@@ -774,7 +774,9 @@ class PdfStore extends Emitter {
             .filter(item => item.str.trim() || item.width <= 100)
             .map(item => ({
               ...item,
-              str: item.str.replace(/(?<=\w) (?=\w)/g, ''),
+              // No lookbehind: a `(?<=…)` literal is a parse error on Safari
+              // < 16.4 and takes the whole chunk with it. Same match set.
+              str: item.str.replace(/(\w) (?=\w)/g, '$1'),
               // Older cached entries may predate the fontName field; widen
               // through unknown to read it tolerantly before re-asserting type.
               fontName: (item as unknown as { fontName?: string }).fontName ?? '',

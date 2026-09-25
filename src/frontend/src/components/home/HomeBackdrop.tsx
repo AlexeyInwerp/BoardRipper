@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { pillVars } from '../../store/color-math';
 import { useBoardStore } from '../../hooks/useBoardStore';
 import { useDatabank } from '../../hooks/useDatabank';
 import { databankStore } from '../../store/databank-store';
@@ -9,7 +10,7 @@ import { IconUpload } from '@tabler/icons-react';
 import { pdfStore } from '../../store/pdf-store';
 import { updateStore } from '../../store/update-store';
 import { renderSettingsStore, type RenderSettings } from '../../store/render-settings';
-import { themeStore, ACCENT_PRESETS } from '../../store/themes';
+import { themeStore, ACCENT_PRESETS, getUiPalette } from '../../store/themes';
 import { isHdrCapable, onHdrCapabilityChange, rungForIntensity } from '../../renderer/hdr-selection-outline';
 import { InterfaceScaleSlider } from '../InterfaceScaleSlider';
 import { FolderLibraryOpenButton } from '../FolderLibraryControls';
@@ -457,7 +458,7 @@ function MatrixSlot({
       <span className="home-bindings-cell-mod">{modifier}</span>
       <span
         className={`home-bindings-cell-action${isDragging ? ' dragging' : ''}`}
-        style={{ '--pill-color': color } as React.CSSProperties}
+        style={pillVars(color, getUiPalette()) as React.CSSProperties}
         draggable
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}

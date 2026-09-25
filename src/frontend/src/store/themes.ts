@@ -7,6 +7,8 @@ import {
   pickAccentFg,
   pickTextColors,
   accentTextColor,
+  derivedUiTokens,
+  type UiPalette,
 } from './color-math';
 
 // Re-exported for existing call sites that imported these from themes.ts.
@@ -462,6 +464,15 @@ interface UiOverrides {
  *    - chrome      → --bg-tertiary; --border derived
  *    - accent      → --accent; --accent-fg auto-flips; --accent-hover in CSS
  */
+/** The palette applyThemeToDOM last wrote — for per-element tints (the
+ *  binding pills) that mix a colour of their own with the theme's. Defaults
+ *  match index.css's :root first-paint block. */
+let lastPalette: UiPalette = {
+  bgPrimary: '#08080c', bgSecondary: '#0f0f18', bgTertiary: '#0c1424', border: '#1a1a28',
+  textPrimary: '#e0e0e0', textSecondary: '#a0a0b0', accent: '#4a9eff',
+};
+export function getUiPalette(): UiPalette { return lastPalette; }
+
 export function applyThemeToDOM(theme: Theme, overrides: Partial<UiOverrides> = {}) {
   const root = document.documentElement;
   const { accent, background, chrome } = overrides;
@@ -473,12 +484,14 @@ export function applyThemeToDOM(theme: Theme, overrides: Partial<UiOverrides> = 
   // a theme declare just bgPrimary/bgTertiary and get a correct tier for free,
   // and keeps knob and theme paths consistent.
   const effBg = background ?? theme.ui.bgPrimary;
+  const effBg2 = background ? shadeToward(effBg, 0.06) : theme.ui.bgSecondary;
   root.style.setProperty('--bg-primary',   effBg);
-  root.style.setProperty('--bg-secondary', background ? shadeToward(effBg, 0.06) : theme.ui.bgSecondary);
+  root.style.setProperty('--bg-secondary', effBg2);
 
   const effChrome = chrome ?? theme.ui.bgTertiary;
+  const effBorder = chrome ? shadeToward(effChrome, 0.12) : theme.ui.border;
   root.style.setProperty('--bg-tertiary', effChrome);
-  root.style.setProperty('--border',      chrome ? shadeToward(effChrome, 0.12) : theme.ui.border);
+  root.style.setProperty('--border',      effBorder);
 
   // Body text is derived from the effective background's luminance so it
   // stays readable when the background knob (or a light theme) flips the base
@@ -500,7 +513,15 @@ export function applyThemeToDOM(theme: Theme, overrides: Partial<UiOverrides> = 
   // text; foreground `color:` sites in index.css read --accent-text, while
   // accent-as-background / border / glow sites keep the pure --accent hue.
   root.style.setProperty('--accent-text', accentTextColor(effAccent, effBg));
-  // --accent-hover is derived from --accent in index.css via color-mix.
+  // Every tint index.css derives from these tokens (--accent-hover, the
+  // scrims, --accent-a12 …) is mixed here rather than by color-mix() in the
+  // stylesheet: color-mix over var() is Safari 16.2+ and the build floor is
+  // lower. One place, one set of percentages — see derivedUiTokens().
+  lastPalette = {
+    bgPrimary: effBg, bgSecondary: effBg2, bgTertiary: effChrome, border: effBorder,
+    textPrimary: text.primary, textSecondary: text.secondary, accent: effAccent,
+  };
+  for (const [name, value] of Object.entries(derivedUiTokens(lastPalette))) root.style.setProperty(name, value);
   root.style.setProperty('--canvas-bg',      theme.board.canvasBackground);
   root.style.setProperty('--icon-board-bg',  theme.ui.iconBoardBg);
   root.style.setProperty('--icon-pdf-bg',    theme.ui.iconPdfBg);

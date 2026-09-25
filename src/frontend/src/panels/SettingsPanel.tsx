@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useMemo, useEffect, useSyncExternalStore, createContext, useContext } from 'react';
+import { pillVars } from '../store/color-math';
 import { IconPalette, IconLayoutBoardSplit, IconKeyboard, IconBooks, IconSettings, IconPlug, IconClick } from '@tabler/icons-react';
-import { themeStore, THEMES, ACCENT_PRESETS } from '../store/themes';
+import { themeStore, THEMES, ACCENT_PRESETS, getUiPalette } from '../store/themes';
 import { isHdrCapable, onHdrCapabilityChange } from '../renderer/hdr-selection-outline';
 import { resizeModeStore } from '../store/resize-mode-store';
 import type { Theme } from '../store/themes';
@@ -1373,7 +1374,7 @@ function ScrollBindingsEditor() {
               <span className="scroll-binding-modifier">{MODIFIER_LABELS[slot]}</span>
               <span
                 className={`scroll-binding-pill${dragging === action ? ' dragging' : ''}`}
-                style={{ '--pill-color': ACTION_COLORS[action] } as React.CSSProperties}
+                style={pillVars(ACTION_COLORS[action], getUiPalette()) as React.CSSProperties}
                 draggable
                 onDragStart={e => handleDragStart(e, action)}
                 onDragEnd={handleDragEnd}
@@ -1703,7 +1704,7 @@ function BoardScrollBindingsEditor({ twoFingerPan, onUpdate }: { twoFingerPan: b
               <span className="scroll-binding-modifier">{BOARD_MODIFIER_LABELS[slot]}</span>
               <span
                 className={`scroll-binding-pill${dragging === action ? ' dragging' : ''}`}
-                style={{ '--pill-color': BOARD_ACTION_COLORS[action] } as React.CSSProperties}
+                style={pillVars(BOARD_ACTION_COLORS[action], getUiPalette()) as React.CSSProperties}
                 draggable onDragStart={e => handleDragStart(e, action)} onDragEnd={handleDragEnd}>
                 {BOARD_ACTION_LABELS[action]}
               </span>
@@ -1778,7 +1779,7 @@ function BoardDragBindingsEditor({ dragToZoom, onUpdate }: { dragToZoom: boolean
               <span className="scroll-binding-modifier">{BOARD_DRAG_MODIFIER_LABELS[slot]}</span>
               <span
                 className={`scroll-binding-pill${dragging === action ? ' dragging' : ''}`}
-                style={{ '--pill-color': BOARD_ACTION_COLORS[action as BoardScrollAction] } as React.CSSProperties}
+                style={pillVars(BOARD_ACTION_COLORS[action as BoardScrollAction], getUiPalette()) as React.CSSProperties}
                 draggable onDragStart={e => handleDragStart(e, action)} onDragEnd={handleDragEnd}>
                 {BOARD_ACTION_LABELS[action as BoardScrollAction]}
               </span>

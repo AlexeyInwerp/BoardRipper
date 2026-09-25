@@ -20,7 +20,7 @@ iPad" sits in the same row as Safari.
 | Folder library | — | iOS 18.4 for a folder, any version for single files | `<input webkitdirectory>` reached iOS in 18.4. `showDirectoryPicker`/`getAsFileSystemHandle`: never on WebKit (Chromium only). |
 | HDR selection outline | — | iOS 16 (AVIF) | Opt-in; `dynamic-range-limit` (iOS 26) is set via `setProperty` and simply ignored earlier. |
 
-**Effective floor today: iOS/iPadOS 16.4.** Verified for the syntax side by
+**Effective floor at v0.43.4: iOS/iPadOS 16.4; on `feat/browser-compat`: 15.4** (see the plan). Verified for the syntax side by
 re-transforming the built main chunk: at `safari16.4` esbuild leaves it
 untouched; at `safari15.4` it rewrites the lookbehind to `new RegExp()` and
 lowers the class fields, i.e. the *only* hard parse-time blocker below 16.4 is
@@ -37,9 +37,7 @@ that one regex.
 | **17.4–17.7** | ✓ | ✓ (`withResolvers`, `URL.parse`, `transferToFixedLength` polyfilled; `Float16Array` guarded by pdf.js) | ✗ | ✓ | Works | iPad 6, Pro 10.5"/12.9" (2nd) |
 | **17.0–17.3** | ✓ | ✓ (same polyfills) | ✗ | ✓ | Works | — |
 | **16.4–16.7** | ✓ | ✓ — nothing above 16.4 is unpolyfilled | ✗ | ✓ | Works in principle, **never run** — no such device or WebKit build in the test matrix | iPad 5, Pro 9.7"/12.9" (1st), iPhone 8/X |
-| **16.2–16.3** | ✗ | ✗ | ✗ | — | **Blank page** (lookbehind SyntaxError in the main chunk) | — |
-| **16.0–16.1** | ✗ | ✗ | ✗ | — | Blank page; also no `color-mix()` | — |
-| **15.4–15.8** | ✗ | ✗ | ✗ | — | Blank page. Reachable at cost (§4 B) | iPad Air 2, iPad mini 4, iPhone 6s/7/SE 1 |
+| **15.4–16.3** | ✓ | ✓ | ✗ | ✓ | Works in principle since `feat/browser-compat` (build target 15.4, no lookbehind, no `color-mix()`, OffscreenCanvas fallback); **never run on a device**. Before that branch: blank page. | iPad Air 2, iPad mini 4, iPhone 6s/7/SE 1 end at 15.8 |
 | **≤ 15.3** | ✗ | ✗ | ✗ | — | Not worth it (`structuredClone`, `BroadcastChannel`, `Object.hasOwn` all 15.4) | iPad mini 2/3, Air 1, iPhone 5s/6 |
 
 Other browsers, for completeness: Chrome/Edge 111+, Firefox 114+ (Vite target;

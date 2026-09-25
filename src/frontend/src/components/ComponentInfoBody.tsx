@@ -39,7 +39,7 @@ import { formatDiode } from '../store/diode-readings';
 import { useRenderSettings } from '../hooks/useRenderSettings';
 import { isGroundNet } from '../store/render-settings';
 import { colorToHex } from '../store/layer-store';
-import { accentTextColor } from '../store/color-math';
+import { accentTextColor, netWireVars } from '../store/color-math';
 import { DiagnosisNotes } from './DiagnosisNotes';
 import { NetBranchSection } from './NetBranchSection';
 import { ObdCell } from './ObdCell';
@@ -153,6 +153,10 @@ export function ComponentInfoBody({
         // net name, so the ink goes through the same luminance correction that
         // already produces --accent-text.
         '--nw-ink': accentTextColor(netWire, '#0f0f18'),
+        // The tint ladder (--nw-rail, --nw-probe, …) used to be color-mix()
+        // declarations under .net-scope; it is computed here now, on the same
+        // element as --nw, for the reason in the comment above.
+        ...netWireVars(netWire),
       } as React.CSSProperties)
     : undefined;
 

@@ -9,7 +9,7 @@
  * Floors (MDN BCD, 2026-09): withResolvers / transferToFixedLength 17.4,
  * URL.parse 18, Promise.try / toBase64 / fromBase64 / toHex / Float16Array
  * 18.2, iterator helpers 18.4, getOrInsertComputed / sumPrecise 26.2.
- * The build target is Safari 16.4; anything above it needs a shim or a guard.
+ * The build target is Safari 15.4; anything above it needs a shim or a guard.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';

@@ -166,13 +166,16 @@ export default defineConfig(({ mode }) => {
       // Separate output dirs so the backend-free bundles never collide with the
       // NAS build (dist/), which the Go server embeds.
       outDir: offline ? 'dist-offline' : lite ? 'dist-lite' : 'dist',
-      // The browser floor, pinned. This is exactly what Vite 7's default
-      // ('baseline-widely-available') resolves to today; Vite 8 will move
-      // that default, and a floor that moves on a tooling bump is what the
-      // support page must never have to explain. Syntax is lowered to this;
-      // APIs are not — the boot gate in index.html and src/polyfills.ts carry
-      // those. Review: docs/research/2026-09-24-web-browser-compatibility.md.
-      target: ['chrome111', 'edge111', 'firefox114', 'safari16.4', 'ios16.4'],
+      // The browser floor, pinned. Safari/iOS 15.4 is the first version with
+      // structuredClone, BroadcastChannel, Object.hasOwn and Array.at, i.e.
+      // the oldest engine the code can run on without shims; Chrome/Firefox
+      // stay at what Vite 7's baseline default resolves to. A floor that
+      // moves on a tooling bump is what the support page must never have to
+      // explain, so this list is explicit. Syntax is lowered to this; APIs
+      // are not — the boot gate in index.html and src/polyfills.ts carry
+      // those. Review: docs/research/2026-09-24-web-browser-compatibility.md,
+      // plan: docs/plans/2026-09-24-browser-compat-patch.md.
+      target: ['chrome111', 'edge111', 'firefox114', 'safari15.4', 'ios15.4'],
     },
     server: {
       host: '0.0.0.0',

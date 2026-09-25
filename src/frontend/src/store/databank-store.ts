@@ -2071,14 +2071,19 @@ class DatabankStore extends Emitter {
       const scale = THUMB_WIDTH / viewport.width;
       const scaledViewport = page.getViewport({ scale });
 
-      const canvas = new OffscreenCanvas(
-        Math.floor(scaledViewport.width),
-        Math.floor(scaledViewport.height),
-      );
+      const w = Math.floor(scaledViewport.width);
+      const h = Math.floor(scaledViewport.height);
+      // OffscreenCanvas is Safari 16.4+; a DOM canvas does the same job here
+      // (the thumbnail is rendered once and uploaded, never displayed).
+      const canvas: OffscreenCanvas | HTMLCanvasElement = typeof OffscreenCanvas !== 'undefined'
+        ? new OffscreenCanvas(w, h)
+        : Object.assign(document.createElement('canvas'), { width: w, height: h });
       const ctx = canvas.getContext('2d')!;
       await page.render({ canvas: canvas as unknown as HTMLCanvasElement, canvasContext: ctx as unknown as CanvasRenderingContext2D, viewport: scaledViewport }).promise;
 
-      const blob = await canvas.convertToBlob({ type: 'image/png' });
+      const blob = canvas instanceof HTMLCanvasElement
+        ? await new Promise<Blob>((res, rej) => canvas.toBlob(b => b ? res(b) : rej(new Error('toBlob failed')), 'image/png'))
+        : await canvas.convertToBlob({ type: 'image/png' });
       doc.destroy();
 
       // Upload to backend

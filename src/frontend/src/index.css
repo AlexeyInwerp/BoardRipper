@@ -24,7 +24,7 @@
   --accent: #4a9eff;
   /* Derived from --accent so theme switches and accent overrides
    * (themeStore.setAccent) flow through automatically. */
-  --accent-hover: color-mix(in srgb, var(--accent) 78%, white 22%);
+  --accent-hover: #72b3ff;
   /* Foreground (text/icon) colour for surfaces that fill with --accent.
    * Auto-flipped to dark when the accent is bright by themeStore — see
    * pickAccentFg() in src/store/themes.ts. The :root fallback below is
@@ -38,9 +38,13 @@
   --border: #1a1a28;
 
   /* ── Semantic token layer ────────────────────────────────────────────
-   * These derive from the theme tokens above via color-mix so they track
-   * accent / background / chrome (and flip correctly on light themes)
-   * without any JS. They replace ~3 dozen hardcoded literals that used to
+   * These derive from the theme tokens above and track accent / background /
+   * chrome (and flip correctly on light themes). The values here are the
+   * first-paint fallback for the default palette; themeStore recomputes every
+   * one of them in JS on each theme change (derivedUiTokens in
+   * src/store/color-math.ts). The stylesheet deliberately contains no
+   * color-mix(): over var() it is Safari 16.2+ and the build floor is 15.4.
+   * They replace ~3 dozen hardcoded literals that used to
    * bake a dark scrim / black tooltip / fixed-accent highlight straight
    * into rules — those broke the moment the background went light. Anything
    * that needs to read "on top of the current surface" should consume one
@@ -48,21 +52,21 @@
 
   /* Dimming scrim for loading / drop / modal overlays. Tracks the base
    * background so it darkens dark themes and lightens light themes. */
-  --scrim: color-mix(in srgb, var(--bg-primary) 72%, transparent);
-  --scrim-strong: color-mix(in srgb, var(--bg-primary) 86%, transparent);
+  --scrim: rgba(8, 8, 12, 0.72);
+  --scrim-strong: rgba(8, 8, 12, 0.86);
 
   /* Floating tooltip / popover surface + its text. */
-  --tooltip-bg: color-mix(in srgb, var(--bg-tertiary) 90%, var(--text-primary) 4%);
+  --tooltip-bg: rgba(21, 29, 44, 0.94);
   --tooltip-fg: var(--text-primary);
 
   /* Accent-tinted interactive surfaces (hover / active / selected rows). */
-  --surface-hover:  color-mix(in srgb, var(--accent) 12%, transparent);
-  --surface-active: color-mix(in srgb, var(--accent) 22%, transparent);
+  --surface-hover:  rgba(74, 158, 255, 0.12);
+  --surface-active: rgba(74, 158, 255, 0.22);
 
   /* Translucent chip used for the floating in-canvas controls (HUD, status
    * chips, sidebar toggle, button groups). Tracks the chrome tier so the
    * chips sit a step off the board on both light and dark canvases. */
-  --chip-bg: color-mix(in srgb, var(--bg-tertiary) 82%, transparent);
+  --chip-bg: rgba(12, 20, 36, 0.82);
 
   /* Fixed-dark base for the neon pan/zoom binding chips (home backdrop +
    * Settings). These carry saturated cyberpunk hues (cyan/gold/pink) as TEXT,
@@ -72,8 +76,41 @@
   --pill-surface: #15151d;
 
   /* Selection / net / pin highlight wash backgrounds. */
-  --highlight-net: color-mix(in srgb, var(--yellow) 16%, transparent);
-  --highlight-pin: color-mix(in srgb, var(--orange) 20%, transparent);
+  --highlight-net: rgba(255, 255, 68, 0.16);
+  --highlight-pin: rgba(255, 170, 0, 0.2);
+
+  /* Tints index.css reads at ~55 sites; same rule as above — first-paint
+   * values for the default palette, recomputed by themeStore. Naming:
+   * -aNN = NN % alpha, -bg2-NN / -bg3-NN / -border-NN = NN % over that token. */
+  --chrome-dark-72: #090e1a;
+  --chrome-dark-55: #070b14;
+  --chrome-bg2-60: #0d121f;
+  --danger-a10: rgba(217, 83, 79, 0.1);
+  --text2-a25: rgba(160, 160, 176, 0.25);
+  --text2-a30: rgba(160, 160, 176, 0.3);
+  --border-a55: rgba(26, 26, 40, 0.55);
+  --border-a65: rgba(26, 26, 40, 0.65);
+  --accent-a5: rgba(74, 158, 255, 0.05);
+  --accent-a6: rgba(74, 158, 255, 0.06);
+  --accent-a8: rgba(74, 158, 255, 0.08);
+  --accent-a10: rgba(74, 158, 255, 0.1);
+  --accent-a14: rgba(74, 158, 255, 0.14);
+  --accent-a16: rgba(74, 158, 255, 0.16);
+  --accent-a18: rgba(74, 158, 255, 0.18);
+  --accent-a28: rgba(74, 158, 255, 0.28);
+  --accent-a30: rgba(74, 158, 255, 0.3);
+  --accent-a40: rgba(74, 158, 255, 0.4);
+  --accent-a50: rgba(74, 158, 255, 0.5);
+  --accent-border-35: #2b4873;
+  --accent-border-40: #2d4f7e;
+  --accent-border-45: #305589;
+  --accent-border-50: #325c94;
+  --accent-bg2-4: #111521;
+  --accent-bg2-10: #151d2f;
+  --accent-bg2-20: #1b2c46;
+  --accent-bg2-30: #213a5d;
+  --accent-bg3-12: #13253e;
+  --accent-bg3-20: #183050;
 
   /* Status semantics — shared by update badges, diffs, log levels, ghost
    * parts. Saturated enough to read on both light and dark surfaces; kept
@@ -300,11 +337,11 @@ body {
   border: 0;
   border-right: 1px solid var(--border);
   border-radius: 0;
-  background: color-mix(in srgb, var(--bg-tertiary) 72%, #000);
+  background: var(--chrome-dark-72);
   color: var(--text-secondary);
 }
-.toolbar-btn.toolbar-railcell:hover:not(:disabled) { background: color-mix(in srgb, var(--bg-tertiary) 55%, #000); color: var(--text-primary); }
-.toolbar-btn.toolbar-railcell.active { background: color-mix(in srgb, var(--bg-tertiary) 55%, #000); color: var(--text-primary); }
+.toolbar-btn.toolbar-railcell:hover:not(:disabled) { background: var(--chrome-dark-55); color: var(--text-primary); }
+.toolbar-btn.toolbar-railcell.active { background: var(--chrome-dark-55); color: var(--text-primary); }
 
 /* Update badge: the version and the word swap places so an available update
    reads as a thing to do, not just a number. One grid cell, so the badge does
@@ -1484,21 +1521,14 @@ body {
    draws this net's connection lines in), alongside --nw-ink, the same value
    run through accentTextColor() so a dark netLineColor still reads as text.
 
-   This ladder MUST stay on .net-scope — the same element that declares --nw —
-   and must NOT be hoisted to :root. A custom property is substituted at
+   This ladder MUST stay on the same element that declares --nw and must NOT
+   be hoisted to :root. A custom property is substituted at
    computed-value time on the element where it is DECLARED, so a ladder at
    :root would resolve var(--nw) against :root once and never follow the
    inline override: the wire would retint and every wash would stay put. */
-.net-scope {
-  --nw-trace:    color-mix(in srgb, var(--nw) 85%, transparent);
-  --nw-rail:     color-mix(in srgb, var(--nw) 45%, transparent);
-  --nw-rowsel:   color-mix(in srgb, var(--nw) 24%, transparent);
-  --nw-bus:      color-mix(in srgb, var(--nw) 19%, transparent);
-  --nw-bus-edge: color-mix(in srgb, var(--nw) 40%, transparent);
-  --nw-probe:    color-mix(in srgb, var(--nw) 14%, transparent);
-  --nw-rowhover: color-mix(in srgb, var(--nw) 11%, transparent);
-  --nw-echo:     color-mix(in srgb, var(--nw)  8%, transparent);
-}
+/* The ladder itself (--nw-trace … --nw-echo) is computed by netWireVars() in
+   src/store/color-math.ts and set inline together with --nw — same element,
+   same reason. */
 
 /* The selected pin row is the node the tree hangs from: washed in the net's
    own colour, capped in the pure colour, and its net cell inked + bold so the
@@ -2355,11 +2385,11 @@ body {
   transition: border-color 0.15s, background 0.15s;
 }
 .settings-search-row:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
-  background: color-mix(in srgb, var(--accent) 4%, var(--bg-secondary));
+  border-color: var(--accent-border-50);
+  background: var(--accent-bg2-4);
 }
 .settings-search-active {
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-color: var(--accent-border-35);
 }
 .settings-search-icon {
   color: var(--text-secondary);
@@ -2403,7 +2433,7 @@ body {
 
 /* Matched row highlight */
 .settings-search-match {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  background: var(--accent-a10);
   border-radius: 4px;
   padding-left: 4px;
   margin-left: -4px;
@@ -2426,7 +2456,7 @@ body {
   line-height: 1;
 }
 .settings-tab-has-match:not(.active) {
-  border-bottom-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  border-bottom-color: var(--accent-a50);
 }
 
 .settings-row {
@@ -3063,7 +3093,7 @@ body {
 }
 .scroll-binding-slot.drag-over {
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary));
+  background: var(--accent-bg2-10);
 }
 .scroll-binding-modifier {
   font-size: 0.82em;
@@ -3080,9 +3110,9 @@ body {
   font-weight: 600;
   cursor: grab;
   user-select: none;
-  background: color-mix(in srgb, var(--pill-color) 20%, var(--pill-surface));
+  background: var(--pill-bg-20);
   color: var(--pill-color);
-  border: 1px solid color-mix(in srgb, var(--pill-color) 40%, transparent);
+  border: 1px solid var(--pill-a40);
   transition: opacity 0.15s, transform 0.1s;
 }
 .scroll-binding-pill:hover {
@@ -3209,7 +3239,7 @@ body {
   padding: 0;
   width: 46px;
   height: 40px;
-  background: color-mix(in srgb, var(--bg-tertiary) 72%, #000);
+  background: var(--chrome-dark-72);
   border: 0;
   border-left: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
@@ -3233,11 +3263,11 @@ body {
 }
 .board-sidebar-toggle:hover {
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--bg-tertiary) 55%, #000);
+  background: var(--chrome-dark-55);
 }
 .board-sidebar-toggle.active {
   color: var(--accent-text);
-  background: color-mix(in srgb, var(--bg-tertiary) 55%, #000);
+  background: var(--chrome-dark-55);
 }
 
 
@@ -3374,7 +3404,7 @@ body {
 .board-netlines-toggle.active {
   color: var(--accent-text);
   background: var(--surface-hover);
-  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  border-color: var(--accent-a30);
 }
 
 .board-netlines-toggle:disabled {
@@ -3834,7 +3864,7 @@ body {
 
 /* Selected layer — bumped on top while nothing is pinned. */
 .layer-item.layer-selected {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: var(--accent-a14);
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
@@ -6360,7 +6390,7 @@ body {
 .library-donor-list { padding: 4px 0; }
 .library-donor-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; border-bottom: 1px solid var(--border); gap: 6px; cursor: pointer; }
 .library-donor-row:hover { background: var(--bg-hover); }
-.library-donor-row.selected { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.library-donor-row.selected { background: var(--accent-a18); }
 .library-donor-name { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-primary); }
 .library-donor-remove { flex-shrink: 0; background: none; border: 1px solid transparent; color: var(--text-secondary); cursor: pointer; font-size: 13px; line-height: 1; padding: 1px 5px; border-radius: 3px; }
 .library-donor-remove:hover { border-color: var(--border); color: var(--accent-text); background: var(--bg-hover); }
@@ -6414,7 +6444,7 @@ body {
   width: 10px;
   height: 10px;
   vertical-align: -1px;
-  border: 2px solid color-mix(in srgb, currentColor 30%, transparent);
+  border: 2px solid var(--text2-a30);
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: library-spin 0.8s linear infinite;
@@ -7342,16 +7372,16 @@ body {
   transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
 .home-card-toggle:hover {
-  background: color-mix(in srgb, var(--accent) 12%, var(--bg-tertiary));
+  background: var(--accent-bg3-12);
   color: var(--accent-text);
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  border-color: var(--accent-border-40);
 }
 
 /* --- Latest update --- */
 .home-update-badge {
-  background: color-mix(in srgb, var(--accent) 20%, var(--bg-tertiary));
+  background: var(--accent-bg3-20);
   color: var(--accent-text);
-  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border: 1px solid var(--accent-a40);
   font-size: 0.72rem;
   padding: 2px 8px;
   border-radius: 10px;
@@ -7458,7 +7488,7 @@ body {
   gap: 14px;
   padding: 6px 12px;
   min-height: 30px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  border-bottom: 1px solid var(--border-a55);
 }
 .home-bindings-row:last-of-type {
   border-bottom: none;
@@ -7495,7 +7525,7 @@ body {
 }
 .home-bindings-cell.over {
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary));
+  background: var(--accent-bg2-10);
 }
 .home-bindings-cell-mod {
   display: inline-flex;
@@ -7513,14 +7543,14 @@ body {
   align-items: center;
   padding: 2px 9px 4px;
   color: var(--pill-color);
-  background: color-mix(in srgb, var(--pill-color) 16%, var(--pill-surface));
+  background: var(--pill-bg-16);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.07em;
   font-size: 0.7rem;
   cursor: grab;
   user-select: none;
-  border-left: 1px solid color-mix(in srgb, var(--pill-color) 30%, var(--border));
+  border-left: 1px solid var(--pill-border-30);
   position: relative;
   transition: opacity 0.12s, background 0.12s, box-shadow 0.18s;
 }
@@ -7537,8 +7567,8 @@ body {
   background: var(--pill-color);
 }
 .home-bindings-cell-action:hover {
-  background: color-mix(in srgb, var(--pill-color) 22%, var(--bg-secondary));
-  box-shadow: 0 0 14px -4px color-mix(in srgb, var(--pill-color) 70%, transparent);
+  background: var(--pill-bg2-22);
+  box-shadow: 0 0 14px -4px var(--pill-a70);
 }
 .home-bindings-cell-action.dragging {
   opacity: 0.35;
@@ -7567,7 +7597,7 @@ body {
 .home-bindings-reset:hover {
   color: var(--accent-text);
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  background: var(--accent-a8);
 }
 
 .home-bindings-foot {
@@ -7577,8 +7607,8 @@ body {
   padding: 6px 12px;
   font-size: 0.7rem;
   color: var(--text-secondary);
-  background: color-mix(in srgb, var(--bg-tertiary) 60%, var(--bg-secondary));
-  border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  background: var(--chrome-bg2-60);
+  border-top: 1px solid var(--border-a55);
   letter-spacing: 0.01em;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
@@ -7720,7 +7750,7 @@ body {
   flex-shrink: 0;
 }
 .home-theme-select:hover {
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-color: var(--accent-border-35);
 }
 .home-theme-select:focus {
   outline: none;
@@ -7755,7 +7785,7 @@ body {
   cursor: pointer;
 }
 .home-accent-input:hover {
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-color: var(--accent-border-35);
 }
 .home-accent-swatches {
   display: flex;
@@ -7812,8 +7842,8 @@ body {
   transition: background 0.15s, border-color 0.15s;
 }
 .home-settings-link:hover {
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: var(--accent-a8);
+  border-color: var(--accent-border-40);
 }
 
 /* --- Library stats --- */
@@ -8074,7 +8104,7 @@ body {
   transform: rotate(90deg);
 }
 .home-instructions .home-spoiler > summary:hover {
-  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  background: var(--accent-a6);
 }
 .home-spoiler-content {
   padding: 2px 4px 8px 22px;
@@ -8122,12 +8152,12 @@ body {
   cursor: default;
 }
 .pdf-watermark-save:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 20%, var(--bg-secondary));
+  background: var(--accent-bg2-20);
   color: var(--accent-text);
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-color: var(--accent-border-45);
 }
 .pdf-watermark-save:not(:disabled):hover {
-  background: color-mix(in srgb, var(--accent) 30%, var(--bg-secondary));
+  background: var(--accent-bg2-30);
 }
 .pdf-watermark-revert {
   /* inherits .settings-btn-option styling */
@@ -8139,8 +8169,8 @@ body {
   gap: 8px;
   flex-wrap: wrap;
   padding: 6px 8px;
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary));
-  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: var(--accent-bg2-10);
+  border: 1px solid var(--accent-border-35);
   border-radius: 4px;
   font-size: 0.82rem;
 }
@@ -8150,12 +8180,12 @@ body {
 }
 .pdf-watermark-reindex-btn {
   flex: 0 0 auto;
-  background: color-mix(in srgb, var(--accent) 20%, var(--bg-secondary));
+  background: var(--accent-bg2-20);
   color: var(--accent-text);
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-color: var(--accent-border-45);
 }
 .pdf-watermark-reindex-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 30%, var(--bg-secondary));
+  background: var(--accent-bg2-30);
 }
 .pdf-watermark-reindex-btn:disabled {
   opacity: 0.55;
@@ -8332,7 +8362,7 @@ body {
    where the keyboard cursor is. Theme-aware via --accent; the inset box-shadow
    bar avoids the layout shift a border-left would cause. */
 .overlay-dropdown-row.selected {
-  background: color-mix(in srgb, var(--accent, #88f) 16%, transparent);
+  background: var(--accent-a16);
   box-shadow: inset 3px 0 0 0 var(--accent, #88f);
   color: var(--text-primary, #ddd);
   font-weight: 600;
@@ -8340,7 +8370,7 @@ body {
 /* When the cursor is also on the selected row, deepen the accent so it reads as
    "selected AND focused" rather than washing the marker out. */
 .overlay-dropdown-row.selected.highlighted {
-  background: color-mix(in srgb, var(--accent, #88f) 28%, transparent);
+  background: var(--accent-a28);
 }
 .overlay-dropdown-row.dimmed {
   opacity: 0.45;
@@ -8584,7 +8614,7 @@ body {
   text-align: left;
 }
 .welcome-chip.is-active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
-.welcome-chip.is-set { background: color-mix(in srgb, var(--accent) 12%, var(--bg-tertiary)); }
+.welcome-chip.is-set { background: var(--accent-bg3-12); }
 .welcome-chip-name { font-size: 13px; color: var(--text-primary); font-weight: 600; }
 .welcome-chip-gesture { font-size: 10px; color: var(--text-secondary); }
 
@@ -8857,7 +8887,7 @@ body {
 
 /* --- Tools: worklists catalog (salvaged from feat/library-bench-folders) --- */
 .library-worklist-catalog { display: flex; flex-direction: column; }
-.library-worklist-row { display: flex; align-items: baseline; gap: 8px; padding: 4px 10px; font-size: 12px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
+.library-worklist-row { display: flex; align-items: baseline; gap: 8px; padding: 4px 10px; font-size: 12px; border-bottom: 1px solid var(--border-a55); }
 .library-worklist-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .library-worklist-board { color: var(--text-secondary); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
 .library-worklist-counts { flex: none; color: var(--text-secondary); font-size: 10px; }
@@ -8941,7 +8971,7 @@ body {
 .part-compare-hl.on {
   color: var(--text);
   border-color: var(--accent, #5e81ac);
-  background: color-mix(in srgb, var(--accent, #5e81ac) 18%, transparent);
+  background: var(--accent-a18);
 }
 
 .part-compare-rows { overflow-y: auto; min-height: 0; }
@@ -9003,7 +9033,7 @@ body {
    the row's own status colour. */
 .pc-net-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pc-net-text .pc-shared {
-  background: color-mix(in srgb, var(--accent, #5e81ac) 28%, transparent);
+  background: var(--accent-a28);
   border-radius: 2px;
   padding: 0 1px;
 }
@@ -9062,7 +9092,7 @@ body {
 .rc:focus-visible .rc-thumb { box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--accent); }
 /* on/off mode: filled thumb = on, hollow ring = off; a halo on hover says the thumb clicks */
 .rc-toggle .rc-thumb { cursor: pointer; }
-.rc-toggle .rc-thumb:hover { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 28%, transparent); }
+.rc-toggle .rc-thumb:hover { box-shadow: 0 0 0 4px var(--accent-a28); }
 .rc-off .rc-fill { width: 0 !important; }
 .rc-off .rc-thumb { background: var(--bg-secondary); border-color: var(--text-secondary); }
 .rc-off .rc-thumb:hover { background: var(--bg-secondary); border-color: var(--accent); }
@@ -9169,7 +9199,7 @@ body {
 
 /* Confirm strip — replaces window.confirm for wipe and delete, so the
    question is asked where the thing being destroyed is. */
-.wl-confirm { display: flex; align-items: center; gap: 7px; padding: 6px 10px; border-bottom: 1px solid var(--border); flex: none; font-size: 12px; background: color-mix(in srgb, var(--danger, #ff5566) 10%, transparent); }
+.wl-confirm { display: flex; align-items: center; gap: 7px; padding: 6px 10px; border-bottom: 1px solid var(--border); flex: none; font-size: 12px; background: var(--danger-a10); }
 .wl-confirm .q { flex: 1; min-width: 0; }
 .wl-confirm button { font: inherit; font-size: 12px; padding: 2px 9px; border-radius: 4px; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text-primary); }
 .wl-confirm button.go { border-color: #ff5566; color: #ff5566; }
@@ -9195,7 +9225,7 @@ body {
 .wl-list { flex: 1; overflow-y: auto; min-height: 0; }
 .wl-sec { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-secondary); padding: 8px 10px 3px; }
 
-.wl-row { border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent); }
+.wl-row { border-bottom: 1px solid var(--border-a65); }
 .wl-row.unresolved { opacity: 0.45; }
 .wl-row.sel { background: var(--surface-hover); box-shadow: inset 2px 0 0 var(--accent); }
 .wl-row-main { display: flex; align-items: center; gap: 6px; padding: 5px 9px 5px 10px; cursor: pointer; }
@@ -9264,7 +9294,7 @@ body {
 }
 
 /* ── AI relay ───────────────────────────────────────────────────────────── */
-.wl-ai { flex: none; border-top: 1px solid var(--border); padding: 6px 8px; background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.wl-ai { flex: none; border-top: 1px solid var(--border); padding: 6px 8px; background: var(--accent-a5); }
 .wl-ai-head { display: flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: var(--accent); margin-bottom: 5px; }
 .wl-ai-log { max-height: 160px; overflow-y: auto; font-size: 11px; margin-bottom: 4px; padding: 2px 0; }
 .wl-ai-msg { margin-bottom: 3px; }
@@ -9279,7 +9309,7 @@ body {
 /* ── Worklists catalog (Tools ▸ Workbench ▸ Worklists) ──────────────────── */
 .wlcat-row {
   display: flex; align-items: center; gap: 9px; width: 100%;
-  padding: 7px 10px; background: none; border: none; border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+  padding: 7px 10px; background: none; border: none; border-bottom: 1px solid var(--border-a65);
   color: var(--text-primary); font: inherit; text-align: left; cursor: pointer;
 }
 .wlcat-row:hover { background: var(--surface-hover); }
@@ -9287,7 +9317,7 @@ body {
 .wlcat-body { flex: 1; min-width: 0; }
 .wlcat-name { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wlcat-meta { font-size: 11px; color: var(--text-secondary); font-family: ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wlcat-bar { width: 30px; height: 3px; flex: none; border-radius: 2px; background: color-mix(in srgb, var(--text-secondary) 25%, transparent); overflow: hidden; }
+.wlcat-bar { width: 30px; height: 3px; flex: none; border-radius: 2px; background: var(--text2-a25); overflow: hidden; }
 .wlcat-bar i { display: block; height: 100%; background: #33cc88; }
 
 /* ── Interactive-mode banner (components/ResizeModeBanner.tsx) ───────────── */
