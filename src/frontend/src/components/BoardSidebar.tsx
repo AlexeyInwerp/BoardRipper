@@ -599,6 +599,11 @@ function LayersTab({ tabId }: { tabId: number }) {
         </div>
       </div>
 
+      {tab?.butterfly && layerStates.length > 0 && (
+        <div className="layer-list-hint" data-testid="layers-butterfly-hint">
+          Copper layers are hidden while Butterfly is on
+        </div>
+      )}
       {layerStates.length > 1 && (
         <div className="layer-list-hint">
           Click a layer to bump it on top · pin one to keep it there

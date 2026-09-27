@@ -580,6 +580,16 @@ async function mergeAscFiles(files: File[]): Promise<File | null> {
   return new File([bundled], name, { type: 'text/plain', lastModified });
 }
 
+/** True when the board carries anything drawn for the board as a whole rather
+ *  than for one side — the geometry Butterfly mode has to hide. */
+export function boardHasCopper(board: BoardData | null | undefined): boolean {
+  if (!board) return false;
+  return (board.traces?.length ?? 0) > 0 || (board.vias?.length ?? 0) > 0 || (board.surfaces?.length ?? 0) > 0;
+}
+
+export const BUTTERFLY_COPPER_HIDDEN_MESSAGE =
+  'Butterfly shows both sides flat, so traces, vias and copper layers are hidden while it is on.';
+
 class BoardStore extends Emitter {
   private _tabs: BoardTab[] = [];
   private _activeTabId: number | null = null;
@@ -953,7 +963,7 @@ class BoardStore extends Emitter {
       tab.layerStates = createLayerStates(cached.layerNames, undefined, !cachedFmt?.hasLayers);
     }
     const vp = loadViewPrefs();
-    if (vp.defaultButterfly && !(cached.layerNames && cached.layerNames.length > 0)) {
+    if (vp.defaultButterfly) {
       tab.butterfly = true;
       tab.showTop = true;
       tab.showBottom = true;
@@ -1092,7 +1102,7 @@ class BoardStore extends Emitter {
           tab.layerStates = createLayerStates(board.layerNames, undefined, !fmt?.hasLayers);
         }
         const vp = loadViewPrefs();
-        if (vp.defaultButterfly && !(board.layerNames && board.layerNames.length > 0)) {
+        if (vp.defaultButterfly) {
           tab.butterfly = true;
           tab.showTop = true;
           tab.showBottom = true;
@@ -1458,11 +1468,18 @@ class BoardStore extends Emitter {
   toggleButterfly() {
     const tab = this.activeTab;
     if (!tab) return;
-    // Butterfly mode is not supported for multi-layer boards (stacked layers)
-    if (tab.board?.layerNames && tab.board.layerNames.length > 0) return;
     const newButterfly = !tab.butterfly;
     if (newButterfly) {
       this.updateActiveTab({ butterfly: true, showTop: true, showBottom: true });
+      // Butterfly lays the two sides out flat, so anything that belongs to
+      // the board as a whole rather than to one side — traces, vias, copper
+      // pours, and with them the layer stack — has no place to be drawn and
+      // is hidden by the renderer while the mode is on (every format, not
+      // only layered ones). Say so once, but only when there is copper to
+      // hide; a BVR board with no traces would get a toast about nothing.
+      if (boardHasCopper(tab.board)) {
+        this.addToast(BUTTERFLY_COPPER_HIDDEN_MESSAGE, 'info', undefined, 5000);
+      }
     } else {
       this.updateActiveTab({ butterfly: false, showTop: true, showBottom: false });
     }

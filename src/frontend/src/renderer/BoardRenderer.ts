@@ -326,6 +326,10 @@ export class BoardRenderer {
   private get isTopVisible() { return boardStore.showTop || boardStore.butterfly; }
   /** Whether bottom layer should be visible (accounts for butterfly mode) */
   private get isBottomVisible() { return boardStore.showBottom || boardStore.butterfly; }
+  /** Butterfly hides everything that is not one side's own (traces, vias,
+   *  pours); see applyLayerVisibility. Read by every trace consumer so a
+   *  hidden trace can neither be hovered nor lit. */
+  private get copperHidden() { return boardStore.butterfly; }
   /** Per-name memo of "is this refdes's resolved part-type hidden?". Cleared
    *  whenever render settings change (the part-type list / hidden flags live
    *  there). Keyed by refdes so the prefix scan in resolvePartType runs once
@@ -2624,7 +2628,14 @@ export class BoardRenderer {
 
   /** Apply per-layer trace, via, and component sub-layer visibility */
   private applyLayerVisibility(scene: BoardScene) {
-    const { layerStates, showTraces, showVias, showSilkscreen, showPads, showCopperDrops, showSurfaces, showComponents, showPins, showOutlines, showLabels, showTop, showBottom } = boardStore;
+    const { layerStates, showVias, showSilkscreen, showPads, showCopperDrops, showComponents, showPins, showOutlines, showLabels, showTop, showBottom } = boardStore;
+    // Butterfly draws the two sides flat and apart; traces, vias and pours
+    // belong to the board as a whole (inner layers to neither side), so they
+    // are hidden for as long as the mode is on. The user's own toggles are
+    // left alone and come back when Butterfly is turned off.
+    const copper = !this.copperHidden;
+    const showTraces = boardStore.showTraces && copper;
+    const showSurfaces = boardStore.showSurfaces && copper;
     // Trace layer master toggle
     if (scene.traceLayer) scene.traceLayer.visible = showTraces;
     // Per-layer trace containers. A *selected* layer is revealed transiently —
@@ -2667,7 +2678,7 @@ export class BoardRenderer {
       c.visible = showSurfaces && (stateVisible || i === selectedLayerIndex);
     }
     // Via overlay
-    if (scene.viaLayer) scene.viaLayer.visible = showVias;
+    if (scene.viaLayer) scene.viaLayer.visible = showVias && copper;
     // Silkscreen — master toggle, plus follow top/bottom side visibility
     if (scene.silkscreenLayer)  scene.silkscreenLayer.visible  = showSilkscreen;
     if (scene.silkscreenTop)    scene.silkscreenTop.visible    = showTop;
@@ -2853,6 +2864,10 @@ export class BoardRenderer {
     // Move bottomLayer from root into butterfly root
     scene.root.removeChild(scene.bottomLayer);
     broot.addChild(scene.bottomLayer);
+    // The bottom silkscreen lives in the shared silkscreenLayer under root;
+    // left there it would be drawn un-mirrored beneath the top half. It rides
+    // with the bottom half and goes back in teardownButterfly.
+    if (scene.silkscreenBottom) broot.addChildAt(scene.silkscreenBottom, 0);
 
     scene.butterflyRoot = broot;
     scene.butterflyOutline = boutline;
@@ -2882,6 +2897,10 @@ export class BoardRenderer {
     // be the last child of scene.root so it renders above pins and borders.
     scene.butterflyRoot.removeChild(scene.bottomLayer);
     scene.root.addChild(scene.bottomLayer);
+    if (scene.silkscreenBottom && scene.silkscreenLayer) {
+      scene.butterflyRoot.removeChild(scene.silkscreenBottom);
+      scene.silkscreenLayer.addChildAt(scene.silkscreenBottom, 0);
+    }
     scene.root.addChild(this.netDimGfx);
     scene.root.addChild(this.crossSideGhostGfx);
     scene.root.addChild(this.crossSideGhostOutlineGfx);
@@ -5144,7 +5163,7 @@ export class BoardRenderer {
       }
 
       // ── Trace highlight (PRIMARY net only) ───────────────────────────
-      if (primaryNet && this.board.traces && this.board.traces.length > 0 && boardStore.showTraces) {
+      if (primaryNet && this.board.traces && this.board.traces.length > 0 && boardStore.showTraces && !this.copperHidden) {
         const netName = primaryNet;
         const { layerStates } = boardStore;
         const traceByColor = new Map<number, { sx: number; sy: number; ex: number; ey: number }[]>();
@@ -6284,7 +6303,7 @@ export class BoardRenderer {
 
   /** Find the trace segment closest to a world-space point, respecting layer visibility */
   private traceHitTest(world: Point): { traceIndex: number; net: string } | null {
-    if (!this.board?.traces || !boardStore.showTraces) return null;
+    if (!this.board?.traces || !boardStore.showTraces || this.copperHidden) return null;
 
     const { layerStates } = boardStore;
     const local = this.worldToScene(world, this.activeScene?.root);
