@@ -45,6 +45,11 @@ services:
       # fixture. Everything the backend needs to write (databank.db,
       # pdfindex.db, .previews/, the OBD cache) lives under DATA_DIR.
       - ./samples:/library:ro
+      # …except incoming/: drop-to-library (POST /api/upload) writes to
+      # <scan root>/incoming/<brand>/<model>/, so that one subfolder is a
+      # separate read-write bind over the read-only parent. New samples land
+      # in samples/incoming/ on the host; the fixtures beside it stay frozen.
+      - ./samples/incoming:/library/incoming
       # Scratch state for this container only. Delete the directory to get a
       # cold-start install back — that is the fastest way to re-test the
       # first-boot path (schema creation, boards.db fallback, cache migration).
