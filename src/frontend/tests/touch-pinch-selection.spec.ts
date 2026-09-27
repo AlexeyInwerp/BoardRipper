@@ -196,6 +196,64 @@ test.describe('touch input', () => {
     }
   });
 
+  /** Flick, then tap: the everyday way to select on a tablet. With inertia
+   *  on, pixi-viewport treats a touch during deceleration as "stop the glide"
+   *  and never emits `clicked` for it — measured: a tap right after a pan
+   *  selected nothing, and one 1.5 s later hit the wrong part, because the
+   *  board was still moving. The renderer now raises the click itself when
+   *  such a touch ends as a tap. */
+  test('a tap while the board is still gliding after a flick selects the part under it', async ({ page }) => {
+    const c = await load(page);
+    const cdp = await page.context().newCDPSession(page);
+    await page.evaluate(async () => {
+      const m = await import('/src/store/render-settings.ts');
+      const st = (m as { renderSettingsStore: { globalSnapshot(): object; applyGlobal(v: object): void } }).renderSettingsStore;
+      st.applyGlobal({ ...st.globalSnapshot(), disableInertia: false });
+    });
+    await page.waitForTimeout(300);
+    await page.evaluate((name) =>
+      (window as unknown as { __boardStore: { focusPart(n: string): void } }).__boardStore.focusPart(name), SUBJECT);
+    await page.waitForTimeout(1500);
+    await page.evaluate(() =>
+      (window as unknown as { __boardStore: { selectPart(i: number | null): void } }).__boardStore.selectPart(null));
+
+    // A short, quick pan that leaves the board gliding, then an immediate
+    // tap where the part is at that instant — read from the store rather than
+    // predicted, since it is still moving.
+    await touch(cdp, 'touchStart', [{ x: c.x - 150, y: c.y }]);
+    for (let i = 1; i <= 6; i++) {
+      await touch(cdp, 'touchMove', [{ x: c.x - 150 + i * 20, y: c.y }]);
+      await page.waitForTimeout(10);
+    }
+    await touch(cdp, 'touchEnd', []);
+    await page.waitForTimeout(60);
+    // The board is still moving, so where the part is at tap time cannot be
+    // predicted from here; sweep taps across the row it glides along and stop
+    // at the first that selects. Before the fix no tap in the sweep selected —
+    // every one of them landed during the glide, and every one was withheld.
+    let hit: number | null = null;
+    for (let dx = 60; dx <= 420 && hit === null; dx += 30) {
+      await touch(cdp, 'touchStart', [{ x: c.x + dx, y: c.y }]);
+      await touch(cdp, 'touchEnd', []);
+      await page.waitForTimeout(120);
+      hit = await selectedPart(page);
+    }
+    expect(hit, 'a tap during the glide should select the part under it').not.toBeNull();
+  });
+
+  /** The touch context menu is a long-press. It is the only way to reach the
+   *  menu on a tablet, so it gets its own test. */
+  test('a long-press opens the context menu', async ({ page }) => {
+    const c = await load(page);
+    const cdp = await page.context().newCDPSession(page);
+    await touch(cdp, 'touchStart', [c]);
+    await touch(cdp, 'touchMove', [{ x: c.x + 3, y: c.y + 2 }]);   // a finger never holds perfectly still
+    await page.waitForTimeout(700);
+    const open = await page.evaluate(() => !!document.querySelector('.context-menu, [data-testid="context-menu"]'));
+    await touch(cdp, 'touchEnd', []);
+    expect(open, 'the menu should be open after a 700 ms hold').toBe(true);
+  });
+
   test('a tap right after a pinch still selects — the guard does not stay armed', async ({ page }) => {
     const c = await load(page);
     const cdp = await page.context().newCDPSession(page);

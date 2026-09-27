@@ -8,6 +8,7 @@ import { pdfPanelId, isLinkActivating, activateLinkedPanel, isAutoSwitchLinked }
 import { pdfStore } from '../store/pdf-store';
 import { fileInputRefs } from '../store/file-inputs';
 import { log } from '../store/log-store';
+import { isTouchPrimary } from '../device-profile';
 import { useBareScrollAction } from '../store/scroll-mode';
 import { obdStore, obdBoardNumberFor } from '../store/obd-store';
 import { renderOverlayLayout } from '../components/overlay/slot-renderers';
@@ -237,6 +238,18 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
 
     return () => { disposable.dispose(); visDisposable.dispose(); };
   }, [tabId, props.api]);
+
+  // On a tablet the context menu is a long-press, and nothing on screen says
+  // so — the first board a touch device opens gets told, once.
+  useEffect(() => {
+    if (!thisTab?.board || !isTouchPrimary()) return;
+    const KEY = 'boardripper-touch-menu-hint-shown';
+    try {
+      if (localStorage.getItem(KEY)) return;
+      localStorage.setItem(KEY, '1');
+    } catch { return; }
+    boardStore.addToast('Touch tip: press and hold a part to open its menu.', 'info', undefined, 10000);
+  }, [thisTab?.board]);
 
   const tabFmt = thisTab?.board ? getFormat(thisTab.board.format) : undefined;
   const slotCtx: SlotCtx = {

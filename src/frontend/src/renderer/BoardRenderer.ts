@@ -522,6 +522,11 @@ export class BoardRenderer {
   private gestureWasCancelled = false;
   /** Pointer type of the gesture in progress, for the click/drag threshold. */
   private gestureIsTouch = false;
+  /** The gesture in progress began while the board was still gliding after
+   *  a flick. pixi-viewport then never emits `clicked` for it — a touch during
+   *  deceleration is "stop the glide" to it, by design — so if it ends as a
+   *  tap, the renderer has to raise the click itself. */
+  private tapDuringGlide = false;
   /** Bound capture-phase pointerup/pointercancel tracker. */
   private boundPointerRelease: ((e: PointerEvent) => void) | null = null;
   /** Bound capture-phase pointermove that drives the two-finger pinch. */
@@ -1791,6 +1796,15 @@ export class BoardRenderer {
       this.gestureWasMultiTouch = false;
       this.gestureWasCancelled = false;
       this.gestureIsTouch = e.pointerType === 'touch';
+      // Read this here, in capture phase on the container: pixi's own
+      // pointerdown on the canvas runs after us and both stops the glide and
+      // decides, from the same `isActive()`, that no click may come of this
+      // touch. On a desktop nobody clicks mid-glide; on a tablet, flick then
+      // tap is the everyday way to select — measured with inertia on, a tap
+      // right after a pan selected nothing, and one 1.5 s later hit the
+      // wrong part because the board was still moving.
+      const decel = this.viewport.plugins.get('decelerate') as { isActive(): boolean } | null;
+      this.tapDuringGlide = this.gestureIsTouch && !!decel?.isActive();
       // pixi-viewport decides click-vs-drag on its own `threshold` (a plain
       // public field, default 5 px) and suppresses `clicked` past it — so the
       // renderer's matching tolerance in handleClick is never even consulted
@@ -1830,6 +1844,22 @@ export class BoardRenderer {
       }
       if (this.activeTouchIds.size === 0 && this.gestureOwner !== 'none') {
         this.endGestureOwnership?.();
+      }
+      // A tap that began mid-glide: pixi-viewport withheld `clicked`, so raise
+      // it here — with every guard handleClick would have applied, because
+      // handleClick applies them again anyway.
+      if (this.tapDuringGlide && e.type === 'pointerup' && this.activeTouchIds.size === 0) {
+        this.tapDuringGlide = false;
+        const isTap = !this.gestureWasMultiTouch && !this.gestureWasCancelled
+          && this.pointerTravelPx <= BoardRenderer.TOUCH_CLICK_DRAG_TOLERANCE_PX;
+        if (isTap && this.board) {
+          const rect = this.containerEl.getBoundingClientRect();
+          const world = this.viewport.toWorld(e.clientX - rect.left, e.clientY - rect.top);
+          log.ui.log('touch: tap during glide — raising the click pixi-viewport withheld');
+          this.handleClick(world);
+        }
+      } else if (this.activeTouchIds.size === 0) {
+        this.tapDuringGlide = false;
       }
     };
     window.addEventListener('pointerup', this.boundPointerRelease, { capture: true });
@@ -1873,7 +1903,7 @@ export class BoardRenderer {
     // swallowed: the first through the existing dragZoomConsumedClick latch,
     // the second by a one-shot capture-phase click listener.
     const LONG_PRESS_MS = 500;
-    const LONG_PRESS_SLOP_PX = 10;
+    const LONG_PRESS_SLOP_PX = BoardRenderer.TOUCH_CLICK_DRAG_TOLERANCE_PX;   // a hold may wander as far as a tap
     const cancelLongPress = () => {
       if (this.longPressTimer) { clearTimeout(this.longPressTimer); this.longPressTimer = null; }
       this.longPressStart = null;

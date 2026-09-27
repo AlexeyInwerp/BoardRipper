@@ -3166,6 +3166,12 @@ body {
   width: 100%;
   height: 100%;
   touch-action: none;
+  /* A long-press on the canvas is the touch context menu. Without these,
+   * iOS answers the same hold with its own callout / selection and cancels
+   * the pointer under it, so the menu never opens on an iPad. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .board-loading-overlay {

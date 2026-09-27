@@ -1,5 +1,17 @@
 # BoardRipper changelog
 
+## v0.43.5 — 2026-09-27
+
+### Fixed
+
+- **Tapping a part right after flicking the board selects it.** With inertia
+  on, a tap while the board was still gliding stopped the glide but selected
+  nothing, which read as "sometimes a tap can't select a component". A tap
+  during the glide now selects the part under it.
+- **The touch context menu opens on the iPad.** Press and hold a part. iOS
+  used to answer the same hold with its own callout and cancel the touch.
+  The first board opened on a touch screen says so once.
+
 ## v0.43.4 — 2026-09-23
 
 ### Fixed
