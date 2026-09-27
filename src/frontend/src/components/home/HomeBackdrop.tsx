@@ -25,12 +25,11 @@ import { welcomeStore } from '../../store/welcome-store';
 import { firstRunStore } from '../../store/first-run-store';
 import { shortcuts, formatShortcut, CATEGORY_LABELS, CATEGORY_ORDER } from '../../store/keyboard-shortcuts';
 import {
-  SCROLL_BINDINGS_KEY,
-  SCROLL_ACTIONS,
-  DEFAULT_SCROLL_BINDINGS,
-  loadScrollBindings,
-} from '../../panels/PdfViewerPanel';
-import type { ScrollAction, ScrollBindings } from '../../panels/PdfViewerPanel';
+  ACTION_COLOR, ACTION_LABEL, SLOT_LABEL, SHIFT_SCROLL_NOTE, SCROLL_ACTIONS, SCROLL_SLOTS, SCROLL_BINDINGS_EVENT,
+  DEFAULT_SCROLL_BINDINGS, BOARD_SCROLL_ACTIONS, isMacPlatform,
+  loadScrollBindings, saveScrollBindings, sameScrollBindings, nextAction, boardScrollBindings, boardScrollSettings,
+  type ScrollBindings, type ScrollSlot, type BoardScrollSettings,
+} from '../../store/scroll-bindings';
 import { sessionRant } from './rants';
 import { renderMarkdown } from './markdown';
 import instructionsMd from './instructions.md?raw';
@@ -108,11 +107,19 @@ function useDragToZoom(): boolean {
   );
 }
 
-function useTwoFingerPan(): boolean {
-  return useSyncExternalStore(
-    (cb) => renderSettingsStore.subscribe(cb),
-    () => renderSettingsStore.globalSettings.twoFingerPan,
-  );
+/** The three board scroll keys as one stable snapshot (useSyncExternalStore
+ *  needs a reference that only changes when a value does). */
+let boardScrollSnap: BoardScrollSettings | null = null;
+function readBoardScrollSettings(): BoardScrollSettings {
+  const g = renderSettingsStore.globalSettings;
+  if (!boardScrollSnap || boardScrollSnap.twoFingerPan !== g.twoFingerPan
+    || boardScrollSnap.wheelShiftAction !== g.wheelShiftAction || boardScrollSnap.wheelMetaAction !== g.wheelMetaAction) {
+    boardScrollSnap = { twoFingerPan: g.twoFingerPan, wheelShiftAction: g.wheelShiftAction, wheelMetaAction: g.wheelMetaAction };
+  }
+  return boardScrollSnap;
+}
+function useBoardScrollSettings(): BoardScrollSettings {
+  return useSyncExternalStore((cb) => renderSettingsStore.subscribe(cb), readBoardScrollSettings);
 }
 
 function useAutoSwitch(): boolean {
@@ -400,20 +407,13 @@ function InstalledNotes({ installed, showHeading }: {
 // ─────────────────────────────────────────────────────────────
 // Pan/zoom bindings (board drag + board scroll + PDF scroll)
 //
-// ⚠ Keep in sync with the Settings panel editors in
-//   src/frontend/src/panels/SettingsPanel.tsx
-// (BoardScrollBindingsEditor, BoardDragBindingsEditor, ScrollBindingsEditor
-//  + their MODIFIER_LABELS / ACTION_LABELS / ACTION_COLORS constants).
-// Pill labels, slot labels, and colors must match exactly — any change
-// here needs the same change there, and vice versa.
+// Mirrors the Settings panel editors (SettingsPanel.tsx: SlotBindingsEditor
+// and BoardDragBindingsEditor). Labels and colours come from
+// store/scroll-bindings.ts so the two surfaces cannot drift; only the
+// compact matrix layout is this file's own. A click on an action cycles it.
 // ─────────────────────────────────────────────────────────────
 
 type PzAction = 'pan' | 'zoom';
-// Mirrors BOARD_ACTION_LABELS / BOARD_ACTION_COLORS in SettingsPanel.tsx.
-const PZ_ACTION_LABEL: Record<PzAction, string> = { zoom: 'Zoom', pan: 'Pan' };
-const PZ_ACTION_COLOR: Record<PzAction, string> = { zoom: '#00d4ff', pan: '#ffd93d' };
-
-type SlotKey = 'bare' | 'shift';
 
 // ─────────────────────────────────────────────────────────────
 // Console-matrix primitives. Each editor renders a single row in
@@ -424,47 +424,28 @@ interface MatrixSlotProps {
   modifier: React.ReactNode;
   actionLabel: string;
   color: string;
-  isDragging: boolean;
-  isOver: boolean;
-  onDragStart: (e: React.DragEvent) => void;
-  onDragEnd: (e: React.DragEvent) => void;
-  onDragOver: (e: React.DragEvent) => void;
-  onDragLeave: (e: React.DragEvent) => void;
-  onDrop: (e: React.DragEvent) => void;
+  testId?: string;
+  action: string;
+  onClick: () => void;
 }
 
-/** A single split-cell: muted modifier on the left, colored action on the
- *  right. Whole cell is the drop target; the action half is draggable. */
-function MatrixSlot({
-  modifier,
-  actionLabel,
-  color,
-  isDragging,
-  isOver,
-  onDragStart,
-  onDragEnd,
-  onDragOver,
-  onDragLeave,
-  onDrop,
-}: MatrixSlotProps) {
+/** A single split-cell: muted modifier on the left, coloured action on the
+ *  right. The action half is a button; a click cycles the slot's action. */
+function MatrixSlot({ modifier, actionLabel, color, testId, action, onClick }: MatrixSlotProps) {
   return (
-    <div
-      className={`home-bindings-cell${isOver ? ' over' : ''}`}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
-    >
+    <div className="home-bindings-cell">
       <span className="home-bindings-cell-mod">{modifier}</span>
-      <span
-        className={`home-bindings-cell-action${isDragging ? ' dragging' : ''}`}
+      <button
+        type="button"
+        className="home-bindings-cell-action"
         style={{ '--pill-color': color } as React.CSSProperties}
-        draggable
-        onDragStart={onDragStart}
-        onDragEnd={onDragEnd}
-        title="Drag onto another slot to swap"
+        data-testid={testId}
+        data-action={action}
+        title="Click to change"
+        onClick={onClick}
       >
         {actionLabel}
-      </span>
+      </button>
     </div>
   );
 }
@@ -484,89 +465,6 @@ function MatrixRow({ label, hint, children }: MatrixRowProps) {
   );
 }
 
-interface PillSwapProps {
-  /** Row label shown in the matrix's left cell. */
-  rowLabel: string;
-  /** Tooltip on the row label. */
-  rowHint?: string;
-  /** Current action assigned to the bare slot (the other slot gets the opposite). */
-  bareAction: PzAction;
-  /** Label shown for each slot. */
-  slotLabels: Record<SlotKey, React.ReactNode>;
-  /** Called when the user swaps pills; receives the new action that the bare slot should hold. */
-  onSwap: (newBareAction: PzAction) => void;
-}
-
-/**
- * Two-slot pill-swap editor as a matrix row. Drop the pan/zoom action
- * pill onto another slot to swap.
- */
-function PillSwap({ rowLabel, rowHint, bareAction, slotLabels, onSwap }: PillSwapProps) {
-  const [dragging, setDragging] = useState<PzAction | null>(null);
-  const [dragOver, setDragOver] = useState<SlotKey | null>(null);
-
-  const bindings: Record<SlotKey, PzAction> = {
-    bare: bareAction,
-    shift: bareAction === 'zoom' ? 'pan' : 'zoom',
-  };
-
-  const onDragStart = useCallback((e: React.DragEvent, action: PzAction) => {
-    setDragging(action);
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', action);
-  }, []);
-
-  const onDragOverSlot = useCallback((e: React.DragEvent, slot: SlotKey) => {
-    if (e.dataTransfer.types.includes('Files')) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    setDragOver(slot);
-  }, []);
-
-  const onDropSlot = useCallback(
-    (e: React.DragEvent, target: SlotKey) => {
-      if (e.dataTransfer.types.includes('Files')) return;
-      e.preventDefault();
-      setDragOver(null);
-      setDragging(null);
-      const action = e.dataTransfer.getData('text/plain') as PzAction;
-      if (action !== 'pan' && action !== 'zoom') return;
-      const newBare: PzAction = target === 'bare' ? action : action === 'zoom' ? 'pan' : 'zoom';
-      if (newBare !== bareAction) onSwap(newBare);
-    },
-    [bareAction, onSwap],
-  );
-
-  const onDragEnd = useCallback(() => {
-    setDragging(null);
-    setDragOver(null);
-  }, []);
-
-  const slots: SlotKey[] = ['bare', 'shift'];
-  return (
-    <MatrixRow label={rowLabel} hint={rowHint}>
-      {slots.map((key) => {
-        const action = bindings[key];
-        return (
-          <MatrixSlot
-            key={key}
-            modifier={slotLabels[key]}
-            actionLabel={PZ_ACTION_LABEL[action]}
-            color={PZ_ACTION_COLOR[action]}
-            isDragging={dragging === action}
-            isOver={dragOver === key}
-            onDragStart={(e) => onDragStart(e, action)}
-            onDragEnd={onDragEnd}
-            onDragOver={(e) => onDragOverSlot(e, key)}
-            onDragLeave={() => setDragOver(null)}
-            onDrop={(e) => onDropSlot(e, key)}
-          />
-        );
-      })}
-    </MatrixRow>
-  );
-}
-
 function setGlobalSetting<K extends 'dragToZoom' | 'twoFingerPan'>(key: K, next: boolean) {
   const snap = renderSettingsStore.globalSnapshot();
   if (snap[key] === next) return;
@@ -574,99 +472,77 @@ function setGlobalSetting<K extends 'dragToZoom' | 'twoFingerPan'>(key: K, next:
   renderSettingsStore.applyGlobal(snap);
 }
 
-// Compact slot labels for the home matrix. The Settings panel keeps the
-// verbose "Left-drag" / "Shift + Scroll / Ctrl + Scroll (fast)" form;
-// the home dashboard collapses them to single-line glyph form so all three
-// editors fit in one console-style table. Pill colors and actions are
-// still 1-to-1 with SettingsPanel — only the modifier display differs.
-// Labels mirror SettingsPanel's BOARD_DRAG_MODIFIER_LABELS / BOARD_MODIFIER_LABELS
-// / MODIFIER_LABELS so the home dashboard reads identically to the Settings page.
-const DRAG_SLOT_LABELS: Record<SlotKey, React.ReactNode> = {
+const DRAG_SLOT_LABELS: Record<'bare' | 'shift', string> = {
   bare: 'Left-drag',
   shift: 'Shift + Left-drag',
 };
 
-const SCROLL_SLOT_LABELS: Record<SlotKey, React.ReactNode> = {
-  bare: 'Scroll',
-  shift: <>Shift + Scroll<br/>Ctrl + Scroll (fast)</>,
-};
+const SCROLL_HINT = 'Click an action to change it. Pinch and Ctrl+Scroll always zoom, dragging always pans.';
+const DRAG_HINT = 'Click to swap left-drag and Shift+left-drag actions.';
 
-const SCROLL_HINT = 'Drag pills between slots to reassign scroll actions.';
-const DRAG_HINT = 'Drag pills between slots to swap left-drag and Shift+left-drag actions.';
-
+/** Board drag: still a two-way swap (`dragToZoom`), so a click on either
+ *  cell flips both. */
 function DragBindings() {
   const dragToZoom = useDragToZoom();
-  // dragToZoom=true  →  bare left-drag zooms
-  // dragToZoom=false →  bare left-drag pans
+  const bindings: Record<'bare' | 'shift', PzAction> = {
+    bare: dragToZoom ? 'zoom' : 'pan',
+    shift: dragToZoom ? 'pan' : 'zoom',
+  };
   return (
-    <PillSwap
-      rowLabel="Board: Drag"
-      rowHint={DRAG_HINT}
-      bareAction={dragToZoom ? 'zoom' : 'pan'}
-      slotLabels={DRAG_SLOT_LABELS}
-      onSwap={(bare) => setGlobalSetting('dragToZoom', bare === 'zoom')}
-    />
+    <MatrixRow label="Board: Drag" hint={DRAG_HINT}>
+      {(['bare', 'shift'] as const).map((key) => {
+        const action = bindings[key];
+        return (
+          <MatrixSlot
+            key={key}
+            modifier={DRAG_SLOT_LABELS[key]}
+            actionLabel={ACTION_LABEL[action]}
+            color={ACTION_COLOR[action]}
+            action={action}
+            testId={`home-drag-${key}`}
+            onClick={() => setGlobalSetting('dragToZoom', !dragToZoom)}
+          />
+        );
+      })}
+    </MatrixRow>
   );
 }
+
+const BOARD_SLOTS: readonly ScrollSlot[] = isMacPlatform ? ['bare', 'shift', 'meta'] : ['bare', 'shift'];
 
 function ScrollBindings() {
-  const twoFingerPan = useTwoFingerPan();
-  // twoFingerPan=true  →  bare scroll pans (shift/ctrl zoom)
-  // twoFingerPan=false →  bare scroll zooms (shift/ctrl pan)
+  const settings = useBoardScrollSettings();
+  const bindings = boardScrollBindings(settings);
+  const setSlot = (slot: ScrollSlot, action: PzAction) => {
+    const snap = renderSettingsStore.globalSnapshot();
+    renderSettingsStore.applyGlobal({ ...snap, ...boardScrollSettings({ ...bindings, [slot]: action }) });
+  };
   return (
-    <PillSwap
-      rowLabel="Board: Scroll"
-      rowHint={SCROLL_HINT}
-      bareAction={twoFingerPan ? 'pan' : 'zoom'}
-      slotLabels={SCROLL_SLOT_LABELS}
-      onSwap={(bare) => setGlobalSetting('twoFingerPan', bare === 'pan')}
-    />
+    <MatrixRow label="Board: Scroll" hint={bindings.shift === 'pan' ? SCROLL_HINT : SHIFT_SCROLL_NOTE}>
+      {BOARD_SLOTS.map((slot) => {
+        const action = bindings[slot];
+        return (
+          <MatrixSlot
+            key={slot}
+            modifier={SLOT_LABEL[slot]}
+            actionLabel={ACTION_LABEL[action]}
+            color={ACTION_COLOR[action]}
+            action={action}
+            testId={`home-scroll-board-${slot}`}
+            onClick={() => setSlot(slot, nextAction(BOARD_SCROLL_ACTIONS, action))}
+          />
+        );
+      })}
+    </MatrixRow>
   );
 }
 
 // ─────────────────────────────────────────────────────────────
-// PDF scroll bindings — 3-slot pill-swap (zoom / pan / page-switch)
+// PDF scroll bindings — three independent slots (zoom / pan / page)
 // ─────────────────────────────────────────────────────────────
-
-// PDF scroll bindings — mirror of ACTION_LABELS / ACTION_COLORS /
-// MODIFIER_LABELS in SettingsPanel.tsx (ScrollBindingsEditor). Labels
-// and colors must stay identical to the Settings panel so both views
-// show the same thing. Any change here must also be made there.
-const PDF_ACTION_LABEL: Record<ScrollAction, string> = {
-  zoom: 'Zoom',
-  pan: 'Pan',
-  switch: 'Page',
-};
-const PDF_ACTION_COLOR: Record<ScrollAction, string> = {
-  zoom: '#00d4ff',
-  pan: '#ffd93d',
-  switch: '#ff6b9d',
-};
-
-const PDF_SLOT_KEYS: (keyof ScrollBindings)[] = ['bare', 'shift', 'meta'];
-const isMacPlatform =
-  typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform ?? '');
-// Mirror SettingsPanel.MODIFIER_LABELS so both surfaces read identically.
-const PDF_SLOT_LABELS: Record<keyof ScrollBindings, React.ReactNode> = {
-  bare: 'Scroll',
-  shift: <>Shift + Scroll<br/>Ctrl + Scroll (fast)</>,
-  meta: isMacPlatform ? '⌘ + Scroll' : 'Ctrl + Scroll',
-};
-const PDF_HINT = 'Drag pills between slots to reassign scroll actions.';
-
-function savePdfBindings(next: ScrollBindings) {
-  try {
-    localStorage.setItem(SCROLL_BINDINGS_KEY, JSON.stringify(next));
-  } catch {
-    /* ignore quota */
-  }
-  window.dispatchEvent(new CustomEvent('pdf-scroll-bindings-changed', { detail: next }));
-}
 
 function PdfScrollBindings() {
   const [bindings, setBindings] = useState<ScrollBindings>(loadScrollBindings);
-  const [dragging, setDragging] = useState<ScrollAction | null>(null);
-  const [dragOver, setDragOver] = useState<keyof ScrollBindings | null>(null);
 
   // Stay in sync with the Settings panel — both listen on this event.
   useEffect(() => {
@@ -674,79 +550,35 @@ function PdfScrollBindings() {
       const detail = (e as CustomEvent<ScrollBindings>).detail;
       if (detail) setBindings(detail);
     };
-    window.addEventListener('pdf-scroll-bindings-changed', handler);
-    return () => window.removeEventListener('pdf-scroll-bindings-changed', handler);
+    window.addEventListener(SCROLL_BINDINGS_EVENT, handler);
+    return () => window.removeEventListener(SCROLL_BINDINGS_EVENT, handler);
   }, []);
 
-  const onDragStart = useCallback((e: React.DragEvent, action: ScrollAction) => {
-    setDragging(action);
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', action);
+  const save = useCallback((next: ScrollBindings) => {
+    setBindings(next);
+    saveScrollBindings(next);
   }, []);
 
-  const onDragOverSlot = useCallback((e: React.DragEvent, slot: keyof ScrollBindings) => {
-    if (e.dataTransfer.types.includes('Files')) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    setDragOver(slot);
-  }, []);
-
-  const onDropSlot = useCallback(
-    (e: React.DragEvent, target: keyof ScrollBindings) => {
-      if (e.dataTransfer.types.includes('Files')) return;
-      e.preventDefault();
-      setDragOver(null);
-      setDragging(null);
-      const action = e.dataTransfer.getData('text/plain') as ScrollAction;
-      if (!SCROLL_ACTIONS.includes(action)) return;
-      const source = PDF_SLOT_KEYS.find((k) => bindings[k] === action);
-      if (!source || source === target) return;
-      const next: ScrollBindings = { ...bindings };
-      next[source] = bindings[target];
-      next[target] = action;
-      setBindings(next);
-      savePdfBindings(next);
-    },
-    [bindings],
-  );
-
-  const onDragEnd = useCallback(() => {
-    setDragging(null);
-    setDragOver(null);
-  }, []);
-
-  const isDefault =
-    bindings.bare === DEFAULT_SCROLL_BINDINGS.bare &&
-    bindings.shift === DEFAULT_SCROLL_BINDINGS.shift &&
-    bindings.meta === DEFAULT_SCROLL_BINDINGS.meta;
-
-  const handleReset = useCallback(() => {
-    setBindings(DEFAULT_SCROLL_BINDINGS);
-    savePdfBindings(DEFAULT_SCROLL_BINDINGS);
-  }, []);
+  const isDefault = sameScrollBindings(bindings, DEFAULT_SCROLL_BINDINGS);
 
   return (
-    <MatrixRow label="PDF: Scroll" hint={PDF_HINT}>
-      {PDF_SLOT_KEYS.map((slot) => {
+    <MatrixRow label="PDF: Scroll" hint={bindings.shift === 'pan' ? SCROLL_HINT : SHIFT_SCROLL_NOTE}>
+      {SCROLL_SLOTS.map((slot) => {
         const action = bindings[slot];
         return (
           <MatrixSlot
             key={slot}
-            modifier={PDF_SLOT_LABELS[slot]}
-            actionLabel={PDF_ACTION_LABEL[action]}
-            color={PDF_ACTION_COLOR[action]}
-            isDragging={dragging === action}
-            isOver={dragOver === slot}
-            onDragStart={(e) => onDragStart(e, action)}
-            onDragEnd={onDragEnd}
-            onDragOver={(e) => onDragOverSlot(e, slot)}
-            onDragLeave={() => setDragOver(null)}
-            onDrop={(e) => onDropSlot(e, slot)}
+            modifier={SLOT_LABEL[slot]}
+            actionLabel={ACTION_LABEL[action]}
+            color={ACTION_COLOR[action]}
+            action={action}
+            testId={`home-scroll-pdf-${slot}`}
+            onClick={() => save({ ...bindings, [slot]: nextAction(SCROLL_ACTIONS, action) })}
           />
         );
       })}
       {!isDefault && (
-        <button type="button" className="home-bindings-reset" onClick={handleReset} title="Reset PDF bindings to default">
+        <button type="button" className="home-bindings-reset" onClick={() => save(DEFAULT_SCROLL_BINDINGS)} title="Reset PDF bindings to default">
           ↺
         </button>
       )}

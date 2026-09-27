@@ -3869,13 +3869,20 @@ export class BoardRenderer {
   }
 
   /**
-   * Install a capture-phase wheel listener that intercepts Shift+Scroll before
-   * pixi-viewport sees it, implementing the scroll-binding swap shown in Settings.
+   * Install a capture-phase wheel listener that resolves the modifier slots
+   * of the board's scroll bindings before pixi-viewport sees the event.
    *
-   * pixi-viewport has no shift-key awareness — its Wheel plugin always zooms
-   * (using deltaY, which is 0 when shift is held) and its Drag plugin always
-   * pans.  This handler provides the missing modifier-key dispatch so the
-   * BoardScrollBindingsEditor UI actually works.
+   * pixi-viewport has no modifier awareness — its Wheel plugin always zooms
+   * (on deltaY, which is 0 for Shift+wheel because the browser has already
+   * turned that into a horizontal deltaX) and its Drag plugin always pans.
+   * The bare slot stays with pixi-viewport (drag `wheel:` / wheel `wheelZoom:`
+   * are configured from `twoFingerPan`); Shift and ⌘ are dispatched here from
+   * `wheelShiftAction` / `wheelMetaAction`. Ctrl is never touched: it is the
+   * synthesised trackpad pinch in Chrome/Firefox and the fast zoom on a mouse.
+   *
+   * A modifier pan consumes deltaX AND deltaY. That is what keeps the OS's
+   * horizontal-scroll gesture (Shift+wheel, or whatever a utility maps) intact
+   * — the axis was decided before the event reached us (issue #40).
    */
   private installShiftWheelHandler(): void {
     // Remove previous listener if viewport was recreated (e.g. context-loss reinit)
@@ -3883,31 +3890,32 @@ export class BoardRenderer {
       this.containerEl.removeEventListener('wheel', this.boundShiftWheel, true);
     }
     this.boundShiftWheel = (e: WheelEvent) => {
-      // Let Ctrl/Meta combos (trackpad pinch, browser zoom) pass through.
-      if (e.ctrlKey || e.metaKey) return;
+      if (e.ctrlKey) return;
 
       const s = renderSettingsStore.settings;
-
-      // Safety net: classic mouse wheel in pan mode would pan jerkily. Route
-      // it to the same mouse-centered zoom path as Shift+scroll when the
-      // wheelDetection heuristic matches.
-      const safetyNetFires =
-        s.wheelDetection && s.twoFingerPan && !e.shiftKey && looksLikeMouseWheel(e);
-
-      if ((e.shiftKey && s.twoFingerPan) || safetyNetFires) {
-        const raw = e.deltaY || e.deltaX;
-        this.zoomAtScreen(e.offsetX, e.offsetY, raw, true);
-      } else if (e.shiftKey && !s.twoFingerPan) {
-        // Alternate mode: bare = zoom, shift+scroll = pan.
-        const dx = e.deltaX || e.deltaY;
-        this.viewport.x -= dx;
-      } else if (!e.shiftKey && !s.twoFingerPan && s.smoothZoom) {
+      let action: 'pan' | 'zoom';
+      if (e.metaKey) {
+        action = s.wheelMetaAction;
+      } else if (e.shiftKey) {
+        action = s.wheelShiftAction;
+      } else if (s.wheelDetection && s.twoFingerPan && looksLikeMouseWheel(e)) {
+        // Safety net: a classic mouse wheel in pan mode would pan jerkily —
+        // route it to the mouse-centred zoom path instead.
+        action = 'zoom';
+      } else if (!s.twoFingerPan && s.smoothZoom) {
         // Plain mouse-wheel zoom: intercept before pixi-viewport's frame-count
         // smoothing and run it through the exponential tween instead.
-        this.zoomAtScreen(e.offsetX, e.offsetY, e.deltaY, true, WHEEL_DIVISOR);
+        action = 'zoom';
       } else {
-        // No modifier and safety net did not fire — let pixi-viewport handle it.
+        // Bare scroll, no override — pixi-viewport's own plugins handle it.
         return;
+      }
+
+      if (action === 'zoom') {
+        this.zoomAtScreen(e.offsetX, e.offsetY, e.deltaY || e.deltaX, true, WHEEL_DIVISOR);
+      } else {
+        this.viewport.x -= e.deltaX;
+        this.viewport.y -= e.deltaY;
       }
 
       this.viewport.emit('moved', { viewport: this.viewport, type: 'wheel' });
@@ -4197,7 +4205,7 @@ export class BoardRenderer {
       // applyGlobal structuredClones the settings, so object/array fields get
       // fresh references each call — use JSON equality for deep comparison.
       const INTERACTION_ONLY = new Set<string>([
-        'twoFingerPan', 'wheelDetection', 'wheelSmooth', 'disableInertia', 'dragToZoom',
+        'twoFingerPan', 'wheelShiftAction', 'wheelMetaAction', 'wheelDetection', 'wheelSmooth', 'disableInertia', 'dragToZoom',
         'cap60Fps', 'showPerfOverlay', 'smoothZoom',
         // Overlay-only: read at label-overlay draw time (OverlayThresholds), so
         // a change needs an overlay repaint, NOT a scene rebuild. Rebuilding on

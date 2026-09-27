@@ -18,7 +18,7 @@ const BVR_FILE = path.resolve(__dirname, '../../../samples/820-02016.bvr');
 const haveBvr = fs.existsSync(BVR_FILE);
 
 test.describe('Pan/zoom scroll-mode toggle', () => {
-  test('clicking the board toolbar button flips twoFingerPan and inverts PDF bindings', async ({ page }) => {
+  test('clicking the board toolbar button flips bare scroll on both surfaces and leaves Shift alone', async ({ page }) => {
     test.skip(!haveBvr, 'samples/820-02016.bvr not present (proprietary fixture)');
     await page.goto('/');
     // Start from a clean slate so defaults apply
@@ -31,7 +31,7 @@ test.describe('Pan/zoom scroll-mode toggle', () => {
     await page.getByTestId('file-input').setInputFiles(BVR_FILE);
     await expect(page.locator('.dv-tab', { hasText: '820-02016.bvr' })).toBeVisible({ timeout: 15000 });
 
-    const toggleBtn = page.locator('.board-status-indicators').getByTitle(/click to swap/);
+    const toggleBtn = page.locator('.board-status-indicators').getByTitle(/click to switch/);
     await expect(toggleBtn).toBeVisible();
 
     const before = await page.evaluate(() => {
@@ -49,7 +49,7 @@ test.describe('Pan/zoom scroll-mode toggle', () => {
     expect(afterOneClick.twoFingerPan).toBe(false);
     expect(afterOneClick.pdf.bare).toBe('zoom');
     expect(afterOneClick.pdf.shift).toBe('pan');
-    expect(afterOneClick.pdf.meta).toBe('switch');
+    expect(afterOneClick.pdf.meta).toBe('zoom');
 
     await toggleBtn.click();
 
@@ -59,11 +59,11 @@ test.describe('Pan/zoom scroll-mode toggle', () => {
     }));
     expect(afterTwoClicks.twoFingerPan).toBe(true);
     expect(afterTwoClicks.pdf.bare).toBe('pan');
-    expect(afterTwoClicks.pdf.shift).toBe('zoom');
-    expect(afterTwoClicks.pdf.meta).toBe('switch');
+    expect(afterTwoClicks.pdf.shift).toBe('pan');
+    expect(afterTwoClicks.pdf.meta).toBe('zoom');
   });
 
-  test('toggle preserves meta slot when it is non-default', async ({ page }) => {
+  test('toggle only moves a displaced action when nothing else holds it', async ({ page }) => {
     test.skip(!haveBvr, 'samples/820-02016.bvr not present (proprietary fixture)');
     await page.goto('/');
     await page.evaluate(() => {
@@ -74,13 +74,15 @@ test.describe('Pan/zoom scroll-mode toggle', () => {
     await page.getByTestId('file-input').setInputFiles(BVR_FILE);
     await expect(page.locator('.dv-tab', { hasText: '820-02016.bvr' })).toBeVisible({ timeout: 15000 });
 
-    const toggleBtn = page.locator('.board-status-indicators').getByTitle(/click to swap/);
+    const toggleBtn = page.locator('.board-status-indicators').getByTitle(/click to switch/);
     await toggleBtn.click();
 
     const pdf = await page.evaluate(() =>
       JSON.parse(localStorage.getItem('boardripper-pdf-scroll-bindings') || '{}'),
     );
-    expect(pdf.bare).toBe('switch');
+    // {pan, switch, zoom} → bare becomes zoom; pan is now reachable nowhere,
+    // so Shift takes it. The ⌘ slot is never touched.
+    expect(pdf.bare).toBe('zoom');
     expect(pdf.shift).toBe('pan');
     expect(pdf.meta).toBe('zoom');
   });

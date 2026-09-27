@@ -152,7 +152,7 @@ export const SETTINGS_INDEX: IndexEntry[] = [
   // Navigation
   S('input', 'navigation', 'Navigation', ['scroll', 'pan', 'zoom', 'wheel', 'drag', 'pinch']),
   S('input', 'navigation', 'Interactive gesture setup', ['welcome', 'wizard', 'first run', 'gesture', 're-run setup']),
-  S('input', 'navigation', 'Scroll wheel behavior', ['scroll', 'wheel', 'pan', 'zoom', 'bindings', 'shift', 'ctrl', 'cmd']),
+  S('input', 'navigation', 'Scroll wheel behavior', ['scroll', 'wheel', 'pan', 'zoom', 'bindings', 'shift', 'ctrl', 'cmd', 'horizontal', 'macos']),
   S('input', 'navigation', 'Trackpad/Mouse drag behavior', ['drag', 'left drag', 'pan', 'zoom', 'shift drag']),
   S('input', 'navigation', 'Keyboard pan / zoom', ['wsad', 'arrow keys', 'keyboard']),
   F('input', 'navigation', 'wheelDetection', 'Mouse wheel detection', 'When scroll is set to pan, classic mouse-wheel events override to zoom instead — avoids jerky pan with a physical scroll wheel. Trackpads and fine-grained wheels are unaffected.'),

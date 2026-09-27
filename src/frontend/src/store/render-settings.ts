@@ -8,6 +8,7 @@ import {
 } from './overlay-layout';
 import { setSlotVisible, moveSlot, moveSlotBefore, removeSlot, isSeparatorId, type OverlaySlotId } from './overlay-layout';
 import { naturalCompare } from '../components/overlay/natural-sort';
+import { isBoardScrollAction, LEGACY_SCROLL_BINDINGS, SCROLL_BINDINGS_KEY, type BoardScrollAction } from './scroll-bindings';
 
 /** Pad shape override — applies to pin pads within a part type */
 export type PadShape = 'natural' | 'round' | 'square';
@@ -359,8 +360,18 @@ export interface RenderSettings {
   /** Animated exponential wheel zoom (cursor-anchored tween). Off = legacy
    *  instant/pixi-viewport zoom. */
   smoothZoom: boolean;
-  /** Require two fingers for panning (one finger does nothing); useful for trackpad users */
+  /** Bare scroll pans the board (true) or zooms it (false). The bare slot of
+   *  the board's scroll bindings; `wheelShiftAction` / `wheelMetaAction` are
+   *  the other two (store/scroll-bindings.ts). */
   twoFingerPan: boolean;
+  /** What Shift + Scroll does on the board. Default 'pan': every browser
+   *  turns Shift+wheel into a horizontal `deltaX`, so a pan here follows the
+   *  OS's own horizontal-scroll gesture — binding it to zoom takes that
+   *  gesture away (issue #40). */
+  wheelShiftAction: BoardScrollAction;
+  /** What ⌘ + Scroll does on the board (macOS; the key is `metaKey`, Ctrl
+   *  stays the pinch/fast-zoom path). Default 'zoom', Preview's convention. */
+  wheelMetaAction: BoardScrollAction;
   /**
    * When scroll is configured to pan, override classic mouse-wheel events
    * (sustained-burst timing) to zoom instead — avoids jerky
@@ -689,6 +700,8 @@ export const DEFAULTS: RenderSettings = {
   wheelSmooth: 5,
   smoothZoom: true,
   twoFingerPan: true,
+  wheelShiftAction: 'pan',
+  wheelMetaAction: 'zoom',
   wheelDetection: false,
   dragToZoom: false,
 
@@ -1321,6 +1334,13 @@ const TEXT_FAST_GRADUATED_KEY = 'boardripper-textfastmode-graduated-v1';
  *  stored settings override DEFAULTS, so a changed default alone never reaches
  *  an existing install. Only a value still at the old default is touched. */
 const PIN_LABEL_FLOOR_BUMPED_KEY = 'boardripper-pinlabel-floor-8';
+/** One-time: the scroll slots became independent and the defaults moved
+ *  Shift+Scroll to Pan (issue #40). An install that already has settings
+ *  keeps the layout it had — Shift = the opposite of bare on the board, the
+ *  legacy {pan, zoom, switch} on the PDF — written out explicitly so the new
+ *  defaults never change a gesture under an existing user. A fresh install
+ *  sets the marker and gets the new defaults. */
+const SCROLL_SLOTS_V2_KEY = 'boardripper-scroll-slots-v2';
 let pendingTextFastGraduationNotice = false;
 /** True exactly once, on the first boot where the graduation migration ran
  *  against a pre-existing installation — drives the one-time "text rendering
@@ -1552,8 +1572,29 @@ function loadFromStorage(): RenderSettings {
       // Clamp keyboard navigation settings to valid ranges
       result.keyboardPanFraction = Math.min(0.30, Math.max(0.02, result.keyboardPanFraction));
       result.keyboardZoomDelta = Math.min(400, Math.max(50, result.keyboardZoomDelta));
+
+      // Scroll slots v2 (see SCROLL_SLOTS_V2_KEY). Existing install, first
+      // boot on this code: reproduce the old behaviour explicitly.
+      try {
+        if (!localStorage.getItem(SCROLL_SLOTS_V2_KEY)) {
+          if (!isBoardScrollAction(parsed.wheelShiftAction)) {
+            parsed.wheelShiftAction = parsed.twoFingerPan === false ? 'pan' : 'zoom';
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+          }
+          if (!localStorage.getItem(SCROLL_BINDINGS_KEY)) {
+            localStorage.setItem(SCROLL_BINDINGS_KEY, JSON.stringify(LEGACY_SCROLL_BINDINGS));
+          }
+          localStorage.setItem(SCROLL_SLOTS_V2_KEY, '1');
+        }
+      } catch { /* ignore quota/private-mode errors */ }
+      result.wheelShiftAction = isBoardScrollAction(parsed.wheelShiftAction) ? parsed.wheelShiftAction : DEFAULTS.wheelShiftAction;
+      result.wheelMetaAction = isBoardScrollAction(parsed.wheelMetaAction) ? parsed.wheelMetaAction : DEFAULTS.wheelMetaAction;
       return result;
     }
+    // Fresh install: the new scroll defaults apply, and must keep applying
+    // once settings get written — mark now so the branch above never
+    // mistakes this install for a legacy one.
+    try { localStorage.setItem(SCROLL_SLOTS_V2_KEY, '1'); } catch { /* ignore */ }
   } catch { /* ignore corrupt data */ }
   return structuredClone(DEFAULTS);
 }

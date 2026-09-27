@@ -7,7 +7,7 @@ export function ScrollModeButton({ ctx }: { ctx: SlotCtx }) {
     <button
       className="board-netlines-toggle"
       onClick={invertScrollBindings}
-      title={scrollSwapTooltip()}
+      title={scrollSwapTooltip('board')}
     >
       {ctx.bareAction === 'pan' ? <IconHandMove size={16} /> : <IconZoomIn size={16} />}
     </button>

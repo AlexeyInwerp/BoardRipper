@@ -45,35 +45,17 @@ const NIGHT_MODE_KEY = 'boardripper-pdf-nightmode';
 const CLEAN_CONTRAST_KEY = 'boardripper-pdf-clean-contrast';
 const DEFAULT_CLEAN_CONTRAST = 3;
 
-/** The three scroll wheel actions */
-export type ScrollAction = 'zoom' | 'pan' | 'switch';
-export const SCROLL_ACTIONS: ScrollAction[] = ['zoom', 'pan', 'switch'];
-
-/** Which action is assigned to each modifier (must be a permutation of all 3 actions) */
-export interface ScrollBindings {
-  bare: ScrollAction;   // no modifier
-  shift: ScrollAction;  // shift + scroll
-  meta: ScrollAction;   // cmd (mac) / ctrl (win) + scroll
-}
+// Scroll bindings live in store/scroll-bindings.ts (shared with the board);
+// re-exported here because the older importers reach them through this panel.
+import { loadScrollBindings, type ScrollAction, type ScrollBindings } from '../store/scroll-bindings';
+export {
+  SCROLL_ACTIONS, SCROLL_BINDINGS_KEY, DEFAULT_SCROLL_BINDINGS, loadScrollBindings,
+} from '../store/scroll-bindings';
+export type { ScrollAction, ScrollBindings } from '../store/scroll-bindings';
 
 export const PDF_INERTIA_KEY = 'boardripper-pdf-inertia';
 export function loadPdfInertia(): boolean {
   try { return localStorage.getItem(PDF_INERTIA_KEY) !== 'false'; } catch { return true; }
-}
-
-export const SCROLL_BINDINGS_KEY = 'boardripper-pdf-scroll-bindings';
-export const DEFAULT_SCROLL_BINDINGS: ScrollBindings = { bare: 'pan', shift: 'zoom', meta: 'switch' };
-
-export function loadScrollBindings(): ScrollBindings {
-  try {
-    const raw = localStorage.getItem(SCROLL_BINDINGS_KEY);
-    if (!raw) return DEFAULT_SCROLL_BINDINGS;
-    const parsed = JSON.parse(raw) as ScrollBindings;
-    // Validate: must be a valid permutation
-    const vals = new Set([parsed.bare, parsed.shift, parsed.meta]);
-    if (vals.size === 3 && SCROLL_ACTIONS.every(a => vals.has(a))) return parsed;
-  } catch { /* ignore */ }
-  return DEFAULT_SCROLL_BINDINGS;
 }
 
 // ---------------------------------------------------------------------------

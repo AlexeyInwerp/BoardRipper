@@ -3061,10 +3061,6 @@ body {
   background: var(--bg-secondary);
   transition: border-color 0.15s, background 0.15s;
 }
-.scroll-binding-slot.drag-over {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary));
-}
 .scroll-binding-modifier {
   font-size: 0.82em;
   color: var(--text-secondary);
@@ -3078,7 +3074,8 @@ body {
   border-radius: 12px;
   font-size: 0.82em;
   font-weight: 600;
-  cursor: grab;
+  font-family: inherit;
+  cursor: pointer;
   user-select: none;
   background: color-mix(in srgb, var(--pill-color) 20%, var(--pill-surface));
   color: var(--pill-color);
@@ -3088,10 +3085,19 @@ body {
 .scroll-binding-pill:hover {
   transform: scale(1.05);
 }
-.scroll-binding-pill:active,
-.scroll-binding-pill.dragging {
+.scroll-binding-pill:active {
   opacity: 0.5;
-  cursor: grabbing;
+}
+/* Shown while Shift + Scroll is bound to anything but Pan (issue #40): the
+ * browser turns Shift+wheel into its horizontal scroll, and this is the one
+ * place a user can learn that the app has taken that gesture over. */
+.scroll-bindings-note {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-left: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--text);
+  opacity: 1;
 }
 .scroll-bindings-reset {
   margin-top: 8px;
@@ -7482,8 +7488,7 @@ body {
 }
 
 /* Slot cell: split into a muted modifier and a colored action half.
- * The action half is the draggable element; the whole cell is the drop
- * target (border-color flips to --accent when something hovers). */
+ * The action half is a button — a click cycles the slot's action. */
 .home-bindings-cell {
   display: inline-flex;
   align-items: stretch;
@@ -7492,10 +7497,6 @@ body {
   border-radius: 4px;
   overflow: hidden;
   transition: border-color 0.12s, background 0.12s, transform 0.08s;
-}
-.home-bindings-cell.over {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary));
 }
 .home-bindings-cell-mod {
   display: inline-flex;
@@ -7518,7 +7519,9 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.07em;
   font-size: 0.7rem;
-  cursor: grab;
+  font-family: inherit;
+  border: none;
+  cursor: pointer;
   user-select: none;
   border-left: 1px solid color-mix(in srgb, var(--pill-color) 30%, var(--border));
   position: relative;
@@ -7540,10 +7543,8 @@ body {
   background: color-mix(in srgb, var(--pill-color) 22%, var(--bg-secondary));
   box-shadow: 0 0 14px -4px color-mix(in srgb, var(--pill-color) 70%, transparent);
 }
-.home-bindings-cell-action.dragging {
-  opacity: 0.35;
-  cursor: grabbing;
-  box-shadow: none;
+.home-bindings-cell-action:active {
+  opacity: 0.6;
 }
 
 .home-bindings-reset {

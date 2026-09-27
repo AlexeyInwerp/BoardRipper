@@ -27,8 +27,14 @@ import { startMcpBridge, stopMcpBridge, getMcpClientIdentity, setMcpClientLabel 
 import { copyText } from '../clipboard';
 import { useDatabank } from '../hooks/useDatabank';
 import { databankStore } from '../store/databank-store';
-import { SCROLL_BINDINGS_KEY, SCROLL_ACTIONS, DEFAULT_SCROLL_BINDINGS, loadScrollBindings, PDF_QUALITY_KEY, PDF_RENDER_QUALITY_OPTIONS, loadPdfQuality, getPdfQualityConfig, PDF_INERTIA_KEY, loadPdfInertia } from './PdfViewerPanel';
-import type { ScrollAction, ScrollBindings, PdfRenderQuality } from './PdfViewerPanel';
+import { PDF_QUALITY_KEY, PDF_RENDER_QUALITY_OPTIONS, loadPdfQuality, getPdfQualityConfig, PDF_INERTIA_KEY, loadPdfInertia } from './PdfViewerPanel';
+import type { PdfRenderQuality } from './PdfViewerPanel';
+import {
+  ACTION_COLOR, ACTION_LABEL, SLOT_LABEL, SHIFT_SCROLL_NOTE, SCROLL_ACTIONS, SCROLL_SLOTS, SCROLL_BINDINGS_EVENT,
+  DEFAULT_SCROLL_BINDINGS, DEFAULT_BOARD_SCROLL_BINDINGS, BOARD_SCROLL_ACTIONS, isMacPlatform,
+  loadScrollBindings, saveScrollBindings, sameScrollBindings, nextAction, boardScrollBindings, boardScrollSettings,
+  type ScrollAction, type ScrollBindings, type ScrollSlot, type BoardScrollSettings,
+} from '../store/scroll-bindings';
 import { ensureDatabaseEditorPanel } from '../store/dockview-api';
 import { useObdForBoard } from '../store/obd-store';
 import { LibrarySyncSection, SoftwareUpdateSection } from './LibrarySyncSection';
@@ -1282,114 +1288,83 @@ function LibrarySettingsSection() {
   );
 }
 
-// ---- PDF Scroll Bindings Editor (drag-and-drop) ----
+// ---- Scroll bindings editor (click a pill to cycle its action) ----
+//
+// One editor for both surfaces. Slots are independent — two of them may hold
+// the same action — so this is a per-slot picker, not the old drag-to-swap
+// permutation (which is what forced Shift+Scroll onto zoom whenever bare
+// scroll panned, issue #40). Mirrored on the home dashboard in
+// components/home/HomeBackdrop.tsx; labels and colours come from
+// store/scroll-bindings.ts so the two cannot drift.
 
-// PDF scroll bindings editor. Mirrored on the home dashboard in
-// components/home/HomeBackdrop.tsx (PdfScrollBindings). Keep labels
-// and colors identical across both surfaces.
-const MODIFIER_KEYS: (keyof ScrollBindings)[] = ['bare', 'shift', 'meta'];
-const MODIFIER_LABELS: Record<keyof ScrollBindings, React.ReactNode> = {
-  bare: 'Scroll',
-  shift: <>Shift + Scroll<br/>Ctrl + Scroll (fast)</>,
-  meta: navigator.platform?.includes('Mac') ? '⌘ + Scroll' : 'Ctrl + Scroll',
-};
-const ACTION_LABELS: Record<ScrollAction, string> = { zoom: 'Zoom', pan: 'Pan', switch: 'Page' };
-const ACTION_COLORS: Record<ScrollAction, string> = { zoom: '#00d4ff', pan: '#ffd93d', switch: '#ff6b9d' };
-
-function ScrollBindingsEditor() {
-  const [bindings, setBindings] = useState<ScrollBindings>(loadScrollBindings);
-  const [dragging, setDragging] = useState<ScrollAction | null>(null);
-  const [dragOver, setDragOver] = useState<keyof ScrollBindings | null>(null);
-
-  // Re-sync when any other surface (HomeBackdrop, WelcomeSetup, DebugPanel,
-  // PDF toolbar swap) changes the bindings while this editor is mounted —
-  // otherwise the pills show stale state and a drag persists wrong swaps.
-  useEffect(() => {
-    const onChange = () => setBindings(loadScrollBindings());
-    window.addEventListener('pdf-scroll-bindings-changed', onChange);
-    return () => window.removeEventListener('pdf-scroll-bindings-changed', onChange);
-  }, []);
-
-  const save = useCallback((next: ScrollBindings) => {
-    setBindings(next);
-    try { localStorage.setItem(SCROLL_BINDINGS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
-    // Notify any open PDF panels (they read from localStorage on next wheel event via ref)
-    window.dispatchEvent(new CustomEvent('pdf-scroll-bindings-changed', { detail: next }));
-  }, []);
-
-  const handleDragStart = useCallback((e: React.DragEvent, action: ScrollAction) => {
-    setDragging(action);
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', action);
-  }, []);
-
-  const handleDragOver = useCallback((e: React.DragEvent, slot: keyof ScrollBindings) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    setDragOver(slot);
-  }, []);
-
-  const handleDrop = useCallback((e: React.DragEvent, targetSlot: keyof ScrollBindings) => {
-    e.preventDefault();
-    setDragOver(null);
-    setDragging(null);
-    const action = e.dataTransfer.getData('text/plain') as ScrollAction;
-    if (!SCROLL_ACTIONS.includes(action)) return;
-
-    // Find which slot currently holds this action and swap
-    const sourceSlot = MODIFIER_KEYS.find(k => bindings[k] === action);
-    if (!sourceSlot || sourceSlot === targetSlot) return;
-
-    const next = { ...bindings };
-    // Swap: source gets target's current action, target gets dragged action
-    next[sourceSlot] = bindings[targetSlot];
-    next[targetSlot] = action;
-    save(next);
-  }, [bindings, save]);
-
-  const handleDragEnd = useCallback(() => {
-    setDragging(null);
-    setDragOver(null);
-  }, []);
-
-  const handleReset = useCallback(() => {
-    save(DEFAULT_SCROLL_BINDINGS);
-  }, [save]);
-
+function SlotBindingsEditor<A extends ScrollAction>({ surface, slots, actions, value, onChange, onReset }: {
+  surface: 'board' | 'pdf';
+  slots: readonly ScrollSlot[];
+  actions: readonly A[];
+  value: Record<ScrollSlot, A>;
+  onChange: (slot: ScrollSlot, action: A) => void;
+  /** Present while the layout differs from the default. */
+  onReset?: () => void;
+}) {
   return (
-    <div className="scroll-bindings-editor">
+    <div className="scroll-bindings-editor" data-testid={`scroll-bindings-${surface}`}>
       <div className="scroll-bindings-grid">
-        {MODIFIER_KEYS.map(slot => {
-          const action = bindings[slot];
-          const isOver = dragOver === slot;
+        {slots.map(slot => {
+          const action = value[slot];
           return (
-            <div
-              key={slot}
-              className={`scroll-binding-slot${isOver ? ' drag-over' : ''}`}
-              onDragOver={e => handleDragOver(e, slot)}
-              onDragLeave={() => setDragOver(null)}
-              onDrop={e => handleDrop(e, slot)}
-            >
-              <span className="scroll-binding-modifier">{MODIFIER_LABELS[slot]}</span>
-              <span
-                className={`scroll-binding-pill${dragging === action ? ' dragging' : ''}`}
-                style={{ '--pill-color': ACTION_COLORS[action] } as React.CSSProperties}
-                draggable
-                onDragStart={e => handleDragStart(e, action)}
-                onDragEnd={handleDragEnd}
+            <div key={slot} className="scroll-binding-slot">
+              <span className="scroll-binding-modifier">{SLOT_LABEL[slot]}</span>
+              <button
+                type="button"
+                className="scroll-binding-pill"
+                style={{ '--pill-color': ACTION_COLOR[action] } as React.CSSProperties}
+                data-testid={`scroll-slot-${surface}-${slot}`}
+                data-action={action}
+                title={`${SLOT_LABEL[slot]}: ${ACTION_LABEL[action]} — click to change`}
+                onClick={() => onChange(slot, nextAction(actions, action))}
               >
-                {ACTION_LABELS[action]}
-              </span>
+                {ACTION_LABEL[action]}
+              </button>
             </div>
           );
         })}
       </div>
-      {(bindings.bare !== DEFAULT_SCROLL_BINDINGS.bare
-        || bindings.shift !== DEFAULT_SCROLL_BINDINGS.shift
-        || bindings.meta !== DEFAULT_SCROLL_BINDINGS.meta) && (
-        <button className="scroll-bindings-reset" onClick={handleReset}>Reset to default</button>
+      {value.shift !== 'pan' && (
+        <p className="settings-hint scroll-bindings-note" data-testid={`scroll-note-${surface}`}>{SHIFT_SCROLL_NOTE}</p>
+      )}
+      {onReset && (
+        <button className="scroll-bindings-reset" onClick={onReset}>Reset to default</button>
       )}
     </div>
+  );
+}
+
+function ScrollBindingsEditor() {
+  const [bindings, setBindings] = useState<ScrollBindings>(loadScrollBindings);
+
+  // Re-sync when any other surface (HomeBackdrop, WelcomeSetup, DebugPanel,
+  // PDF toolbar swap) changes the bindings while this editor is mounted.
+  useEffect(() => {
+    const onChange = () => setBindings(loadScrollBindings());
+    window.addEventListener(SCROLL_BINDINGS_EVENT, onChange);
+    return () => window.removeEventListener(SCROLL_BINDINGS_EVENT, onChange);
+  }, []);
+
+  const save = useCallback((next: ScrollBindings) => {
+    setBindings(next);
+    saveScrollBindings(next);
+  }, []);
+
+  const isDefault = sameScrollBindings(bindings, DEFAULT_SCROLL_BINDINGS);
+  return (
+    <SlotBindingsEditor
+      surface="pdf"
+      slots={SCROLL_SLOTS}
+      actions={SCROLL_ACTIONS}
+      value={bindings}
+      onChange={(slot, action) => save({ ...bindings, [slot]: action })}
+      onReset={isDefault ? undefined : () => save(DEFAULT_SCROLL_BINDINGS)}
+    />
   );
 }
 
@@ -1632,86 +1607,29 @@ function PdfWatermarkFilterEditor() {
   );
 }
 
-// ---- Board scroll bindings editor (drag-and-drop pills) ----
+// ---- Board scroll bindings editor ----
 //
-// ⚠ Keep labels / colors / actions in sync with the home dashboard
-//   editors in src/frontend/src/components/home/HomeBackdrop.tsx
-//   (PillSwap + DragBindings + ScrollBindings + PdfScrollBindings).
-//   Both surfaces render the same state and must show identical pills.
+// The board's slots live in three render-settings keys (twoFingerPan is the
+// bare slot). The ⌘ slot is shown on macOS only: elsewhere `metaKey` is the
+// Windows key, and Ctrl is the pinch/fast-zoom path that cannot be
+// reassigned.
 
-type BoardScrollAction = 'zoom' | 'pan';
-const BOARD_ACTIONS: BoardScrollAction[] = ['zoom', 'pan'];
-const BOARD_ACTION_LABELS: Record<BoardScrollAction, string> = { zoom: 'Zoom', pan: 'Pan' };
-const BOARD_ACTION_COLORS: Record<BoardScrollAction, string> = { zoom: '#00d4ff', pan: '#ffd93d' };
+const BOARD_SLOTS: readonly ScrollSlot[] = isMacPlatform ? ['bare', 'shift', 'meta'] : ['bare', 'shift'];
 
-const BOARD_MODIFIER_KEYS = ['bare', 'shift'] as const;
-type BoardModifier = typeof BOARD_MODIFIER_KEYS[number];
-const BOARD_MODIFIER_LABELS: Record<BoardModifier, React.ReactNode> = {
-  bare: 'Scroll',
-  shift: <>Shift + Scroll<br/>Ctrl + Scroll (fast)</>,
-};
-
-function BoardScrollBindingsEditor({ twoFingerPan, onUpdate }: { twoFingerPan: boolean; onUpdate: DraftUpdater }) {
-  // Derive bindings from twoFingerPan: bare=pan when twoFingerPan, else bare=zoom.
-  // Memoized on the primitive `twoFingerPan` so handleDrop's useCallback below
-  // (which closes over `bindings`) keeps a stable identity across renders.
-  const bindings = useMemo<Record<BoardModifier, BoardScrollAction>>(() => ({
-    bare: twoFingerPan ? 'pan' : 'zoom',
-    shift: twoFingerPan ? 'zoom' : 'pan',
-  }), [twoFingerPan]);
-
-  const [dragging, setDragging] = useState<BoardScrollAction | null>(null);
-  const [dragOver, setDragOver] = useState<BoardModifier | null>(null);
-
-  const handleDragStart = useCallback((e: React.DragEvent, action: BoardScrollAction) => {
-    setDragging(action);
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', action);
-  }, []);
-
-  const handleDragOver = useCallback((e: React.DragEvent, slot: BoardModifier) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    setDragOver(slot);
-  }, []);
-
-  const handleDrop = useCallback((e: React.DragEvent, targetSlot: BoardModifier) => {
-    e.preventDefault();
-    setDragOver(null);
-    setDragging(null);
-    const action = e.dataTransfer.getData('text/plain') as BoardScrollAction;
-    if (!BOARD_ACTIONS.includes(action)) return;
-    const sourceSlot = BOARD_MODIFIER_KEYS.find(k => bindings[k] === action);
-    if (!sourceSlot || sourceSlot === targetSlot) return;
-    // Swapping bare and shift means toggling twoFingerPan
-    onUpdate({ twoFingerPan: targetSlot === 'bare' && action === 'pan' });
-  }, [bindings, onUpdate]);
-
-  const handleDragEnd = useCallback(() => { setDragging(null); setDragOver(null); }, []);
-
+function BoardScrollBindingsEditor({ draft, onUpdate }: { draft: BoardScrollSettings; onUpdate: DraftUpdater }) {
+  const bindings = boardScrollBindings(draft);
+  const isDefault = bindings.bare === DEFAULT_BOARD_SCROLL_BINDINGS.bare
+    && bindings.shift === DEFAULT_BOARD_SCROLL_BINDINGS.shift
+    && bindings.meta === DEFAULT_BOARD_SCROLL_BINDINGS.meta;
   return (
-    <div className="scroll-bindings-editor">
-      <div className="scroll-bindings-grid">
-        {BOARD_MODIFIER_KEYS.map(slot => {
-          const action = bindings[slot];
-          const isOver = dragOver === slot;
-          return (
-            <div key={slot} className={`scroll-binding-slot${isOver ? ' drag-over' : ''}`}
-              onDragOver={e => handleDragOver(e, slot)}
-              onDragLeave={() => setDragOver(null)}
-              onDrop={e => handleDrop(e, slot)}>
-              <span className="scroll-binding-modifier">{BOARD_MODIFIER_LABELS[slot]}</span>
-              <span
-                className={`scroll-binding-pill${dragging === action ? ' dragging' : ''}`}
-                style={{ '--pill-color': BOARD_ACTION_COLORS[action] } as React.CSSProperties}
-                draggable onDragStart={e => handleDragStart(e, action)} onDragEnd={handleDragEnd}>
-                {BOARD_ACTION_LABELS[action]}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
+    <SlotBindingsEditor
+      surface="board"
+      slots={BOARD_SLOTS}
+      actions={BOARD_SCROLL_ACTIONS}
+      value={bindings}
+      onChange={(slot, action) => onUpdate(boardScrollSettings({ ...bindings, [slot]: action }))}
+      onReset={isDefault ? undefined : () => onUpdate(boardScrollSettings(DEFAULT_BOARD_SCROLL_BINDINGS))}
+    />
   );
 }
 
@@ -1778,9 +1696,9 @@ function BoardDragBindingsEditor({ dragToZoom, onUpdate }: { dragToZoom: boolean
               <span className="scroll-binding-modifier">{BOARD_DRAG_MODIFIER_LABELS[slot]}</span>
               <span
                 className={`scroll-binding-pill${dragging === action ? ' dragging' : ''}`}
-                style={{ '--pill-color': BOARD_ACTION_COLORS[action as BoardScrollAction] } as React.CSSProperties}
+                style={{ '--pill-color': ACTION_COLOR[action] } as React.CSSProperties}
                 draggable onDragStart={e => handleDragStart(e, action)} onDragEnd={handleDragEnd}>
-                {BOARD_ACTION_LABELS[action as BoardScrollAction]}
+                {ACTION_LABEL[action]}
               </span>
             </div>
           );
@@ -2234,8 +2152,8 @@ export function SettingsPanel() {
           </button>
         </div>
         <div className="settings-subsection-label">Scroll wheel behavior</div>
-        <p className="settings-hint">Drag pills between slots to reassign scroll actions.</p>
-        <BoardScrollBindingsEditor twoFingerPan={draft.twoFingerPan} onUpdate={updateGlobal} />
+        <p className="settings-hint">Click a pill to change what that scroll does. Pinch and Ctrl+Scroll always zoom, dragging always pans.</p>
+        <BoardScrollBindingsEditor draft={draft} onUpdate={updateGlobal} />
         <Toggle
           label="Mouse wheel detection"
           value={draft.wheelDetection}
@@ -2489,7 +2407,7 @@ export function SettingsPanel() {
           ))}
         </div>
         <div className="settings-subsection-label">Scroll wheel behavior</div>
-        <p className="settings-hint">Drag pills between slots to reassign scroll actions.</p>
+        <p className="settings-hint">Click a pill to change what that scroll does. Pinch always zooms, dragging always pans; Page flips one page per notch.</p>
         <ScrollBindingsEditor />
       </CollapsibleSection>
       )}
