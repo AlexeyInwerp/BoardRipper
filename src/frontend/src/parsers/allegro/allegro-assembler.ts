@@ -498,8 +498,7 @@ function extractComponentsV15(
     let hasThru = false;
     const ring = pads?.byInstance.get(inst.key) ?? [];
     if (ring.length === 0) ringless++;
-    for (let i = 0; i < ring.length; i++) {
-      const pad = ring[i];
+    for (const pad of ring) {
       const [x1, y1, x2, y2] = pad.coords;
       const cx = (x1 + x2) / 2 / div;
       const cy = (y1 + y2) / 2 / div;
@@ -512,10 +511,12 @@ function extractComponentsV15(
       if (pad.flags & 0x80) hasThru = true;
       const radius = Math.max(2, Math.min(w, h) / 2);
       pins.push({
-        // Ring position is the only fallback when the footprint carries no
-        // pin number at all (never seen on Kronos; kept so a pad is not lost).
+        // '' when the footprint gives the pad no number — the mounting posts
+        // of the BGA/TSOP sockets on Kronos; Allegro's own v17 re-save leaves
+        // them blank too, and a ring-position stand-in would collide with the
+        // real pins 1, 2, … of the same part.
         name: pad.name,
-        number: pad.number || String(i + 1),
+        number: pad.number,
         position: { x: cx, y: cy },
         radius,
         side,

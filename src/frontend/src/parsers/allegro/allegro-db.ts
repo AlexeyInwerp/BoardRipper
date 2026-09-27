@@ -55,8 +55,9 @@ export interface V15Pads {
  * the real one, and a first-match lookup lost every GND pad to it.
  *
  * Object records carry byte 3 ∈ {0, 1}; BLK_0xC8 uses the top three bits as
- * pad flags (0x00 SMD, 0x20/0x40/0x60 variants, 0x80/0xa0 through-hole).
- * The hop types carry a layer in bytes 2–3 and are not filtered.
+ * pad flags (0x00 SMD, 0x20/0x40/0x60 variants, 0x80/0xa0 through-hole) and
+ * byte 0 as a second flag byte (see the index loop). The hop types carry a
+ * layer in bytes 2–3 and are not filtered.
  */
 const V15_HEADER_OK: ReadonlyMap<number, (b3: number) => boolean> = new Map<number, (b3: number) => boolean>([
   ...[0x34, 0x20, 0x44, 0xb4, 0xac, 0x10, 0x6c, 0x1c, 0x18, 0x8c, 0x48]
@@ -635,8 +636,12 @@ export class AllegroDb {
     let candidates = 0;
     const ofType = new Map<number, number[]>(); // type byte → record offsets (accepted headers)
     for (let off = 0; off + 8 <= bytes.length; off += 4) {
-      if (bytes[off] !== 0) continue;
       const b1 = bytes[off + 1];
+      // Byte 0 is zero on every header except BLK_0xC8, where it is a second
+      // flag byte: 0x04 on 4 Kronos pads and 0x10 on 7, every one of them a
+      // real pad in a real ring. Requiring 0 broke the four BGA136 rings
+      // (U3D1/U3R1/U4U1/U5U1) 44–63 pins early.
+      if (bytes[off] !== 0 && !(b1 === 0xc8 && (bytes[off] & ~0x14) === 0)) continue;
       const ok = V15_HEADER_OK.get(b1);
       if (!ok || !ok(bytes[off + 3])) continue;
       const key = u32(off + 4);
