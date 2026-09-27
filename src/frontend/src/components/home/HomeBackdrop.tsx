@@ -586,6 +586,47 @@ function PdfScrollBindings() {
   );
 }
 
+/**
+ * Shown while either surface has Shift + Scroll bound to something other
+ * than Pan (issue #40): the browser turns Shift+wheel into its horizontal
+ * scroll, and an existing install keeps the old Shift = Zoom layout after
+ * the update. One click puts both surfaces on Pan; nothing else moves.
+ */
+function ShiftScrollNote() {
+  const board = boardScrollBindings(useBoardScrollSettings());
+  const [pdf, setPdf] = useState<ScrollBindings>(loadScrollBindings);
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<ScrollBindings>).detail;
+      if (detail) setPdf(detail);
+    };
+    window.addEventListener(SCROLL_BINDINGS_EVENT, handler);
+    return () => window.removeEventListener(SCROLL_BINDINGS_EVENT, handler);
+  }, []);
+
+  if (board.shift === 'pan' && pdf.shift === 'pan') return null;
+
+  const fix = () => {
+    if (board.shift !== 'pan') {
+      const snap = renderSettingsStore.globalSnapshot();
+      renderSettingsStore.applyGlobal({ ...snap, ...boardScrollSettings({ ...board, shift: 'pan' }) });
+    }
+    if (pdf.shift !== 'pan') {
+      const next = { ...pdf, shift: 'pan' as const };
+      setPdf(next);
+      saveScrollBindings(next);
+    }
+  };
+  return (
+    <div className="home-bindings-note" data-testid="home-shift-scroll-note">
+      <span>{SHIFT_SCROLL_NOTE}</span>
+      <button type="button" className="home-bindings-note-btn" onClick={fix} data-testid="home-shift-scroll-fix">
+        Set Shift + Scroll to Pan
+      </button>
+    </div>
+  );
+}
+
 function AutoSwitchToggle() {
   const enabled = useAutoSwitch();
   return (
@@ -994,12 +1035,13 @@ function QuickSettings() {
       <div className="home-quick-section">
         <h3 className="home-quick-section-title">
           Pan / zoom bindings
-          <span className="home-quick-section-hint">drag a pill onto another slot to swap</span>
+          <span className="home-quick-section-hint">click a pill to change what it does</span>
         </h3>
         <div className="home-bindings-matrix" role="group" aria-label="Pan and zoom bindings">
           <DragBindings />
           <ScrollBindings />
           <PdfScrollBindings />
+          <ShiftScrollNote />
           <div className="home-bindings-foot">
             <span className="home-bindings-foot-glyph" aria-hidden="true">↳</span>
             Trackpad: two-finger scroll = mouse wheel · <strong>pinch always zooms</strong>

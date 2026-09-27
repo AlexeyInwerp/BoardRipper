@@ -106,6 +106,31 @@ test.describe('board scroll slots', () => {
     expect(after.scale, 'legacy layout: Shift still zooms').toBeGreaterThan(before.scale * 1.05);
   });
 
+  test('start page: a kept legacy layout shows the note, and one click puts both surfaces on Pan', async ({ page }) => {
+    await page.evaluate((k) => {
+      localStorage.setItem(k.SETTINGS_KEY, JSON.stringify({ twoFingerPan: true }));
+    }, { SETTINGS_KEY });
+    await page.reload();
+
+    const note = page.getByTestId('home-shift-scroll-note');
+    await expect(note).toContainText('horizontal scroll');
+    await expect(page.getByTestId('home-scroll-board-shift')).toHaveAttribute('data-action', 'zoom');
+    await expect(page.getByTestId('home-scroll-pdf-shift')).toHaveAttribute('data-action', 'zoom');
+
+    await page.getByTestId('home-shift-scroll-fix').click();
+    await expect(note).toHaveCount(0);
+    await expect(page.getByTestId('home-scroll-board-shift')).toHaveAttribute('data-action', 'pan');
+    await expect(page.getByTestId('home-scroll-pdf-shift')).toHaveAttribute('data-action', 'pan');
+    // Only Shift moved: the PDF's ⌘ slot keeps its legacy page flip.
+    await expect(page.getByTestId('home-scroll-pdf-meta')).toHaveAttribute('data-action', 'switch');
+    const stored = await page.evaluate((k) => ({
+      shift: JSON.parse(localStorage.getItem(k.SETTINGS_KEY) || '{}').wheelShiftAction,
+      pdf: JSON.parse(localStorage.getItem(k.PDF_KEY) || '{}'),
+    }), { SETTINGS_KEY, PDF_KEY });
+    expect(stored.shift).toBe('pan');
+    expect(stored.pdf).toEqual({ bare: 'pan', shift: 'pan', meta: 'switch' });
+  });
+
   test('a legacy mouse layout (bare = zoom) keeps Shift = Pan, and it pans both axes', async ({ page }) => {
     await page.evaluate((k) => {
       localStorage.setItem(k.SETTINGS_KEY, JSON.stringify({ twoFingerPan: false }));

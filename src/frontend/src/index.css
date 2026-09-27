@@ -7571,6 +7571,37 @@ body {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
+/* Shift + Scroll not on Pan (issue #40): the one place a user who kept the
+ * old layout learns what it costs, with the fix beside it. */
+.home-bindings-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-secondary));
+  border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  border-left: 2px solid var(--accent);
+}
+.home-bindings-note-btn {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 3px 10px;
+  font-size: 0.7rem;
+  font-family: inherit;
+  font-weight: 600;
+  color: var(--accent-text);
+  background: transparent;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.home-bindings-note-btn:hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
 .home-bindings-foot {
   display: flex;
   align-items: center;

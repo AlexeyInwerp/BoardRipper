@@ -9,6 +9,7 @@ export const welcomeRants: string[] = [
   `The worst fault to diagnose is the open line between the chair and the board.`,
   `OL is  often interpreted as Open Line or Over Limit. I figured it might mean Zero Life.`,
   `The hardest repair is fixing what isn't broken. — old Repairman's saying`,
+  `If swapping a CPU on an iPhone costs 1500 € at a self-proclaimed "best specialist in Europe", how much should I charge for knowing that instead of a swap the customer should wait for the update? The answer is simple: if you charge more than your usual repair, you punish the customer for THEIR incompetence.`,
 
   // H — mid-length
   `A MacBook, a ThinkPad, and a Surface walk into a bar.
