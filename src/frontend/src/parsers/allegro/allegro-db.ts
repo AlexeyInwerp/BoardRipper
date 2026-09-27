@@ -22,6 +22,50 @@ const dbg = log.parser;
 /** String table start offset (fixed across all versions). */
 const STRING_TABLE_OFFSET = 0x1200;
 
+/** One pad of a v15 placed instance, as read from its BLK_0xC8 record. */
+export interface V15Pin {
+  /** BLK_0xC8 key — the pad's identity for net lookups. */
+  c8Key: number;
+  /** Pin number as printed on the footprint (inline ASCII in the [0x34] record). */
+  number: string;
+  /** Logical pin name from the component definition ([0x20] → [0x44]), '' when absent. */
+  name: string;
+  /** Pad bbox in raw file units (board-absolute), from C8 +0x38..+0x44. */
+  coords: [number, number, number, number];
+  /** Prefix byte 3 of the C8 record: 0x00 SMD; 0x80/0xa0 observed only on through-hole pads. */
+  flags: number;
+  /** Net name, '' when no route resolved one. */
+  net: string;
+}
+
+export interface V15Pads {
+  /** BLK_0x2D key → pads in ring order. */
+  byInstance: Map<number, V15Pin[]>;
+  /** How many pads each net route resolved (diagnostics for the Debug panel). */
+  routeCounts: { r1: number; r5: number; r8c: number; r08: number };
+}
+
+/**
+ * v15 record types the pointer index keeps. The heap image holds ~550k
+ * `00 xx yy zz | key` candidates on a 26 MB board; indexing only the types
+ * the pad walk dereferences keeps the map small, and a per-type test on
+ * prefix byte 3 rejects most false headers: a pointer such as `0x09201000`
+ * reads as `00 10 20 09` — a "[0x10] record" whose byte 3 is 0x09. The GND
+ * NetAssign on Kronos (key 0x93dd58c) had exactly such a twin 2 MB before
+ * the real one, and a first-match lookup lost every GND pad to it.
+ *
+ * Object records carry byte 3 ∈ {0, 1}; BLK_0xC8 uses the top three bits as
+ * pad flags (0x00 SMD, 0x20/0x40/0x60 variants, 0x80/0xa0 through-hole).
+ * The hop types carry a layer in bytes 2–3 and are not filtered.
+ */
+const V15_HEADER_OK: ReadonlyMap<number, (b3: number) => boolean> = new Map<number, (b3: number) => boolean>([
+  ...[0x34, 0x20, 0x44, 0xb4, 0xac, 0x10, 0x6c, 0x1c, 0x18, 0x8c, 0x48]
+    .map((t): [number, (b3: number) => boolean] => [t, (b3) => b3 === 0 || b3 === 1]),
+  [0xc8, (b3) => (b3 & 0x1f) === 0],
+  ...[0x50, 0x58, 0x54, 0x5c, 0x30, 0xc0, 0xc4]
+    .map((t): [number, (b3: number) => boolean] => [t, () => true]),
+]);
+
 export class AllegroDb {
   readonly header: FileHeader;
   readonly strings: Map<number, string>;
@@ -38,6 +82,12 @@ export class AllegroDb {
    * = clean parse.
    */
   parseWarning?: string;
+
+  /**
+   * v15 only: per placed instance (BLK_0x2D key) the pads of its pad ring,
+   * with inline pin numbers and resolved nets. Undefined for v16+.
+   */
+  v15Pads?: V15Pads;
 
   constructor(buffer: ArrayBuffer) {
     const stream = new AllegroStream(buffer);
@@ -402,211 +452,31 @@ export class AllegroDb {
       dbg.log(`v15: scanned BLK_0x07 → ${n07} component instances at 0x${start07.toString(16)}..0x${scan07.toString(16)}`);
     }
 
-    // ── PAD CHAIN (v15-specific) ──────────────────────────────────────────
-    // BLK_0x07 ←[+0x28]─ byte1=0x40 ─[+0x2C]→ BLK_0x48 first pad
-    //   BLK_0x48 ─[+0x08]→ BLK_0x48 m_Next
-    //   BLK_0x48 ─[+0x10]→ BLK_0xC8 (pad geometry, coords at +0x34..+0x40)
-    //
-    // Whole-file scans for the three signatures. Records are stored as
-    // generic blocks in db.blocks so the v15 assembler can traverse them.
-    const fileBytes = new Uint8Array((stream as unknown as { view: DataView }).view.buffer);
-    const peekByte = (off: number) => fileBytes[off];
-    const peekU32 = (off: number) =>
-      ((fileBytes[off]) | (fileBytes[off+1] << 8) | (fileBytes[off+2] << 16) | (fileBytes[off+3] << 24)) >>> 0;
-    const peekI32 = (off: number) => (peekU32(off) | 0);
-
-    // Walk byte1=0x40 records (per-placement device records) — 56-byte stride
-    // assumption when contiguous; we just scan whole file for the prefix and
-    // store each record. Build a Map<blk07Key, firstPadKey> for fast lookup.
-    const blk07ToFirstPad = new Map<number, number>();
-    let n40 = 0;
-    for (let off = 0; off + 56 <= fileBytes.length; off += 4) {
-      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x40 || peekByte(off+3) !== 0x00) continue;
-      const blk07Ref = peekU32(off + 0x28);
-      const firstPad = peekU32(off + 0x2C);
-      if (blk07Ref !== 0 && firstPad !== 0) {
-        blk07ToFirstPad.set(blk07Ref, firstPad);
-      }
-      n40++;
-    }
-    dbg.log(`v15: scanned byte1=0x40 → ${n40} per-placement records, ${blk07ToFirstPad.size} BLK_0x07→firstPad links`);
-
-    // Walk BLK_0x48 records (pad headers) — 24-byte logical size. Store as
-    // {next, detailKey} per m_Key.
-    const blk48Records = new Map<number, { next: number; detailKey: number }>();
-    for (let off = 0; off + 24 <= fileBytes.length; off += 4) {
-      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x48 || peekByte(off+3) !== 0x00) continue;
-      const mKey = peekU32(off + 0x04);
-      const next = peekU32(off + 0x08);
-      const detail = peekU32(off + 0x10);
-      if (mKey !== 0) blk48Records.set(mKey, { next, detailKey: detail });
-    }
-    dbg.log(`v15: scanned BLK_0x48 → ${blk48Records.size} pad header records`);
-
-    // Walk BLK_0xC8 records (pad geometry) — coords at +0x38..+0x44
-    // (verified board-absolute via .cad oracle: PQ306/L124/U41 pin 1
-    // positions decode EXACTLY to oracle values).
-    //
-    // Multiple prefix variants (byte 2 always 0x0C):
-    //   `00 c8 0c 00` — main pad-stack record (11082 on LA-7321P, 18937 on v13tl)
-    //   `00 c8 0c 20` — variant on 15.5.2 (45 on v13tl)
-    //   `00 c8 0c 40` — small variant (17 on LA-7321P, 49 on v13tl)
-    //   `00 c8 0c 60` — variant on 15.5.2 (10 on v13tl)
-    //   `00 c8 0c 80` — multi-layer connector pad (149 on LA-7321P)
-    // All carry the same coord layout at +0x38..+0x44. byte3 is a flag/
-    // sub-type byte; values >= 0x100 are mostly random false-positive
-    // pattern matches (single-digit counts).
-    const blkC8Records = new Map<number, { coords: [number, number, number, number] }>();
-    for (let off = 0; off + 0x48 <= fileBytes.length; off += 4) {
-      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0xC8 || peekByte(off+2) !== 0x0C) continue;
-      const b3 = peekByte(off+3);
-      if (b3 !== 0x00 && b3 !== 0x20 && b3 !== 0x40 && b3 !== 0x60 && b3 !== 0x80) continue;
-      const mKey = peekU32(off + 0x04);
-      const x1 = peekI32(off + 0x38);
-      const y1 = peekI32(off + 0x3C);
-      const x2 = peekI32(off + 0x40);
-      const y2 = peekI32(off + 0x44);
-      if (mKey !== 0 && !blkC8Records.has(mKey)) blkC8Records.set(mKey, { coords: [x1, y1, x2, y2] });
-    }
-    dbg.log(`v15: scanned BLK_0xC8 (byte3 ∈ {0x00, 0x20, 0x40, 0x60, 0x80}) → ${blkC8Records.size} pad geometry records`);
-
-    // Some multi-layer connector pins (JHDMI1/JLAN1 on LA-7321P) terminate
-    // their pad-stack chain at a byte1=0x01 record where +0x10 = 0 (no
-    // further BLK_0xC8). These records carry the pad bbox INLINE at
-    // +0x14..+0x20. We keep them in a SEPARATE map so the chain walker
-    // can prefer real BLK_0xC8 records (which still resolve to nets via
-    // Route 5) and only fall back to terminal byte1=0x01 records when
-    // the chain truly dead-ends.
-    const terminalPadRecords = new Map<number, { coords: [number, number, number, number] }>();
-    for (let off = 0; off + 0x24 <= fileBytes.length; off += 4) {
-      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x01) continue;
-      const b3 = peekByte(off+3);
-      if (b3 !== 0x00 && b3 !== 0x01) continue;
-      if (peekU32(off + 0x10) !== 0) continue; // only terminal records
-      const mKey = peekU32(off + 0x04);
-      if (!mKey || terminalPadRecords.has(mKey)) continue;
-      const x1 = peekI32(off + 0x14);
-      const y1 = peekI32(off + 0x18);
-      const x2 = peekI32(off + 0x1C);
-      const y2 = peekI32(off + 0x20);
-      // Sanity: real pad bbox has |x2-x1| < 100k coord units (~1000 mils).
-      // Reject huge rectangles which are likely chain-link false positives.
-      const w = Math.abs(x2 - x1);
-      const h = Math.abs(y2 - y1);
-      if (w === 0 || h === 0 || w > 100000 || h > 100000) continue;
-      terminalPadRecords.set(mKey, { coords: [x1, y1, x2, y2] });
-    }
-    if (terminalPadRecords.size > 0) dbg.log(`v15: indexed ${terminalPadRecords.size} terminal byte1=0x01 records as fallback pad geometry`);
-
-    // First, scan ALL byte1=0x6c records directly (not just the LL chain) to
-    // build a complete BLK_0x1B m_Key → net-name lookup. The LL_0x1B chain
-    // covers 7943 records but only ~1977 are byte1=0x6c (the chain crosses
-    // multiple byte1 prefixes). byte1=0x10 NetAssign records reference the
-    // byte1=0x6c subset specifically.
-    const directNetNames = new Map<number, string>();
-    for (let off = 0; off + 0x10 <= fileBytes.length; off += 4) {
-      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x6c || peekByte(off+3) !== 0x00) continue;
-      const mKey = peekU32(off + 0x04);
-      const nameStrKey = peekU32(off + 0x0C);
-      const raw = this.strings.get(nameStrKey) ?? '';
-      // Strip the Cadence hierarchical-sheet prefix `/` from net names.
-      // Hierarchical-schematic v15 designs (e.g. v13tl-0629) prefix every
-      // net with the root sheet path `/`; flat designs (LA-7321P) don't.
-      // We normalise to the bare name everywhere — matches what users
-      // expect from boardview tools and keeps search consistent across
-      // hierarchical/flat designs.
-      const name = raw.startsWith('/') ? raw.slice(1) : raw;
-      if (name && mKey !== 0) directNetNames.set(mKey, name);
-    }
-
-    // ── byte1=0x10 NetAssign (Route 1) ───────────────────────────────────
-    //
-    // Per-pad NetAssign: forward link byte1=0x10.+0x10 → BLK_0xC8 padK,
-    // byte1=0x10.+0x0C → BLK_0x6c netK. Works on both 15.5.2 and 15.5.7
-    // sub-variants. (Earlier session disabled this on 15.5.2 due to a
-    // slash-strip bug in the test harness — the v13tl oracle has `/NET`
-    // prefixes everywhere, the parser correctly strips them, but the
-    // harness was comparing stripped-parser to unstripped-oracle and
-    // reporting 0 correct. Fixed in commit-after-97cd6f8.)
-    const padGeoToNetName = new Map<number, string>();
-    let netAssignTotal = 0;
-    let netAssignToC8 = 0;
-    for (let off = 0; off + 0x14 <= fileBytes.length; off += 4) {
-      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x10 || peekByte(off+3) !== 0x00) continue;
-      netAssignTotal++;
-      const padGeoKey = peekU32(off + 0x10);
-      const netKey = peekU32(off + 0x0C);
-      if (!blkC8Records.has(padGeoKey)) continue;
-      netAssignToC8++;
-      const netName = directNetNames.get(netKey);
-      if (netName) padGeoToNetName.set(padGeoKey, netName);
-    }
-    dbg.log(`v15: byte1=0x10 NetAssign (Route 1) — total=${netAssignTotal} +0x10→BLK_0xC8=${netAssignToC8} resolved=${padGeoToNetName.size}`);
-
-    // ── Route 5: BLK_0xC8 back-link to byte1=0x10 NetAssign ──────────────
-    //
-    // Each BLK_0xC8 (pad geometry) record has a +0x0C field that points to
-    // a byte1=0x10 NetAssign. Multiple BLK_0xC8 records in the same pad-
-    // stack reference the same NetAssign, so this back-link covers ALL
-    // layers of every pad with a single per-stack NetAssign. Works on
-    // both v15 sub-variants.
-    //
-    // Per-component oracle test (CAD = ground truth):
-    //
-    //   LA-7321P (15.5.7):  R1+R5 → 1776/1903 perfect (93.3%), 0 FP
-    //   v13tl-0629 (15.5.2): R1+R5 → 1367/1367 perfect (100%), 0 FP
-    //
-    // The 15.5.2 result was misdiagnosed in an earlier session due to a
-    // slash-strip bug in the test harness (oracle nets had `/` prefixes,
-    // parser stripped them, harness compared apples to oranges and showed
-    // "0 correct, 3443 FP"). After fixing the harness, both sub-variants
-    // resolve correctly via the same Route 5.
-    {
-      const netByR10mKey = new Map<number, string>();
-      for (let off = 0; off + 0x10 <= fileBytes.length; off += 4) {
-        if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x10 || peekByte(off+3) !== 0x00) continue;
-        const mKey = peekU32(off + 0x04);
-        const netK = peekU32(off + 0x0C);
-        const n = directNetNames.get(netK);
-        if (n && mKey !== 0) netByR10mKey.set(mKey, n);
-      }
-      let r5 = 0;
-      for (let off = 0; off + 0x10 <= fileBytes.length; off += 4) {
-        if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0xC8 || peekByte(off+3) !== 0x00) continue;
-        const c8Key = peekU32(off + 0x04);
-        if (!blkC8Records.has(c8Key)) continue;
-        if (padGeoToNetName.has(c8Key)) continue; // Route 1 priority
-        const r10Key = peekU32(off + 0x0C);
-        const n = netByR10mKey.get(r10Key);
-        if (n) {
-          padGeoToNetName.set(c8Key, n);
-          r5++;
-        }
-      }
-      dbg.log(`v15: Route 5 (BLK_0xC8 +0x0C → byte1=0x10 back-link) added ${r5} mappings; final c8→net = ${padGeoToNetName.size} of ${blkC8Records.size}`);
-    }
-    // resolve pads per BLK_0x2D placement.
-    (this as unknown as Record<string, unknown>).v15PadChain = {
-      blk07ToFirstPad, blk48Records, blkC8Records, padGeoToNetName,
-      terminalPadRecords,
-    };
-
     // BLK_0x2D (Footprint instances / placed parts) — sequential 60-byte
-    // records, no LL in the header. The records are NOT grouped per footprint
-    // — each record's m_FpDefRef (at +0x18) points to whichever BLK_0x2B is
-    // its parent. Walker scans starting at min(BLK_0x2B.firstInstPtr) − addend
-    // and stops when the prefix byte 1 is no longer 0xB4.
+    // records, no LL in the header. Walker scans starting at
+    // min(BLK_0x2B.firstInstPtr) − addend and stops when the prefix byte 1 is
+    // no longer 0xB4.
     //
-    // v15 BLK_0x2D 60-byte layout (validated on COMPAL LA-7321P):
-    //   +0x00  prefix `00 b4 0X 00`  (0X is per-instance sub-type / counter)
+    // v15 BLK_0x2D 60-byte layout (LA-7321P; +0x18/+0x24 corrected on
+    // Jasper_Kronos 2026-09-27 against its v17 re-save):
+    //   +0x00  prefix `00 b4 0X 00`  (0X = layer: 0x00 top, 0x01 bottom)
     //   +0x04  m_Key
-    //   +0x08  unknown
-    //   +0x0C  unknown
+    //   +0x08  flags
+    //   +0x0C  rotation in millidegrees (0x2BF20 = 180000 = 180°)
     //   +0x10  i32 m_CoordX (signed mils*divisor)
     //   +0x14  i32 m_CoordY
-    //   +0x18  m_FpDefRef → BLK_0x2B
-    //   +0x1C  m_InstRef → BLK_0x07 (verified — resolves to refdes match in .cad oracle)
-    //   +0x20..0x38  cross-pool pointers (BLK_0x32, BLK_0x14, etc — pending)
+    //   +0x18  m_Next — the NEXT BLK_0x2D of the same footprint; the last one
+    //          points at the BLK_0x2B footprint definition, whose +0x24 is the
+    //          chain head. Earlier sessions read this as "m_FpDefRef", which is
+    //          only true for the last instance of each footprint — every other
+    //          part came out with an empty package name.
+    //   +0x1C  m_InstRef → BLK_0x07 (refdes). Zero on the 141 Kronos records
+    //          that are drawing symbols (FAB_NUMBER, dimensions, logos, UNK…):
+    //          those have no component instance and are not parts.
+    //   +0x20  → [0x50]
+    //   +0x24  m_FirstPadPtr → BLK_0xC8 head of this instance's pad ring
+    //          (C8.+0x10 = next pad, ring closes on this record's key)
+    //   +0x28  → [0xc0]   +0x30 → [0xa0]   (graphics, unread)
     let firstInst2D = Infinity;
     for (const blk of map.values()) {
       if (blk.blockType !== 0x2B) continue;
@@ -620,43 +490,31 @@ export class AllegroDb {
       let scanPos = start;
       let n2D = 0;
       while (scanPos + 60 <= stream.size) {
-        // Validate prefix shape `00 b4 layerByte 00` — prefix byte 2 encodes
-        // layer: 0x00 = top, 0x01 = bottom (verified via 1178/731 split on
-        // LA-7321P, matches typical motherboard top/bottom ratio).
         stream.seek(scanPos);
         const p0 = stream.u8();
         const p1 = stream.u8();
         const layerByte = stream.u8();
         const p3 = stream.u8();
         if (p0 !== 0x00 || p1 !== 0xb4 || p3 !== 0x00) break;
-        // m_Key at +0x04
         const mKey = stream.u32();
-        // +0x08 looks like flags (0x00000000 ~ 0x01cb_xxxx); skip for now
-        stream.skip(4);
-        // +0x0C = rotation in millidegrees (verified: 0x2BF20 = 180000 = 180°)
+        stream.skip(4); // +0x08 flags
         const rotationMillideg = stream.u32();
-        // +0x10/+0x14 = signed coords
         const coordX = stream.s32();
         const coordY = stream.s32();
-        // +0x18 = m_FpDefRef → BLK_0x2B
-        const fpDefRef = stream.u32();
-        // +0x1C = m_InstRef → BLK_0x07 (refdes lookup)
+        const next18 = stream.u32();
         const compDefRef = stream.u32();
-        const ptr20 = stream.u32();
-        const ptr24 = stream.u32();
-        const ptr28 = stream.u32();
-        const ptr2c = stream.u32();
-        const ptr30 = stream.u32();
-        void ptr20; void ptr24; void ptr28; void ptr2c; void ptr30;
+        stream.skip(4); // +0x20
+        const firstPad24 = stream.u32();
 
         // Build a Blk0x2DFootprintInst-shaped record. v15 doesn't expose all
         // the v16+ fields; we leave those zero/empty so the assembler chain
-        // walk doesn't trip on them. The synthesized `next` is wired below.
+        // walk doesn't trip on them. `next` and `unknownPtr1` (the footprint
+        // definition) are resolved below once every instance is known.
         map.set(mKey, {
           blockType: 0x2D,
           offset: scanPos,
           key: mKey,
-          next: 0,
+          next: next18,
           unknownByte1: 0,
           layer: layerByte, // 0=top, 1=bottom (v15 prefix byte 2)
           unknownByte2: 0,
@@ -671,11 +529,11 @@ export class AllegroDb {
           coordY,
           instRef: undefined,
           graphicPtr: 0,
-          firstPadPtr: 0,
+          firstPadPtr: firstPad24,
           textPtr: 0,
           assemblyPtr: 0,
           areasPtr: 0,
-          unknownPtr1: fpDefRef,
+          unknownPtr1: 0,
           unknownPtr2: compDefRef,
         } as AllegroBlock);
         n2D++;
@@ -683,27 +541,263 @@ export class AllegroDb {
       }
       dbg.log(`v15: scanned BLK_0x2D → ${n2D} placed instances at 0x${start.toString(16)}..0x${scanPos.toString(16)}`);
 
-      // Group BLK_0x2D records by their fpDefRef (stashed in unknownPtr1) and
-      // synthesize per-footprint next chains so the existing assembler can
-      // walk fpDef.firstInstPtr → inst.next → ... unchanged.
-      const groups = new Map<number, AllegroBlock[]>();
+      // Resolve each instance's footprint definition by following the +0x18
+      // chain to the BLK_0x2B that terminates it. The chain is what
+      // `extractComponents`'s generic walk expects (fpDef.firstInstPtr →
+      // inst.next → … → 0), so cut the ring at the definition: an instance
+      // whose next is the 0x2B gets next = 0.
+      let resolvedFp = 0;
       for (const blk of map.values()) {
         if (blk.blockType !== 0x2D) continue;
-        const inst = blk as unknown as { unknownPtr1: number };
-        const arr = groups.get(inst.unknownPtr1) ?? [];
-        arr.push(blk);
-        groups.set(inst.unknownPtr1, arr);
-      }
-      for (const arr of groups.values()) {
-        for (let i = 0; i < arr.length - 1; i++) {
-          (arr[i] as unknown as { next: number }).next = arr[i + 1].key;
+        const inst = blk as unknown as { key: number; next: number; unknownPtr1: number };
+        let k = inst.next;
+        const seen = new Set<number>([inst.key]);
+        for (let hop = 0; hop < 100_000 && k !== 0 && !seen.has(k); hop++) {
+          seen.add(k);
+          const t = map.get(k);
+          if (!t) break;
+          if (t.blockType === 0x2B) { inst.unknownPtr1 = k; resolvedFp++; break; }
+          if (t.blockType !== 0x2D) break;
+          k = (t as unknown as { next: number }).next;
         }
-        // Last record's next stays 0 (terminator) so the assembler walk ends.
+        if (map.get(inst.next)?.blockType === 0x2B) inst.next = 0;
       }
-      dbg.log(`v15: synthesized ${groups.size} BLK_0x2D chains`);
+      dbg.log(`v15: resolved footprint definition for ${resolvedFp} of ${n2D} instances via the +0x18 chain`);
     }
 
+    // Pads, pin numbers and nets — see indexV15Pads.
+    this.v15Pads = this.indexV15Pads(stream, map, globalAddend);
+
     return map;
+  }
+
+  /**
+   * v15 pads, pin numbers and nets.
+   *
+   * ## Why pointers need an index, not a subtraction
+   *
+   * A v15 file is a heap image: `m_Key` is the record's memory address, and
+   * `key − fileOffset` is only constant inside one contiguous pool. Between
+   * pools the addend drifts (Kronos: 0x83557f4 for the LL pools up to
+   * ~0x8396000 for shapes — some 260 KB of memory that was never written).
+   * So a pointer cannot be resolved by one addend. Instead every 4-aligned
+   * position that reads `00 b1 b2 b3 | key` with `key − off` inside a window
+   * around the primary addend is a *candidate* record start, indexed by key.
+   * ~10% of keys have several candidates (a zero-terminated field followed by
+   * a pointer looks like a header), so every lookup names the type byte it
+   * expects. Measured on Kronos: with a type-blind first-wins index 2377 of
+   * 5277 pads lost their pin number and 150 rings ended on junk; with the
+   * type-aware lookup every ring closes on its owning BLK_0x2D.
+   *
+   * ## The pad ring (replaces the byte1=0x40 → BLK_0x48 chain)
+   *
+   *   BLK_0x2D.+0x24 → BLK_0xC8 (first pad)
+   *   BLK_0xC8.+0x10 → next BLK_0xC8; the last one points back at the 2D
+   *   BLK_0xC8.+0x14 → owning BLK_0x2D (checked)
+   *   BLK_0xC8.+0x1C → [0x34] pin-number record, inline ASCII at +0x08
+   *   BLK_0xC8.+0x28 → [0x20] component-pin record (inline pin number at
+   *                    +0x08, +0x2C → [0x44] with the inline pin *name*)
+   *   BLK_0xC8.+0x38..+0x44 pad bbox, board-absolute
+   *
+   * The old BLK_0x48 chain visited pads in an order unrelated to the pin
+   * numbers and the walker invented sequential numbers: on Kronos that
+   * swapped pins 1↔3 of every SOT-23 and 1↔2 of every diode (435 "wrong"
+   * nets against the v17 oracle that were all correct by position), and it
+   * lost 3095 of 7982 pins because BGA rings pass through records the
+   * prefix scan mis-keyed.
+   *
+   * ## Net routes, in priority order — each measured at 0 false positives on
+   * the 7715 Kronos pins whose v17 re-save names a net
+   *
+   *   R1  [0x10] NetAssign: +0x10 → C8, +0x0C → [0x6c] net      (forward)
+   *   R5  C8.+0x0C → [0x10] → +0x0C → [0x6c]                    (back-link;
+   *       ALL prefix byte-3 variants — the shipped loop accepted only
+   *       `00 c8 ?? 00` and so skipped every through-hole pad, which is
+   *       where 450 of the 495 remaining misses were)
+   *   R8c [0x8c] member record: +0x10 / +0x18 → C8; its +0x08 chain
+   *       (through 0x8c/0x48/0x50/0x58/… records) ends at the [0x6c] net
+   *   R08 C8.+0x08 → next member C8 → … → [0x10] NetAssign
+   */
+  private indexV15Pads(
+    stream: AllegroStream,
+    map: Map<number, AllegroBlock>,
+    globalAddend: number,
+  ): V15Pads {
+    const bytes = new Uint8Array((stream as unknown as { view: DataView }).view.buffer);
+    const u32 = (off: number) =>
+      ((bytes[off]) | (bytes[off + 1] << 8) | (bytes[off + 2] << 16) | (bytes[off + 3] << 24)) >>> 0;
+    const i32 = (off: number) => (u32(off) | 0);
+
+    // ── candidate index ──
+    const WINDOW_BELOW = 0x100000;  // 1 MB
+    const WINDOW_ABOVE = 0x800000;  // 8 MB
+    const index = new Map<number, number | number[]>();
+    let candidates = 0;
+    const ofType = new Map<number, number[]>(); // type byte → record offsets (accepted headers)
+    for (let off = 0; off + 8 <= bytes.length; off += 4) {
+      if (bytes[off] !== 0) continue;
+      const b1 = bytes[off + 1];
+      const ok = V15_HEADER_OK.get(b1);
+      if (!ok || !ok(bytes[off + 3])) continue;
+      const key = u32(off + 4);
+      const add = key - off;
+      if (add < globalAddend - WINDOW_BELOW || add > globalAddend + WINDOW_ABOVE) continue;
+      candidates++;
+      const cur = index.get(key);
+      if (cur === undefined) index.set(key, off);
+      else if (typeof cur === 'number') index.set(key, [cur, off]);
+      else cur.push(off);
+      let arr = ofType.get(b1);
+      if (!arr) { arr = []; ofType.set(b1, arr); }
+      arr.push(off);
+    }
+    /** File offset of the record with this key and type byte, or -1. */
+    const rec = (key: number, b1: number): number => {
+      if (key === 0) return -1;
+      const cur = index.get(key);
+      if (cur === undefined) return -1;
+      if (typeof cur === 'number') return bytes[cur + 1] === b1 ? cur : -1;
+      for (const o of cur) if (bytes[o + 1] === b1) return o;
+      return -1;
+    };
+    /** Offset of a candidate at this key whose type byte is in the set, or -1. */
+    const recAny = (key: number, types: Set<number>): number => {
+      if (key === 0) return -1;
+      const cur = index.get(key);
+      if (cur === undefined) return -1;
+      if (typeof cur === 'number') return types.has(bytes[cur + 1]) ? cur : -1;
+      for (const o of cur) if (types.has(bytes[o + 1])) return o;
+      return -1;
+    };
+    const inlineAscii = (off: number, max: number): string => {
+      let s = '';
+      for (let i = 0; i < max; i++) {
+        const c = bytes[off + i];
+        if (c === 0) break;
+        if (c < 0x20 || c > 0x7e) return '';
+        s += String.fromCharCode(c);
+      }
+      return s;
+    };
+    dbg.log(`v15: pointer index — ${candidates} candidates, ${index.size} keys`);
+
+    // ── net names: [0x6c] key → name ──
+    const netNameOf = (k6c: number): string => {
+      const o = rec(k6c, 0x6c);
+      if (o < 0) return '';
+      const raw = this.strings.get(u32(o + 0x0c)) ?? '';
+      // Strip the Cadence hierarchical-sheet prefix `/` (v13tl-0629 prefixes
+      // every net with the root sheet path; flat designs don't).
+      return raw.startsWith('/') ? raw.slice(1) : raw;
+    };
+    const netOf10 = (k10: number): string => {
+      const o = rec(k10, 0x10);
+      if (o < 0) return '';
+      return netNameOf(u32(o + 0x0c)) || netNameOf(u32(o + 0x08));
+    };
+
+    // ── walk every instance's pad ring ──
+    const byInstance = new Map<number, V15Pin[]>();
+    const allPads: Array<{ pin: V15Pin; off: number }> = [];
+    let rings = 0, closed = 0, noNumber = 0, ownerMismatch = 0;
+    for (const blk of map.values()) {
+      if (blk.blockType !== 0x2D) continue;
+      const inst = blk as unknown as { key: number; firstPadPtr: number };
+      const pins: V15Pin[] = [];
+      byInstance.set(inst.key, pins);
+      let k = inst.firstPadPtr;
+      if (k === 0) continue;
+      rings++;
+      const seen = new Set<number>();
+      while (k !== 0 && !seen.has(k) && pins.length < 10_000) {
+        seen.add(k);
+        if (k === inst.key) { closed++; break; }
+        const o = rec(k, 0xc8);
+        if (o < 0) break;
+        if (u32(o + 0x14) !== inst.key) { ownerMismatch++; break; }
+        const o34 = rec(u32(o + 0x1c), 0x34);
+        const o20 = rec(u32(o + 0x28), 0x20);
+        let number = o34 >= 0 ? inlineAscii(o34 + 8, 32) : '';
+        if (!number && o20 >= 0) number = inlineAscii(o20 + 8, 32);
+        if (!number) noNumber++;
+        const o44 = o20 >= 0 ? rec(u32(o20 + 0x2c), 0x44) : -1;
+        const name = o44 >= 0 ? inlineAscii(o44 + 8, 32) : '';
+        const pin: V15Pin = {
+          c8Key: k,
+          number,
+          name,
+          coords: [i32(o + 0x38), i32(o + 0x3c), i32(o + 0x40), i32(o + 0x44)],
+          flags: bytes[o + 3],
+          net: '',
+        };
+        pins.push(pin);
+        allPads.push({ pin, off: o });
+        k = u32(o + 0x10);
+      }
+    }
+    dbg.log(`v15: pad rings — ${rings} walked, ${closed} closed on their instance, ${allPads.length} pads, ${noNumber} without pin number, ${ownerMismatch} owner mismatches`);
+
+    // ── nets ──
+    const netByC8 = new Map<number, string>();
+    const counts = { r1: 0, r5: 0, r8c: 0, r08: 0 };
+
+    // R1: forward NetAssign links.
+    for (const off of ofType.get(0x10) ?? []) {
+      const c8 = u32(off + 0x10);
+      if (rec(c8, 0xc8) < 0 || netByC8.has(c8)) continue;
+      const n = netNameOf(u32(off + 0x0c));
+      if (n) { netByC8.set(c8, n); counts.r1++; }
+    }
+    // R5: back-link from every pad of every ring, all byte-3 variants.
+    for (const { pin, off } of allPads) {
+      if (netByC8.has(pin.c8Key)) continue;
+      const n = netOf10(u32(off + 0x0c));
+      if (n) { netByC8.set(pin.c8Key, n); counts.r5++; }
+    }
+    // R8c: [0x8c] member records → chase +0x08 to the [0x6c] net.
+    const CHASE_HOPS = new Set<number>([0x48, 0x50, 0x8c, 0x58, 0x54, 0x5c, 0x30, 0xc0, 0xc4]);
+    const chaseToNet = (startOff: number): string => {
+      let k = u32(startOff + 8);
+      const seen = new Set<number>();
+      for (let i = 0; i < 200 && k !== 0 && !seen.has(k); i++) {
+        seen.add(k);
+        if (rec(k, 0x6c) >= 0) return netNameOf(k);
+        const o = recAny(k, CHASE_HOPS);
+        if (o < 0) return '';
+        k = u32(o + 8);
+      }
+      return '';
+    };
+    for (const off of ofType.get(0x8c) ?? []) {
+      for (const fo of [0x10, 0x18]) {
+        const c8 = u32(off + fo);
+        if (rec(c8, 0xc8) < 0 || netByC8.has(c8)) continue;
+        const n = chaseToNet(off);
+        if (n) { netByC8.set(c8, n); counts.r8c++; }
+      }
+    }
+    // R08: member chain of C8s terminating at a [0x10].
+    for (const { pin, off } of allPads) {
+      if (netByC8.has(pin.c8Key)) continue;
+      let k = u32(off + 8);
+      const seen = new Set<number>([pin.c8Key]);
+      let n = '';
+      for (let i = 0; i < 5000 && k !== 0 && !seen.has(k); i++) {
+        seen.add(k);
+        const oc = rec(k, 0xc8);
+        if (oc >= 0) { k = u32(oc + 8); continue; }
+        n = netOf10(k);
+        break;
+      }
+      if (n) { netByC8.set(pin.c8Key, n); counts.r08++; }
+    }
+    let netted = 0;
+    for (const { pin } of allPads) {
+      pin.net = netByC8.get(pin.c8Key) ?? '';
+      if (pin.net) netted++;
+    }
+    dbg.log(`v15: nets — R1 ${counts.r1}, R5 ${counts.r5}, R8c ${counts.r8c}, R08 ${counts.r08}; ${netted} of ${allPads.length} pads named`);
+    return { byInstance, routeCounts: counts };
   }
 
   /** Walk a v15 linked list. The per-block parser owns reading m_Next from
