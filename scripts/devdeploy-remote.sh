@@ -36,7 +36,7 @@ sdocker run -d --name "${NAME}" \
   -v "/volume1/docker/boardripper-dev/data:/data" \
   -v "/volume1/AL ZEUG/LogiCloud/Schematics-BV-EFI:/library/logicloud:ro" \
   -v "/volume1/AL ZEUG/XZZ:/library/xzz:ro" \
-  -v "/volume1/AL ZEUG/New Boards:/library/incoming:ro" \
+  -v "/volume1/AL ZEUG/New Boards:/library/incoming" \
   -v "/volume1/AL ZEUG/DESKTOP/BOARDS STUFF:/library/boards_stuff:ro" \
   "${IMAGE}"
 
