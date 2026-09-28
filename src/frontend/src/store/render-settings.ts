@@ -262,6 +262,14 @@ export interface RenderSettings {
    *  keeps the full device pixel ratio. See `device-profile.ts`. */
   touchPerformanceMode: boolean;
 
+  /** Multisampled (MSAA) framebuffer for the WebGL board. On by default —
+   *  thin strokes such as the 3-mil board outline are sub-pixel at any
+   *  overview zoom and draw as broken jaggies without it. Off is a pure
+   *  performance escape hatch for a GPU that cannot afford the resolve.
+   *  Read once at `Application.init`; takes effect when a board panel is
+   *  next opened. */
+  boardAntialiasing: boolean;
+
   /** Show the per-phase frame-time overlay on the board canvas. Same toggle
    *  as the small "i" button at the bottom-left of each board panel. */
   showPerfOverlay: boolean;
@@ -662,6 +670,7 @@ export const DEFAULTS: RenderSettings = {
   labelAtlasResolution: 8,
   cap60Fps: false,
   touchPerformanceMode: true,
+  boardAntialiasing: true,
   showPerfOverlay: false,
 
   circleLabelMinScreenPx: 8,

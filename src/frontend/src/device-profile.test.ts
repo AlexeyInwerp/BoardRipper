@@ -50,6 +50,14 @@ describe('device profile', () => {
     expect(boardMaxFps(false, true)).toBe(60);
   });
 
+  it('edge smoothing has its own switch, independent of the device', () => {
+    pretend('fine', 2);
+    expect(boardAntialias(false, false)).toBe(false);
+    pretend('coarse', 2);
+    expect(boardAntialias(true, false)).toBe(false);
+    expect(boardAntialias(true, true)).toBe(true);
+  });
+
   it('leaves a tablet alone when the user turns the mode off', () => {
     pretend('coarse', 2);
     expect(boardPixelRatio(false)).toBe(2);

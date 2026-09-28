@@ -18,7 +18,8 @@
  * `touchPerformanceMode` (Settings ▸ Performance & Debug, on by default) trades
  * two of them back: 60 fps and a 1.5× render resolution ceiling for the WebGL
  * board. MSAA stays on — see `boardAntialias` for why the third trade was a
- * mistake. Board *text* is unaffected — the Canvas2D label overlay keeps its
+ * mistake; it has its own switch (`boardAntialiasing`) for anyone who wants
+ * to trade it anyway. Board *text* is unaffected — the Canvas2D label overlay keeps its
  * own full device pixel ratio — so the visible cost is slightly softer copper
  * and silk, not blurry labels.
  */
@@ -71,8 +72,8 @@ export function boardPixelRatio(touchPerfMode: boolean): number {
  *  1-px jaggies at every zoom, and a 1.5→2 CSS upscale on top makes their
  *  width uneven. The profile keeps the two costs that are real on an A12Z,
  *  the 120 Hz refresh and the fragment count. */
-export function boardAntialias(_touchPerfMode: boolean): boolean {
-  return true;
+export function boardAntialias(_touchPerfMode: boolean, enabled = true): boolean {
+  return enabled;
 }
 
 /** Ticker cap in fps (PixiJS reads 0 as uncapped). A 120 Hz ProMotion panel

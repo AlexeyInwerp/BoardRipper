@@ -1,9 +1,48 @@
 # BoardRipper changelog
 
-## v0.43.5 — 2026-09-27
+## v0.44.0 — 2026-09-28
+
+### Added
+
+- **Shift+Scroll is the browser's horizontal scroll again (#40).** Every
+  browser turns Shift+wheel into a horizontal scroll before the page sees
+  it, and both viewers took it for zoom. The three scroll slots — plain,
+  Shift, ⌘ — are now independent, for the board and the PDF alike, in
+  Settings ▸ Input and on the start page. A fresh install gets Shift = Pan,
+  ⌘ = Zoom; an existing install keeps the layout it had, and the start page
+  offers the one-click switch.
+- **Butterfly works on layered boards.** KiCad, Allegro, Altium and EAGLE
+  boards showed the button and it did nothing. Traces, vias and copper
+  pours are hidden while Butterfly is on — they belong to the board as a
+  whole, not to a side — and a toast says so.
+- **A board loading in the background says so.** Opening a second board
+  freezes the page while its scene is built — a second or more on a
+  tablet, during which a finger on the glass gets no answer at all. A
+  "Loading …" banner now sits at the top of the board area from the moment
+  the file is opened until the new board is on screen, and it is painted
+  before the freeze begins.
+- **Edge smoothing has a switch.** Settings ▸ Performance & Debug ▸ Edge
+  smoothing (MSAA), on by default. Off saves GPU work on a machine that
+  cannot afford it, at the price of jagged thin lines.
+- **A legacy web build for older iPads.** iPadOS 15.4–16.3 gets its own
+  build at ripperdoc.de/boardripper/legacy-web, and a supported-devices
+  page lists browsers, iPads and iPhones by model. A browser below the
+  floor now sees a message with the minimum versions instead of a blank
+  page.
 
 ### Fixed
 
+- **Allegro v15: real pin numbers, no invented parts.** A third 15.5.x
+  sub-variant (Jasper_Kronos) drove a rewrite of the pad walk. Pads come
+  from the pad ring with the pin numbers the file carries — the old walk
+  invented 1..n in file order, which swapped pins 1↔3 on every SOT-23 and
+  1↔2 on every diode — and drawing symbols no longer become empty parts
+  that blew up the board bounds. Against Allegro's own v17 re-save of the
+  same board: 7982 of 7982 pins, 7910 nets agree, none disagree.
+- **PDF fonts, CJK maps and image decoders are actually shipped.** The
+  URLs pdf.js was given for its character maps, standard fonts and wasm
+  decoders pointed at nothing in every build; only the dev server worked.
+  PDFs with non-embedded fonts or JPEG 2000 / JBIG2 images render now.
 - **Tapping a part right after flicking the board selects it.** With inertia
   on, a tap while the board was still gliding stopped the glide but selected
   nothing, which read as "sometimes a tap can't select a component". A tap
@@ -11,23 +50,17 @@
 - **The touch context menu opens on the iPad.** Press and hold a part. iOS
   used to answer the same hold with its own callout and cancel the touch.
   The first board opened on a touch screen says so once.
-- **A board loading in the background says so.** Opening a second board
-  freezes the page while its scene is built — a second or more on a
-  tablet, during which a finger on the glass gets no answer at all. A
-  "Loading …" banner now sits at the top of the board area from the moment
-  the file is opened until the new board is on screen, and it is painted
-  before the freeze begins.
-- **The "gpu idle" readout is gone from the debug HUD.** The value it read
-  is cleared every frame, so it never showed anything.
-- **The Silkscreen toggle works while Butterfly is on.** Butterfly moves the
-  bottom silkscreen out of the shared silkscreen layer to mirror it with the
-  bottom half, and the toggle stopped reaching it there — the silk came on
-  with Butterfly and could not be turned off.
 - **Lines on a tablet are smooth again.** The touch performance profile
   turned off edge smoothing for the board, which left every thin line —
   the board outline first of all — jagged and at an uneven width. Edge
   smoothing stays on; the profile keeps its 60 FPS cap and 1.5× render
   resolution ceiling.
+- **The Silkscreen toggle works while Butterfly is on.** Butterfly moves the
+  bottom silkscreen out of the shared silkscreen layer to mirror it with the
+  bottom half, and the toggle stopped reaching it there — the silk came on
+  with Butterfly and could not be turned off.
+- **The "gpu idle" readout is gone from the debug HUD.** The value it read
+  is cleared every frame, so it never showed anything.
 
 ## v0.43.4 — 2026-09-23
 
