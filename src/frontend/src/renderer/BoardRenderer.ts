@@ -532,6 +532,13 @@ export class BoardRenderer {
   private static readonly ROTATE_DEAD_ZONE_DEG = 2;
   /** A two-finger double-tap toggles the lock: two taps of ≤ TAP_MS with the
    *  fingers travelling no further than a tap may, within DOUBLE_MS. */
+  /** The right angle the Butterfly spread is laid out at; a free angle is
+   *  that layout turned rigidly by the residual (see applyFlips). Kept
+   *  across gesture commits so a turn never re-lays the halves out
+   *  mid-way — only a button rotation (right angle from a right angle) or
+   *  turning Butterfly on picks a new base. */
+  private butterflyBaseDeg: number | null = null;
+  private butterflyLastDeg = 0;
   private static readonly TWO_FINGER_TAP_MS = 350;
   private static readonly TWO_FINGER_DOUBLE_MS = 450;
   private twoFingerDownAt = 0;
@@ -2845,9 +2852,35 @@ export class BoardRenderer {
       const bw = board.bounds.maxX - board.bounds.minX;
       const bh = board.bounds.maxY - board.bounds.minY;
 
+      // The spread is laid out at a right angle — the mirror across the seam
+      // and the separation along a screen axis are only right there — and a
+      // free angle (two-finger rotation) shows that layout turned rigidly by
+      // the residual about the common centre, which is what the live gesture
+      // showed. The base survives gesture commits: re-choosing the nearest
+      // right angle at every commit swapped the separation axis and the
+      // hinge at 45°, and the halves jumped ("butterfly positioning broken
+      // on a rotated board", 2026-09-28). A right angle reached from a right
+      // angle is a button press and re-lays out as always.
+      const deg = boardStore.rotation;
+      const isRight = (d: number) => Math.abs(d / 90 - Math.round(d / 90)) < 1e-6;
+      if (this.butterflyBaseDeg === null || (isRight(deg) && isRight(this.butterflyLastDeg))) {
+        this.butterflyBaseDeg = ((Math.round(deg / 90) * 90) % 360 + 360) % 360;
+      }
+      this.butterflyLastDeg = deg;
+      const baseRot = this.butterflyBaseDeg * Math.PI / 180;
+      let residual = rotation - baseRot;
+      residual = Math.atan2(Math.sin(residual), Math.cos(residual));
+      const resCos = Math.cos(residual), resSin = Math.sin(residual);
+      // Everything that reads "are the axes swapped" follows the BASE here,
+      // not the nearest right angle: at 72° from base 0 the nearest is 90,
+      // and taking the swap from it flipped the bottom half's mirror onto
+      // the other axis — same positions, wrong hinge.
+      const baseSwapped = (this.butterflyBaseDeg / 90) % 2 === 1;
+      const bMirrorX = baseSwapped ? boardStore.mirrorY : boardStore.mirrorX;
+      const bMirrorY = baseSwapped ? boardStore.mirrorX : boardStore.mirrorY;
       // After rotation, compute visual extents to decide separation axis
-      const sinR = Math.abs(Math.sin(rotation));
-      const cosR = Math.abs(Math.cos(rotation));
+      const sinR = Math.abs(Math.sin(baseRot));
+      const cosR = Math.abs(Math.cos(baseRot));
       const visualW = bw * cosR + bh * sinR;
       const visualH = bw * sinR + bh * cosR;
 
@@ -2858,8 +2891,8 @@ export class BoardRenderer {
       const gap = sepDim * 0.05;
       const halfSep = sepDim / 2 + gap / 2;
 
-      const flipY = autoFlipY !== mirrorY;
-      const sx = mirrorX ? -1 : 1;
+      const flipY = autoFlipY !== bMirrorY;
+      const sx = bMirrorX ? -1 : 1;
       const topSy = flipY ? -1 : 1;
 
       // Butterfly bottom-half mirroring.
@@ -2885,7 +2918,7 @@ export class BoardRenderer {
         botScaleX = sx;
         botScaleY = -topSy;
       } else {
-        const mirrorBoardX = separateX !== axesSwapped;
+        const mirrorBoardX = separateX !== baseSwapped;
         botScaleX = mirrorBoardX ? -sx : sx;
         botScaleY = mirrorBoardX ? topSy : -topSy;
       }
@@ -2893,16 +2926,19 @@ export class BoardRenderer {
       const dx = separateX ? halfSep : 0;
       const dy = separateX ? 0 : halfSep;
 
-      // Top half: shifted left/up
+      // Top half: shifted left/up; bottom half: shifted right/down, mirrored
+      // along the fold axis. The shifts are the base layout's, turned by the
+      // residual; each root's own rotation is base + residual = rotation.
+      const rdx = dx * resCos - dy * resSin;
+      const rdy = dx * resSin + dy * resCos;
       scene.root.pivot.set(cx, cy);
-      scene.root.position.set(cx - dx, cy - dy);
+      scene.root.position.set(cx - rdx, cy - rdy);
       scene.root.rotation = rotation;
       scene.root.scale.set(sx, topSy);
 
-      // Bottom half: shifted right/down, mirrored along the fold axis
       const broot = scene.butterflyRoot!;
       broot.pivot.set(cx, cy);
-      broot.position.set(cx + dx, cy + dy);
+      broot.position.set(cx + rdx, cy + rdy);
       broot.rotation = rotation;
       broot.scale.set(botScaleX, botScaleY);
 
@@ -2924,6 +2960,7 @@ export class BoardRenderer {
     } else {
       // Normal mode
       this.teardownButterfly(scene);
+      this.butterflyBaseDeg = null;
 
       // When viewing bottom-only, auto-mirror to simulate physically flipping
       // the board over. flipAxis controls the hinge: 'x' flips around horizontal

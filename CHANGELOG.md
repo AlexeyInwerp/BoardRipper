@@ -12,6 +12,7 @@
   within 10°; the rotate buttons step to the next right angle from any
   angle. A double-tap with two fingers locks rotation again and squares the
   board. Settings ▸ Performance & Debug ▸ Two-finger rotation turns it off.
+  In Butterfly the whole spread turns as one picture.
 
 ## v0.44.0 — 2026-09-28
 

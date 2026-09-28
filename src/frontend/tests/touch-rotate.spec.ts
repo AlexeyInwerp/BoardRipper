@@ -264,6 +264,48 @@ test.describe('two-finger rotation', () => {
     expect(Math.abs((await storeRotation(page)) - 123)).toBeLessThanOrEqual(slack(45, 12));
   });
 
+  /** The bottom half's transform in the top half's frame: root⁻¹ · broot.
+   *  A rigid turn of the whole spread multiplies both by the same matrix on
+   *  the left and leaves this invariant; a re-layout changes it. */
+  type M6 = { a: number; b: number; c: number; d: number; tx: number; ty: number };
+  const halvesRelation = (page: Page) => page.evaluate(() => {
+    type M6 = { a: number; b: number; c: number; d: number; tx: number; ty: number };
+    const S = (window as unknown as { __boardRenderer: { activeScene: { root: { worldTransform: M6 }; butterflyRoot: { worldTransform: M6 } | null } } }).__boardRenderer.activeScene;
+    const t = S.root.worldTransform, b = S.butterflyRoot?.worldTransform;
+    if (!b) return null;
+    const det = t.a * t.d - t.b * t.c;
+    const i = { a: t.d / det, b: -t.b / det, c: -t.c / det, d: t.a / det };
+    const itx = -(i.a * t.tx + i.c * t.ty), ity = -(i.b * t.tx + i.d * t.ty);
+    return {
+      a: i.a * b.a + i.c * b.b, b: i.b * b.a + i.d * b.b,
+      c: i.a * b.c + i.c * b.d, d: i.b * b.c + i.d * b.d,
+      tx: i.a * b.tx + i.c * b.ty + itx, ty: i.b * b.tx + i.d * b.ty + ity,
+    };
+  });
+  const sameRelation = (p: M6, q: M6) =>
+    ['a', 'b', 'c', 'd'].every(k => Math.abs(p[k as keyof M6] - q[k as keyof M6]) < 1e-3)
+    && Math.abs(p.tx - q.tx) < 1 && Math.abs(p.ty - q.ty) < 1;
+
+  test('in Butterfly, a free angle turns the whole spread rigidly — the halves keep their relation', async ({ page }) => {
+    const at = await load(page);
+    const cdp = await page.context().newCDPSession(page);
+    await page.getByTestId('butterfly-btn').click();
+    await expect(page.getByTestId('butterfly-btn')).toHaveClass(/active/);
+    await page.waitForTimeout(400);
+    const before = await halvesRelation(page);
+    expect(before).not.toBeNull();
+    await turn(page, cdp, at, 45, 12);                  // unlock → ~33°, committed
+    expect(await storeRotation(page)).toBeGreaterThan(20);
+    const after = await halvesRelation(page);
+    expect(sameRelation(before!, after!), `halves relation changed: ${JSON.stringify(before)} → ${JSON.stringify(after)}`).toBe(true);
+    // And past 45°, where the nearest right angle changes: still the same spread.
+    await turn(page, cdp, at, 40, 12);                  // ~73°
+    const later = await halvesRelation(page);
+    // Past 45° the nearest right angle is 90: a layout that follows it swaps
+    // the separation axis and the bottom half's mirror hinge here.
+    expect(sameRelation(before!, later!), `halves relation changed past 45°: before ${JSON.stringify(before)} → ${JSON.stringify(later)} at rotation ${await storeRotation(page)}`).toBe(true);
+  });
+
   test('off in Settings, two fingers only zoom and pan', async ({ page }) => {
     const at = await load(page);
     const cdp = await page.context().newCDPSession(page);
