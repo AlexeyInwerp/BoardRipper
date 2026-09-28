@@ -2712,10 +2712,15 @@ export class BoardRenderer {
     }
     // Via overlay
     if (scene.viaLayer) scene.viaLayer.visible = showVias && copper;
-    // Silkscreen — master toggle, plus follow top/bottom side visibility
+    // Silkscreen — master toggle, plus follow top/bottom side visibility. The
+    // master is applied to each side container as well, not only to the
+    // shared layer: in Butterfly the bottom silk is reparented out of that
+    // layer into butterflyRoot (setupButterfly), where the layer's own
+    // visibility no longer reaches it — which is how the toggle stopped
+    // hiding the bottom silk the moment Butterfly came on (2026-09-28).
     if (scene.silkscreenLayer)  scene.silkscreenLayer.visible  = showSilkscreen;
-    if (scene.silkscreenTop)    scene.silkscreenTop.visible    = showTop;
-    if (scene.silkscreenBottom) scene.silkscreenBottom.visible = showBottom;
+    if (scene.silkscreenTop)    scene.silkscreenTop.visible    = showSilkscreen && showTop;
+    if (scene.silkscreenBottom) scene.silkscreenBottom.visible = showSilkscreen && showBottom;
     // Copper pads — parented inside the side layers so each container is
     // gated by both the master `showPads` toggle and its own side toggle.
     if (scene.padsTop)          scene.padsTop.visible          = showPads && showTop;

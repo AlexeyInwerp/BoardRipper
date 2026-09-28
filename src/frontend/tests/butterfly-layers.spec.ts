@@ -13,12 +13,14 @@
  */
 import { test, expect, type Page } from '@playwright/test';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // Public KiCad sample: 2 copper layers, traces and vias, so the gate has
 // something to hide.
 const FIXTURE = path.resolve(HERE, '../public/samples/tomu-fpga.kicad_pcb');
+const SILK_FIXTURE = path.resolve(HERE, '../../../samples/eagle/10004_epic_cape.brd');
 
 interface SceneVis {
   layerNames: number;
@@ -102,6 +104,39 @@ test.describe('butterfly on a layered board', () => {
     expect(off.viaVisible).toBe(before.viaVisible);      // back to the user's own via toggle (off by default)
     if (before.silkBottomParent !== 'none') expect(off.silkBottomParent).toBe('silk');
     if (await tracesBtn.count()) await expect(tracesBtn).toBeEnabled();
+  });
+
+  test('the Silkscreen toggle still hides the bottom silk while Butterfly is on', async ({ page }) => {
+    // Needs a board that carries silkscreen; the KiCad fixture has none.
+    test.skip(!fs.existsSync(SILK_FIXTURE), 'EAGLE sample with silkscreen not present');
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    await page.setInputFiles('[data-testid="file-input"]', SILK_FIXTURE);
+    await expect(page.getByTestId('butterfly-btn')).toBeVisible();
+    // Drawn = visible itself and through every ancestor (Pixi v8 has no
+    // worldVisible). Both sides are shown in Butterfly, so the bottom silk is
+    // the one to watch: it is the container that leaves silkscreenLayer.
+    const silkDrawn = () => page.evaluate(() => {
+      type C = { visible: boolean; parent: C | null };
+      const S = (window as unknown as { __boardRenderer?: { activeScene?: { silkscreenBottom: C | null } } }).__boardRenderer?.activeScene;
+      let c = S?.silkscreenBottom ?? null;
+      if (!c) return null;
+      for (; c; c = c.parent) if (!c.visible) return false;
+      return true;
+    });
+    await expect.poll(silkDrawn, { timeout: 15000 }).not.toBeNull();
+
+    await page.getByTestId('butterfly-btn').click();
+    await expect(page.getByTestId('butterfly-btn')).toHaveClass(/active/);
+    await expect.poll(silkDrawn).toBe(true);
+    const toggle = page.locator('.board-sidebar-toggle');
+    if (!(await page.locator('[data-board-tab="layers"]').isVisible())) await toggle.click();
+    await page.locator('[data-board-tab="layers"]').click();
+    await page.getByTitle('Hide silkscreen').click();
+    // Reparented into butterflyRoot, the bottom silk used to stay drawn here.
+    await expect.poll(silkDrawn).toBe(false);
+    await page.getByTitle('Show silkscreen').click();
+    await expect.poll(silkDrawn).toBe(true);
   });
 
   test('the Layers tab says why its rows do nothing', async ({ page }) => {

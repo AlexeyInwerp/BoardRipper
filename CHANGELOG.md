@@ -19,6 +19,10 @@
   before the freeze begins.
 - **The "gpu idle" readout is gone from the debug HUD.** The value it read
   is cleared every frame, so it never showed anything.
+- **The Silkscreen toggle works while Butterfly is on.** Butterfly moves the
+  bottom silkscreen out of the shared silkscreen layer to mirror it with the
+  bottom half, and the toggle stopped reaching it there — the silk came on
+  with Butterfly and could not be turned off.
 - **Lines on a tablet are smooth again.** The touch performance profile
   turned off edge smoothing for the board, which left every thin line —
   the board outline first of all — jagged and at an uneven width. Edge
