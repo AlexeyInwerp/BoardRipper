@@ -227,34 +227,42 @@ test.describe('touch input', () => {
     }
     await touch(cdp, 'touchEnd', []);
     await page.waitForTimeout(60);
-    // The board is still moving, so where the part is at tap time cannot be
-    // predicted from here; sweep taps across the row it glides along, and
-    // count only taps issued WHILE it is still moving — read off the viewport
-    // itself (the Pixi app is reachable through the DEV registry). A tap after
-    // the glide has ended selects through pixi-viewport's own `clicked` and
-    // proves nothing; the first version of this test passed against the
-    // unfixed code for exactly that reason.
-    const viewportX = () => page.evaluate(() => {
-      const refs = (window as unknown as { __brAppRefs?: { deref(): { stage: { children: { x: number }[] } } | undefined }[] }).__brAppRefs ?? [];
+    // The board is still moving, and the first tap will stop it (pixi's own
+    // pointerdown does that), so there is exactly one chance: tap ONCE, at
+    // where the part is at that instant. The viewport is reachable through
+    // the DEV registry and can say where a world point is on screen right now.
+    const canvas = (await page.locator('.board-panel-canvas canvas').first().boundingBox())!;
+    const subjectIndex = await page.evaluate((name) => {
+      const bd = (window as unknown as { __boardStore: { board: { parts: { name: string }[] } } }).__boardStore.board;
+      return bd.parts.findIndex(q => q.name === name);
+    }, SUBJECT);
+    // Pins are drawn inside the scene root, which carries the board's own
+    // transform (a Y flip and an offset here), so the conversion has to go
+    // through that container — `viewport.toScreen(pin world)` lands on the
+    // wrong spot. `toGlobal` on the root gives renderer screen px.
+    const partOnScreen = () => page.evaluate((idx) => {
+      type Node = { x: number; children: Node[]; toGlobal(p: { x: number; y: number }): { x: number; y: number } };
+      const refs = (window as unknown as { __brAppRefs?: { deref(): { stage: Node } | undefined }[] }).__brAppRefs ?? [];
       const app = refs.map(r => r.deref()).find(Boolean);
-      return app ? app.stage.children[0].x : NaN;
-    });
-    let hitWhileGliding: number | null = null;
-    let tapsWhileGliding = 0;
-    let lastX = await viewportX();
-    for (let dx = 60; dx <= 420 && hitWhileGliding === null; dx += 30) {
-      await touch(cdp, 'touchStart', [{ x: c.x + dx, y: c.y }]);
-      await touch(cdp, 'touchEnd', []);
-      await page.waitForTimeout(60);
-      const x = await viewportX();
-      const moving = Math.abs(x - lastX) > 0.5;
-      lastX = x;
-      if (!moving) break;                 // glide over — later taps are ordinary
-      tapsWhileGliding++;
-      hitWhileGliding = await selectedPart(page);
-    }
-    expect(tapsWhileGliding, 'the sweep should have tapped while the board was still gliding').toBeGreaterThan(0);
-    expect(hitWhileGliding, 'a tap during the glide should select the part under it').not.toBeNull();
+      const bd = (window as unknown as { __boardStore: { board: { parts: { pins: { position: { x: number; y: number } }[] }[] } } }).__boardStore.board;
+      const pins = bd.parts[idx].pins;
+      const cx = pins.reduce((a, q) => a + q.position.x, 0) / pins.length;
+      const cy = pins.reduce((a, q) => a + q.position.y, 0) / pins.length;
+      const vp = app!.stage.children[0];
+      const root = vp.children[0];
+      const g = root.toGlobal({ x: cx, y: cy });
+      return { x: g.x, y: g.y, vx: vp.x };
+    }, subjectIndex);
+
+    const a = await partOnScreen();
+    await page.waitForTimeout(40);
+    const b = await partOnScreen();
+    expect(Math.abs(b.vx - a.vx), 'the board should still be gliding when the tap lands').toBeGreaterThan(0.5);
+
+    await touch(cdp, 'touchStart', [{ x: canvas.x + b.x, y: canvas.y + b.y }]);
+    await touch(cdp, 'touchEnd', []);
+    await page.waitForTimeout(300);
+    expect(await selectedPart(page), 'a tap during the glide should select the part under it').toBe(subjectIndex);
   });
 
   /** The touch context menu is a long-press. It is the only way to reach the
