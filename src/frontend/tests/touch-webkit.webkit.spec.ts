@@ -176,6 +176,10 @@ test.describe('WebKit / iPadOS', () => {
     await openBoard(page);
     const r = (await page.locator('.board-panel-canvas').boundingBox())!;
     const at = { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    // Reads the scene root through a DEV-only global: skipped against a
+    // production bundle (the :1234 pre-flight), like the pdf-touch cases.
+    const devHooks = await page.evaluate(() => '__boardRenderer' in (window as unknown as Record<string, unknown>));
+    test.skip(!devHooks, 'renderer is a DEV-only global');
     const rootDeg = () => page.evaluate(() => {
       const r = (window as unknown as { __boardRenderer?: { activeScene?: { root: { rotation: number } } } }).__boardRenderer;
       return (r?.activeScene?.root.rotation ?? 0) * 180 / Math.PI;
