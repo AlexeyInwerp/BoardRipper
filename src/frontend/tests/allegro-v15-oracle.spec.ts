@@ -126,4 +126,72 @@ test.describe('Allegro v15 oracle correctness', () => {
     // If it does, we've leaked a route past the gate.
     expect(r.fpTotal, 'No false-positive nets allowed on 15.5.2 (net routes magic-gated OFF)').toBe(0);
   });
+
+  /**
+   * Jasper_Kronos (15.5.x, magic 0x0012050a — a third sub-variant) has no
+   * .cad sibling; its oracle is Allegro's own v17 re-save of the same board,
+   * which the mature v16+ path parses. Part origins agree to <5 mil, so pins
+   * are matched by (refdes, pin number) and compared on position and net.
+   *
+   * Baseline at commit cb4d880: 1933 parts, 7982/7982 pins, 7976 within
+   * 2 mil (the 6 "off" are socket mounting posts that both files leave
+   * unnumbered, which collide in the by-number map), 7910 nets agree,
+   * 0 disagree, 0 missed.
+   */
+  test('Jasper_Kronos (15.5.x, 0x0012050a) — pins and nets match the v17 re-save', async () => {
+    const dir = path.resolve(__dirname, '../../../samples/incoming/uncategorized');
+    const v15Path = path.resolve(dir, 'Jasper_Kronos.brd');
+    const v17Path = path.resolve(dir, 'Jasper_Kronos_v17.brd');
+    if (!fs.existsSync(v15Path) || !fs.existsSync(v17Path)) {
+      test.skip(true, 'sample files not present');
+      return;
+    }
+    const { parseAllegroBRD } = await import('../src/parsers/allegro/allegro-brd-parser');
+    const load = (p: string) => {
+      const buf = fs.readFileSync(p);
+      return parseAllegroBRD(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+    };
+    const a = load(v15Path);
+    const b = load(v17Path);
+    const byName = new Map(b.parts.map((p) => [p.name, p]));
+
+    // Every v15 part is a real component of the v17 board — no drawing
+    // symbols, no UNK placeholders — and the bounds are the board's.
+    for (const p of a.parts) expect(byName.has(p.name), `v15 part ${p.name} is not in the v17 re-save`).toBe(true);
+    expect(a.parts.length).toBe(b.parts.length);
+    expect(a.bounds.minX).toBeGreaterThan(-300);
+    expect(a.bounds.maxX).toBeLessThan(10500);
+    expect(a.bounds.minY).toBeGreaterThan(-300);
+    expect(a.bounds.maxY).toBeLessThan(8300);
+
+    let pins = 0, matched = 0, posOk = 0, agree = 0, wrong = 0, missed = 0;
+    const wrongExamples: string[] = [];
+    for (const pa of a.parts) {
+      const pbPart = byName.get(pa.name)!;
+      const oraclePins = new Map(pbPart.pins.filter((q) => q.number).map((q) => [q.number, q]));
+      for (const pin of pa.pins) {
+        pins++;
+        if (!pin.number) continue;
+        const q = oraclePins.get(pin.number);
+        if (!q) continue;
+        matched++;
+        if (Math.hypot(pin.position.x - q.position.x, pin.position.y - q.position.y) <= 2) posOk++;
+        if (pin.net && q.net) {
+          if (pin.net === q.net) agree++;
+          else { wrong++; if (wrongExamples.length < 10) wrongExamples.push(`${pa.name}.${pin.number}: v15=${pin.net} v17=${q.net}`); }
+        } else if (!pin.net && q.net) missed++;
+      }
+    }
+    const v17Pins = b.parts.reduce((n, p) => n + p.pins.length, 0);
+    console.log(`[Kronos] parts=${a.parts.length} pins=${pins}/${v17Pins} matched=${matched} pos<=2mil=${posOk} nets agree=${agree} wrong=${wrong} missed=${missed}`);
+    if (wrongExamples.length) console.log('[Kronos] wrong nets:', wrongExamples.join('; '));
+
+    // Hard gate: a wrong net is worse than no net.
+    expect(wrong, 'No net may disagree with the v17 re-save').toBe(0);
+    // Recall gates, a little under the measured baseline.
+    expect(pins).toBeGreaterThanOrEqual(v17Pins - 50);
+    expect(posOk).toBeGreaterThanOrEqual(matched - 20);
+    expect(agree).toBeGreaterThanOrEqual(7800);
+    expect(missed).toBeLessThanOrEqual(50);
+  });
 });

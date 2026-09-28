@@ -735,3 +735,91 @@ Audited 2026-05-02 to determine whether any open-source v15 parser exists that w
 - **KiCad Allegro parser (v16+ only):** https://gitlab.com/kicad/code/kicad/-/blob/master/pcbnew/pcb_io/allegro/
 - **Existing v16+ TS parser in this repo:** `src/frontend/src/parsers/allegro/`
 - **Structure dumper (RE tool):** `scripts/allegro-dump.mjs`
+
+---
+
+## Third sub-variant: magic `0x0012050a` (Jasper_Kronos, 2026-09-27/28)
+
+Minor byte `0x05`, between the two corpus variants (`0x02` = 15.5.2,
+`0x0A` = 15.5.7); `allegro-header.ts` has no case for it and it falls through
+to the `V_15X` default. The sample has no `.cad` sibling — its oracle is
+**Allegro's own v17 re-save of the same board** (`Jasper_Kronos_v17.brd`),
+which the mature v16+ path parses completely (1933 parts, 7982 pins, 98.9 %
+of pins with a net, 4 layers). Part origins agree to <5 mil, so pins are
+matched by (refdes, pin number) and compared on position and net.
+
+### What the shipped walker did on it
+
+| | before | after |
+|---|---:|---:|
+| parts | 2074 (141 phantom: 128 `UNK*`, 13 drawing symbols) | 1933 |
+| bounds | −7885..18313 × −8700..9728 (drawing symbols off-board) | −158..10308 × −82..8151 |
+| pins | 4887 / 7982 | 7982 / 7982 |
+| pins within 2 mil of oracle | — | 7976 |
+| nets agree / **wrong** / missed | 3180 / **435** / 427 | 7910 / **0** / 0 |
+
+The 435 "wrong" nets were **pin numbering**, not net links: the
+`byte1=0x40 → BLK_0x48` chain visited pads in an order unrelated to the pin
+numbers and the walker invented `1..n`, so every SOT-23 read 1↔3 swapped and
+every diode 1↔2 (positions swapped by exactly one pitch, nets "wrong" but
+correct by position). The 3095 missing pins were BGA rings passing through
+records the prefix scan mis-keyed (`U4D1` 85/1017, `U7D1` 47/783).
+
+### The pad ring (replaces the byte1=0x40 → BLK_0x48 chain)
+
+```
+BLK_0x2D.+0x24  → first BLK_0xC8
+BLK_0xC8.+0x10  → next BLK_0xC8; the last one points back at the 2D (ring)
+BLK_0xC8.+0x14  → owning BLK_0x2D (checked)
+BLK_0xC8.+0x1C  → [0x34] pin-number record, inline ASCII at +0x08 (BGA names such as AG27 included)
+BLK_0xC8.+0x28  → [0x20] component-pin record (+0x2C → [0x44] with the pin *name*)
+BLK_0xC8.+0x38..+0x44  pad bbox, board-absolute
+BLK_0x2D.+0x18  → next-instance chain ending at the BLK_0x2B (NOT the footprint definition —
+                  package names were empty for every instance but the last of each footprint)
+```
+
+**C8 header byte 0 is a flag, not zero.** Four BGA136 rings (U3D1/U3R1/U4U1/
+U5U1) broke 44–63 pins early at a C8 reading `04 c8 0c 00`; byte 0 is 0x04 on
+4 pads and 0x10 on 7, all real pads in real rings. Byte 3 is `0x00` SMD,
+`0x20/0x40/0x60` variants, `0x80/0xa0` through-hole.
+
+**Pointers resolve through a type-aware candidate index**, because the
+key→offset addend drifts between heap pools; a first-match index lost every
+GND pad to a false `[0x10]` twin (5277 pads lost their pin number, 150 rings
+ended on junk).
+
+**Unnumbered pads stay unnumbered.** Socket mounting posts have no pin number
+in the footprint and the v17 re-save leaves them blank too; the old
+ring-position stand-in collided with the real pins 1, 2 of the same socket.
+
+### Net routes, in priority order — each at 0 false positives on the 7715 Kronos pins whose re-save names a net
+
+```
+R1   [0x10] NetAssign: +0x10 → C8, +0x0C → [0x6c] net              (forward)
+R5   C8.+0x0C → [0x10] → +0x0C → [0x6c]                            (back-link; now ALL byte-3
+     variants — the shipped loop accepted only `00 c8 ?? 00` and so skipped every
+     through-hole pad, which is where 450 of the 495 remaining misses were)
+R8c  [0x8c] member record: +0x10 / +0x18 → C8; its +0x08 chain (through
+     0x8c/0x48/0x50/0x58/… records) ends at the [0x6c] net
+R08  C8.+0x08 → next member C8 → … → [0x10] NetAssign
+```
+
+### Drawing symbols
+
+Instance-less `BLK_0x2D` records that are drawing symbols (`FAB_NUMBER`,
+`*_DIMENSION`, `LEADER`, `DATUM_*`, `OFF_BD_TEXT`, logos, fiducials, tooling
+holes) used to become zero-pin `UNK` parts; they are dropped and no longer
+enter `bounds`.
+
+### Regression
+
+- `tests/allegro-v15-oracle.spec.ts` ▸ "Jasper_Kronos" — hard gate `wrong === 0`,
+  recall gates a little under the measured baseline. Sample lives in
+  `samples/incoming/uncategorized/`; skips when absent.
+- The 24 v16 boards in `samples/allegroBRD/` parse byte-identically (parts,
+  pins, nets, traces, vias, outline, layers) before and after — the v16+ path
+  is untouched.
+- LA-7321P (15.5.7) and v13tl-0629 (15.5.2) are **not on the build machine**
+  (their oracle tests skip), so this sub-variant's changes have not been
+  re-measured on them. Re-run the oracle spec where those samples exist
+  before a release that ships this.
