@@ -277,6 +277,16 @@ function nextRightAngle(deg: number, dir: 1 | -1): number {
   return ((next * 90) % 360 + 360) % 360;
 }
 
+/** The buttons' hinge rule, applied only from a right angle: from a free
+ *  angle (left by the two-finger rotation) the button just turns the picture
+ *  to the next right angle, and the parity swap — a 180° change of the
+ *  bottom view — would be a jump, not a step. */
+function buttonFlipAxis(flipAxis: 'x' | 'y', oldRotationDeg: number, newRotationDeg: number): 'x' | 'y' {
+  const q = oldRotationDeg / 90;
+  if (Math.abs(q - Math.round(q)) > 1e-6) return flipAxis;
+  return rotateFlipAxis(flipAxis, oldRotationDeg, newRotationDeg);
+}
+
 /** When the rotation crosses an axes-swap boundary (90°↔0°, 270°↔180°, …),
  *  flip the board-axis hinge identifier so the *screen* direction the user
  *  selected stays the same. Without this, manual rotation silently inverts
@@ -1605,13 +1615,22 @@ class BoardStore extends Emitter {
   }
 
   /** Any angle, degrees, as displayed (positive = clockwise on screen). The
-   *  two-finger rotation commits here; the buttons stay on 90° steps. */
+   *  two-finger rotation commits here; the buttons stay on 90° steps.
+   *
+   *  `flipAxis` is deliberately left alone. The buttons' rule keeps the
+   *  bottom view's mirror hinge fixed on the *screen* by swapping which
+   *  board axis carries it at every parity change — and the two hinges
+   *  (`scale.y = -1` vs `scale.x = -1`) differ by exactly 180°, so applying
+   *  that rule to a free angle turned the bottom view over at the 45°/135°
+   *  boundary on release ("rotation lost, 180° flip", 2026-09-28). A screen
+   *  hinge is representable only at right angles; the fingers turn the
+   *  picture, so the hinge turns with the board. */
   setRotation(deg: number) {
     const tab = this.activeTab;
     if (!tab) return;
     const r = Math.round((((deg % 360) + 360) % 360) * 10) / 10 % 360;
     if (r === tab.rotation) return;
-    this.updateActiveTab({ rotation: r, flipAxis: rotateFlipAxis(tab.flipAxis, tab.rotation, r) });
+    this.updateActiveTab({ rotation: r });
     this.saveFileViewPrefs(tab);
     this.notify();
   }
@@ -1622,7 +1641,7 @@ class BoardStore extends Emitter {
     // From a free angle (two-finger rotation) the button goes to the next
     // 90° step in its direction, not to angle + 90.
     const newRotation = nextRightAngle(tab.rotation, +1);
-    this.updateActiveTab({ rotation: newRotation, flipAxis: rotateFlipAxis(tab.flipAxis, tab.rotation, newRotation) });
+    this.updateActiveTab({ rotation: newRotation, flipAxis: buttonFlipAxis(tab.flipAxis, tab.rotation, newRotation) });
     this.saveFileViewPrefs(tab);
     this.notify();
   }
@@ -1631,7 +1650,7 @@ class BoardStore extends Emitter {
     const tab = this.activeTab;
     if (!tab) return;
     const newRotation = nextRightAngle(tab.rotation, -1);
-    this.updateActiveTab({ rotation: newRotation, flipAxis: rotateFlipAxis(tab.flipAxis, tab.rotation, newRotation) });
+    this.updateActiveTab({ rotation: newRotation, flipAxis: buttonFlipAxis(tab.flipAxis, tab.rotation, newRotation) });
     this.saveFileViewPrefs(tab);
     this.notify();
   }

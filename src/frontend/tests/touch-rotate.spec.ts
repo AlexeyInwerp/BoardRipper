@@ -160,6 +160,40 @@ test.describe('two-finger rotation', () => {
     expect(await storeRotation(page)).toBe(0);
   });
 
+  /** The screen rotation the root's transform gained between two readings,
+   *  degrees CW — a mirror in the transform cancels out, so a 180° turn of
+   *  the bottom view's hinge shows up as 180 here. */
+  const screenTurn = (m0: M, m1: M) => {
+    const det = m0.a * m0.d - m0.b * m0.c;
+    const inv = { a: m0.d / det, b: -m0.b / det, c: -m0.c / det, d: m0.a / det };
+    const a = m1.a * inv.a + m1.c * inv.b;
+    const b = m1.b * inv.a + m1.d * inv.b;
+    return Math.atan2(b, a) * 180 / Math.PI;
+  };
+  type M = { a: number; b: number; c: number; d: number };
+  const rootMatrix = (page: Page) => page.evaluate(() => {
+    const r = (window as unknown as { __boardRenderer: { activeScene: { root: { worldTransform: M } } } }).__boardRenderer;
+    type M = { a: number; b: number; c: number; d: number };
+    const m = r.activeScene.root.worldTransform;
+    return { a: m.a, b: m.b, c: m.c, d: m.d };
+  });
+
+  test('on the bottom side, turning past 45° and 135° never turns the view over', async ({ page }) => {
+    const at = await load(page);
+    const cdp = await page.context().newCDPSession(page);
+    await page.getByTestId('side-bottom').click();
+    await page.waitForTimeout(300);
+    // Three gestures of 45° each: 0 → 45 → 90 (snapped) → 135. Each must be
+    // a 45° turn of the picture on screen, never 45 + 180.
+    for (const expected of [45, 45, 45]) {
+      const before = await rootMatrix(page);
+      await turn(page, cdp, at, 45, 12);
+      const d = screenTurn(before, await rootMatrix(page));
+      expect(Math.abs(d - expected), `gesture turned the view by ${d.toFixed(1)}°`).toBeLessThanOrEqual(1.5);
+    }
+    expect(await storeRotation(page)).toBe(135);
+  });
+
   test('off in Settings, two fingers only zoom and pan', async ({ page }) => {
     const at = await load(page);
     const cdp = await page.context().newCDPSession(page);
