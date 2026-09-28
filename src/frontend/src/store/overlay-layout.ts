@@ -23,7 +23,7 @@
 /** The fixed-name slots (one button each). Separator slots use the
  *  open-ended `sep${number}` ids — see `isSeparatorId` below. */
 export type NamedSlotId =
-  | 'sideSwitch' | 'butterfly' | 'rotateCCW' | 'rotateCW' | 'transformMenu'
+  | 'sideSwitch' | 'butterfly' | 'rotateCCW' | 'rotateCW' | 'transformMenu' | 'history'
   | 'pdfFollow' | 'scrollMode' | 'fitBoard'
   | 'hoverInfo' | 'netDim' | 'netLines' | 'ghosts' | 'diodeValues' | 'traces'
   | 'partsDropdown' | 'netsDropdown';
@@ -34,7 +34,7 @@ export type OverlaySlotId = NamedSlotId | SeparatorSlotId;
 export interface OverlaySlot { id: OverlaySlotId; visible: boolean }
 
 const NAMED_SLOT_IDS: ReadonlySet<NamedSlotId> = new Set([
-  'sideSwitch', 'butterfly', 'rotateCCW', 'rotateCW', 'transformMenu',
+  'sideSwitch', 'butterfly', 'rotateCCW', 'rotateCW', 'transformMenu', 'history',
   'pdfFollow', 'scrollMode', 'fitBoard',
   'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'traces',
   'partsDropdown', 'netsDropdown',
@@ -49,6 +49,7 @@ export const SLOT_LABELS: Readonly<Record<NamedSlotId, string>> = {
   rotateCCW:     'Rotate left',
   rotateCW:      'Rotate right',
   transformMenu: 'More transforms',
+  history:       'History',
   traces:        'Traces',
   pdfFollow:     'Follow PDF',
   scrollMode:    'Scroll mode',
@@ -104,6 +105,9 @@ export const DEFAULT_OVERLAY_LAYOUT: ReadonlyArray<Readonly<OverlaySlot>> = [
   { id: 'rotateCCW',     visible: true },
   { id: 'rotateCW',      visible: true },
   { id: 'transformMenu', visible: true },
+  // Back / Forward through the navigation history (2026-09-29). Placed after
+  // the transforms so reconcileOverlayLayout lands it there for existing users.
+  { id: 'history',       visible: true },
   { id: 'sep0',          visible: true },
   { id: 'pdfFollow',     visible: true },
   { id: 'scrollMode',    visible: true },

@@ -573,7 +573,7 @@ async function dispatchDrive(op: string, p: any): Promise<any> {
     }
     case 'highlight_net': {
       const board = requireBoard();
-      boardStore.highlightNet(p.net);
+      boardStore.highlightNet(p.net, { via: 'mcp' });
       const pins = netPins(board, p.net) ?? [];
       const parts = Array.from(new Set(pins.map((x) => x.part).filter(Boolean)));
       toast(`Agent highlighted net ${p.net}`);
@@ -587,7 +587,7 @@ async function dispatchDrive(op: string, p: any): Promise<any> {
     case 'select_part': {
       const board = requireBoard();
       const part = findPart(board, p.refdes);
-      boardStore.focusPart(p.refdes);
+      boardStore.focusPart(p.refdes, { cause: 'click', via: 'mcp' });
       toast(`Agent selected ${p.refdes}`);
       return { ok: true, refdes: p.refdes, found: !!part, side: part?.side ?? null, centered: !!part };
     }

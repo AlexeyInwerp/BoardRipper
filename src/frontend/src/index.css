@@ -349,6 +349,10 @@ body {
   cursor: pointer;
 }
 .overlay-seg-btn + .overlay-seg-btn { border-left: 1px solid rgba(255,255,255,0.1); }
+/* History ‹ › — two chevrons, no words, so the segment is narrow. */
+.overlay-history-btn { min-width: 26px; padding: 0 5px; }
+.overlay-history-btn:disabled { opacity: 0.3; cursor: default; }
+.overlay-history-btn:disabled:hover { background: transparent; color: var(--text-secondary); }
 .overlay-seg-btn:hover { color: var(--text-primary); background: rgba(255,255,255,0.08); }
 .overlay-seg-btn.active { background: var(--accent); color: var(--accent-fg); }
 .overlay-seg-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }

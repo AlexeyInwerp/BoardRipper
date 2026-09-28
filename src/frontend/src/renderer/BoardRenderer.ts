@@ -43,6 +43,8 @@ import { compareStackHits, type StackHit } from './hit-test-ranking';
 import { buildTraceGrid, queryTraceGrid, type TraceGrid } from './trace-grid';
 import type { BorderBatch, PadGeometry } from './board-scene';
 import { registerRenderer, unregisterRenderer } from './renderer-registry';
+import { navHistoryStore, type BoardCameraProvider } from '../store/nav-history-store';
+import type { BoardCamera } from '../store/nav-history';
 import { getFormat } from '../parsers/registry';
 import { log } from '../store/log-store';
 import { ensurePdfPanel } from '../store/dockview-api';
@@ -774,6 +776,14 @@ export class BoardRenderer {
   // Pool index for reusing BitmapText children in netLabelLayer
   private netLabelPoolIdx = 0;
 
+  /** Navigation-history camera provider: the departure rule reads the pose
+   *  through `get`, a restore writes one through `set` (`animateToViewport`).
+   *  Registered wherever `registerRenderer` is, released wherever it is. */
+  private navCamera: BoardCameraProvider = {
+    get: () => ({ x: this.viewport.x, y: this.viewport.y, scaleX: this.viewport.scale.x, scaleY: this.viewport.scale.y }),
+    set: (cam) => this.animateToViewport(cam),
+  };
+
   // Animated zoom state
   private zoomAnim: {
     fromX: number; fromY: number; fromScaleX: number; fromScaleY: number;
@@ -1212,7 +1222,7 @@ export class BoardRenderer {
    */
   private teardownForReinit() {
     log.render.log('teardownForReinit', 'tab=' + this.tabId);
-    if (this.tabId !== null) unregisterRenderer(this.tabId);
+    if (this.tabId !== null) { unregisterRenderer(this.tabId); navHistoryStore.unregisterBoardCamera(this.tabId, this.navCamera); }
     if (this._rebuildTimer) { clearTimeout(this._rebuildTimer); this._rebuildTimer = null; }
     this.clickCycle = null;
     this.clearPendingCycleAdvance();
@@ -1487,7 +1497,7 @@ export class BoardRenderer {
         ...(RENDERER_PREFERENCE ? { preference: RENDERER_PREFERENCE } : {}),
       });
       log.render.log(`reinitApp: app.init succeeded tab=${this.tabId} size=${this.containerEl.clientWidth}x${this.containerEl.clientHeight}`);
-      if (this.tabId !== null) registerRenderer(this.tabId, this.app);
+      if (this.tabId !== null) { registerRenderer(this.tabId, this.app); navHistoryStore.registerBoardCamera(this.tabId, this.navCamera); }
     } catch (err) {
       log.render.error(`reinitApp: app.init FAILED tab=${this.tabId}:`, err);
       this.reinitializing = false;
@@ -1674,7 +1684,7 @@ export class BoardRenderer {
       log.render.log(`init: aborted — renderer destroyed during app.init (tab=${this.tabId})`);
       return;
     }
-    if (this.tabId !== null) registerRenderer(this.tabId, this.app);
+    if (this.tabId !== null) { registerRenderer(this.tabId, this.app); navHistoryStore.registerBoardCamera(this.tabId, this.navCamera); }
     this.containerEl.appendChild(this.app.canvas as HTMLCanvasElement);
     this.initialized = true;
 
@@ -3794,6 +3804,28 @@ export class BoardRenderer {
     }
   }
 
+  /**
+   * Put the camera back exactly where a navigation-history entry recorded it
+   * (the same 400 ms ease as `zoomToBounds`, but an absolute pose — not a
+   * fit, which is what the user did *not* want when they pressed back).
+   */
+  animateToViewport(cam: BoardCamera) {
+    if (!this.viewport || this.destroyed) return;
+    if (!isFinite(cam.x) || !isFinite(cam.y) || !cam.scaleX || !cam.scaleY) return;
+    this.zoomAnim = {
+      fromX: this.viewport.position.x,
+      fromY: this.viewport.position.y,
+      fromScaleX: this.viewport.scale.x,
+      fromScaleY: this.viewport.scale.y,
+      toX: cam.x, toY: cam.y, toScaleX: cam.scaleX, toScaleY: cam.scaleY,
+      elapsed: 0,
+      duration: 400,
+    };
+    this.zoomTween = null;
+    this.needsRender = true;
+    if (!this.app.ticker.started) this.app.ticker.start();
+  }
+
   private zoomToBounds(
     bounds: { minX: number; minY: number; maxX: number; maxY: number },
     root?: Container,
@@ -3989,6 +4021,14 @@ export class BoardRenderer {
       // symbol placement), handling page navigation itself.
       log.render.log(`triggerFollowPdf: lookup="${part.name}" ctx=${lookupContext.length} pdf="${pdfName}" force=${force}`);
       pdfStore.lookupEntity(pdfName, part.name, lookupContext, 'lookup');
+      // Navigation history: a deliberate lookup (double-click) is a stop of
+      // its own; the passive follow only annotates the click that caused it.
+      const landed = pdfStore.navPlaceFor(pdfName);
+      if (force) {
+        navHistoryStore.record({ cause: 'lookup', place: landed, query: { surface: 'pdf', text: part.name }, from: part.name });
+      } else if (landed) {
+        navHistoryStore.noteFollow({ fileName: pdfName, page: landed.page, matchIndex: pdfStore.getDocActiveMatchIndex(pdfName) });
+      }
     } else {
       // User-typed search → navigate + selection rectangle + tooltip for double-click
       log.render.log(`triggerFollowPdf: navigate-only query="${navQuery}" pdf="${pdfName}" (user search preserved)`);
@@ -7635,7 +7675,7 @@ export class BoardRenderer {
     // destroy() is the full-teardown path (tab closed) and does NOT route
     // through teardownForReinit() — unregister here too, or a closed tab's
     // Application would stay referenced in renderer-registry.ts forever.
-    if (this.tabId !== null) unregisterRenderer(this.tabId);
+    if (this.tabId !== null) { unregisterRenderer(this.tabId); navHistoryStore.unregisterBoardCamera(this.tabId, this.navCamera); }
     if (this.selectionBlinkTimer) {
       clearTimeout(this.selectionBlinkTimer);
       this.selectionBlinkTimer = null;

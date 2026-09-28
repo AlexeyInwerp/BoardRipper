@@ -15,6 +15,8 @@ import { fileViewPrefsStore } from './file-view-prefs-store';
 import { createLayerStates } from './layer-store';
 import type { LayerState } from './layer-store';
 import { deriveBoardView } from './derive-board-view';
+import { navHistoryStore } from './nav-history-store';
+import type { NavCause } from './nav-history';
 import type { FoldMode } from './derive-board-view';
 
 
@@ -174,6 +176,21 @@ export const PREVIEW_BURST_MS = 5500;
 export interface PreviewPulse {
   partIndex: number;
   phase: 'burst' | 'beacon';
+}
+
+/**
+ * How a selection came about, for the navigation history
+ * (docs/specs/2026-09-29-navigation-history-design.md §5). Every selection
+ * mutator takes it as an optional trailing argument with a default per
+ * method — `selectPart`/`selectPin`/`highlightNet`/`promotePartOnNet` are a
+ * click, `focusPart`/`focusNet` a search result — and the few callers whose
+ * intent differs (a word clicked in the PDF, the MCP bridge) pass it.
+ */
+export interface NavOpts {
+  cause?: NavCause;
+  /** Label of the place a lookup started from (`820-02016.pdf · p.47`). */
+  from?: string;
+  via?: 'mcp' | 'worklist' | 'list';
 }
 
 export interface FocusRequest {
@@ -1411,7 +1428,7 @@ class BoardStore extends Emitter {
     this.notify();
   }
 
-  selectPart(partIndex: number | null) {
+  selectPart(partIndex: number | null, nav?: NavOpts) {
     this._clearPreviewPulse();
     // Hierarchical net-lines (chain-adjacent): selecting a 2-pin component by
     // its body — which otherwise highlights no net — seeds the highlight from
@@ -1429,10 +1446,11 @@ class BoardStore extends Emitter {
       selection: { partIndex, pinIndex: null, highlightedNet, adjacentNets: this._resolveAdjacentNets(highlightedNet) },
       searchSelectionActive: false,
     });
+    if (partIndex !== null) this._recordNav(this.activeTab, nav?.cause ?? 'click', nav);
     this.notify();
   }
 
-  selectPin(partIndex: number, pinIndex: number) {
+  selectPin(partIndex: number, pinIndex: number, nav?: NavOpts) {
     this._clearPreviewPulse();
     const tab = this.activeTab;
     const part = tab?.board?.parts[partIndex];
@@ -1441,6 +1459,48 @@ class BoardStore extends Emitter {
       selection: { partIndex, pinIndex, highlightedNet: pin?.net || null, adjacentNets: this._resolveAdjacentNets(pin?.net || null) },
       searchSelectionActive: false,
     });
+    this._recordNav(tab, nav?.cause ?? 'click', nav);
+    this.notify();
+  }
+
+  /**
+   * Record the tab's current selection as a visit in the navigation history.
+   * A cleared selection is not a visit (clicking empty canvas is not a
+   * navigation; the departure rule still captures the camera). The place is
+   * named by refdes / pin number / net name, never by index — indices shift
+   * under fold-mode, revision and BOM changes.
+   */
+  private _recordNav(tab: BoardTab | null, cause: NavCause, nav?: NavOpts) {
+    if (!tab?.board) return;
+    const sel = tab.selection;
+    if (sel.partIndex == null && !sel.highlightedNet) return;
+    const part = sel.partIndex != null ? tab.board.parts[sel.partIndex] : undefined;
+    if (sel.partIndex != null && !part) return;   // a stale index names nothing
+    const pin = part && sel.pinIndex != null ? part.pins[sel.pinIndex] : undefined;
+    navHistoryStore.record({
+      cause,
+      place: {
+        kind: 'board',
+        tabId: tab.id,
+        fileKey: tab.cacheKey,
+        fileId: tab.fileId,
+        fileName: tab.fileName,
+        part: part?.name,
+        pin: pin ? (pin.number || pin.name || undefined) : undefined,
+        net: sel.highlightedNet ?? undefined,
+        side: tab.butterfly || (tab.showTop && tab.showBottom) ? 'both' : tab.showTop ? 'top' : 'bottom',
+      },
+      from: nav?.from,
+      via: nav?.via,
+    });
+  }
+
+  /** Restore-time side setter (navigation history). Leaves butterfly alone. */
+  setSideVisibility(tabId: number, showTop: boolean, showBottom: boolean) {
+    const tab = this._tabs.find(t => t.id === tabId);
+    if (!tab || tab.butterfly) return;
+    if (tab.showTop === showTop && tab.showBottom === showBottom) return;
+    Object.assign(tab, { showTop, showBottom });
     this.notify();
   }
 
@@ -1489,13 +1549,14 @@ class BoardStore extends Emitter {
     this.notify();
   }
 
-  highlightNet(netName: string | null) {
+  highlightNet(netName: string | null, nav?: NavOpts) {
     const tab = this.activeTab;
     if (!tab) return;
     this.updateActiveTab({
       selection: { ...tab.selection, highlightedNet: netName, adjacentNets: this._resolveAdjacentNets(netName) },
       searchSelectionActive: false,
     });
+    if (netName) this._recordNav(tab, nav?.cause ?? 'click', nav);
     this.notify();
   }
 
@@ -2252,6 +2313,8 @@ class BoardStore extends Emitter {
   }
 
   setSearch(query: string) {
+    const tab = this.activeTab;
+    if (tab && tab.searchQuery !== query) navHistoryStore.recordQuery('board', query);
     this.updateActiveTab({ searchQuery: query });
     this.notify();
   }
@@ -2335,7 +2398,7 @@ class BoardStore extends Emitter {
    *
    * Returns true when the part was found.
    */
-  selectPinInTab(tabId: number, partName: string, pinIndex: number | null): boolean {
+  selectPinInTab(tabId: number, partName: string, pinIndex: number | null, opts: NavOpts & { focus?: boolean } = {}): boolean {
     const tab = this._tabs.find(t => t.id === tabId);
     if (!tab?.board) return false;
     const upper = partName.trim().toUpperCase();
@@ -2363,13 +2426,14 @@ class BoardStore extends Emitter {
     });
     if (tab.id === this._activeTabId) {
       this._clearPreviewPulse();
-      this._focusRequest = { partIndex: idx, bounds: part.bounds };
+      if (opts.focus !== false) this._focusRequest = { partIndex: idx, bounds: part.bounds };
     }
+    this._recordNav(tab, opts.cause ?? 'click', opts);
     this.notify();
     return true;
   }
 
-  focusPart(name: string) {
+  focusPart(name: string, nav?: NavOpts) {
     this._clearPreviewPulse();
     const tab = this.activeTab;
     if (!tab?.board) return;
@@ -2399,6 +2463,7 @@ class BoardStore extends Emitter {
       searchSelectionActive: true,
     });
     this._focusRequest = { partIndex: idx, bounds: part.bounds };
+    this._recordNav(tab, nav?.cause ?? 'search', nav);
     this.notify();
   }
 
@@ -2482,7 +2547,7 @@ class BoardStore extends Emitter {
    * Side-flip and camera behaviour are copied from `focusPart` so promoting
    * feels identical to any other navigation.
    */
-  promotePartOnNet(partIndex: number, pinIndex: number) {
+  promotePartOnNet(partIndex: number, pinIndex: number, nav?: NavOpts) {
     this._clearPreviewPulse();
     const tab = this.activeTab;
     const part = tab ? viewPart(tab, partIndex) : undefined;
@@ -2503,10 +2568,11 @@ class BoardStore extends Emitter {
       searchSelectionActive: true,
     });
     this._focusRequest = { partIndex, bounds: part.bounds };
+    this._recordNav(tab, nav?.cause ?? 'click', nav);
     this.notify();
   }
 
-  focusNet(name: string) {
+  focusNet(name: string, nav?: NavOpts) {
     const tab = this.activeTab;
     if (!tab?.board) return;
     // Case-insensitive net lookup — try exact match first, then scan
@@ -2541,6 +2607,7 @@ class BoardStore extends Emitter {
       searchSelectionActive: true,
     });
     this._focusRequest = { partIndex: null, bounds: { minX, minY, maxX, maxY } };
+    this._recordNav(tab, nav?.cause ?? 'search', nav);
     this.notify();
   }
 }

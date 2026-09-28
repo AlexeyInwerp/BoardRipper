@@ -10,6 +10,7 @@ import { focusBoardSearchInput } from '../components/BoardSidebar.utils';
 import { toggleLibrarySidebar } from '../components/Sidebar.utils';
 import { copyText } from '../clipboard';
 import { peekHintStore } from '../store/peek-hint-store';
+import { historyBack, historyForward } from '../store/nav-history-actions';
 
 /**
  * Global keyboard shortcut handler — attach once in App.
@@ -180,6 +181,19 @@ export function useKeyboardShortcuts() {
           fileInputRefs.search.select();
           return;
         }
+      }
+
+      // ⌘[ / ⌘] — navigation history, Preview's Go ▸ Back / Forward. Handled
+      // before the input bailout: neither key edits text and Preview's Back
+      // works with the find field focused. preventDefault unconditionally —
+      // ⌘[ is the browser's own Back in Chrome and Safari on macOS, and in the
+      // hosted PWA that would leave the app even when there is nothing to go
+      // back to.
+      {
+        const hb = getShortcut('historyBack');
+        const hf = getShortcut('historyForward');
+        if (hb && matchesShortcut(e, hb)) { e.preventDefault(); historyBack(); return; }
+        if (hf && matchesShortcut(e, hf)) { e.preventDefault(); historyForward(); return; }
       }
 
       // Don't intercept when typing in inputs/textareas

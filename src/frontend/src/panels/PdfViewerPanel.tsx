@@ -6,6 +6,7 @@ import { boardStore } from '../store/board-store';
 import { boardPanelId, activateLinkedPanel, isAutoSwitchLinked } from '../store/dockview-api';
 import { pickLinkedBoardTab } from '../store/linked-panel';
 import { openBoardSearch } from './board-viewer-bridge';
+import { navHistoryStore, type PdfCameraProvider } from '../store/nav-history-store';
 import { fileInputRefs } from '../store/file-inputs';
 import { contextMenuStore } from '../store/context-menu-store';
 import { log } from '../store/log-store';
@@ -3238,8 +3239,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const upper = hit.word.toUpperCase();
       const isPart = board.parts.some(p => p.name.toUpperCase() === upper);
       const isNet = !isPart && [...board.nets.keys()].some(n => n.toUpperCase() === upper);
-      if (isPart) boardStore.focusPart(hit.word);
-      else if (isNet) boardStore.focusNet(hit.word);
+      const nav = { cause: 'lookup' as const, from: `${pdfFileName} · p.${hit.pageIndex + 1}` };
+      if (isPart) boardStore.focusPart(hit.word, nav);
+      else if (isNet) boardStore.focusNet(hit.word, nav);
       if (isPart || isNet) openBoardSearch(hit.word);
     }
 
@@ -3269,10 +3271,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const board = boardStore.board;
     if (board) {
       const upper = hit.word.toUpperCase();
+      const nav = { cause: 'lookup' as const, from: `${pdfFileName} · p.${hit.pageIndex + 1}` };
       if (board.parts.some(p => p.name.toUpperCase() === upper)) {
-        boardStore.focusPart(hit.word);
+        boardStore.focusPart(hit.word, nav);
       } else {
-        boardStore.focusNet(hit.word);
+        boardStore.focusNet(hit.word, nav);
       }
       openBoardSearch(hit.word);
     }
@@ -3531,6 +3534,37 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     pdfStore.addBookmark(currentPage, zoomRef.current, panRef.current.x, panRef.current.y);
   }, [pdfFileName, currentPage]);
 
+  /** Put the view at an exact pose — bookmarks and the navigation history share it. */
+  const applyPose = useCallback((page: number, zoom: number, panX: number, panY: number) => {
+    pdfStore.switchTo(pdfFileName);
+    zoomRef.current = zoom;
+    panRef.current = { x: panX, y: panY };
+    const samePage = page === pdfStore.getDocCurrentPage(pdfFileName);
+    if (!samePage) {
+      // Defer zoom/pan restore — goToPage triggers re-render + renderPage via useEffect.
+      // skipResetRef prevents the page-change effect from resetting zoom/pan to defaults.
+      skipResetRef.current = true;
+      pdfStore.goToPage(page);
+    }
+    syncTransform();
+    // Only render immediately when staying on the same page. When changing pages,
+    // the useEffect([renderPage]) fires after re-render with the correct currentPage.
+    if (samePage) renderPageRef.current();
+  }, [pdfFileName, syncTransform]);
+  const applyPoseRef = useRef(applyPose);
+  applyPoseRef.current = applyPose;
+
+  // Navigation-history camera provider for this document (registered per
+  // file name; the store hands a pose to a panel that mounts later).
+  useEffect(() => {
+    const provider: PdfCameraProvider = {
+      get: () => ({ page: pdfStore.getDocCurrentPage(pdfFileName), zoom: zoomRef.current, panX: panRef.current.x, panY: panRef.current.y }),
+      set: (cam) => applyPoseRef.current(cam.page, cam.zoom, cam.panX, cam.panY),
+    };
+    navHistoryStore.registerPdfCamera(pdfFileName, provider);
+    return () => navHistoryStore.unregisterPdfCamera(pdfFileName, provider);
+  }, [pdfFileName]);
+
   const handleBookmarkClick = useCallback((id: string) => {
     if (bookmarkClickTimerRef.current) {
       clearTimeout(bookmarkClickTimerRef.current);
@@ -3538,24 +3572,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     }
     bookmarkClickTimerRef.current = setTimeout(() => {
       bookmarkClickTimerRef.current = null;
-      pdfStore.switchTo(pdfFileName);
       const bm = pdfStore.getDocBookmarks(pdfFileName).find(b => b.id === id);
       if (!bm) return;
-      zoomRef.current = bm.zoom;
-      panRef.current = { x: bm.panX, y: bm.panY };
-      const samePage = bm.page === pdfStore.getDocCurrentPage(pdfFileName);
-      if (!samePage) {
-        // Defer zoom/pan restore — goToPage triggers re-render + renderPage via useEffect.
-        // skipResetRef prevents the page-change effect from resetting zoom/pan to defaults.
-        skipResetRef.current = true;
-        pdfStore.goToPage(bm.page);
-      }
-      syncTransform();
-      // Only render immediately when staying on the same page. When changing pages,
-      // the useEffect([renderPage]) fires after re-render with the correct currentPage.
-      if (samePage) renderPageRef.current();
+      applyPose(bm.page, bm.zoom, bm.panX, bm.panY);
     }, 250);
-  }, [pdfFileName, syncTransform]);
+  }, [pdfFileName, applyPose]);
 
   const handleBookmarkDblClick = useCallback((id: string) => {
     if (bookmarkClickTimerRef.current) {

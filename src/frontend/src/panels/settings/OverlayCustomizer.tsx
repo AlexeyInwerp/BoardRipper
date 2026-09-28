@@ -11,7 +11,7 @@
  * its own group below — it is a different question from what is on the bar.
  */
 import { useState, type DragEvent, type ReactNode } from 'react';
-import { IconEye, IconEyeOff, IconArrowUp, IconArrowDown, IconX, IconGripVertical, IconCircuitDiode, IconCpu, IconTopologyStar, IconStackFront } from '@tabler/icons-react';
+import { IconEye, IconEyeOff, IconArrowUp, IconArrowDown, IconX, IconGripVertical, IconCircuitDiode, IconCpu, IconTopologyStar, IconStackFront, IconHistory } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import { renderSettingsStore, DEFAULTS } from '../../store/render-settings';
 import { useRenderSettings } from '../../hooks/useRenderSettings';
@@ -50,6 +50,7 @@ const stubCtx: SlotCtx = {
    does not fit a 40px cell. These get a fixed glyph instead of the live chip. */
 const EDITOR_ICONS: Partial<Record<string, Icon>> = {
   sideSwitch:    IconStackFront,
+  history:       IconHistory,
   diodeValues:   IconCircuitDiode,
   partsDropdown: IconCpu,
   netsDropdown:  IconTopologyStar,

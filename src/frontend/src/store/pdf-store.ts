@@ -9,6 +9,8 @@ import { log } from './log-store';
 import { ensureIndexed } from '../pdf/pdf-index-client';
 import { scoreLookupCandidates, type LookupCandidate, type LookupContextHit } from './pdf-lookup-score';
 import { isOfflineBuild } from './build-mode';
+import { navHistoryStore } from './nav-history-store';
+import type { PdfPlace, PdfMatchRef } from './nav-history';
 
 // ES2025 shims that pdf.js calls on the main thread live in src/polyfills.ts
 // (imported first in main.tsx); the worker's copies are in the patch.
@@ -608,6 +610,34 @@ class PdfStore extends Emitter {
   /** Per-document accessors — allow panels to render without being the "active" doc */
   getDocPageCount(fileName: string): number { return this._documents.get(fileName)?.pageCount ?? 0; }
   getDocCurrentPage(fileName: string): number { return this._documents.get(fileName)?.currentPage ?? 1; }
+  hasDoc(fileName: string): boolean { return this._documents.has(fileName); }
+
+  /** Where this document is right now, as a navigation-history place. */
+  navPlaceFor(fileName: string): PdfPlace | null {
+    const d = this._documents.get(fileName);
+    if (!d) return null;
+    const m = d.activeMatchIndex >= 0 ? d.matches[d.activeMatchIndex] : undefined;
+    return {
+      kind: 'pdf', fileName, fileId: d.fileId, page: d.currentPage,
+      match: m ? { pageIndex: m.pageIndex, itemIndex: m.itemIndex, charStart: m.charStart, charEnd: m.charEnd } : undefined,
+    };
+  }
+
+  /**
+   * Navigation-history restore: re-run a query on a document (source `user`,
+   * so the field shows it as the user's own) and land on the recorded match
+   * when it still exists. Never records — the caller holds `isRestoring`.
+   */
+  restoreSearch(fileName: string, query: string, match: PdfMatchRef | null) {
+    const doc = this._documents.get(fileName);
+    if (!doc) return;
+    if (doc.searchQuery.toUpperCase() !== query.toUpperCase() || doc.matches.length === 0) {
+      this._runSearch(doc, query, 'user', false);
+    }
+    if (!match) return;
+    const idx = doc.matches.findIndex(m => m.pageIndex === match.pageIndex && m.itemIndex === match.itemIndex && m.charStart === match.charStart);
+    if (idx >= 0 && idx !== doc.activeMatchIndex) this._setActiveMatchInDoc(doc, idx);
+  }
   getDocRotation(fileName: string): number { return this._documents.get(fileName)?.rotation ?? 0; }
   getDocPageMode(fileName: string): 'single' | 'continuous' { return this._documents.get(fileName)?.pageMode ?? 'continuous'; }
   getDocMirror(fileName: string): boolean { return this._documents.get(fileName)?.mirror ?? false; }
@@ -1068,6 +1098,10 @@ class PdfStore extends Emitter {
   searchText(query: string, source: 'user' | 'lookup' = 'user') {
     if (!this._active) return;
     this._runSearch(this._active, query, source, true);
+    if (source === 'user' && query.trim()) {
+      const d = this._active;
+      navHistoryStore.recordQuery('pdf', query, { results: d.matches.length, place: this.navPlaceFor(d.fileName) ?? undefined });
+    }
   }
 
   /**
@@ -1471,7 +1505,12 @@ class PdfStore extends Emitter {
   /** Set the active match to a specific index (silent — won't re-trigger nav UI). */
   setActiveMatchIndex(idx: number) {
     const d = this._active;
-    if (!d || idx < 0 || idx >= d.matches.length) return;
+    if (!d) return;
+    this._setActiveMatchInDoc(d, idx);
+  }
+
+  private _setActiveMatchInDoc(d: PdfDocument, idx: number) {
+    if (idx < 0 || idx >= d.matches.length) return;
     d.activeMatchIndex = idx;
     if (d.matchGroups.length > 0) {
       const g = d.matchGroups.findIndex(group => group.includes(idx));
@@ -1479,7 +1518,15 @@ class PdfStore extends Emitter {
     }
     d.currentPage = d.matches[idx].pageIndex + 1;
     this._rebuildActiveIndicesCache(d);
+    this._touchNavMatch(d);
     this.notify();
+  }
+
+  /** Stepping within a query updates the history entry that recorded it (§3.3). */
+  private _touchNavMatch(d: PdfDocument) {
+    const m = d.activeMatchIndex >= 0 ? d.matches[d.activeMatchIndex] : undefined;
+    navHistoryStore.touchPdfMatch(d.fileName, d.currentPage,
+      m ? { pageIndex: m.pageIndex, itemIndex: m.itemIndex, charStart: m.charStart, charEnd: m.charEnd } : undefined);
   }
 
   private _stepMatch(delta: 1 | -1) {
@@ -1497,6 +1544,7 @@ class PdfStore extends Emitter {
     }
     d.currentPage = d.matches[d.activeMatchIndex].pageIndex + 1;
     this._rebuildActiveIndicesCache(d);
+    this._touchNavMatch(d);
     this.notify();
   }
 
@@ -1545,14 +1593,19 @@ class PdfStore extends Emitter {
     const q = word.trim();
     if (!q) return;
 
+    const from = source ? `${sourceFileName} · p.${source.currentPage}` : sourceFileName;
     const sameQuery = target.searchQuery.toUpperCase() === q.toUpperCase();
     if (sameQuery && target.searchSource === 'lookup' && target.matches.length > 0) {
       if (source) source.crossProbeHint = null;   // success — clear any stale hint
       this._stepMatchInDoc(target, 1);             // cycle to next occurrence (notifies)
+      navHistoryStore.record({ cause: 'lookup', place: this.navPlaceFor(targetName), query: { surface: 'pdf', text: q }, from });
       return;
     }
 
     this._runSearch(target, q, 'lookup', false);   // fresh search (notifies)
+    if (target.matches.length > 0) {
+      navHistoryStore.record({ cause: 'lookup', place: this.navPlaceFor(targetName), query: { surface: 'pdf', text: q, results: target.matches.length }, from });
+    }
     if (source) {
       source.crossProbeHint = target.matches.length === 0
         ? `No match for ${q} in ${targetName}`

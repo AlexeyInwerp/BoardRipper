@@ -14,6 +14,7 @@ import { Separator }        from './slots/Separator';
 import { PartsDropdown }    from './slots/PartsDropdown';
 import { NetsDropdown }     from './slots/NetsDropdown';
 import { SideSwitch }       from './slots/SideSwitch';
+import { HistoryButtons }   from './slots/HistoryButtons';
 import { ButterflyButton, RotateCcwButton, RotateCwButton, TracesButton, TransformMenuButton } from './slots/TransformButtons';
 
 /**
@@ -29,6 +30,7 @@ export function renderOverlaySlot(id: OverlaySlotId, ctx: SlotCtx): ReactNode {
     case 'rotateCCW':     return <RotateCcwButton />;
     case 'rotateCW':      return <RotateCwButton />;
     case 'transformMenu': return <TransformMenuButton ctx={ctx} />;
+    case 'history':       return <HistoryButtons />;
     case 'traces':        return <TracesButton ctx={ctx} />;
     case 'pdfFollow':     return <PdfFollowButton  ctx={ctx} />;
     case 'scrollMode':    return <ScrollModeButton ctx={ctx} />;

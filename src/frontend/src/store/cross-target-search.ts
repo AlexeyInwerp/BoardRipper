@@ -6,6 +6,7 @@
  * are guaranteed to behave identically.
  */
 import { boardStore } from './board-store';
+import { navHistoryStore } from './nav-history-store';
 import { pdfStore } from './pdf-store';
 import { fileInputRefs } from './file-inputs';
 import { openBoardSearch } from '../panels/board-viewer-bridge';
@@ -60,6 +61,9 @@ export function findInBoardTab(term: string, tabId: number): void {
   const t = term.trim();
   if (!t) return;
   boardStore.switchTab(tabId);
+  // The global field is its own search surface; focusPart then completes
+  // this query entry with the part it lands on.
+  navHistoryStore.record({ cause: 'search', place: null, query: { surface: 'global', text: t } });
   boardStore.focusPart(t);
   openBoardSearch(t, tabId);
 }
