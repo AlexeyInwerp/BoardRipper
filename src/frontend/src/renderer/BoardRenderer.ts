@@ -25,6 +25,7 @@ import { looksLikeMouseWheel } from '../store/scroll-mode';
 import { contextMenuStore } from '../store/context-menu-store';
 import { resizeModeStore } from '../store/resize-mode-store';
 import { boardAntialias, boardMaxFps, boardPixelRatio } from '../device-profile';
+import { rotationLockStore } from '../store/rotation-lock-store';
 import { viewCommands, type PanDirection, type ZoomDirection } from '../store/view-commands';
 import { selectionSetStore } from '../store/selection-set-store';
 import { partCompareStore } from '../store/part-compare-store';
@@ -515,10 +516,22 @@ export class BoardRenderer {
    *  the pinch writes the viewport: a store commit per move would run the
    *  whole onBoardUpdate — net-line re-projection, ghosts, a full
    *  renderSelection — for every finger movement. */
-  private liveRotate: { engaged: boolean; appliedRad: number; midX: number; midY: number } | null = null;
-  /** Fingers must turn this far before rotation engages, so an ordinary
-   *  pinch-zoom — never perfectly axial — does not wobble the board. */
-  private static readonly ROTATE_DEAD_ZONE_DEG = 6;
+  private liveRotate: { engaged: boolean; appliedRad: number; baseRad: number; midX: number; midY: number } | null = null;
+  /** Locked (the starting state, `rotationLockStore`): the fingers must turn
+   *  this far before rotation unlocks — and then the board turns on from
+   *  where it is, no catch-up jump (`baseRad`). */
+  private static readonly ROTATE_UNLOCK_DEG = 12;
+  /** Unlocked: a small dead zone so a pinch-zoom's wobble does not drift a
+   *  free angle by a degree or two per pinch. */
+  private static readonly ROTATE_DEAD_ZONE_DEG = 2;
+  /** A two-finger double-tap toggles the lock: two taps of ≤ TAP_MS with the
+   *  fingers travelling no further than a tap may, within DOUBLE_MS. */
+  private static readonly TWO_FINGER_TAP_MS = 350;
+  private static readonly TWO_FINGER_DOUBLE_MS = 450;
+  private twoFingerDownAt = 0;
+  private twoFingerMaxTravel = 0;
+  private lastTwoFingerTapAt = 0;
+  private touchDownPos = new Map<number, { x: number; y: number }>();
   /** A committed angle this close to a multiple of 90° snaps to it. */
   private static readonly ROTATE_SNAP_DEG = 10;
   /** True once two or more fingers have been down during the gesture in
@@ -1796,8 +1809,14 @@ export class BoardRenderer {
         // pointerup would make every later tap look like a second finger.
         if (e.isPrimary) this.activeTouchIds.clear();
         this.activeTouchIds.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (e.isPrimary) this.touchDownPos.clear();
+        this.touchDownPos.set(e.pointerId, { x: e.clientX, y: e.clientY });
       }
       if (this.activeTouchIds.size > 1) {
+        if (this.activeTouchIds.size === 2) {
+          this.twoFingerDownAt = performance.now();
+          this.twoFingerMaxTravel = 0;
+        }
         // Second finger of a pinch. The gesture is no longer a tap, and its
         // travel must keep being measured from where the FIRST finger landed
         // — re-anchoring here would reset the drag test mid-pinch and hand
@@ -1864,6 +1883,26 @@ export class BoardRenderer {
       }
       if (this.activeTouchIds.size === 0 && this.gestureOwner !== 'none') {
         this.endGestureOwnership?.();
+      }
+      // A two-finger tap: both fingers down and up within TAP_MS, neither
+      // travelling further than a tap may, no rotation engaged. Two of them
+      // within DOUBLE_MS toggle the rotation lock.
+      if (this.activeTouchIds.size === 0 && this.gestureWasMultiTouch && e.type === 'pointerup'
+          && !this.gestureWasCancelled && this.twoFingerDownAt > 0) {
+        const now = performance.now();
+        const isTap = now - this.twoFingerDownAt <= BoardRenderer.TWO_FINGER_TAP_MS
+          && this.twoFingerMaxTravel <= BoardRenderer.TOUCH_CLICK_DRAG_TOLERANCE_PX;
+        this.twoFingerDownAt = 0;
+        if (isTap) {
+          if (now - this.lastTwoFingerTapAt <= BoardRenderer.TWO_FINGER_DOUBLE_MS) {
+            this.lastTwoFingerTapAt = 0;
+            if (renderSettingsStore.settings.twoFingerRotate) this.toggleRotationLock();
+          } else {
+            this.lastTwoFingerTapAt = now;
+          }
+        } else {
+          this.lastTwoFingerTapAt = 0;
+        }
       }
       // A tap that began mid-glide: pixi-viewport withheld `clicked`, so raise
       // it here — with every guard handleClick would have applied, because
@@ -4094,15 +4133,25 @@ export class BoardRenderer {
     if (!renderSettingsStore.settings.twoFingerRotate) return;
     const scene = this.activeScene;
     if (!scene) return;
-    const lr = this.liveRotate ?? (this.liveRotate = { engaged: false, appliedRad: 0, midX, midY });
+    const lr = this.liveRotate ?? (this.liveRotate = { engaged: false, appliedRad: 0, baseRad: 0, midX, midY });
     lr.midX = midX;
     lr.midY = midY;
     if (!lr.engaged) {
-      if (Math.abs(targetRad) * 180 / Math.PI < BoardRenderer.ROTATE_DEAD_ZONE_DEG) return;
+      const turnedDeg = Math.abs(targetRad) * 180 / Math.PI;
+      if (rotationLockStore.locked) {
+        if (turnedDeg < BoardRenderer.ROTATE_UNLOCK_DEG) return;
+        // Unlock, and turn on from here — the 12° already turned are the
+        // unlock gesture, not rotation the board should catch up on.
+        rotationLockStore.setLocked(false);
+        lr.baseRad = targetRad;
+        boardStore.addToast('Rotation unlocked — turn two fingers to rotate; double-tap with two fingers to lock again.', 'info');
+        log.ui.log('touch: rotation unlocked by a two-finger turn');
+      } else if (turnedDeg < BoardRenderer.ROTATE_DEAD_ZONE_DEG) {
+        return;
+      }
       lr.engaged = true;
-      log.ui.log('touch: two-finger rotation engaged');
     }
-    const step = targetRad - lr.appliedRad;
+    const step = (targetRad - lr.baseRad) - lr.appliedRad;
     if (step === 0) return;
     const P = this.viewport.toWorld(midX, midY);
     const cos = Math.cos(step), sin = Math.sin(step);
@@ -4112,11 +4161,28 @@ export class BoardRenderer {
       root.position.set(P.x + dx * cos - dy * sin, P.y + dx * sin + dy * cos);
       root.rotation += step;
     }
-    lr.appliedRad = targetRad;
+    lr.appliedRad = targetRad - lr.baseRad;
     this.needsRender = true;
     this.netLinesDirty = true;
     this.overlayDirty = true;
     this.overlayContentDirty = true;
+  }
+
+  /** Two-finger double-tap: lock ⇄ unlock. Locking squares the board — a
+   *  locked board sits at a right angle — about the screen centre, as the
+   *  buttons do. */
+  private toggleRotationLock(): void {
+    if (rotationLockStore.locked) {
+      rotationLockStore.setLocked(false);
+      boardStore.addToast('Rotation unlocked — turn two fingers to rotate; double-tap with two fingers to lock again.', 'info');
+      log.ui.log('touch: rotation unlocked by a two-finger double-tap');
+      return;
+    }
+    rotationLockStore.setLocked(true);
+    const nearest = (Math.round(boardStore.rotation / 90) * 90) % 360;
+    boardStore.setRotation(nearest);
+    boardStore.addToast(`Rotation locked at ${nearest}°.`, 'info');
+    log.ui.log(`touch: rotation locked by a two-finger double-tap, snapped to ${nearest}°`);
   }
 
   /** The fingers lifted: hand the angle to the store — snapped to a right
@@ -4171,6 +4237,10 @@ export class BoardRenderer {
       if (!rec) return;
       rec.x = e.clientX;
       rec.y = e.clientY;
+      const down = this.touchDownPos.get(e.pointerId);
+      if (down) {
+        this.twoFingerMaxTravel = Math.max(this.twoFingerMaxTravel, Math.hypot(e.clientX - down.x, e.clientY - down.y));
+      }
       if (this.gestureOwner === 'gesture') return;   // WebKit owns this one
       const p = this.pinch;
       if (!p || (e.pointerId !== p.a && e.pointerId !== p.b)) return;

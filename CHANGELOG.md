@@ -5,11 +5,13 @@
 ### Added
 
 - **Two-finger rotation.** On a touch screen, turning two fingers turns the
-  board about the point between them, live. The angle is kept when the
-  fingers lift — snapped to the nearest right angle when within 10°, any
-  other angle stays as it is — and the rotate buttons step to the next right
-  angle from there. A small dead zone keeps a pinch-zoom from wobbling.
-  Settings ▸ Performance & Debug ▸ Two-finger rotation turns it off.
+  board about the point between them, live. Rotation starts locked: a turn
+  under 12° does nothing (every pinch turns a little), a turn past it
+  unlocks — a toast says so — and the board turns on from there. The angle
+  is kept when the fingers lift, snapped to the nearest right angle when
+  within 10°; the rotate buttons step to the next right angle from any
+  angle. A double-tap with two fingers locks rotation again and squares the
+  board. Settings ▸ Performance & Debug ▸ Two-finger rotation turns it off.
 
 ## v0.44.0 — 2026-09-28
 

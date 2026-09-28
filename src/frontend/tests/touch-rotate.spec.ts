@@ -1,9 +1,14 @@
 /**
  * Two-finger rotation on the board: turning the pair turns the board, live,
  * about the point between the fingers; the angle is committed when the
- * fingers lift — snapped to a right angle when within 10°, kept otherwise
- * ("unlocked") — and the point between the fingers stays where it was
- * through the commit. A dead zone keeps a pinch-zoom from wobbling.
+ * fingers lift — snapped to a right angle when within 10°, kept otherwise —
+ * and the point between the fingers stays where it was through the commit.
+ *
+ * Rotation starts LOCKED: a turn under 12° does nothing (every pinch turns a
+ * little), a turn past it unlocks with a toast and the board turns on from
+ * there, no catch-up. A two-finger double-tap locks again and squares the
+ * board. So the first 45° gesture leaves the board at 33°; every later one
+ * turns the full amount.
  *
  * Real touches through CDP, like touch-pinch-zoom.spec.ts: the pointer pair
  * is what iPadOS delivers when it does not claim the gesture itself; the
@@ -92,7 +97,66 @@ async function turn(page: Page, cdp: CDPSession, at: Pt, deg: number, steps: num
   await page.waitForTimeout(400);
 }
 
+const locked = (page: Page) => page.evaluate(
+  () => (window as unknown as { __rotationLock: { locked: boolean } }).__rotationLock.locked);
+
+async function twoFingerTap(page: Page, cdp: CDPSession, at: Pt) {
+  const a = { x: at.x - 40, y: at.y }, b = { x: at.x + 40, y: at.y };
+  await touch(cdp, 'touchStart', [a]);
+  await touch(cdp, 'touchStart', [a, b]);
+  await page.waitForTimeout(40);
+  await touch(cdp, 'touchEnd', [a]);
+  await touch(cdp, 'touchEnd', []);
+}
+
+const UNLOCK = 12;
+/** The unlock fires on the first move EVENT past 12°, and a CDP step of
+ *  deg/steps arrives as two pointer moves (one per finger), so the board
+ *  turns on from somewhere within one step past 12°. */
+const slack = (deg: number, steps: number) => Math.abs(deg) / steps + 0.3;
+
 test.describe('two-finger rotation', () => {
+  test('locked at first: a 10° turn does nothing, a turn past 12° unlocks and says so', async ({ page }) => {
+    const at = await load(page);
+    const cdp = await page.context().newCDPSession(page);
+    expect(await locked(page)).toBe(true);
+    await turn(page, cdp, at, 10, 8);
+    expect(await storeRotation(page)).toBe(0);
+    expect(await locked(page)).toBe(true);
+    // 30°, not 20: what is left after the 12° unlock must clear the ±10°
+    // snap window around 0, or the release squares it back — correctly.
+    await turn(page, cdp, at, 30, 8);
+    expect(await locked(page)).toBe(false);
+    await expect(page.locator('.toast', { hasText: /Rotation unlocked/ })).toBeVisible();
+    expect(Math.abs((await storeRotation(page)) - (30 - UNLOCK))).toBeLessThanOrEqual(slack(30, 8));
+  });
+
+  test('a two-finger double-tap locks again and squares the board', async ({ page }) => {
+    const at = await load(page);
+    const cdp = await page.context().newCDPSession(page);
+    await turn(page, cdp, at, 45, 12);                  // unlocks, 33°
+    expect(await locked(page)).toBe(false);
+    await twoFingerTap(page, cdp, at);
+    await page.waitForTimeout(120);
+    await twoFingerTap(page, cdp, at);
+    await page.waitForTimeout(300);
+    expect(await locked(page)).toBe(true);
+    expect(await storeRotation(page)).toBe(0);          // 33 → nearest right angle
+    await expect(page.locator('.toast', { hasText: /Rotation locked/ })).toBeVisible();
+    await turn(page, cdp, at, 10, 8);                   // locked again: nothing
+    expect(await storeRotation(page)).toBe(0);
+  });
+
+  test('a single two-finger tap, or two far apart, do not toggle the lock', async ({ page }) => {
+    const at = await load(page);
+    const cdp = await page.context().newCDPSession(page);
+    await twoFingerTap(page, cdp, at);
+    await page.waitForTimeout(700);
+    await twoFingerTap(page, cdp, at);
+    await page.waitForTimeout(300);
+    expect(await locked(page)).toBe(true);
+  });
+
   test('turning the fingers 45° turns the board 45°, live, and keeps it when they lift', async ({ page }) => {
     const at = await load(page);
     const cdp = await page.context().newCDPSession(page);
@@ -100,16 +164,22 @@ test.describe('two-finger rotation', () => {
     const local = await localUnder(page, at);
 
     await turn(page, cdp, at, 45, 12);
-    expect(Math.abs((await storeRotation(page)) - 45)).toBeLessThanOrEqual(1);
-    expect(Math.abs((await rootDeg(page)) - 45)).toBeLessThanOrEqual(1);
+    const first = await storeRotation(page);
+    expect(Math.abs(first - (45 - UNLOCK))).toBeLessThanOrEqual(slack(45, 12));
+    expect(Math.abs((await rootDeg(page)) - first)).toBeLessThanOrEqual(0.2);
     // The point that was between the fingers is still there.
     const now = await pageOf(page, local);
     expect(Math.hypot(now.x - at.x, now.y - at.y)).toBeLessThan(4);
+    // Unlocked now: the next gesture turns the full amount.
+    await turn(page, cdp, at, 45, 12);
+    expect(Math.abs((await storeRotation(page)) - first - 45)).toBeLessThanOrEqual(1);
   });
 
   test('the board follows the fingers while they are still down', async ({ page }) => {
     const at = await load(page);
     const cdp = await page.context().newCDPSession(page);
+    await turn(page, cdp, at, 30, 8);                   // unlock (→ ~18°)
+    const base = await storeRotation(page);
     const r0 = 90;
     await touch(cdp, 'touchStart', [{ x: at.x + r0, y: at.y }]);
     await touch(cdp, 'touchStart', [{ x: at.x + r0, y: at.y }, { x: at.x - r0, y: at.y }]);
@@ -123,18 +193,18 @@ test.describe('two-finger rotation', () => {
     }
     // Chromium delivers touch moves frame-aligned, so the last one may land a
     // frame after the dispatch resolves — poll rather than read once.
-    await expect.poll(() => rootDeg(page), { timeout: 2000 }).toBeGreaterThan(29);   // live …
-    expect(Math.abs((await rootDeg(page)) - 30)).toBeLessThanOrEqual(1);
-    expect(await storeRotation(page)).toBe(0);                                        // … nothing committed yet
+    await expect.poll(async () => Math.abs((await rootDeg(page)) - base - 30), { timeout: 2000 }).toBeLessThanOrEqual(1);   // live …
+    expect(await storeRotation(page)).toBe(base);                                            // … nothing committed yet
     await touch(cdp, 'touchEnd', []);
   });
 
   test('close to a right angle snaps to it', async ({ page }) => {
     const at = await load(page);
     const cdp = await page.context().newCDPSession(page);
-    await turn(page, cdp, at, 84, 16);
+    await turn(page, cdp, at, 45, 12);                  // unlock (→ 33°)
+    await turn(page, cdp, at, 51, 12);                  // 84° → snaps to 90
     expect(await storeRotation(page)).toBe(90);
-    await turn(page, cdp, at, -84, 16);
+    await turn(page, cdp, at, -84, 16);                 // 6° → snaps to 0
     expect(await storeRotation(page)).toBe(0);
   });
 
@@ -151,13 +221,13 @@ test.describe('two-finger rotation', () => {
   test('the rotate buttons step to the next right angle from a free angle', async ({ page }) => {
     const at = await load(page);
     const cdp = await page.context().newCDPSession(page);
-    await turn(page, cdp, at, 45, 12);
+    await turn(page, cdp, at, 45, 12);                  // unlock (→ 33°)
     await page.evaluate(() => (window as unknown as { __boardStore: { rotateCW(): void } }).__boardStore.rotateCW());
     expect(await storeRotation(page)).toBe(90);
-    await turn(page, cdp, at, -45, 12);
-    expect(await storeRotation(page)).toBe(45);
+    await turn(page, cdp, at, 45, 12);                  // 135°
+    expect(await storeRotation(page)).toBe(135);
     await page.evaluate(() => (window as unknown as { __boardStore: { rotateCCW(): void } }).__boardStore.rotateCCW());
-    expect(await storeRotation(page)).toBe(0);
+    expect(await storeRotation(page)).toBe(90);
   });
 
   /** The screen rotation the root's transform gained between two readings,
@@ -183,15 +253,15 @@ test.describe('two-finger rotation', () => {
     const cdp = await page.context().newCDPSession(page);
     await page.getByTestId('side-bottom').click();
     await page.waitForTimeout(300);
-    // Three gestures of 45° each: 0 → 45 → 90 (snapped) → 135. Each must be
-    // a 45° turn of the picture on screen, never 45 + 180.
-    for (const expected of [45, 45, 45]) {
+    // Three gestures of 45° each: the first unlocks (33°), then 78°, then
+    // 123°. Each must be that turn of the picture on screen, never + 180.
+    for (const [expected, tol] of [[45 - UNLOCK, slack(45, 12)], [45, 1.5], [45, 1.5]]) {
       const before = await rootMatrix(page);
       await turn(page, cdp, at, 45, 12);
       const d = screenTurn(before, await rootMatrix(page));
-      expect(Math.abs(d - expected), `gesture turned the view by ${d.toFixed(1)}°`).toBeLessThanOrEqual(1.5);
+      expect(Math.abs(d - expected), `gesture turned the view by ${d.toFixed(1)}°`).toBeLessThanOrEqual(tol);
     }
-    expect(await storeRotation(page)).toBe(135);
+    expect(Math.abs((await storeRotation(page)) - 123)).toBeLessThanOrEqual(slack(45, 12));
   });
 
   test('off in Settings, two fingers only zoom and pan', async ({ page }) => {
