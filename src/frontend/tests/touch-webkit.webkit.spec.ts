@@ -172,7 +172,7 @@ test.describe('WebKit / iPadOS', () => {
     await expect(page.locator('.board-panel-canvas canvas').first()).toBeVisible();
     expect(await zoomPct(page)).toBeGreaterThan(0);
   });
-  test('a gesture that turns the fingers turns the board — CCW-positive per WebKit, so −45 reads as 45° clockwise (33° after the 12° unlock)', async ({ page }) => {
+  test('a gesture that turns the fingers turns the board — GestureEvent.rotation is CW-positive, so +45 reads as 45° clockwise (33° after the 12° unlock)', async ({ page }) => {
     await openBoard(page);
     const r = (await page.locator('.board-panel-canvas').boundingBox())!;
     const at = { x: r.x + r.width / 2, y: r.y + r.height / 2 };
@@ -187,10 +187,10 @@ test.describe('WebKit / iPadOS', () => {
     const before = await rootDeg();
     await gestureOn(page, 'gesturestart', 1, at, 0);
     // One-degree steps, so the unlock fires at 12° exactly and the arithmetic below is exact.
-    for (let i = 1; i <= 45; i++) await gestureOn(page, 'gesturechange', 1, at, -i);
+    for (let i = 1; i <= 45; i++) await gestureOn(page, 'gesturechange', 1, at, i);
     // Rotation starts locked and unlocks 12° in, turning on from there.
     expect(Math.abs((await rootDeg()) - before - (45 - 12))).toBeLessThan(0.5);
-    await gestureOn(page, 'gestureend', 1, at, -45);
+    await gestureOn(page, 'gestureend', 1, at, 45);
     await page.waitForTimeout(200);
     const stored = await page.evaluate(() => (window as unknown as { __boardStore: { rotation: number } }).__boardStore.rotation);
     expect(Math.abs(stored - (45 - 12))).toBeLessThan(0.5);

@@ -516,7 +516,13 @@ export class BoardRenderer {
    *  the pinch writes the viewport: a store commit per move would run the
    *  whole onBoardUpdate — net-line re-projection, ghosts, a full
    *  renderSelection — for every finger movement. */
-  private liveRotate: { engaged: boolean; appliedRad: number; baseRad: number; midX: number; midY: number } | null = null;
+  private liveRotate: {
+    engaged: boolean; appliedRad: number; baseRad: number; midX: number; midY: number;
+    /** Which stream drives it, and the last raw angle that stream reported —
+     *  for the one summary line per gesture in the Debug log, which is how a
+     *  sign or ownership question gets settled on the device itself. */
+    stream: 'pointer' | 'gesture'; rawDeg: number;
+  } | null = null;
   /** Locked (the starting state, `rotationLockStore`): the fingers must turn
    *  this far before rotation unlocks — and then the board turns on from
    *  where it is, no catch-up jump (`baseRad`). */
@@ -2170,11 +2176,19 @@ export class BoardRenderer {
       this.viewport.x += anchor.x - gestureAnchor.x;
       this.viewport.y += anchor.y - gestureAnchor.y;
       gestureAnchor = anchor;
-      // GestureEvent.rotation is cumulative degrees since gesturestart with
-      // counter-clockwise POSITIVE (Apple's documented convention), the
-      // opposite of the y-down screen angle — hence the sign.
+      // GestureEvent.rotation is cumulative degrees since gesturestart,
+      // CLOCKWISE positive: Apple's own sample (Safari Web Content Guide,
+      // "Handling Events") applies `rotate(event.rotation + "deg")` and the
+      // element follows the fingers, and CSS rotate() is CW-positive. The
+      // first cut negated it on the strength of a doc sentence, and since
+      // which stream owns a pinch on iPadOS depends on whether the engine
+      // claims it before the second pointerdown arrives, the board turned
+      // the wrong way on exactly the gestures that came with movement
+      // (2026-09-28). The pointer path's screen angle is CW-positive too,
+      // so the two streams now agree; the per-gesture Debug line records
+      // raw vs applied in case a device disagrees.
       if (typeof e.rotation === 'number' && Number.isFinite(e.rotation)) {
-        this.rotateLive(-e.rotation * Math.PI / 180, anchor.x, anchor.y);
+        this.rotateLive(e.rotation * Math.PI / 180, anchor.x, anchor.y, 'gesture', e.rotation);
       }
       this.viewport.emit('moved', { viewport: this.viewport, type: 'pinch' });
       this.needsRender = true;
@@ -4129,13 +4143,15 @@ export class BoardRenderer {
    *  — for both roots in Butterfly, each about the same P. Screen-space
    *  finger angles are CW-positive in a y-down frame, and so is Pixi's
    *  rotation, so the two agree with no sign change. */
-  private rotateLive(targetRad: number, midX: number, midY: number): void {
+  private rotateLive(targetRad: number, midX: number, midY: number, stream: 'pointer' | 'gesture', rawDeg: number): void {
     if (!renderSettingsStore.settings.twoFingerRotate) return;
     const scene = this.activeScene;
     if (!scene) return;
-    const lr = this.liveRotate ?? (this.liveRotate = { engaged: false, appliedRad: 0, baseRad: 0, midX, midY });
+    const lr = this.liveRotate ?? (this.liveRotate = { engaged: false, appliedRad: 0, baseRad: 0, midX, midY, stream, rawDeg });
     lr.midX = midX;
     lr.midY = midY;
+    lr.stream = stream;
+    lr.rawDeg = rawDeg;
     if (!lr.engaged) {
       const turnedDeg = Math.abs(targetRad) * 180 / Math.PI;
       if (rotationLockStore.locked) {
@@ -4195,6 +4211,10 @@ export class BoardRenderer {
     const lr = this.liveRotate;
     this.liveRotate = null;
     const scene = this.activeScene;
+    if (lr && !lr.engaged && Math.abs(lr.rawDeg) >= 1) {
+      log.ui.log(`touch: two-finger turn ended without rotating (stream=${lr.stream}, raw=${lr.rawDeg.toFixed(1)}°, ` +
+        `${rotationLockStore.locked ? 'locked' : 'under the dead zone'})`);
+    }
     if (!lr || !lr.engaged || !scene) return;
     const mid = { x: lr.midX, y: lr.midY };
     const local = scene.root.toLocal(mid);
@@ -4211,7 +4231,13 @@ export class BoardRenderer {
     this.needsRender = true;
     this.netLinesDirty = true;
     this.overlayContentDirty = true;
-    log.ui.log(`touch: rotation committed at ${boardStore.rotation}°`);
+    // The one record of what a gesture was, readable off the device: the
+    // stream that owned it, the raw angle it reported (pointer: the pair's
+    // screen angle; gesture: GestureEvent.rotation as delivered) and what the
+    // board turned. Raw and applied disagreeing in sign is the sign bug.
+    log.ui.log(`touch: rotation committed at ${boardStore.rotation}° — stream=${lr.stream}, ` +
+      `raw=${lr.rawDeg.toFixed(1)}°, board turned ${(lr.appliedRad * 180 / Math.PI).toFixed(1)}° (CW+), ` +
+      `snap ${Math.abs(off) <= BoardRenderer.ROTATE_SNAP_DEG ? 'yes' : 'no'}`);
   }
 
   /** Two-finger pinch: zoom and pan, owned here rather than by pixi-viewport.
@@ -4274,7 +4300,7 @@ export class BoardRenderer {
       // read as a full turn.
       let dAng = Math.atan2(pb.y - pa.y, pb.x - pa.x) - p.startAngle;
       dAng = Math.atan2(Math.sin(dAng), Math.cos(dAng));
-      this.rotateLive(p.rotBaseRad + dAng, midX, midY);
+      this.rotateLive(p.rotBaseRad + dAng, midX, midY, 'pointer', dAng * 180 / Math.PI);
 
       this.viewport.emit('moved', { viewport: this.viewport, type: 'pinch' });
       this.needsRender = true;
