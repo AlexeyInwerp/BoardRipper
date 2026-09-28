@@ -2372,7 +2372,7 @@ export function SettingsPanel() {
         <Toggle label="Cap to 60 FPS" value={draft.cap60Fps} field="cap60Fps" onUpdate={updateGlobal}
           title="Limit the renderer to 60 frames per second. Disable to let the ticker run at the display refresh rate (120/144/240 Hz) — smoother but more CPU/GPU work" />
         <Toggle label="Touch device performance mode" value={draft.touchPerformanceMode} field="touchPerformanceMode" onUpdate={updateGlobal}
-          title="On a tablet (finger as the primary pointer): cap the board to 60 FPS instead of the panel's 120, turn off edge smoothing, and cap the render resolution at 1.5×. Board text keeps full resolution. No effect on a mouse or trackpad machine. Takes effect when a board panel is next opened." />
+          title="On a tablet (finger as the primary pointer): cap the board to 60 FPS instead of the panel's 120 and cap the render resolution at 1.5×. Edge smoothing stays on. Board text keeps full resolution. No effect on a mouse or trackpad machine. Takes effect when a board panel is next opened." />
         <Slider label="Label Atlas Resolution" value={draft.labelAtlasResolution} min={4} max={24} step={1} field="labelAtlasResolution" onUpdate={updateGlobal}
           title="Pixel multiplier for the BitmapFont atlases used by pin/net/part labels. Higher = sharper labels at deep zoom; texture memory grows ~quadratically. Default 8. Triggers a scene rebuild." />
         <Toggle label="Hide Text During Zoom" value={draft.hideTextDuringZoom} field="hideTextDuringZoom" onUpdate={updateGlobal}

@@ -41,10 +41,12 @@ describe('device profile', () => {
     expect(boardMaxFps(false, true)).toBe(0);
   });
 
-  it('trades all three costs on a tablet', () => {
+  it('trades refresh rate and resolution on a tablet — never edge smoothing', () => {
     pretend('coarse', 2);
     expect(boardPixelRatio(true)).toBe(1.5);
-    expect(boardAntialias(true)).toBe(false);
+    // Thin strokes need coverage sampling, not pixels: without MSAA the
+    // sub-pixel board outline draws as broken jaggies (iPad, 2026-09-28).
+    expect(boardAntialias(true)).toBe(true);
     expect(boardMaxFps(false, true)).toBe(60);
   });
 

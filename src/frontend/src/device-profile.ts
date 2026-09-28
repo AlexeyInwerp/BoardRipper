@@ -16,10 +16,11 @@
  *    multiplicative with the others.
  *
  * `touchPerformanceMode` (Settings ▸ Performance & Debug, on by default) trades
- * the three of them back: 60 fps, no MSAA, and a 1.5× render resolution ceiling
- * for the WebGL board. Board *text* is unaffected — the Canvas2D label overlay
- * keeps its own full device pixel ratio — so the visible cost is slightly
- * softer copper and silk, not blurry labels.
+ * two of them back: 60 fps and a 1.5× render resolution ceiling for the WebGL
+ * board. MSAA stays on — see `boardAntialias` for why the third trade was a
+ * mistake. Board *text* is unaffected — the Canvas2D label overlay keeps its
+ * own full device pixel ratio — so the visible cost is slightly softer copper
+ * and silk, not blurry labels.
  */
 
 /** True for a phone or tablet — not for a laptop with a touchscreen bolted on,
@@ -59,13 +60,19 @@ export function boardPixelRatio(touchPerfMode: boolean): number {
   return dpr;
 }
 
-/** Whether to ask for a multisampled default framebuffer. MSAA on a tile GPU
- *  is paid in tile-memory bandwidth on every resolve, which is exactly the
- *  budget a 22 Mpx 120 Hz tablet has none of — and at DPR ≥ 1.5 the
- *  supersampling from the device pixel ratio already hides most of what MSAA
- *  would smooth. */
-export function boardAntialias(touchPerfMode: boolean): boolean {
-  return !(touchPerfMode && isTouchPrimary());
+/** Whether to ask for a multisampled default framebuffer. Always — the touch
+ *  profile used to turn it off, on the theory that MSAA on a tile GPU is paid
+ *  in bandwidth on every resolve and that a 1.5× pixel ratio hides most of
+ *  what it smooths. Both halves were wrong (2026-09-28, iPad): a tile-based
+ *  deferred GPU resolves multisampling *inside* tile memory, which is exactly
+ *  why Apple documents MSAA as cheap on its GPUs; and the board's thin
+ *  strokes — the 3-mil outline is sub-pixel at any overview zoom — need the
+ *  coverage sampling, not the resolution: without it they draw as broken
+ *  1-px jaggies at every zoom, and a 1.5→2 CSS upscale on top makes their
+ *  width uneven. The profile keeps the two costs that are real on an A12Z,
+ *  the 120 Hz refresh and the fragment count. */
+export function boardAntialias(_touchPerfMode: boolean): boolean {
+  return true;
 }
 
 /** Ticker cap in fps (PixiJS reads 0 as uncapped). A 120 Hz ProMotion panel

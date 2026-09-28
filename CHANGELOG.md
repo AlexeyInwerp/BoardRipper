@@ -19,6 +19,11 @@
   before the freeze begins.
 - **The "gpu idle" readout is gone from the debug HUD.** The value it read
   is cleared every frame, so it never showed anything.
+- **Lines on a tablet are smooth again.** The touch performance profile
+  turned off edge smoothing for the board, which left every thin line —
+  the board outline first of all — jagged and at an uneven width. Edge
+  smoothing stays on; the profile keeps its 60 FPS cap and 1.5× render
+  resolution ceiling.
 
 ## v0.43.4 — 2026-09-23
 
