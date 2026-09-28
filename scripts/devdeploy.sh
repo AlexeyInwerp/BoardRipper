@@ -3,9 +3,18 @@
 # (rd-nas:1234). The local half of scripts/devdeploy-remote.sh, which until now
 # had no caller — the image had to be built, saved, copied and loaded by hand.
 #
-#   scripts/devdeploy.sh              # build, ship, redeploy, wait for health
+#   scripts/devdeploy.sh --head       # PRE-FLIGHT: build exactly `git HEAD`, ship, redeploy
+#   scripts/devdeploy.sh              # build the working tree (uncommitted edits included)
 #   scripts/devdeploy.sh --test       # …then run the WebKit iPad suite against it
 #   scripts/devdeploy.sh --no-build   # ship the boardripper-dev:latest already built
+#
+# The rule (2026-09-28): everything staged for an update is on main and built to
+# :1234 with --head for a final pre-flight test on the real devices, and the
+# release is cut only after that test. --head builds from `git archive HEAD`, so
+# an uncommitted edit sitting in the IDE cannot ride into the pre-flight image
+# and what is on :1234 is exactly what main says it is. Every Dockerfile input
+# (src/, Board Database/boards.db, etc-passwd, patches) is tracked, which is
+# what makes the archive a complete build context.
 #
 # This is the touchscreen test target: the machine you are reading this on
 # cannot reproduce a tablet, and WebKit's Mac port cannot reproduce iPadOS.
@@ -30,10 +39,12 @@ set -euo pipefail
 
 BUILD=1
 RUN_TESTS=0
+FROM_HEAD=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --test)     RUN_TESTS=1; shift;;
     --no-build) BUILD=0; shift;;
+    --head)     FROM_HEAD=1; shift;;
     -h|--help)  sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
@@ -63,8 +74,20 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 if [ "$BUILD" = 1 ]; then
-  echo "[dev] Building $IMAGE for linux/amd64 from the working tree…"
-  docker buildx build --platform linux/amd64 -t "$IMAGE" --load "$REPO_ROOT"
+  CONTEXT="$REPO_ROOT"
+  if [ "$FROM_HEAD" = 1 ]; then
+    HEAD_SHA="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+    if [ -n "$(git -C "$REPO_ROOT" status --short --untracked-files=no)" ]; then
+      echo "[dev] NOTE: working tree has uncommitted changes — they are NOT in this build (HEAD $HEAD_SHA is)."
+    fi
+    CONTEXT="$TMP/head"
+    mkdir -p "$CONTEXT"
+    git -C "$REPO_ROOT" archive HEAD | tar -x -C "$CONTEXT"
+    echo "[dev] Building $IMAGE for linux/amd64 from git HEAD ($HEAD_SHA)…"
+  else
+    echo "[dev] Building $IMAGE for linux/amd64 from the working tree…"
+  fi
+  docker buildx build --platform linux/amd64 -t "$IMAGE" --load "$CONTEXT"
 fi
 
 arch="$(docker image inspect "$IMAGE" --format '{{.Architecture}}')"

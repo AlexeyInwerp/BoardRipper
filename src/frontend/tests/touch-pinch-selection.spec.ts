@@ -228,17 +228,33 @@ test.describe('touch input', () => {
     await touch(cdp, 'touchEnd', []);
     await page.waitForTimeout(60);
     // The board is still moving, so where the part is at tap time cannot be
-    // predicted from here; sweep taps across the row it glides along and stop
-    // at the first that selects. Before the fix no tap in the sweep selected —
-    // every one of them landed during the glide, and every one was withheld.
-    let hit: number | null = null;
-    for (let dx = 60; dx <= 420 && hit === null; dx += 30) {
+    // predicted from here; sweep taps across the row it glides along, and
+    // count only taps issued WHILE it is still moving — read off the viewport
+    // itself (the Pixi app is reachable through the DEV registry). A tap after
+    // the glide has ended selects through pixi-viewport's own `clicked` and
+    // proves nothing; the first version of this test passed against the
+    // unfixed code for exactly that reason.
+    const viewportX = () => page.evaluate(() => {
+      const refs = (window as unknown as { __brAppRefs?: { deref(): { stage: { children: { x: number }[] } } | undefined }[] }).__brAppRefs ?? [];
+      const app = refs.map(r => r.deref()).find(Boolean);
+      return app ? app.stage.children[0].x : NaN;
+    });
+    let hitWhileGliding: number | null = null;
+    let tapsWhileGliding = 0;
+    let lastX = await viewportX();
+    for (let dx = 60; dx <= 420 && hitWhileGliding === null; dx += 30) {
       await touch(cdp, 'touchStart', [{ x: c.x + dx, y: c.y }]);
       await touch(cdp, 'touchEnd', []);
-      await page.waitForTimeout(120);
-      hit = await selectedPart(page);
+      await page.waitForTimeout(60);
+      const x = await viewportX();
+      const moving = Math.abs(x - lastX) > 0.5;
+      lastX = x;
+      if (!moving) break;                 // glide over — later taps are ordinary
+      tapsWhileGliding++;
+      hitWhileGliding = await selectedPart(page);
     }
-    expect(hit, 'a tap during the glide should select the part under it').not.toBeNull();
+    expect(tapsWhileGliding, 'the sweep should have tapped while the board was still gliding').toBeGreaterThan(0);
+    expect(hitWhileGliding, 'a tap during the glide should select the part under it').not.toBeNull();
   });
 
   /** The touch context menu is a long-press. It is the only way to reach the
