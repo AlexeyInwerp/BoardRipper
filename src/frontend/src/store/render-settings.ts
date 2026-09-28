@@ -378,6 +378,12 @@ export interface RenderSettings {
    *  `ROTATE_SNAP_DEG`, otherwise kept as is ("unlocked"). A dead zone keeps
    *  an ordinary pinch-zoom from wobbling. Off = pinch only. */
   twoFingerRotate: boolean;
+  /** While rotation is locked, the fingers must turn this many degrees
+   *  before it unlocks (every pinch turns a little). */
+  rotateUnlockDeg: number;
+  /** A committed angle within this many degrees of 0/90/180/270 snaps to
+   *  it; 0 never snaps. */
+  rotateSnapDeg: number;
   /** What Shift + Scroll does on the board. Default 'pan': every browser
    *  turns Shift+wheel into a horizontal `deltaX`, so a pan here follows the
    *  OS's own horizontal-scroll gesture — binding it to zoom takes that
@@ -716,6 +722,8 @@ export const DEFAULTS: RenderSettings = {
   smoothZoom: true,
   twoFingerPan: true,
   twoFingerRotate: true,
+  rotateUnlockDeg: 12,
+  rotateSnapDeg: 10,
   wheelShiftAction: 'pan',
   wheelMetaAction: 'zoom',
   wheelDetection: false,

@@ -524,11 +524,10 @@ export class BoardRenderer {
     stream: 'pointer' | 'gesture'; rawDeg: number;
   } | null = null;
   /** Locked (the starting state, `rotationLockStore`): the fingers must turn
-   *  this far before rotation unlocks — and then the board turns on from
-   *  where it is, no catch-up jump (`baseRad`). */
-  private static readonly ROTATE_UNLOCK_DEG = 12;
-  /** Unlocked: a small dead zone so a pinch-zoom's wobble does not drift a
-   *  free angle by a degree or two per pinch. */
+   *  `renderSettings.rotateUnlockDeg` before rotation unlocks — and then the
+   *  board turns on from where it is, no catch-up jump (`baseRad`).
+   *  Unlocked: this small dead zone, so a pinch-zoom's wobble does not
+   *  drift a free angle by a degree or two per pinch. */
   private static readonly ROTATE_DEAD_ZONE_DEG = 2;
   /** A two-finger double-tap toggles the lock: two taps of ≤ TAP_MS with the
    *  fingers travelling no further than a tap may, within DOUBLE_MS. */
@@ -545,8 +544,6 @@ export class BoardRenderer {
   private twoFingerMaxTravel = 0;
   private lastTwoFingerTapAt = 0;
   private touchDownPos = new Map<number, { x: number; y: number }>();
-  /** A committed angle this close to a multiple of 90° snaps to it. */
-  private static readonly ROTATE_SNAP_DEG = 10;
   /** True once two or more fingers have been down during the gesture in
    *  progress, and until the next gesture begins.
    *
@@ -4192,7 +4189,7 @@ export class BoardRenderer {
     if (!lr.engaged) {
       const turnedDeg = Math.abs(targetRad) * 180 / Math.PI;
       if (rotationLockStore.locked) {
-        if (turnedDeg < BoardRenderer.ROTATE_UNLOCK_DEG) return;
+        if (turnedDeg < renderSettingsStore.settings.rotateUnlockDeg) return;
         // Unlock, and turn on from here — the 12° already turned are the
         // unlock gesture, not rotation the board should catch up on.
         rotationLockStore.setLocked(false);
@@ -4259,7 +4256,11 @@ export class BoardRenderer {
     deg = ((deg % 360) + 360) % 360;
     const nearest = Math.round(deg / 90) * 90;
     const off = ((deg - nearest) % 360 + 540) % 360 - 180;
-    if (Math.abs(off) <= BoardRenderer.ROTATE_SNAP_DEG) deg = nearest % 360;
+    // A committed angle within the snap window of a right angle squares up;
+    // a window of 0 never snaps.
+    const snapDeg = renderSettingsStore.settings.rotateSnapDeg;
+    const snapped = snapDeg > 0 && Math.abs(off) <= snapDeg;
+    if (snapped) deg = nearest % 360;
     boardStore.setRotation(deg);
     const now = scene.root.toGlobal(local);
     this.viewport.x += mid.x - now.x;
@@ -4274,7 +4275,7 @@ export class BoardRenderer {
     // board turned. Raw and applied disagreeing in sign is the sign bug.
     log.ui.log(`touch: rotation committed at ${boardStore.rotation}° — stream=${lr.stream}, ` +
       `raw=${lr.rawDeg.toFixed(1)}°, board turned ${(lr.appliedRad * 180 / Math.PI).toFixed(1)}° (CW+), ` +
-      `snap ${Math.abs(off) <= BoardRenderer.ROTATE_SNAP_DEG ? 'yes' : 'no'}`);
+      `snap ${snapped ? 'yes' : 'no'}`);
   }
 
   /** Two-finger pinch: zoom and pan, owned here rather than by pixi-viewport.

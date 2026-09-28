@@ -2372,7 +2372,11 @@ export function SettingsPanel() {
         <Toggle label="Cap to 60 FPS" value={draft.cap60Fps} field="cap60Fps" onUpdate={updateGlobal}
           title="Limit the renderer to 60 frames per second. Disable to let the ticker run at the display refresh rate (120/144/240 Hz) — smoother but more CPU/GPU work" />
         <Toggle label="Two-finger rotation" value={draft.twoFingerRotate} field="twoFingerRotate" onUpdate={updateGlobal}
-          title="On a touch screen, turning two fingers turns the board about the point between them. Starts locked: a turn past 12° unlocks it, a two-finger double-tap locks it again and squares the board. The angle is kept when the fingers lift, snapped to the nearest right angle when within 10°. Off: two fingers only zoom and pan." />
+          title="On a touch screen, turning two fingers turns the board about the point between them. Starts locked: a turn past the unlock angle unlocks it, a two-finger double-tap locks it again and squares the board. The angle is kept when the fingers lift, snapped to the nearest right angle when within the snap window. Off: two fingers only zoom and pan." />
+        <Slider label="Rotation unlock angle" value={draft.rotateUnlockDeg} min={4} max={45} step={1} field="rotateUnlockDeg" onUpdate={updateGlobal} unit="°"
+          title="While rotation is locked, two fingers must turn this far before it unlocks. Every pinch turns a little; too low and zooming starts rotating, too high and unlocking takes a deliberate twist. Default 12°." />
+        <Slider label="Rotation snap window" value={draft.rotateSnapDeg} min={0} max={45} step={1} field="rotateSnapDeg" onUpdate={updateGlobal} unit="°"
+          title="When the fingers lift within this many degrees of 0°, 90°, 180° or 270°, the board snaps to that right angle. 0 never snaps. Default 10°." />
         <Toggle label="Touch device performance mode" value={draft.touchPerformanceMode} field="touchPerformanceMode" onUpdate={updateGlobal}
           title="On a tablet (finger as the primary pointer): cap the board to 60 FPS instead of the panel's 120 and cap the render resolution at 1.5×. Edge smoothing stays on. Board text keeps full resolution. No effect on a mouse or trackpad machine. Takes effect when a board panel is next opened." />
         <Toggle label="Edge smoothing (MSAA)" value={draft.boardAntialiasing} field="boardAntialiasing" onUpdate={updateGlobal}

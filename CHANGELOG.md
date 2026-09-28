@@ -1,6 +1,6 @@
 # BoardRipper changelog
 
-## v0.45.0 — unreleased
+## v0.45.0 — 2026-09-28
 
 ### Added
 
@@ -11,8 +11,9 @@
   is kept when the fingers lift, snapped to the nearest right angle when
   within 10°; the rotate buttons step to the next right angle from any
   angle. A double-tap with two fingers locks rotation again and squares the
-  board. Settings ▸ Performance & Debug ▸ Two-finger rotation turns it off.
-  In Butterfly the whole spread turns as one picture.
+  board. Settings ▸ Performance & Debug ▸ Two-finger rotation turns it off,
+  and the unlock angle and the snap window are sliders there (a snap window
+  of 0 never snaps). In Butterfly the whole spread turns as one picture.
 
 ## v0.44.0 — 2026-09-28
 
