@@ -165,12 +165,20 @@ export function buildIndex(buf: Buffer, opts: { below?: number; above?: number }
   const hdr = parseHeader(new AllegroStream(ab));
   const { strings, end } = parseStrings(buf, hdr.stringsCount);
   const globalAddend = hdr.LL_0x06.head - end;
-  const below = opts.below ?? 0x100000, above = opts.above ?? 0x800000;
+  // Default window: −1 MB / +8 MB around the LL addend (the shipped parser's).
+  // PROBE_BELOW / PROBE_ABOVE (hex) widen it: the Kronos tracks at the file's
+  // tail sit in pools at −0x1EA79E0 and +0xA38068, outside the default window.
+  const below = opts.below ?? (process.env.PROBE_BELOW ? parseInt(process.env.PROBE_BELOW, 16) : 0x100000);
+  const above = opts.above ?? (process.env.PROBE_ABOVE ? parseInt(process.env.PROBE_ABOVE, 16) : 0x800000);
   const index = new Map<number, number | number[]>();
   const ofType = new Map<number, number[]>();
   for (let off = 0; off + 8 <= buf.length; off += 4) {
     const b1 = buf[off + 1];
-    if (buf[off] !== 0 && !(b1 === 0xc8 && (buf[off] & ~0x14) === 0)) continue;
+    // Byte 0 is a flag byte on BLK_0xC8 pads (0x04 / 0x10) AND on [0x14] tracks:
+    // the 6-mil DDR address tracks on Kronos read `04 14 06 00` — 975 of the
+    // oracle's segments hung off such tracks and were invisible to a byte-0 == 0
+    // scan (see 10-orphan-parents.ts).
+    if (buf[off] !== 0 && !((b1 === 0xc8 || b1 === 0x14) && (buf[off] & ~0x14) === 0)) continue;
     if ((b1 & 3) !== 0 || b1 === 0 || (b1 >> 2) > 0x3c) continue;
     const ok = HEADER_OK.get(b1);
     if (ok && !ok(buf[off + 2], buf[off + 3])) continue;

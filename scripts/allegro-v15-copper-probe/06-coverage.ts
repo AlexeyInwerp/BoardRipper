@@ -85,6 +85,7 @@ for (const o of tracks) {
 }
 console.log(`== traces ==\nv15 ETCH tracks: ${tracks.length} (empty ${emptyTracks}, broken chains ${brokenChains} — broke at type: ${[...brokenAt].map(([k, n]) => `${k}:${n}`).join(' ')}); segments walked: ${v15segs.length}; oracle segments: ${oracle.segments.length}`);
 console.log('track net route:', [...routeHist]);
+console.log('track header byte 0 (flag):', [...histogram(tracks.map(o => buf[o].toString(16)))], ' byte 3 (ETCH subclass = layer):', [...histogram(tracks.map(o => buf[o + 3]))].sort((a, b) => a[0] - b[0]));
 console.log('v15 segments per layer:', [...histogram(v15segs.map(s => s.layer))].sort((a, b) => a[0] - b[0]));
 console.log('oracle segments per layer:', [...histogram(oracle.segments.map(s => s.sub))].sort((a, b) => a[0] - b[0]));
 console.log('v15 segment types:', [...histogram(v15segs.map(s => s.t.toString(16)))]);

@@ -823,3 +823,452 @@ enter `bounds`.
   (their oracle tests skip), so this sub-variant's changes have not been
   re-measured on them. Re-run the oracle spec where those samples exist
   before a release that ships this.
+
+---
+
+## Copper, outline and layers (RE against the Kronos v17 re-save, 2026-09-28)
+
+Documentation only — no parser code was changed for this section. Every
+number below comes from the probe scripts in `scripts/allegro-v15-copper-probe/`
+(`cd src/frontend && npx vite-node ../../scripts/allegro-v15-copper-probe/<n>.ts`;
+`01-oracle-dump.ts` first, it writes `oracle.json` for the others). Sample:
+`samples/incoming/uncategorized/Jasper_Kronos.brd` (magic `0x0012050a`, 25.9 MB)
+against `Jasper_Kronos_v17.brd`, Allegro's own re-save of the same board, read
+by the shipped v16+ path: 4 ETCH layers `TOP, GND, VCC, BOTTOM`, 15,565 ETCH
+tracks with 46,843 line segments and no arcs, 6,539 vias, a 16-primitive
+outline (8 lines + 8 arcs; 81 points after linearisation), 366 pours.
+
+### 1. The oracle holds: same frame, same unit, same integers
+
+Both files carry `unitsDivisor = 10000` (raw units are 1/10000 mil), so a v17
+coordinate should appear in the v15 bytes **verbatim**. It does. For 300
+randomly chosen v17 trace segments, 300 via centres and the 16 outline
+primitives (all with non-round coordinates), the `(x, y)` i32 pair was searched
+at every byte alignment (`02-coord-search.ts`):
+
+| Oracle set | scale ×1: found once / several / never | ×10, ×100, ×1000 | float32 / float64 |
+|---|---|---|---|
+| trace start points (300) | 1 / 288 / 11 | 0 hits (most non-integral) | 0 / 0 |
+| via centres (300) | 1 / 299 / 0 | 0 | 0 / 0 |
+| outline vertices (16) | 0 / 16 / 0 | 0 | 0 / 0 |
+
+"Several" is expected: an endpoint is shared with the neighbouring segment, a
+pad or a via, and the outline is drawn three times (§7). The 11 "never" are the
+2.7 % of segments whose coordinates the re-save rounded by up to 10 raw units
+(0.001 mil) — see §8. Every hit is 4-aligned, and in 277 of 290 cases the
+second endpoint follows the first immediately (`x1 y1 x2 y2`), which is what
+gave the segment record away.
+
+### 2. The v15 type byte is the v16 block type × 4
+
+Every copper record found here obeys one rule that the earlier sections of this
+document observed piecemeal (`0x18` ↔ `BLK_0x06`, `0xAC` ↔ `0x2B`, `0xB4` ↔
+`0x2D`, `0x1C` ↔ `0x07`, `0x6C` ↔ `0x1B`, `0xC8` ↔ `0x32`, `0x10` ↔ `0x04`,
+`0x34` ↔ `0x0D`, `0x20` ↔ `0x08`, `0x44` ↔ `0x11`) and that the copper types
+now confirm without exception:
+
+> **prefix byte 1 = v16 block type << 2.** The v15 header is
+> `[flag][type<<2][class][subclass]`, i.e. v16's `[type][class][subclass]`
+> with the type widened to a byte pair and the class/subclass pair
+> (`LAYER_INFO`) kept where v16 has it.
+
+| v15 byte 1 | v16 type | Record | Kronos count | Header bytes 2/3 |
+|---|---|---|---|---|
+| `0x14` | `0x05` | track (etch container) | 16,114 | class `0x06` ETCH, subclass = layer index |
+| `0x54` / `0x58` / `0x5c` | `0x15` / `0x16` / `0x17` | line segment | 58,529 / 155,749 / 57,016 | `00 00` |
+| `0x04` | `0x01` | arc | 22,744 | `00` / subtype (`0x40` = CW) |
+| `0xcc` | `0x33` | via | 6,539 | class `0x12` VIA_CLASS / `0x10 0x14 0x04 0x00` |
+| `0x50` | `0x14` | graphics container | 47,740 | class / subclass of the drawing |
+| `0xa0` | `0x28` | shape (pour, keepin, …) | 9,020 | class / subclass |
+| `0xd0` | `0x34` | void / keepout in a shape | 8,237 | class `0x06`, layer |
+| `0x10` | `0x04` | net assignment | 1,315 | `00 00` |
+| `0x6c` | `0x1B` | net | 1,279 | `00 00` |
+| `0x70` | `0x1C` | padstack | 121 | `00 00` |
+| `0xa8` | `0x2A` | layer list | 32 | byte 2 = entry count |
+| `0x98` | `0x26` | pour table (see §9) | 2,140 | `00 00` |
+
+The census counts the header shape `00 XX YY ZZ` at 4-aligned offsets whose
+`+4` key sits within an addend window of the LL pools; a few dozen per type are
+false headers (bytes 2/3 like `8e/08`), which is why the pointer resolver below
+validates bytes 2/3 per type. The **byte-0 flag** observed on `BLK_0xC8` (`0x04`,
+`0x10`) also occurs on tracks: 48 Kronos tracks read `04 14 06 xx` (all the
+6-mil DDR address tracks on TOP), 11 read `10 14 …` and 4 `14 14 …`. A scan that
+requires byte 0 == 0 loses 975 of the oracle's segments through those 48
+tracks alone (`10-orphan-parents.ts`).
+
+### 3. Pointers: heap pools, addend drift, and why the copper needs no window
+
+`m_Key` is a heap address; `key − fileOffset` is constant only inside one
+allocation pool. Measured per type (`07-details.ts` §1, relative to the LL
+addend `0x083557f4` = `LL_0x06.head − stringTableEnd`):
+
+| Type | records | key − offset − LL addend: min … max | modes (4 KB bins) |
+|---|---|---|---|
+| `[0xb4]` 2D, `[0x6c]` net, `[0x70]` padstack | 2,074 / 1,279 / 121 | exactly 0 (+0x2b8 for padstacks) | one pool |
+| `[0x14]` track | 15,952 in the ±window | +0x334 … +0x6e96c | +0xe000, +0xf000, +0xa000, +0xd000 |
+| `[0x54/58/5c]` segment, `[0x04]` arc | 271k / 22.7k | +0x2f0 … +0x6eb38 | +0x6f000 (63k), +0x56000, +0x8000, +0x1b000 |
+| `[0xcc]` via | 6,537 | −0x7a98 … +0x51958 | +0xa000 (4,191), +0x10000 |
+| `[0x50]` container, `[0xa0]` shape | 47,740 / 9,020 | −0x88a2c … +0x677b94 | scattered |
+
+So the copper types are spread over dozens of pools within roughly ±0.5 MB of
+the LL addend — and **not only there**: of the 16,114 ETCH track headers in the
+file, 15,999 sit at +0 MB (1 MB bins), 92 at **−43 MB**, 7 at +10 MB and a
+dozen further out to −146 MB. The shipped `indexV15Pads` window (−1 MB / +8 MB)
+sees 15,951 of them; the 92 far-pool tracks carry ~140 oracle segments. For
+copper the resolver should therefore not filter candidates by addend at all
+and rely on structure instead: byte-0 ∈ {0, 0x04, 0x10, 0x14}, byte 1 a
+multiple of 4 with `byte1 >> 2 ≤ 0x3C`, per-type bytes 2/3 (`HEADER_OK` in
+`lib.ts`), and — decisive — **every chain is a ring that must close on its
+parent key** (§5), which a false candidate never does. A type-blind first-match
+index broke 70 of 15,951 track chains on junk twins; the type-aware lookup
+(`recOfTypes(key, {0x54,0x58,0x5c,0x04})`) leaves 3.
+
+### 4. Record layouts
+
+All offsets from the record start; u32 little-endian; coordinates i32 in
+raw units (÷10000 = mils). "→ [T]" = pointer whose candidate carries type
+byte T. Percentages are field-type histograms over every record of the type
+(`03-record-shapes.ts`).
+
+**`[0x14]` track — v16 `BLK_0x05` — 48 bytes** (v16.5: 60)
+
+```
++0x00  00|04|10|14  14  06  LL      byte 0 flag; class 0x06 ETCH; LL = layer index (subclass)
++0x04  m_Key
++0x08  next member of the net's connectivity ring → [0x14] 61% / [0xb8] 13% / [0xc8] 12% / [0xcc] 12%
++0x0C  → [0x10] net assignment   (100 % of the 16,098 in-window tracks resolve a net through it)
++0x10  0
++0x14  object at the chain START → [0xc8] pad (at first point, 5,398) / [0xcc] via (2,977) / [0xb8] / [0xa0] pour / 0
++0x18  0 (59 %) or → [0x14] track   (the track met at the start, when the connection is a T)
++0x1C  object at the chain END   → [0xcc] via (at last point, 4,070) / [0xc8] pad (3,232) / [0xb8] / [0xa0] / 0
++0x20  0 (41 %) or → [0x14] track   (the track met at the end)
++0x24  → first segment [0x54/0x58/0x5c/0x04]   (15,934 / 15,951 point at a segment whose +0x0C is this track)
++0x28  0 (66 %) or → [0x0c] attribute record (v16 0x03), 16 bytes
++0x2C  0
+```
+
+Tracks are not stored contiguously: a track is usually followed in the file by
+its own segments (stride histogram 48 / 88 / 128 …), so a sequential walker
+cannot be used — the header scan plus the ring is the way in. Non-ETCH tracks
+exist (`3e/03`, a handful) and are ignored by class.
+
+**`[0x54]` / `[0x58]` / `[0x5c]` line segment — v16 `BLK_0x15/0x16/0x17` — 40 bytes** (v16.5: 40)
+
+```
++0x00  00 54|58|5c 00 00
++0x04  m_Key
++0x08  next segment in the chain → same types; the LAST one points at the parent ([0x50] 34 % / [0x14] 4 % / [0xa0] 2 %)
++0x0C  parent → [0x50] 60 % / [0x14] 15 % / [0xa0] 14 % / [0xd0] 3 %
++0x10  width (raw units; 0 on outline and silkscreen lines)
++0x14  0
++0x18  x1    +0x1C  y1    +0x20  x2    +0x24  y2
+```
+
+v16 has `flags` before `width`; v15 has width first and the zero after. The
+three types carry the same geometry (v16 distinguishes them by direction
+class: 0x15 horizontal, 0x16 diagonal, 0x17 vertical — Kronos matches that:
+every matched `[0x54]` is a v17 `0x15`, etc., 45,544 / 45,544).
+
+**`[0x04]` arc — v16 `BLK_0x01` — 68 bytes** (v16.5: 80)
+
+```
++0x00  00 04 00 SS      SS = subtype: 0x00 CCW, 0x40 CW (bit 6, as in v16 m_SubType)
++0x04  m_Key
++0x08  next             (chain, as for lines)
++0x0C  parent
++0x10  0
++0x14  width
++0x18  x1  +0x1C  y1  +0x20  x2  +0x24  y2
++0x28  centre x   (i32 — NOT the two-word double v16 uses)
++0x2C  centre y   (i32)
++0x30  radius     (i32)
++0x34  bbox x1  +0x38  bbox y1  +0x3C  bbox x2  +0x40  bbox y2
+```
+
+The 12 bytes saved against v16 are exactly the three doubles becoming i32s.
+Kronos has no arcs under ETCH tracks (neither file); 22,744 arcs hang off
+`[0xd0]` voids (via anti-pads on the plane layers: full circles with start ==
+end, centre = via centre, r = 16.0002 mil), `[0xa0]` shapes and `[0x50]`
+drawings — the outline arcs among them (§7).
+
+**`[0xcc]` via — v16 `BLK_0x33` — 68 bytes** (v16.5: 72)
+
+```
++0x00  00 cc 12 SS      class 0x12 VIA_CLASS; SS = subclass, equal to the v17 via's layerInfo.subclass
+                        (0x10: 5,988, 0x14: 339, 0x04: 158, 0x00: 51 — identical histogram in v17)
++0x04  m_Key
++0x08  next member of the net ring → [0xcc] 54 % / [0x14] 26 % / [0xc8] 16 %
++0x0C  → [0x10] net assignment  (6,500 / 6,537; the 37 without one have no net in v17 either)
++0x10  0
++0x14  x     +0x18  y        (centre, board-absolute)
++0x1C  connection → [0x24] (v16 0x09) 68 % / [0x14] track 22 %
++0x20  → [0x70] padstack (99 %)
++0x24  0 / → [0x0c] attribute / → [0xc0] text
++0x28  0
++0x2C  0 or unresolved
++0x30  0 / small
++0x34  bbox x1  +0x38  bbox y1  +0x3C  bbox x2  +0x40  bbox y2   (centre ± pad radius)
+```
+
+Compared with v16 (`key next netPtr unknown2 unknownPtr1 x y connection padstack …`)
+v15 drops `unknownPtr1` before the coordinates and one word after.
+
+**`[0x70]` padstack — v16 `BLK_0x1C` — variable, partially read**
+
+```
++0x00  00 70 00 00
++0x04  m_Key
++0x08  next → [0x70]
++0x0C  string id → padstack name  ("VIA-22R10", "TP-32R-BOT-OSP", "R45X65", …; 121 names)
++0x10  drill diameter (100000 = 10 mil on VIA-22R10; 0 on the SMD test pad)
++0x18 / +0x1C  350000 / 350000 on VIA-22R10 (35 mil — anti-pad or thermal?, unverified)
++0x54  shape code of the first pad-layer entry (2 on both records read: circle)
++0x58 / +0x5C  width / height of that entry (220000×220000 = 22 mil; 320000 on the 32-mil test pad)
+       further per-layer entries repeat every 0x70 bytes (+0xc8, +0x1a8 …); record length not derived
+```
+
+**`[0x10]` net assignment — v16 `BLK_0x04` — 20 bytes** (v16.5: 20)
+
+```
++0x00  00 10 00 00
++0x04  m_Key
++0x08  → [0x6c] net (93 %)        v16: m_Next
++0x0C  → [0x6c] net (93 %)        the field the shipped R1/R5 routes read
++0x10  → first member of the ring: [0x14] track 74 % / [0xc8] pad 12 % / [0xcc] via 5 %
+```
+
+`[0x6c]` net (52 bytes) is as documented above: `+0x08` next net, `+0x0C`
+string id, `+0x10` flags, `+0x14` → its `[0x10]` assignment.
+
+**`[0x50]` graphics container — v16 `BLK_0x14` — 28 bytes** (v16.5: 32)
+
+```
++0x00  00 50 CC SS      CC/SS = class / subclass of the drawing (01/fd = board outline, 09/f7 silk top, 07/xx fab …)
++0x04  m_Key
++0x08  next container   (per owner)
++0x0C  owner:  → [0xb4] placed instance or [0xac] footprint def for package geometry;
+               for board-level drawings a key no pool window knows (0x0627c064 on every board-level
+               container — presumably the board object itself)
++0x10  → first primitive [0x54/0x58/0x5c/0x04]
++0x14  0     +0x18  0
+```
+
+**`[0xa0]` shape — v16 `BLK_0x28` — 64 bytes** (v16.5: 68)
+
+```
++0x00  00 a0 CC SS
++0x04  m_Key
++0x08  next shape → [0xa0] 75 % / [0xb4] 18 % (a footprint's shape chain ends on its instance)
++0x0C  owner  → [0xb4] 25 % / unresolved 68 % (board-level, see [0x50] +0x0C)
++0x10  0
++0x14  0 / → [0x24] / → [0x14]
++0x18  → first [0xd0] void (v16 firstKeepoutPtr)
++0x1C  → first primitive (v16 firstSegmentPtr; [0x04] 72 % — pours are mostly arcs+lines)
++0x20  0
++0x24  small int (fill style?)
++0x28  0 / → [0x0c] attribute
++0x2C  → [0x98] (v16 0x26) 3 % / [0xb0] (v16 0x2C table) 3 % / 0      — the pour-net path, see §9
++0x30  bbox x1  +0x34  bbox y1  +0x38  bbox x2  +0x3C  bbox y2
+```
+
+One word fewer than v16 before `firstKeepoutPtr` (v16's `ptr3` is absent).
+
+**`[0xa8]` layer list — v16 `BLK_0x2A` — 4 + 36·n + 4 bytes**
+
+```
++0x00  00 a8 NN 00                  NN = entry count (u8 at byte 2; v16 reads a u16 there)
++0x04  entry 0:  32-byte name, NUL-terminated but NOT NUL-padded (the bytes after the terminator are
+                 uninitialised memory — "TOP LAYER TEXT\0y..aIt." in the BOARD_GEOMETRY list),
+                 then u32 properties
++0x04+36·i  entry i
++0x04+36·NN  m_Key                  ← the key comes AFTER the entries, as in v16
+```
+
+This is KiCad's pre-V165 layout (inline names) with the property word appended
+to each entry. Because the key is not at `+4`, the candidate index cannot find a
+`[0xa8]` by key; the header map pointer is located by searching for the key
+value and stepping back 36·NN + 4 bytes to the header (`05-outline-layers.ts`).
+
+### 5. Chains and rings
+
+- **Segment chain**: `container.+firstSeg → seg.+0x08 → … → key == container.key`.
+  The last segment's `next` is the parent, so the ring closes on the owner —
+  the same shape as the `BLK_0x2D → BLK_0xC8` pad ring. First-segment offset:
+  `[0x14]` +0x24, `[0x50]` +0x10, `[0xa0]` +0x1C. Every segment also carries the
+  owner in `+0x0C`. Chains are stored **reversed** relative to file order
+  (the record right after a track is its last segment).
+- **Layer**: a segment has no layer of its own — it is header byte 3 of the
+  `[0x14]` track that owns it (ETCH subclass, 0-based, `TOP = 0 … BOTTOM = 3`
+  on Kronos; the same `etchSubclassBase` rebasing the v16 assembler does
+  applies). A via's layer span is not decoded (`layers: []` as in v16).
+- **Net**: `track.+0x0C` / `via.+0x0C → [0x10] → +0x0C (or +0x08) → [0x6c] → string`.
+  Direct for 16,098 / 16,098 in-window tracks and 6,500 / 6,537 vias; the 37
+  vias without one are the 37 vias v17 also leaves unnamed (36 matched pairs
+  both empty). The connectivity **ring** `[0x10].+0x10 → member.+0x08 → … → [0x10]`
+  (members: tracks, vias, `[0xc8]` pads, `[0xb8]` junctions) is the fallback the
+  shipped R08 route already walks for pads; it was not needed for copper.
+- **Arc direction**: header byte 3 bit 6 (`0x40` = CW), verified on the outline:
+  the two arcs v17 marks `subType 64` are the two `00 04 00 40` records.
+
+### 6. Layer names
+
+The header layer map is **not at 0x428 in v15**. It starts at **0x470** — 18
+u32 (0x48 bytes) later than in v16/v17 — so `parseHeader()` reads ten leading
+zero slots and only the first fifteen real ones; the row "Layer map … Identical"
+in the Phase 0.5 table is wrong on that point. Aligned at 0x470 the 25 slots
+mirror v17's slot for slot (`05-outline-layers.ts` §A): slot 1 (BOARD_GEOMETRY)
+lists the same 27 user subclasses in the same order (`CONST_LINE … XDK_OUTLINE …
+TP-FUNC-X806774009`), slot 4 the 14 MANUFACTURING ones, slot 9 the 7
+PACKAGE_GEOMETRY ones, slot 13 `SILKSCREEN_TOP_NO, SILKSCREEN_BOT_NO`. The
+`a` word is not the entry count in either version (v15 slot 1: a=20, 27 entries).
+
+**ETCH names**: slot 6 (`LayerClass.ETCH`, the slot the v16 assembler reads
+first) holds `(a=0, ptr=0x09154680)`; that pointer is also the most-referenced
+one in the map (slots 5, 6, 12, 15, 18–21), exactly like v17's `0x55e76`. The
+key `0x09154680` occurs in the file at `0xddb4f4`, immediately after four
+36-byte entries; the header `00 a8 04 00` is at `0xddb460`:
+
+```
+0x00ddb460  00 a8 04 00  54 4f 50 00 …             header, count 4; "TOP"     props 0x00088001
+0x00ddb488               47 4e 44 00 …             "GND"     props 0x00000103
+0x00ddb4ac               56 43 43 00 …             "VCC"     props 0x00000103
+0x00ddb4d0               42 4f 54 54 4f 4d 00 …    "BOTTOM"  props 0x00108002
+0x00ddb4f4  80 46 15 09                            m_Key = 0x09154680
+```
+
+Order = stackup order = ETCH subclass order: `TOP, GND, VCC, BOTTOM`, 4/4
+against the oracle. The property word is only meaningful here (outer layers
+`0x…8001`/`0x…8002`, planes `0x103`); on the user-subclass lists it is
+uninitialised.
+
+### 7. Board outline
+
+The outline that v17 stores as a `0x28` shape on `BOARD_GEOMETRY / 0xEA` is, in
+v15, a **`[0x50]` graphics container on class `0x01` subclass `0xFD`** (file
+offset `0xa982c8`, key `0x08e0812c`), whose 16-primitive chain reproduces the
+v17 outline **exactly**: all 8 lines and 8 arcs by endpoints, all 8 arc centres
+and radii (1250000 / 3150000 / 1248031), both CW bits, width 0 everywhere. No
+`[0xa0]` shape and no record on subclass `0xEA` carries the board edge in v15.
+Reading: v16.6 introduced `DESIGN_OUTLINE`, which took code `0xFD` on
+BOARD_GEOMETRY and pushed `OUTLINE` to `0xEA`; in v15 `0xFD` is OUTLINE itself.
+This is one file's evidence — whether other v15 boards also use `0xFD` (or
+`0xEA`) is open; an implementation should accept both codes on class 1.
+
+Ranking the 8,180 class 1 / 4 / 0x15 containers and shapes by bbox area
+(`05-outline-layers.ts` §B) — the rule `extractOutline` uses for v16 — lists
+seven 16-primitive copies of the edge at the same area: subclasses `0xFD`
+and `0x0c` match the oracle 16/16, while `0x15`, `0x19`, `0x1a` are rounded
+copies (`103511800` for `103511811`). The user subclasses resolve through the
+BOARD_GEOMETRY list of §6: index 12 = `XDK_OUTLINE`, 21 = `XDK_OUTLINE_2`,
+25/26 = the two test-point layers — drawings that include the edge. **Trap:** two
+`[0x50]` on class 4 (DRAWING_FORMAT) / `0xFD` with 4 segments and a 33″ × 21″
+bbox (the drawing sheet frame, 0…330000000 × 0…210000000) out-rank the board
+by area 8:1. The v16 assembler accepts `DRAWING_FORMAT / 0xFD` and ranks by
+area, so applied to v15 as-is it would pick the sheet frame; in v17 that
+frame is not a `0x28` shape and never enters the ranking. Restrict to class
+`0x01` first, class 4 only as a fallback.
+
+### 8. Coverage
+
+Full-file header scan (256 MB addend window), type-aware lookups, chains as
+in §5 (`06-coverage.ts`, `08-unmatched.ts`; the default −1 MB/+8 MB window
+gives the second column):
+
+| | full scan | default window |
+|---|---:|---:|
+| `[0x14]` ETCH tracks found | 16,114 | 15,999 |
+| segments reached through the rings | 46,821 | 46,709 |
+| v17 segments (46,843) matched **exactly** by both endpoints | **45,544 (97.23 %)** | 45,476 (97.08 %) |
+| of those: width equal / layer equal / net equal / type class equal | 45,544 / 45,544 / 45,544 / 45,544 | same, all |
+| v17 segments matched within ≤ 10 raw units (0.001 mil), same layer + net | +1,255 → **46,799 (99.91 %)** | +1,220 |
+| v17 segments with no v15 counterpart | 44 (0.09 %) | 147 |
+| v15 segments with no v17 counterpart | 22 | 13 |
+| vias matched by centre | **6,536 / 6,539** | 6,536 |
+| via nets equal (incl. 36 both unnamed) / wrong | 6,536 / **0** | 6,536 / 0 |
+| outline primitives exact (lines, arcs, centres, radii, CW bits) | **16 / 16** | 16 / 16 |
+| ETCH layer names, in order | **4 / 4** | 4 / 4 |
+
+Not one matched segment or via disagrees on width, layer or net. The residue:
+
+- The 1,255 near-matches are the re-save's own rounding (787 within 2 units,
+  468 within 10) — `(11338622, 39788622)` in v15 for a 45° stub v17 writes one
+  unit off. They are the same segments; an exact-match test is simply too strict
+  for a re-save oracle.
+- 44 v17-only segments: 21 have no same-layer/net v15 candidate at all and 23
+  are far from any — mostly five-spoke GND stars on VCC/GND at one via
+  (`(93150000, 1950000)`), i.e. thermal ties the re-save materialised as
+  clines. With the default window the residue was 147, of which 67 had their
+  four coordinates in no v15 segment record at all (`09-oracle-only.ts`); the
+  other 80 hung off the far-pool tracks of §3.
+- 22 v15-only segments, all on BOTTOM: 13 are collinear pieces v17 merged
+  into one (`V_1P8` `(73123229…74550000, 39300000)` is two v15 records) and
+  9 come from the far −43 MB pool with no net (`w=20000`, likely stale).
+- Vias: 3 v17 vias missing — one mounting hole (padstack `0x4c06`, no net) and
+  two `VIA-22R10` at trace ends (`MC_A<5>`, `MB_CS1_N`) that exist in v15
+  only as segment endpoints; 3 v15 `[0xcc]` records with header byte 3 = 0x09
+  that are not vias (one at `(-116801536, 152226884)`).
+- With the full-file scan 16 tracks read as ring-dead / layer 5: junk
+  headers admitted by the wide window; they never close a ring and would be
+  rejected by the ring test.
+
+### 9. Open questions
+
+1. **Pour nets.** 337 `[0xa0]` shapes sit on class 6 (175 TOP, 3 GND, 48 VCC,
+   111 BOTTOM; v17 has 366 surfaces) and 333 of their chains walk (18,472
+   primitives). `+0x2C` points at a 20-byte `[0x98]` (v16 `0x26`) on 274 of
+   them, whose `+0x08` points back at the shape and `+0x0C` at an unresolved
+   key; the v16 path (`0x28 → 0x2C table → 0x37 → 0x1B`) has no obvious v15
+   twin yet. Evidence that would settle it: the v17 surface list's nets per
+   bbox, joined to the v15 shapes by bbox, then a field histogram over the
+   `[0x98]` records of same-net pours.
+2. **Padstack record length and per-layer entries** (§4): two records read; a
+   walk over all 121 with the v17 `0x1C` blocks as oracle (drill, shape, size)
+   would fix the layout.
+3. **Via layer span**: `[0xcc]` byte 3 equals v17's `layerInfo.subclass`
+   (`0x10 / 0x14 / 0x04 / 0x00`); what those codes mean (through / blind /
+   test pad) is not decoded in v16 either.
+4. **Outline subclass code across the corpus**: `0xFD` on the one v15 board
+   with an oracle; LA-7321P and v13tl-0629 should be checked for `0xFD` vs `0xEA`
+   on `[0x50]` class 1 (their `.cad` siblings carry a 4-vertex outline).
+5. **The far pools**: 92 tracks at −43 MB and a dozen further out. Whether
+   they are live copper (the DDR tracks they hold *are* in v17) or stale
+   allocations the writer flushed cannot be told from one file; the ring test
+   admits them, the wide window also admits junk. Cheap invariant to add: a
+   track's layer index must be < the ETCH list length.
+6. **`[0xb8]`** (v16 `0x2E`, 2,132 records) appears as a ring member between
+   tracks — a T-junction object. Not needed for drawing; noted for the
+   connectivity graph.
+7. The **first 10 slots of the header layer map** at 0x428–0x46f are zero on
+   Kronos; whether the v15 map really begins at 0x470 or the 0x428 block is a
+   separate, empty table needs a second v15 file with data there.
+
+### 10. Implementation sketch (no code changed)
+
+- `allegro-db.ts ▸ indexV15Pads` already builds the candidate index; lift it into
+  a `V15Index` shared by pads and copper, extend the byte-0 tolerance
+  (`(b0 & ~0x14) === 0`) from `0xc8` to `0x14`, add the copper types to
+  `V15_HEADER_OK` (`0x14`: b2 == 6 for etch; `0x54/58/5c`: b2 == b3 == 0; `0x04`:
+  b2 == 0, `(b3 & ~0x40) == 0`; `0xcc`: b2 == 0x12; `0x50`, `0xa0`: any), and
+  either drop the addend window for those types or widen it and rely on the
+  ring test. Add `recOfTypes(key, Set)` beside `rec(key, b1)`.
+- New `indexV15Copper(stream, map, index)` producing `V15Copper { tracks:
+  {layer, net, segments:[{x1,y1,x2,y2,w} | arc]}[], vias: {x,y,net,padstackName,
+  drill}[], outline: primitives[] }`: walk every `[0x14]` header with class 6,
+  resolve the net exactly as `netOf10` does today, follow `+0x24` through
+  `+0x08` until the track key returns (bounded, cycle-guarded), reading
+  `[0x54/58/5c]` and `[0x04]` records per §4; walk every `[0xcc]` with class
+  0x12; pick the outline as the largest-area `[0x50]` on class 1 with subclass
+  `0xFD` or `0xEA`, class 4 / `0xFD` only when class 1 yields nothing.
+- `allegro-header.ts`: for `FmtVer.V_15X` read the 25 layer-map pairs from
+  0x470 (or re-read there when the 0x428 block is all zero).
+- `allegro-assembler.ts`: `extractTraces` / `extractVias` / `extractOutline` /
+  `extractLayerNames` take the v16 block map; give each a `V_15X` branch that
+  consumes `db.v15Copper` and produces the same `Trace` / `Via` / `Point[]` /
+  `string[]` (reuse `linearizeArc` on an `{startX,startY,endX,endY,centerX,
+  centerY,radius,subType}` shaped from the i32 fields, and `etchSubclassBase`
+  for the layer rebase). Layer names: read the `[0xa8]` at slot 6 by the
+  key-search-then-step-back rule of §4, inline 32-byte names.
+- Gate on the v17 oracle: `tests/allegro-v15-oracle.spec.ts ▸ Kronos` gains
+  trace / via / outline / layer assertions at the numbers of §8 (exact ≥ 97 %,
+  within 10 units ≥ 99.8 %, 0 wrong nets/layers; vias 6,536 with 0 wrong nets;
+  outline 16 primitives; layers `TOP,GND,VCC,BOTTOM`).
