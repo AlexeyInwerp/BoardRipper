@@ -503,7 +503,24 @@ export class BoardRenderer {
   private pinch: {
     a: number; b: number; startDist: number; startScale: number;
     lastMidX: number; lastMidY: number;
+    /** Angle of the pair at seed time, and the rotation the roots already
+     *  carried then — so a re-seed (third finger, a replaced pointer) keeps
+     *  turning from where the picture is, not from zero. */
+    startAngle: number; rotBaseRad: number;
   } | null = null;
+  /** Two-finger rotation in progress, from either stream (pointer pair or
+   *  WebKit gesture). `appliedRad` is what the scene roots carry beyond the
+   *  store's rotation; it is committed to the store when the fingers lift
+   *  (`commitLiveRotation`). Mid-gesture the roots are turned directly, like
+   *  the pinch writes the viewport: a store commit per move would run the
+   *  whole onBoardUpdate — net-line re-projection, ghosts, a full
+   *  renderSelection — for every finger movement. */
+  private liveRotate: { engaged: boolean; appliedRad: number; midX: number; midY: number } | null = null;
+  /** Fingers must turn this far before rotation engages, so an ordinary
+   *  pinch-zoom — never perfectly axial — does not wobble the board. */
+  private static readonly ROTATE_DEAD_ZONE_DEG = 6;
+  /** A committed angle this close to a multiple of 90° snaps to it. */
+  private static readonly ROTATE_SNAP_DEG = 10;
   /** True once two or more fingers have been down during the gesture in
    *  progress, and until the next gesture begins.
    *
@@ -1842,6 +1859,7 @@ export class BoardRenderer {
       // Lifting one of three fingers leaves a pinch running on a different
       // pair; dropping to one ends it.
       if (this.pinch && (e.pointerId === this.pinch.a || e.pointerId === this.pinch.b)) {
+        if (this.activeTouchIds.size < 2) this.commitLiveRotation();
         this.seedPinch();
       }
       if (this.activeTouchIds.size === 0 && this.gestureOwner !== 'none') {
@@ -2048,6 +2066,7 @@ export class BoardRenderer {
       if (this.gestureReleaseTimer) { clearTimeout(this.gestureReleaseTimer); this.gestureReleaseTimer = null; }
       if (this.gestureOwner !== 'gesture') return;
       this.gestureOwner = 'none';
+      this.commitLiveRotation();
       this.viewport.plugins.resume('drag');
       if (this.activeTouchIds.size >= 2) this.seedPinch();
     };
@@ -2092,6 +2111,7 @@ export class BoardRenderer {
       ev.stopPropagation();
       this.gestureOwner = 'gesture';
       this.pinch = null;
+      this.commitLiveRotation();   // a pointer-pair rotation this claim interrupts
       this.viewport.plugins.pause('drag');
       gestureStartScale = this.viewport.scale.x;
       const rect = this.containerEl.getBoundingClientRect();
@@ -2111,6 +2131,12 @@ export class BoardRenderer {
       this.viewport.x += anchor.x - gestureAnchor.x;
       this.viewport.y += anchor.y - gestureAnchor.y;
       gestureAnchor = anchor;
+      // GestureEvent.rotation is cumulative degrees since gesturestart with
+      // counter-clockwise POSITIVE (Apple's documented convention), the
+      // opposite of the y-down screen angle — hence the sign.
+      if (typeof e.rotation === 'number' && Number.isFinite(e.rotation)) {
+        this.rotateLive(-e.rotation * Math.PI / 180, anchor.x, anchor.y);
+      }
       this.viewport.emit('moved', { viewport: this.viewport, type: 'pinch' });
       this.needsRender = true;
       this.netLinesDirty = true;
@@ -4053,7 +4079,73 @@ export class BoardRenderer {
       a, b, startDist: dist, startScale: Math.abs(this.viewport.scale.x),
       lastMidX: (pa.x + pb.x) / 2 - rect.left,
       lastMidY: (pa.y + pb.y) / 2 - rect.top,
+      startAngle: Math.atan2(pb.y - pa.y, pb.x - pa.x),
+      rotBaseRad: this.liveRotate?.appliedRad ?? 0,
     };
+  }
+
+  /** Turn the scene roots so they carry `targetRad` beyond the store's
+   *  rotation, about the world point under the screen midpoint. Rotating the
+   *  picture about P is position' = P + R(Δ)·(position − P), rotation' += Δ
+   *  — for both roots in Butterfly, each about the same P. Screen-space
+   *  finger angles are CW-positive in a y-down frame, and so is Pixi's
+   *  rotation, so the two agree with no sign change. */
+  private rotateLive(targetRad: number, midX: number, midY: number): void {
+    if (!renderSettingsStore.settings.twoFingerRotate) return;
+    const scene = this.activeScene;
+    if (!scene) return;
+    const lr = this.liveRotate ?? (this.liveRotate = { engaged: false, appliedRad: 0, midX, midY });
+    lr.midX = midX;
+    lr.midY = midY;
+    if (!lr.engaged) {
+      if (Math.abs(targetRad) * 180 / Math.PI < BoardRenderer.ROTATE_DEAD_ZONE_DEG) return;
+      lr.engaged = true;
+      log.ui.log('touch: two-finger rotation engaged');
+    }
+    const step = targetRad - lr.appliedRad;
+    if (step === 0) return;
+    const P = this.viewport.toWorld(midX, midY);
+    const cos = Math.cos(step), sin = Math.sin(step);
+    for (const root of [scene.root, scene.butterflyRoot]) {
+      if (!root) continue;
+      const dx = root.position.x - P.x, dy = root.position.y - P.y;
+      root.position.set(P.x + dx * cos - dy * sin, P.y + dx * sin + dy * cos);
+      root.rotation += step;
+    }
+    lr.appliedRad = targetRad;
+    this.needsRender = true;
+    this.netLinesDirty = true;
+    this.overlayDirty = true;
+    this.overlayContentDirty = true;
+  }
+
+  /** The fingers lifted: hand the angle to the store — snapped to a right
+   *  angle when close — and keep the point that was between the fingers
+   *  where it is. The store commit runs applyFlips, which rebuilds the root
+   *  transform about the board centre and re-centres the viewport about the
+   *  screen centre; the pan correction afterwards puts the finger point back,
+   *  so the snap too turns about the fingers, not about the screen. */
+  private commitLiveRotation(): void {
+    const lr = this.liveRotate;
+    this.liveRotate = null;
+    const scene = this.activeScene;
+    if (!lr || !lr.engaged || !scene) return;
+    const mid = { x: lr.midX, y: lr.midY };
+    const local = scene.root.toLocal(mid);
+    let deg = boardStore.rotation + lr.appliedRad * 180 / Math.PI;
+    deg = ((deg % 360) + 360) % 360;
+    const nearest = Math.round(deg / 90) * 90;
+    const off = ((deg - nearest) % 360 + 540) % 360 - 180;
+    if (Math.abs(off) <= BoardRenderer.ROTATE_SNAP_DEG) deg = nearest % 360;
+    boardStore.setRotation(deg);
+    const now = scene.root.toGlobal(local);
+    this.viewport.x += mid.x - now.x;
+    this.viewport.y += mid.y - now.y;
+    this.viewport.emit('moved', { viewport: this.viewport, type: 'pinch' });
+    this.needsRender = true;
+    this.netLinesDirty = true;
+    this.overlayContentDirty = true;
+    log.ui.log(`touch: rotation committed at ${boardStore.rotation}°`);
   }
 
   /** Two-finger pinch: zoom and pan, owned here rather than by pixi-viewport.
@@ -4107,6 +4199,12 @@ export class BoardRenderer {
       this.viewport.y += midY - p.lastMidY;
       p.lastMidX = midX;
       p.lastMidY = midY;
+      // Turning the pair turns the board (see rotateLive). The angle is the
+      // pair's own, wrapped to (−π, π] so a finger crossing the axis does not
+      // read as a full turn.
+      let dAng = Math.atan2(pb.y - pa.y, pb.x - pa.x) - p.startAngle;
+      dAng = Math.atan2(Math.sin(dAng), Math.cos(dAng));
+      this.rotateLive(p.rotBaseRad + dAng, midX, midY);
 
       this.viewport.emit('moved', { viewport: this.viewport, type: 'pinch' });
       this.needsRender = true;

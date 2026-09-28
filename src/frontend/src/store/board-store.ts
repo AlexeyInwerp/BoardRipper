@@ -268,6 +268,15 @@ function flipAxisForRotation(rotationDeg: number): 'x' | 'y' {
   return axesSwapped ? 'y' : 'x';
 }
 
+/** The next multiple of 90° clockwise (+1) or counter-clockwise (−1) of
+ *  `deg`; from a multiple itself, the one beyond it. */
+function nextRightAngle(deg: number, dir: 1 | -1): number {
+  const q = deg / 90;
+  const onStep = Math.abs(q - Math.round(q)) < 1e-6;
+  const next = onStep ? Math.round(q) + dir : (dir > 0 ? Math.ceil(q) : Math.floor(q));
+  return ((next * 90) % 360 + 360) % 360;
+}
+
 /** When the rotation crosses an axes-swap boundary (90°↔0°, 270°↔180°, …),
  *  flip the board-axis hinge identifier so the *screen* direction the user
  *  selected stays the same. Without this, manual rotation silently inverts
@@ -1595,10 +1604,24 @@ class BoardStore extends Emitter {
     });
   }
 
+  /** Any angle, degrees, as displayed (positive = clockwise on screen). The
+   *  two-finger rotation commits here; the buttons stay on 90° steps. */
+  setRotation(deg: number) {
+    const tab = this.activeTab;
+    if (!tab) return;
+    const r = Math.round((((deg % 360) + 360) % 360) * 10) / 10 % 360;
+    if (r === tab.rotation) return;
+    this.updateActiveTab({ rotation: r, flipAxis: rotateFlipAxis(tab.flipAxis, tab.rotation, r) });
+    this.saveFileViewPrefs(tab);
+    this.notify();
+  }
+
   rotateCW() {
     const tab = this.activeTab;
     if (!tab) return;
-    const newRotation = (tab.rotation + 90) % 360;
+    // From a free angle (two-finger rotation) the button goes to the next
+    // 90° step in its direction, not to angle + 90.
+    const newRotation = nextRightAngle(tab.rotation, +1);
     this.updateActiveTab({ rotation: newRotation, flipAxis: rotateFlipAxis(tab.flipAxis, tab.rotation, newRotation) });
     this.saveFileViewPrefs(tab);
     this.notify();
@@ -1607,7 +1630,7 @@ class BoardStore extends Emitter {
   rotateCCW() {
     const tab = this.activeTab;
     if (!tab) return;
-    const newRotation = (tab.rotation + 270) % 360;
+    const newRotation = nextRightAngle(tab.rotation, -1);
     this.updateActiveTab({ rotation: newRotation, flipAxis: rotateFlipAxis(tab.flipAxis, tab.rotation, newRotation) });
     this.saveFileViewPrefs(tab);
     this.notify();

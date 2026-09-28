@@ -2371,6 +2371,8 @@ export function SettingsPanel() {
           title="Animated cursor-anchored zoom" />
         <Toggle label="Cap to 60 FPS" value={draft.cap60Fps} field="cap60Fps" onUpdate={updateGlobal}
           title="Limit the renderer to 60 frames per second. Disable to let the ticker run at the display refresh rate (120/144/240 Hz) — smoother but more CPU/GPU work" />
+        <Toggle label="Two-finger rotation" value={draft.twoFingerRotate} field="twoFingerRotate" onUpdate={updateGlobal}
+          title="On a touch screen, turning two fingers turns the board about the point between them. The angle is kept when the fingers lift, snapped to the nearest right angle when within 10°. Off: two fingers only zoom and pan." />
         <Toggle label="Touch device performance mode" value={draft.touchPerformanceMode} field="touchPerformanceMode" onUpdate={updateGlobal}
           title="On a tablet (finger as the primary pointer): cap the board to 60 FPS instead of the panel's 120 and cap the render resolution at 1.5×. Edge smoothing stays on. Board text keeps full resolution. No effect on a mouse or trackpad machine. Takes effect when a board panel is next opened." />
         <Toggle label="Edge smoothing (MSAA)" value={draft.boardAntialiasing} field="boardAntialiasing" onUpdate={updateGlobal}

@@ -372,6 +372,12 @@ export interface RenderSettings {
    *  the board's scroll bindings; `wheelShiftAction` / `wheelMetaAction` are
    *  the other two (store/scroll-bindings.ts). */
   twoFingerPan: boolean;
+  /** Two-finger rotation on a touch screen: turning the fingers turns the
+   *  board, live, about the point between them, and the angle is committed
+   *  when the fingers lift — snapped to the nearest 90° when within
+   *  `ROTATE_SNAP_DEG`, otherwise kept as is ("unlocked"). A dead zone keeps
+   *  an ordinary pinch-zoom from wobbling. Off = pinch only. */
+  twoFingerRotate: boolean;
   /** What Shift + Scroll does on the board. Default 'pan': every browser
    *  turns Shift+wheel into a horizontal `deltaX`, so a pan here follows the
    *  OS's own horizontal-scroll gesture — binding it to zoom takes that
@@ -709,6 +715,7 @@ export const DEFAULTS: RenderSettings = {
   wheelSmooth: 5,
   smoothZoom: true,
   twoFingerPan: true,
+  twoFingerRotate: true,
   wheelShiftAction: 'pan',
   wheelMetaAction: 'zoom',
   wheelDetection: false,

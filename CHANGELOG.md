@@ -1,5 +1,16 @@
 # BoardRipper changelog
 
+## v0.45.0 — unreleased
+
+### Added
+
+- **Two-finger rotation.** On a touch screen, turning two fingers turns the
+  board about the point between them, live. The angle is kept when the
+  fingers lift — snapped to the nearest right angle when within 10°, any
+  other angle stays as it is — and the rotate buttons step to the next right
+  angle from there. A small dead zone keeps a pinch-zoom from wobbling.
+  Settings ▸ Performance & Debug ▸ Two-finger rotation turns it off.
+
 ## v0.44.0 — 2026-09-28
 
 ### Added
