@@ -886,6 +886,8 @@ export class BoardRenderer {
 
   /** The board tab ID this renderer is bound to (null = legacy single-renderer mode) */
   private tabId: number | null = null;
+  /** See the deferral at the top of onBoardUpdate. */
+  private sceneBuildDeferral: 'idle' | 'pending' | 'running' = 'idle';
 
   constructor(container: HTMLDivElement, tabId?: number) {
     this.containerEl = container;
@@ -2254,7 +2256,6 @@ export class BoardRenderer {
 
     const zoom = Math.round(Math.abs(this.viewport.scale.x) * 100);
     const fps = Math.round(tickerFps);
-    const gpuText = this.needsRender ? '' : ' · gpu idle';
 
     let sceneText = '';
     const scene = this.activeScene;
@@ -2270,7 +2271,9 @@ export class BoardRenderer {
       sceneText = ` · ${labelCount} labels`;
     }
 
-    this.hudEl.textContent = `${zoom}% · ${fps} fps${sceneText}${gpuText}`;
+    // ("gpu idle" used to trail this; it read needsRender, which the dirty-flag
+    // loop clears every frame, so it never said anything a user could use.)
+    this.hudEl.textContent = `${zoom}% · ${fps} fps${sceneText}`;
   }
 
   /** Flush perf accumulators and update the perf overlay DOM */
@@ -3271,6 +3274,10 @@ export class BoardRenderer {
         loadProgressStore.finishIfMatching(activatingFile);
       });
     }
+    // The scene is on screen: take the "loading" banner down. The deferral in
+    // onBoardUpdate clears its own mark too; this covers every other way a
+    // new scene gets activated (rebuilds, the lost-scene recovery branch).
+    boardStore.clearSceneBuilding(this.tabId ?? -1);
   }
 
   private deactivateScene() {
@@ -3369,6 +3376,31 @@ export class BoardRenderer {
     if (this.tabId !== null && boardStore.activeTabId !== this.tabId) {
       log.render.log('onBoardUpdate SKIP: tab mismatch', 'mine=' + this.tabId, 'active=' + boardStore.activeTabId);
       return;
+    }
+    // A board with no scene yet is about to be built on the main thread —
+    // ~0.7 s of stalls on a 3369-part board here, seconds on a tablet, and no
+    // input is answered meanwhile. Say so BEFORE it starts: record the build
+    // in the store, give React a committed frame (rAF) that has been painted
+    // (setTimeout 0) so the banner is on screen, then run this same update.
+    // A notify that arrives while the frame is pending is folded into the
+    // deferred run, which reads the store fresh.
+    if (this.sceneBuildDeferral === 'pending') return;
+    if (this.sceneBuildDeferral === 'idle') {
+      const next = boardStore.board;
+      if (next && next !== this.board && !this.sceneCache.has(this.sceneCacheKey(next))) {
+        const tabId = this.tabId ?? -1;
+        this.sceneBuildDeferral = 'pending';
+        boardStore.markSceneBuilding(tabId, boardStore.fileName || next.format);
+        requestAnimationFrame(() => setTimeout(() => {
+          this.sceneBuildDeferral = 'running';
+          try { this.onBoardUpdate(); }
+          finally {
+            this.sceneBuildDeferral = 'idle';
+            boardStore.clearSceneBuilding(tabId);
+          }
+        }, 0));
+        return;
+      }
     }
     // The worklist Highlight toggle lives on boardStore; redrawMultiHighlight is
     // otherwise only reached via worklist / selection-set / viewport-move

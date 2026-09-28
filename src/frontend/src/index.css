@@ -9337,6 +9337,17 @@ body {
 .resize-mode-banner-done:focus-visible { outline: 2px solid var(--bg-primary); outline-offset: 2px; }
 @media (max-width: 700px) { .resize-mode-banner-text { display: none; } }
 
+/* Boards loading in the background. Sits at the top of the dock area (App
+ * level, so it survives a tab switch) and is in view while the main thread
+ * mounts and builds another tab's scene — the moment touch input stops
+ * answering. Not interactive: it explains the wait, it does not add to it. */
+.background-load-banner { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 31; display: flex; align-items: center; gap: 10px; padding: 7px 14px; border-radius: 999px; background: var(--accent); color: var(--bg-primary); font-size: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.35); white-space: nowrap; max-width: calc(100% - 40px); pointer-events: none; }
+.background-load-banner-text { overflow: hidden; text-overflow: ellipsis; }
+.background-load-banner-hint { opacity: .75; }
+.background-load-spinner { flex: 0 0 auto; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--bg-primary); border-top-color: transparent; animation: background-load-spin 0.8s linear infinite; }
+@keyframes background-load-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .background-load-spinner { animation: none; } }
+
 /* ── Local-folder library (lite / offline builds) ────────────────────────
    The chip sits between the file list and the status bar; the empty state
    replaces the list until a folder has been handed over. */

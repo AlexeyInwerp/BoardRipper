@@ -41,6 +41,7 @@ import { saveDroppedToIncoming } from './store/incoming-upload';
 import { isElectron } from './store/databank-store';
 import { isLiteBuild, isOfflineBuild } from './store/build-mode';
 import { UpdatePrompt } from './components/UpdatePrompt';
+import { BackgroundLoadBanner } from './components/BackgroundLoadBanner';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { getAllExtensions, getFileExtension } from './parsers';
 import { themeStore } from './store/themes';
@@ -370,6 +371,12 @@ function App() {
                 popoutUrl="popout.html"
               />
               <HomeBackdrop />
+              {/* Mounted here, over the whole dock area, never inside a
+                  board panel: Dockview drops an inactive panel's DOM, so a
+                  banner in the panel you are looking at is gone at the very
+                  moment the new tab mounts and builds — the block it exists
+                  to explain. */}
+              <BackgroundLoadBanner />
             </div>
           </div>
           {!statusBarHidden && <StatusBar />}

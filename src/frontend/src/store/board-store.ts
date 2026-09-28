@@ -604,6 +604,17 @@ class BoardStore extends Emitter {
   private _nextToastId = 1;
   /** Guard against concurrent loadFile calls for the same file */
   private _loading = new Set<string>();
+  /** Tabs whose board has arrived but whose scene is not on screen yet
+   *  (tabId → file name). Parsing runs in a worker and never blocks; what
+   *  follows — mounting the renderer and building the scene — runs on the
+   *  main thread and does, for as long as it takes, with no input answered.
+   *  Set before the panel is created, cleared by the renderer once the scene
+   *  is active (or when the tab is closed). Together with `_loading` this is
+   *  what BackgroundLoadBanner shows, so the pause reads as "loading" and
+   *  not as a hang. */
+  private _sceneBuilding = new Map<number, string>();
+  private _backgroundLoadsSnap: { count: number; names: string[] } = { count: 0, names: [] };
+  private _backgroundLoadsDirty = false;
   /** Original File objects for currently-open board tabs, keyed by fileName.
    *  Kept so "reparse current board" can re-read the raw bytes without
    *  re-prompting the user. Cleared when a tab closes. File references are
@@ -688,6 +699,39 @@ class BoardStore extends Emitter {
    *  genuinely need the full parts array (e.g. serialising the cache). */
   get rawBoard(): BoardData | null { return this.activeTab?.board ?? null; }
   get fileName(): string { return this.activeTab?.fileName ?? ''; }
+
+  /** Boards being parsed or having their scene built — a stable reference
+   *  while nothing changes (useSyncExternalStore). */
+  get backgroundLoads(): { count: number; names: string[] } {
+    if (this._backgroundLoadsDirty) {
+      const names = [...new Set([...this._loading, ...this._sceneBuilding.values()])];
+      this._backgroundLoadsSnap = { count: names.length, names };
+      this._backgroundLoadsDirty = false;
+    }
+    return this._backgroundLoadsSnap;
+  }
+
+  private setLoading(name: string, on: boolean) {
+    if (on) this._loading.add(name); else this._loading.delete(name);
+    this._backgroundLoadsDirty = true;
+    this.notify();
+  }
+
+  /** A tab's scene is about to be built on the main thread. Set here before
+   *  the panel exists and again by the renderer right before it blocks. */
+  markSceneBuilding(tabId: number, name: string) {
+    if (this._sceneBuilding.get(tabId) === name) return;
+    this._sceneBuilding.set(tabId, name);
+    this._backgroundLoadsDirty = true;
+    this.notify();
+  }
+
+  /** The scene is on screen (or the tab is gone). */
+  clearSceneBuilding(tabId: number) {
+    if (!this._sceneBuilding.delete(tabId)) return;
+    this._backgroundLoadsDirty = true;
+    this.notify();
+  }
   get selection(): SelectionState { return this.activeTab?.selection ?? emptySelection; }
   get showTop(): boolean { return this.activeTab?.showTop ?? true; }
   get showBottom(): boolean { return this.activeTab?.showBottom ?? true; }
@@ -996,7 +1040,7 @@ class BoardStore extends Emitter {
       loadProgressStore.dismiss();
       return;
     }
-    this._loading.add(file.name);
+    this.setLoading(file.name, true);
 
     try {
       const tab = this.makeTab(file.name);
@@ -1022,6 +1066,7 @@ class BoardStore extends Emitter {
           // is actually waiting on, especially on cold-cache opens of large
           // boards like NM-G611. Renderer calls finishIfMatching when done.
           loadProgressStore.setPhase('Building scene', 'Renderer mounting + buildBoardScene + first frame');
+          this.markSceneBuilding(id, file.name);
           this.onTabCreated?.(id, file.name);
           this.notify();
           return;
@@ -1139,10 +1184,11 @@ class BoardStore extends Emitter {
       // Create panel AFTER board + rotation are ready so the renderer sees correct state.
       // Renderer closes the overlay once activateScene finishes — see above.
       loadProgressStore.setPhase('Building scene', 'Renderer mounting + buildBoardScene + first frame');
+      this.markSceneBuilding(id, file.name);
       this.onTabCreated?.(id, file.name);
       this.notify();
     } finally {
-      this._loading.delete(file.name);
+      this.setLoading(file.name, false);
     }
   }
 
@@ -1157,6 +1203,7 @@ class BoardStore extends Emitter {
     if (!cached) return false;
     const tab = this.makeTab(fileName);
     this.applyCachedBoard(tab, cached, fileName, fileSize, lastModified);
+    this.markSceneBuilding(tab.id, fileName);
     this.onTabCreated?.(tab.id, fileName);
     this.notify();
     return true;
@@ -1298,6 +1345,10 @@ class BoardStore extends Emitter {
   }
 
   switchTab(tabId: number) {
+    // A "scene building" mark describes the tab being brought to screen. A
+    // tab hidden before its scene was built is not blocking anyone; when it
+    // is shown again the renderer re-marks it right before it builds.
+    for (const id of [...this._sceneBuilding.keys()]) if (id !== tabId) this.clearSceneBuilding(id);
     if (this._tabs.some(t => t.id === tabId) && this._activeTabId !== tabId) {
       this._activeTabId = tabId;
       this.notify();
@@ -1307,6 +1358,7 @@ class BoardStore extends Emitter {
   closeTab(tabId: number) {
     const idx = this._tabs.findIndex(t => t.id === tabId);
     if (idx === -1) return;
+    this.clearSceneBuilding(tabId);
 
     // Unbind all PDFs
     const tab = this._tabs[idx];

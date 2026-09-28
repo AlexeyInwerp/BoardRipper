@@ -11,6 +11,14 @@
 - **The touch context menu opens on the iPad.** Press and hold a part. iOS
   used to answer the same hold with its own callout and cancel the touch.
   The first board opened on a touch screen says so once.
+- **A board loading in the background says so.** Opening a second board
+  freezes the page while its scene is built — a second or more on a
+  tablet, during which a finger on the glass gets no answer at all. A
+  "Loading …" banner now sits at the top of the board area from the moment
+  the file is opened until the new board is on screen, and it is painted
+  before the freeze begins.
+- **The "gpu idle" readout is gone from the debug HUD.** The value it read
+  is cleared every frame, so it never showed anything.
 
 ## v0.43.4 — 2026-09-23
 
