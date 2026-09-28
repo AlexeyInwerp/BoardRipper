@@ -3,7 +3,9 @@ import {
   IconPin, IconPinFilled, IconChevronRight, IconChevronDown,
   IconInfoCircle, IconStack2, IconEye, IconSearch, IconVersions, IconChecklist,
 } from '@tabler/icons-react';
+import { IconHistory } from '@tabler/icons-react';
 import { useBoardStore } from '../hooks/useBoardStore';
+import { useNavHistory } from '../hooks/useNavHistory';
 import { useWorklist } from '../hooks/useWorklist';
 import { boardStore, ghostPairSig, bomClusterSig } from '../store/board-store';
 import { worklistStore } from '../store/worklist-store';
@@ -1101,10 +1103,25 @@ function SearchTab({ tabId }: { tabId: number }) {
   const shownParts = matchedParts.length > RESULT_CAP ? matchedParts.slice(0, RESULT_CAP) : matchedParts;
   const shownNets = matchedNets.length > RESULT_CAP ? matchedNets.slice(0, RESULT_CAP) : matchedNets;
 
-  // Autocomplete suggestions (max 8)
+  // Autocomplete suggestions (max 8). With the field empty, the last eight
+  // queries typed here come up instead — Preview's magnifier menu.
+  const { listed: navListed } = useNavHistory();
   const suggestions = useMemo(() => {
-    if (!ql) return [];
-    const items: { label: string; type: 'component' | 'net' }[] = [];
+    if (!ql) {
+      const seen = new Set<string>();
+      const recents: { label: string; type: 'component' | 'net' | 'recent' }[] = [];
+      for (const e of navListed) {
+        const q = e.query;
+        if (!q || (q.surface !== 'board' && q.surface !== 'global')) continue;
+        const key = q.text.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        recents.push({ label: q.text, type: 'recent' });
+        if (recents.length >= 8) break;
+      }
+      return recents;
+    }
+    const items: { label: string; type: 'component' | 'net' | 'recent' }[] = [];
     for (const name of allParts) {
       if (name.toLowerCase().includes(ql)) items.push({ label: name, type: 'component' });
       if (items.length >= 8) return items;
@@ -1114,7 +1131,7 @@ function SearchTab({ tabId }: { tabId: number }) {
       if (items.length >= 8) return items;
     }
     return items;
-  }, [ql, allParts, allNets]);
+  }, [ql, allParts, allNets, navListed]);
 
   // Sync toolbar search with local query
   const onQueryChange = useCallback((value: string) => {
@@ -1148,7 +1165,7 @@ function SearchTab({ tabId }: { tabId: number }) {
           placeholder="Search components or nets..."
           value={query}
           onChange={(e) => { onQueryChange(e.target.value); setShowSuggestions(true); }}
-          onFocus={() => { if (query) setShowSuggestions(true); }}
+          onFocus={() => setShowSuggestions(true)}
         />
         {query && (
           <button className="search-tab-clear" onClick={() => { onQueryChange(''); setShowSuggestions(false); }} title="Clear">×</button>
@@ -1156,11 +1173,11 @@ function SearchTab({ tabId }: { tabId: number }) {
         {showSuggestions && suggestions.length > 0 && (
           <div className="search-tab-suggestions" ref={suggestionsRef}>
             {suggestions.map((s, i) => (
-              <div key={i} className="search-tab-suggestion" onClick={() => {
+              <div key={i} className={`search-tab-suggestion${s.type === 'recent' ? ' recent' : ''}`} data-testid={s.type === 'recent' ? 'search-recent' : undefined} onClick={() => {
                 onQueryChange(s.label);
                 setShowSuggestions(false);
               }}>
-                <span className={`suggestion-type suggestion-type-${s.type}`}>{s.type === 'component' ? 'C' : 'N'}</span>
+                <span className={`suggestion-type suggestion-type-${s.type}`}>{s.type === 'recent' ? <IconHistory size={11} stroke={2} /> : s.type === 'component' ? 'C' : 'N'}</span>
                 <span className="suggestion-label">{s.label}</span>
               </div>
             ))}

@@ -9424,3 +9424,54 @@ body {
   align-items: center;
   gap: 6px;
 }
+
+/* ---- History panel (rail destination, 2026-09-29) ------------------------- */
+.hist-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.hist-strip { flex: none; border-bottom: 1px solid var(--border); }
+.hist-layers { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 8px 4px; }
+.hist-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px 3px 6px;
+  border: 1px solid var(--border); border-radius: 999px; background: transparent;
+  color: var(--text-secondary); font: inherit; font-size: 11px; cursor: pointer; line-height: 1.2;
+}
+.hist-chip:hover { background: var(--surface-hover); color: var(--text-primary); }
+.hist-chip.on { color: var(--accent-text); background: var(--surface-hover); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.hist-chip-n { font-family: ui-monospace, monospace; font-size: 10px; opacity: 0.7; font-variant-numeric: tabular-nums; }
+.hist-scope { display: flex; gap: 0; padding: 2px 8px 8px; }
+.hist-scope-btn {
+  font: inherit; font-size: 11px; padding: 2px 9px; border: 1px solid var(--border); background: transparent;
+  color: var(--text-secondary); cursor: pointer;
+}
+.hist-scope-btn:first-child { border-radius: 4px 0 0 4px; }
+.hist-scope-btn:last-child { border-radius: 0 4px 4px 0; border-left: none; }
+.hist-scope-btn.on { color: var(--text-primary); background: var(--surface-hover); }
+.hist-scope-btn:disabled { opacity: 0.4; cursor: default; }
+.hist-list { flex: 1; min-height: 0; overflow-y: auto; }
+.hist-group {
+  display: flex; align-items: center; gap: 5px; padding: 8px 10px 3px;
+  font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary);
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.hist-row {
+  display: flex; align-items: center; gap: 8px; padding: 5px 10px; cursor: pointer;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+}
+.hist-row:hover { background: rgba(255,255,255,0.03); }
+.hist-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.hist-row.current { background: var(--surface-hover); box-shadow: inset 2px 0 0 var(--accent); cursor: default; }
+.hist-row.forward { opacity: 0.6; }
+.hist-row.closed { opacity: 0.4; cursor: default; }
+.hist-glyph { flex: none; width: 18px; display: inline-flex; justify-content: center; color: var(--text-secondary); }
+.hist-row.current .hist-glyph { color: var(--accent-text); }
+.hist-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.hist-label { font-family: ui-monospace, monospace; font-size: 12px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-sub { font-size: 10px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-time { flex: none; font-size: 10px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.hist-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; padding: 28px 16px; color: var(--text-secondary); }
+.hist-empty small { font-size: 11px; opacity: 0.8; line-height: 1.4; }
+.hist-foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-secondary); }
+.hist-foot-n { flex: 1; }
+.hist-foot-btn { font: inherit; font-size: 11px; padding: 2px 9px; border-radius: 4px; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text-secondary); }
+.hist-foot-btn:hover { color: var(--text-primary); background: var(--surface-hover); }
+/* Recent queries under an empty search field (Preview's magnifier menu). */
+.search-tab-suggestion.recent .suggestion-type { background: transparent; color: var(--text-secondary); }

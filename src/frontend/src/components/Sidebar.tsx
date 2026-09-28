@@ -3,6 +3,7 @@ import { IconLayoutSidebar, IconLayoutSidebarRight } from '@tabler/icons-react';
 import { LibraryPanel } from '../panels/LibraryPanel';
 import { SettingsPanel } from '../panels/SettingsPanel';
 import { ToolsPanel } from '../panels/ToolsPanel';
+import { HistoryPanel } from '../panels/HistoryPanel';
 import { PanelErrorBoundary } from './PanelErrorBoundary';
 import { DebugPanel } from '../panels/DebugPanel';
 import {
@@ -191,6 +192,11 @@ export function Sidebar() {
             with display:none and contributes no layout. */}
         <div style={{ display: activeTab === 'library' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
           <LibraryPanel />
+        </div>
+        <div style={{ display: activeTab === 'history' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
+          <PanelErrorBoundary label="History">
+            <HistoryPanel />
+          </PanelErrorBoundary>
         </div>
         <div style={{ display: activeTab === 'tools' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
           <PanelErrorBoundary label="Tools">

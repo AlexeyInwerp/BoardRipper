@@ -219,6 +219,71 @@ test.describe('navigation history', () => {
     expect(await selectedName(page)).toBe('C1');
   });
 
+  test('the History rail tab lists visits newest first, jumps on click, filters by chip, and clears', async ({ page }) => {
+    await load(page);
+    for (const n of ['U1', 'C1', 'R1']) { await click(page, n); await page.waitForTimeout(120); }
+    await page.evaluate(() => (window as unknown as Win).__boardStore.setSearch('J'));
+    await page.evaluate(() => (window as unknown as Win).__navHistory.store.flushQuery());
+    await page.waitForTimeout(200);
+
+    await page.locator('[data-sidebar-tab="history"]').first().click();
+    const panel = page.getByTestId('history-panel');
+    await expect(panel).toBeVisible();
+    const rows = panel.getByTestId('history-row');
+    await expect(rows).toHaveCount(4);
+    await expect(rows.nth(0)).toContainText('“J”');
+    await expect(rows.nth(1)).toContainText('R1');
+    await expect(rows.nth(0)).toHaveAttribute('data-current', 'true');
+
+    // Jump to U1 (the oldest): cursor moves, nothing is appended.
+    await rows.nth(3).click();
+    await page.waitForTimeout(500);
+    expect(await selectedName(page)).toBe('U1');
+    await expect(rows).toHaveCount(4);
+    await expect(rows.nth(3)).toHaveAttribute('data-current', 'true');
+
+    // Layer chip: switching clicks off hides the three click rows.
+    await panel.locator('[data-history-layer="click"]').click();
+    await expect(rows).toHaveCount(1);
+    await expect(rows.nth(0)).toContainText('“J”');
+    await panel.locator('[data-history-layer="click"]').click();
+    await expect(rows).toHaveCount(4);
+
+    // The board search field offers the recent query while empty.
+    await page.evaluate(() => (window as unknown as Win).__boardStore.setSearch(''));
+    await page.locator('.board-sidebar-toggle').first().click();
+    await page.locator('[data-board-tab="search"]').first().click();
+    const field = page.locator('.search-tab-input');
+    await field.click();
+    await expect(page.getByTestId('search-recent').first()).toContainText('J');
+
+    // Clear asks first, then empties the list.
+    await page.getByTestId('history-clear').click();
+    await expect(page.getByTestId('history-confirm')).toBeVisible();
+    await page.getByTestId('history-confirm-yes').click();
+    await expect(rows).toHaveCount(0);
+    await expect(page.getByTestId('history-back')).toBeDisabled();
+  });
+
+  test('holding the ribbon back button lists the entries behind the cursor', async ({ page }) => {
+    await load(page);
+    for (const n of ['U1', 'C1', 'R1']) { await click(page, n); await page.waitForTimeout(120); }
+    const back = page.getByTestId('history-back');
+    const box = (await back.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.waitForTimeout(700);
+    await page.mouse.up();
+    const menu = page.getByTestId('history-back-menu');
+    await expect(menu).toBeVisible();
+    await expect(menu).toContainText('C1');
+    await expect(menu).toContainText('U1');
+    expect(await selectedName(page)).toBe('R1');       // the hold did not also step
+    await menu.locator('button', { hasText: 'U1' }).first().click();
+    await page.waitForTimeout(500);
+    expect(await selectedName(page)).toBe('U1');
+  });
+
   test('a PDF find is a search entry and comes back with its query and match', async ({ page }) => {
     test.skip(!fs.existsSync(PDF), 'pdf fixture missing');
     await load(page);
