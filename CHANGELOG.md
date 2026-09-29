@@ -1,5 +1,36 @@
 # BoardRipper changelog
 
+## v0.46.0 — 2026-09-29
+
+### Added
+
+- **Back and Forward, like Preview.** ⌘[ goes back to where you were and
+  ⌘] forward again (Ctrl+[ / Ctrl+] on Windows and Linux) — across boards
+  and PDFs alike. A visit is a part or pin you clicked, a PDF lookup in
+  either direction, or a search and the result you picked from it. The
+  view comes back exactly as you left it, not re-fitted. Going back and
+  then somewhere new deletes nothing: the path you left is still there.
+  The board ribbon has ‹ › buttons for touch screens; hold one for a list
+  of where it leads.
+- **A History tab** in the sidebar lists every visit, newest first, grouped
+  by file. Click a row to go there. Filter by kind — clicks, PDF lookups,
+  searches, viewpoints — and by boards, PDFs or just the board in front of
+  you. A row for a file you closed reopens it from the library. The
+  history survives a reload.
+- **Viewpoints (off by default).** Switch the Viewpoints filter on and the
+  places you looked at with nothing selected are kept too: a region of the
+  board, a PDF page, another board tab. Only a place you stayed on for two
+  seconds counts, so paging through a document leaves one row.
+- **Search history.** The PDF find field and the board search field show
+  your recent searches when you click into them; typing narrows the list,
+  ↑↓ and Enter pick one.
+
+### Fixed
+
+- **A single search hit is found again.** With only one hit, pressing
+  Enter or ⌘F after panning away did not bring it back, and a drag that
+  was still gliding pulled every jump off its target.
+
 ## v0.45.0 — 2026-09-28
 
 ### Added
