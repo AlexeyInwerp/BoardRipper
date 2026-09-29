@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useState } from 'react';
+import { useRef, useEffect, useCallback, useState, useMemo } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { usePdfDoc } from '../hooks/usePdfStore';
 import { pdfStore, pdfFontSize } from '../store/pdf-store';
@@ -7,6 +7,8 @@ import { boardPanelId, activateLinkedPanel, isAutoSwitchLinked } from '../store/
 import { pickLinkedBoardTab } from '../store/linked-panel';
 import { openBoardSearch } from './board-viewer-bridge';
 import { navHistoryStore, type PdfCameraProvider } from '../store/nav-history-store';
+import { useNavHistory } from '../hooks/useNavHistory';
+import { IconHistory } from '@tabler/icons-react';
 import { fileInputRefs } from '../store/file-inputs';
 import { contextMenuStore } from '../store/context-menu-store';
 import { log } from '../store/log-store';
@@ -767,6 +769,42 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const viewportTransformRef = useRef<number[]>([1, 0, 0, -1, 0, 0]);
   const [renderEpoch, setRenderEpoch] = useState(0); // bumped after each renderPage to sync overlays
   const [showNavHint, setShowNavHint] = useState(false);
+
+  // Recent queries under the find field — Preview's magnifier menu. Opens on
+  // focus and while typing (filtered by the text), never by itself, and it
+  // takes ↑↓ / Enter only while it is open, so match stepping after a search
+  // is untouched. Fed by the navigation history (searches and lookups whose
+  // query ran in a PDF), so the History tab's Clear empties it too.
+  const [recentsOpen, setRecentsOpen] = useState(false);
+  const [recentHi, setRecentHi] = useState(-1);
+  const [recentFilter, setRecentFilter] = useState('');
+  const { listed: navListed } = useNavHistory();
+  const pdfRecents = useMemo(() => {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    const f = recentFilter.trim().toLowerCase();
+    for (const e of navListed) {
+      const q = e.query;
+      if (!q || q.surface !== 'pdf') continue;
+      const key = q.text.toLowerCase();
+      if (seen.has(key)) continue;
+      if (f && !key.includes(f)) continue;
+      seen.add(key);
+      out.push(q.text);
+      if (out.length >= 8) break;
+    }
+    return out;
+  }, [navListed, recentFilter]);
+  const pickRecent = useCallback((text: string) => {
+    if (searchInputRef.current) searchInputRef.current.value = text;
+    pdfStore.switchTo(pdfFileName);
+    pdfStore.setLastClickedLocation(null);
+    pdfStore.searchText(text);
+    navHintShownRef.current = false;
+    setRecentsOpen(false);
+    setRecentHi(-1);
+    searchInputRef.current?.focus();
+  }, [pdfFileName]);
   const navHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navHintShownRef = useRef(false);
   // Click-to-lookup overlay state
@@ -3738,13 +3776,27 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
                 placeholder="Search (multi-term: 10UF 25V)"
                 title="Enter / ↓ / Cmd+F — next match. Shift+Enter / ↑ / Shift+Cmd+F — previous match."
                 defaultValue={searchQuery}
+                // On focus the whole list shows whatever the field holds (Preview's
+                // magnifier menu); typing then filters it.
+                onFocus={() => { setRecentFilter(''); setRecentHi(-1); setRecentsOpen(true); }}
+                onBlur={() => { setRecentsOpen(false); setRecentHi(-1); }}
                 onChange={(e) => {
+                  setRecentFilter(e.target.value);
+                  setRecentHi(-1);
+                  setRecentsOpen(true);
                   if (!e.target.value.trim()) {
                     pdfStore.switchTo(pdfFileName);
                     pdfStore.searchText('');
                   }
                 }}
                 onKeyDown={(e) => {
+                  if (recentsOpen && pdfRecents.length > 0) {
+                    if (e.key === 'ArrowDown') { e.preventDefault(); setRecentHi(h => (h + 1) % pdfRecents.length); return; }
+                    if (e.key === 'ArrowUp') { e.preventDefault(); setRecentHi(h => (h <= 0 ? pdfRecents.length - 1 : h - 1)); return; }
+                    if (e.key === 'Escape') { e.preventDefault(); setRecentsOpen(false); setRecentHi(-1); return; }
+                    if (e.key === 'Enter' && recentHi >= 0) { e.preventDefault(); pickRecent(pdfRecents[recentHi]); return; }
+                  }
+                  if (e.key === 'Enter') { setRecentsOpen(false); setRecentHi(-1); }
                   // PageUp/PageDown page the PDF even while the search field is
                   // focused — after a search the focus stays here, and losing
                   // keyboard paging mid-probe is worse than the caret quirk.
@@ -3806,12 +3858,32 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
               </>
             ) : null}
           </div>
+          {recentsOpen && pdfRecents.length > 0 && (
+            <div className="pdf-search-recents" data-testid="pdf-search-recents" role="listbox" aria-label="Recent searches">
+              {pdfRecents.map((text, i) => (
+                <div
+                  key={text}
+                  className={`pdf-search-recent${i === recentHi ? ' hi' : ''}`}
+                  role="option"
+                  aria-selected={i === recentHi}
+                  data-testid="pdf-search-recent"
+                  // pointerdown, not click: the input's blur would close the
+                  // list before a click could land.
+                  onPointerDown={(e) => { e.preventDefault(); pickRecent(text); }}
+                  onPointerEnter={() => setRecentHi(i)}
+                >
+                  <IconHistory size={12} stroke={2} />
+                  <span>{text}</span>
+                </div>
+              ))}
+            </div>
+          )}
           {lookupHint && (
             <div className="pdf-lookup-hint">
               Double-click <b>{lookupHint}</b> to search
             </div>
           )}
-          {showNavHint && (
+          {showNavHint && !recentsOpen && (
             <div className="pdf-nav-hint">Enter / ↑↓ to navigate results</div>
           )}
           {isMultiTerm && (

@@ -352,6 +352,34 @@ test.describe('navigation history', () => {
     expect(await selectedName(page)).toBe('U1');
   });
 
+  test('the PDF find field lists recent queries while focused and runs one on pick', async ({ page }) => {
+    test.skip(!fs.existsSync(PDF), 'pdf fixture missing');
+    await load(page);
+    await page.getByTestId('file-input').setInputFiles(PDF);
+    await page.waitForTimeout(2500);
+    await page.evaluate(() => { const s = (window as unknown as Win).__pdfStore; s.searchText('PPBUS_G3H'); s.searchText('U8100'); });
+    await page.waitForTimeout(300);
+
+    // The store searches leave the (uncontrolled) field empty; a click is the
+    // focus event that opens the list.
+    const field = page.locator('.pdf-search-input');
+    await field.click();
+    const recents = page.getByTestId('pdf-search-recent');
+    await expect(recents).toHaveCount(2);
+    await expect(recents.nth(0)).toContainText('U8100');       // newest first
+    await expect(recents.nth(1)).toContainText('PPBUS_G3H');
+
+    await field.fill('PPB');                                    // typing filters
+    await expect(recents).toHaveCount(1);
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+    const doc = await page.evaluate(() => (window as unknown as Win).__pdfStore.activeDoc);
+    expect(doc?.searchQuery).toBe('PPBUS_G3H');
+    expect(doc?.activeMatchIndex).toBeGreaterThanOrEqual(0);
+    await expect(page.getByTestId('pdf-search-recents')).toHaveCount(0);
+  });
+
   test('a PDF find is a search entry and comes back with its query and match', async ({ page }) => {
     test.skip(!fs.existsSync(PDF), 'pdf fixture missing');
     await load(page);

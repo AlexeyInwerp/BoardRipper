@@ -9475,3 +9475,16 @@ body {
 .hist-foot-btn:hover { color: var(--text-primary); background: var(--surface-hover); }
 /* Recent queries under an empty search field (Preview's magnifier menu). */
 .search-tab-suggestion.recent .suggestion-type { background: transparent; color: var(--text-secondary); }
+
+/* Recent queries under the PDF find field (fed by the navigation history). */
+.pdf-search-recents {
+  position: absolute; top: 100%; left: 0; min-width: 100%; margin-top: 2px; z-index: 30;
+  background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 4px;
+  padding: 3px 0; box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+}
+.pdf-search-recent {
+  display: flex; align-items: center; gap: 6px; padding: 4px 8px; font-size: 11px;
+  color: var(--text-primary); cursor: pointer; white-space: nowrap;
+}
+.pdf-search-recent svg { color: var(--text-secondary); flex: none; }
+.pdf-search-recent.hi, .pdf-search-recent:hover { background: var(--surface-hover); }
