@@ -95,10 +95,15 @@ export function useKeyboardShortcuts() {
       if (focusSearch && focusSearchMatch) {
         // Standard behavior: if the PDF search field is already focused with a
         // query, repeat Cmd+F steps to the next match (Shift reverses direction).
-        if (fileInputRefs.pdfSearch
-            && document.activeElement === fileInputRefs.pdfSearch
-            && fileInputRefs.pdfSearch.value.trim()) {
+        // Any focused PDF find field counts, not only the one registered in
+        // fileInputRefs (that ref follows Dockview's *active* panel, which a
+        // focused field in another panel need not be) — otherwise ⌘F fell
+        // through to the fresh-search path and reset the view.
+        const focused = document.activeElement as HTMLInputElement | null;
+        if (focused?.classList?.contains('pdf-search-input') && focused.value.trim()) {
           e.preventDefault();
+          const file = focused.dataset.pdfFile;
+          if (file) pdfStore.switchTo(file);
           if (e.shiftKey) pdfStore.prevMatch();
           else pdfStore.nextMatch();
           return;

@@ -464,6 +464,10 @@ interface PdfDocument {
   fileId?: number;
   /** Transient cross-lookup status shown verbatim on the SOURCE doc (e.g. "No match…"). */
   crossProbeHint: string | null;
+  /** Bumped on every explicit match navigation (Enter, ↑↓, ⌘F, cross-probe),
+   *  even when the index does not change — a single hit stepped to "again"
+   *  must still re-centre after the user panned away. */
+  matchNavSeq: number;
 }
 
 /** Follow target: a location to zoom to without highlighting */
@@ -650,6 +654,7 @@ class PdfStore extends Emitter {
   getDocSearchQuery(fileName: string): string { return this._documents.get(fileName)?.searchQuery ?? ''; }
   getDocMatches(fileName: string): PdfTextMatch[] { return this._documents.get(fileName)?.matches ?? []; }
   getDocActiveMatchIndex(fileName: string): number { return this._documents.get(fileName)?.activeMatchIndex ?? -1; }
+  getDocMatchNavSeq(fileName: string): number { return this._documents.get(fileName)?.matchNavSeq ?? 0; }
   getDocMatchGroups(fileName: string): number[][] { return this._documents.get(fileName)?.matchGroups ?? []; }
   getDocActiveGroupIndex(fileName: string): number { return this._documents.get(fileName)?.activeGroupIndex ?? -1; }
   getDocBookmarks(fileName: string): PdfBookmark[] { return this._documents.get(fileName)?.bookmarks ?? []; }
@@ -761,6 +766,7 @@ class PdfStore extends Emitter {
         textPages: [],
         searchQuery: '',
         searchSource: null,
+        matchNavSeq: 0,
         lookupHint: null,
         crossProbeHint: null,
         matches: [],
@@ -1530,6 +1536,7 @@ class PdfStore extends Emitter {
       if (g >= 0) d.activeGroupIndex = g;
     }
     d.currentPage = d.matches[idx].pageIndex + 1;
+    d.matchNavSeq++;
     this._rebuildActiveIndicesCache(d);
     this._touchNavMatch(d);
     this.notify();
@@ -1556,6 +1563,7 @@ class PdfStore extends Emitter {
       d.activeMatchIndex = (d.activeMatchIndex + delta + d.matches.length) % d.matches.length;
     }
     d.currentPage = d.matches[d.activeMatchIndex].pageIndex + 1;
+    d.matchNavSeq++;
     this._rebuildActiveIndicesCache(d);
     this._touchNavMatch(d);
     this.notify();

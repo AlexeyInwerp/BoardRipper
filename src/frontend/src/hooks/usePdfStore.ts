@@ -54,6 +54,7 @@ export interface PdfDocSnapshot {
   searchQuery: string;
   matches: PdfTextMatch[];
   activeMatchIndex: number;
+  matchNavSeq: number;
   matchGroupCount: number;
   activeGroupIndex: number;
   isMultiTerm: boolean;
@@ -99,6 +100,7 @@ function getDocSnapshot(fileName: string): PdfDocSnapshot {
     searchQuery: pdfStore.getDocSearchQuery(fileName),
     matches: pdfStore.getDocMatches(fileName),
     activeMatchIndex: pdfStore.getDocActiveMatchIndex(fileName),
+    matchNavSeq: pdfStore.getDocMatchNavSeq(fileName),
     matchGroupCount: pdfStore.getDocMatchGroups(fileName).length,
     activeGroupIndex: pdfStore.getDocActiveGroupIndex(fileName),
     isMultiTerm: pdfStore.isDocMultiTerm(fileName),

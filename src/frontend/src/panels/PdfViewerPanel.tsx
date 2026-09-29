@@ -626,7 +626,7 @@ function PageScrubber({ currentPage, pageCount, onGoToPage, scrubberRef }: {
 
 export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string }>) {
   const pdfFileName = props.params.pdfFileName ?? '';
-  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, rotation, pageMode, mirror, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, lookupHint, crossProbeHint } = usePdfDoc(pdfFileName);
+  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, rotation, pageMode, mirror, searchQuery, matches, activeMatchIndex, matchNavSeq, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, lookupHint, crossProbeHint } = usePdfDoc(pdfFileName);
   /** Effective single-page layout: explicit single mode OR forced while rotated. */
   const singlePageMode = pageMode === 'single' || rotation !== 0;
   /** Current user rotation, read imperatively inside render callbacks. */
@@ -872,6 +872,16 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const velocityRef = useRef({ x: 0, y: 0 });
   const lastDragTimeRef = useRef(0);
   const inertiaRafRef = useRef(0);
+  /** Every programmatic jump (match step, board follow, bookmark, history
+   *  restore) stops a running drag glide first — otherwise the glide keeps
+   *  adding its velocity to the pan the jump just wrote and drags the page
+   *  off the target (a lone search hit stepped to again landed hundreds of
+   *  px short, 2026-09-29). */
+  const stopGlide = () => {
+    cancelAnimationFrame(inertiaRafRef.current);
+    inertiaRafRef.current = 0;
+    velocityRef.current = { x: 0, y: 0 };
+  };
   const pdfInertiaRef = useRef(loadPdfInertia());
   const tierDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Last zoom level at which highlights were drawn — skip redraw on pan-only changes */
@@ -2354,15 +2364,24 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
   const prevMatchIndexRef = useRef(-1);
   const prevMatchesRef = useRef<typeof matches | null>(null);
+  const prevNavSeqRef = useRef(0);
   useEffect(() => {
     if (!isLoaded || activeMatchIndex < 0 || !matches[activeMatchIndex]) return;
-    // Only snap-to-match on explicit navigation (activeMatchIndex OR matches
-    // array changed — a new search produces a fresh matches reference even if
-    // activeMatchIndex happens to land on the same number).
+    // Only snap-to-match on explicit navigation: activeMatchIndex OR matches
+    // array changed (a new search produces a fresh matches reference even if
+    // activeMatchIndex happens to land on the same number), OR the store's
+    // navigation counter moved — Enter / ⌘F on a single hit steps to the same
+    // index, and the user who panned away still expects to be taken back.
     const isNewSearch = prevMatchesRef.current !== matches;
-    if (!isNewSearch && activeMatchIndex === prevMatchIndexRef.current) return;
+    const isStep = matchNavSeq !== prevNavSeqRef.current;
+    if (!isNewSearch && !isStep && activeMatchIndex === prevMatchIndexRef.current) return;
+    // A step that lands on the index already active (one hit, stepped again)
+    // is the user asking to be taken back to it: re-centre even if a corner
+    // of it is still on screen.
+    const isRefocus = isStep && !isNewSearch && activeMatchIndex === prevMatchIndexRef.current;
     prevMatchIndexRef.current = activeMatchIndex;
     prevMatchesRef.current = matches;
+    prevNavSeqRef.current = matchNavSeq;
 
     const match = matches[activeMatchIndex];
     const matchPage = match.pageIndex + 1;
@@ -2420,7 +2439,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       // Skip the zoom only if we're ALREADY zoomed in enough AND the match is
       // visible. At low zooms the whole page is "in view" which would wrongly
       // leave the user at 100% — enforce the 300% floor instead.
-      const alreadyInView = z >= 3.0 && matchPageNow === currentPage && items.some(isItemInView);
+      const alreadyInView = !isRefocus && z >= 3.0 && matchPageNow === currentPage && items.some(isItemInView);
 
       // On a FRESH search only, try to relocate the active match to a
       // different visible match on the same page (handles "multiple U5
@@ -2455,6 +2474,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         // Mirrored: the centering pan was computed in un-mirrored space; reflect
         // its X so the match lands centered on the flipped display.
         if (mirrorRef.current) newPan.x = container.clientWidth * (1 - newZoom) - newPan.x;
+        stopGlide();
         zoomRef.current = newZoom;
         panRef.current = newPan;
         syncTransform();
@@ -2492,7 +2512,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       }
       blinkPhaseRef.current = 0;
     };
-  }, [isLoaded, activeMatchIndex, matches, currentPage, isMultiTerm, isAtSyntax, pdfFileName, syncTransform]);
+  }, [isLoaded, activeMatchIndex, matchNavSeq, matches, currentPage, isMultiTerm, isAtSyntax, pdfFileName, syncTransform]);
 
   // Follow target: zoom + highlight location (triggered by board follow mode / click-to-lookup)
   useEffect(() => {
@@ -2521,6 +2541,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         floor,
       );
       if (mirrorRef.current) pan.x = containerRef.current.clientWidth * (1 - zoom) - pan.x;
+      stopGlide();
       zoomRef.current = zoom;
       panRef.current = pan;
       syncTransform();
@@ -3575,6 +3596,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   /** Put the view at an exact pose — bookmarks and the navigation history share it. */
   const applyPose = useCallback((page: number, zoom: number, panX: number, panY: number) => {
     pdfStore.switchTo(pdfFileName);
+    stopGlide();
     zoomRef.current = zoom;
     panRef.current = { x: panX, y: panY };
     const samePage = page === pdfStore.getDocCurrentPage(pdfFileName);
@@ -3773,6 +3795,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
                 ref={searchInputRef}
                 type="text"
                 className="pdf-search-input"
+                data-pdf-file={pdfFileName}
                 placeholder="Search (multi-term: 10UF 25V)"
                 title="Enter / ↓ / Cmd+F — next match. Shift+Enter / ↑ / Shift+Cmd+F — previous match."
                 defaultValue={searchQuery}
