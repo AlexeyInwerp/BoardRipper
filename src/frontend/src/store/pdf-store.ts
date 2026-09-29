@@ -1039,20 +1039,16 @@ class PdfStore extends Emitter {
     this.notify();
   }
 
-  private _viewNoteTimer: ReturnType<typeof setTimeout> | null = null;
-  /** A page turned by hand (keys, scroll-flip, bookmark, agent) becomes a
-   *  viewpoint once it has settled for half a second — not a page reached by
-   *  a search or a history restore, which set `currentPage` directly. */
+  /** A page turned by hand (keys, scroll-flip, bookmark, agent) is a
+   *  viewpoint candidate — committed by the history store only once the user
+   *  has stayed on it (flipping through a document leaves one row, for the
+   *  page they stopped on). Not a page reached by a search or a history
+   *  restore, which set `currentPage` directly. */
   private _scheduleViewNote(d: PdfDocument) {
     if (navHistoryStore.isRestoring) return;
-    if (this._viewNoteTimer) clearTimeout(this._viewNoteTimer);
-    this._viewNoteTimer = setTimeout(() => {
-      this._viewNoteTimer = null;
-      if (!this._documents.has(d.fileName)) return;
-      const cur = navHistoryStore.current;
-      if (cur?.place?.kind === 'pdf' && cur.place.fileName === d.fileName && cur.place.page === d.currentPage) return;
-      navHistoryStore.record({ cause: 'view', label: `p.${d.currentPage}`, place: { kind: 'pdf', fileName: d.fileName, fileId: d.fileId, page: d.currentPage } });
-    }, 500);
+    const cur = navHistoryStore.current;
+    if (cur?.place?.kind === 'pdf' && cur.place.fileName === d.fileName && cur.place.page === d.currentPage) return;
+    navHistoryStore.recordViewpoint({ cause: 'view', label: `p.${d.currentPage}`, place: { kind: 'pdf', fileName: d.fileName, fileId: d.fileId, page: d.currentPage } });
   }
 
   /** Rotate the named doc 90° in the given direction. While rotated the layout

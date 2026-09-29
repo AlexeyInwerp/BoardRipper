@@ -83,6 +83,8 @@ export function HistoryPanel() {
   const { listed, currentId, layers, entries } = useNavHistory();
   const { activeTabId, tabs } = useBoardStore();
   const [scope, setScope] = useState<'all' | 'board'>('all');
+  /** Boards / PDFs — a list filter only; ⌘[ / ⌘] still walk both. */
+  const [kind, setKind] = useState<'all' | 'boards' | 'pdfs'>('all');
   const [confirmClear, setConfirmClear] = useState(false);
   const [, tick] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
@@ -103,9 +105,16 @@ export function HistoryPanel() {
   }, [activeTab]);
 
   const rows = useMemo(() => {
-    if (scope === 'all') return listed;
-    return listed.filter(e => { const f = fileOf(e); return f == null || activeFiles.has(f); });
-  }, [listed, scope, activeFiles]);
+    let out = listed;
+    if (kind !== 'all') {
+      out = out.filter(e => {
+        const isPdf = e.place ? e.place.kind === 'pdf' : e.query?.surface === 'pdf';
+        return kind === 'pdfs' ? isPdf : !isPdf;
+      });
+    }
+    if (scope === 'board') out = out.filter(e => { const f = fileOf(e); return f == null || activeFiles.has(f); });
+    return out;
+  }, [listed, scope, kind, activeFiles]);
 
   // Keep the cursor row in view when it moves.
   useEffect(() => {
@@ -154,9 +163,16 @@ export function HistoryPanel() {
             </button>
           ))}
         </div>
-        <div className="hist-scope" role="group" aria-label="Scope">
-          <button type="button" className={`hist-scope-btn${scope === 'all' ? ' on' : ''}`} aria-pressed={scope === 'all'} onClick={() => setScope('all')} data-testid="history-scope-all">Everything</button>
-          <button type="button" className={`hist-scope-btn${scope === 'board' ? ' on' : ''}`} aria-pressed={scope === 'board'} onClick={() => setScope('board')} disabled={!activeTab} data-testid="history-scope-board" title={activeTab ? `${activeTab.fileName} and its PDFs` : 'No board open'}>This board</button>
+        <div className="hist-scope-row">
+          <div className="hist-scope" role="group" aria-label="Scope">
+            <button type="button" className={`hist-scope-btn${scope === 'all' ? ' on' : ''}`} aria-pressed={scope === 'all'} onClick={() => setScope('all')} data-testid="history-scope-all">Everything</button>
+            <button type="button" className={`hist-scope-btn${scope === 'board' ? ' on' : ''}`} aria-pressed={scope === 'board'} onClick={() => setScope('board')} disabled={!activeTab} data-testid="history-scope-board" title={activeTab ? `${activeTab.fileName} and its PDFs` : 'No board open'}>This board</button>
+          </div>
+          <div className="hist-scope" role="group" aria-label="Kind" title="Lists boards, PDFs or both — the shortcuts still walk both">
+            <button type="button" className={`hist-scope-btn${kind === 'all' ? ' on' : ''}`} aria-pressed={kind === 'all'} onClick={() => setKind('all')} data-testid="history-kind-all">All</button>
+            <button type="button" className={`hist-scope-btn${kind === 'boards' ? ' on' : ''}`} aria-pressed={kind === 'boards'} onClick={() => setKind('boards')} data-testid="history-kind-boards"><IconCpu size={11} stroke={2} /> Boards</button>
+            <button type="button" className={`hist-scope-btn${kind === 'pdfs' ? ' on' : ''}`} aria-pressed={kind === 'pdfs'} onClick={() => setKind('pdfs')} data-testid="history-kind-pdfs"><IconFileTypePdf size={11} stroke={2} /> PDFs</button>
+          </div>
         </div>
         {confirmClear && (
           <div className="wl-confirm" data-testid="history-confirm" role="alertdialog">
@@ -177,7 +193,7 @@ export function HistoryPanel() {
         ) : allOff ? (
           <div className="panel-empty hist-empty"><div>Every layer is switched off.</div><small>Switch one on above to list it.</small></div>
         ) : rows.length === 0 ? (
-          <div className="panel-empty hist-empty"><div>Nothing on this board yet.</div></div>
+          <div className="panel-empty hist-empty"><div>{kind === 'pdfs' ? 'No PDF visits yet.' : kind === 'boards' ? 'No board visits yet.' : 'Nothing on this board yet.'}</div></div>
         ) : rows.map(e => {
           const file = fileOf(e);
           const header = scope === 'all' && file !== lastFile ? file : null;

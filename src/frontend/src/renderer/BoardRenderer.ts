@@ -3888,7 +3888,7 @@ export class BoardRenderer {
       return;
     }
     const near = this.findLargestPartNearCenter();
-    navHistoryStore.record({
+    navHistoryStore.recordViewpoint({
       cause: 'view',
       label: `${near ? `near ${near.name}` : 'region'} · ${Math.abs(cam.scaleX).toFixed(1)}×`,
       place: { kind: 'board', tabId: tab.id, fileKey: tab.cacheKey, fileId: tab.fileId, fileName: tab.fileName,

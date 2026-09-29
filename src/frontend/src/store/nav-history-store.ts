@@ -28,6 +28,10 @@ const PERSIST_DEBOUNCE_MS = 500;
 
 /** A query is committed 1.5 s after the last keystroke (or sooner by a pick). */
 const QUERY_COMMIT_MS = 1500;
+/** A viewpoint (a region, a page, a tab) is committed only after the user has
+ *  stayed on it this long; flipping through pages or panning across a board
+ *  leaves one row for where they stopped, not one per pause. */
+const VIEW_DWELL_MS = 2000;
 
 export interface BoardCameraProvider { get(): BoardCamera; set(cam: BoardCamera): void }
 export interface PdfCameraProvider   { get(): PdfCamera;   set(cam: PdfCamera): void }
@@ -86,6 +90,7 @@ class NavHistoryStore extends Emitter {
   private pendingPdf = new Map<string, PdfCamera>();
 
   private pendingQuery: { visit: NavVisit; timer: ReturnType<typeof setTimeout> } | null = null;
+  private pendingView: { visit: NavVisit; timer: ReturnType<typeof setTimeout> } | null = null;
 
   get state(): NavHistoryState { return this._state; }
   get layers(): NavLayers { return this._layers; }
@@ -176,6 +181,8 @@ class NavHistoryStore extends Emitter {
   record(visit: NavVisit) {
     if (this.isRestoring) return;
     if (visit.cause === 'view' && !this._layers.view) return;   // §3.4: views are a record gate
+    // Any other visit records the pose the candidate viewpoint described.
+    if (visit.cause !== 'view') this.dropPendingView();
     this.flushQuery();
     const cur = this.current;
     const departure = visit.cause === 'view' ? undefined : this.cameraOf(cur?.place ?? null);
@@ -190,6 +197,23 @@ class NavHistoryStore extends Emitter {
     const e = this.current!;
     log.ui.log(`history: ${before === this._state.entries.length ? 'update' : 'visit'} [${e.cause}] ${e.label}${e.from ? ` (from ${e.from})` : ''} #${this._state.cursor + 1}/${this._state.entries.length}`);
     this.notify();
+  }
+
+  /**
+   * A viewpoint candidate: committed after `VIEW_DWELL_MS` of standing still,
+   * replaced by a newer candidate, dropped by any other visit. The Fit button
+   * records directly — a deliberate act needs no dwell.
+   */
+  recordViewpoint(visit: NavVisit) {
+    if (this.isRestoring || !this._layers.view) return;
+    this.dropPendingView();
+    this.pendingView = { visit, timer: setTimeout(() => { this.pendingView = null; this.record(visit); }, VIEW_DWELL_MS) };
+  }
+
+  private dropPendingView() {
+    if (!this.pendingView) return;
+    clearTimeout(this.pendingView.timer);
+    this.pendingView = null;
   }
 
   /** A query typed on a surface; committed after a pause or by the next pick. */
@@ -247,6 +271,7 @@ class NavHistoryStore extends Emitter {
 
   clear() {
     if (this.pendingQuery) { clearTimeout(this.pendingQuery.timer); this.pendingQuery = null; }
+    this.dropPendingView();
     this._state = clear(this._state);
     this.notify();
   }

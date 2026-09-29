@@ -292,10 +292,10 @@ test.describe('navigation history', () => {
     // to the settle detector like a drag is; they are deterministic where a
     // synthetic drag arms the inertia.
     const arrived = await camera(page);
-    const drag = async (presses: number, dir: 'Left' | 'Right') => {
+    const drag = async (presses: number, dir: 'Left' | 'Right', dwell = true) => {
       await page.locator('canvas').first().hover();
       for (let i = 0; i < presses; i++) await page.keyboard.press(`Alt+Arrow${dir}`);
-      await page.waitForTimeout(900);    // 600 ms settle
+      await page.waitForTimeout(dwell ? 3000 : 900);   // 600 ms settle (+ 2 s dwell)
     };
 
     // Layer off (the default): a big pan leaves no row, but the click entry
@@ -317,11 +317,27 @@ test.describe('navigation history', () => {
     l = await labels(page);
     expect(l).toHaveLength(2);
 
-    // ⌘[ returns to U1 at the pose it was left in.
+
+    // ⌘[ returns to U1 at the pose it was left in; ⌘] back to the viewpoint.
     await page.keyboard.press(`${MOD}+BracketLeft`);
     await page.waitForTimeout(700);
     expect(await selectedName(page)).toBe('U1');
     expect(near(await camera(page), left, 6)).toBe(true);
+    await page.keyboard.press(`${MOD}+BracketRight`);
+    await page.waitForTimeout(700);
+
+    // Two big pans with no dwell between them leave one row, for where the
+    // user stopped; a click before the dwell drops the candidate entirely.
+    await drag(9, 'Left', false);
+    await drag(9, 'Left', true);
+    l = await labels(page);
+    expect(l).toHaveLength(3);
+    await drag(9, 'Right', false);
+    await click(page, 'C1');
+    await page.waitForTimeout(2600);
+    l = await labels(page);
+    expect(l).toHaveLength(4);
+    expect(l[3]).toMatch(/^C1/);
     await page.evaluate(() => (window as unknown as Win).__navHistory.store.setLayer('view', false));
   });
 
@@ -350,6 +366,40 @@ test.describe('navigation history', () => {
     await page.keyboard.press(`${MOD}+BracketLeft`);
     await page.waitForTimeout(600);
     expect(await selectedName(page)).toBe('U1');
+  });
+
+  test('PDF pages flipped through leave one viewpoint, and the Boards / PDFs filter splits the list', async ({ page }) => {
+    test.skip(!fs.existsSync(PDF), 'pdf fixture missing');
+    await load(page);
+    await click(page, 'U1');
+    await page.getByTestId('file-input').setInputFiles(PDF);
+    await page.waitForTimeout(2500);
+    await page.evaluate(() => (window as unknown as Win).__navHistory.store.setLayer('view', true));
+    // Flip forward, back, forward within the dwell: one row, for page 2.
+    await page.evaluate(() => { const s = (window as unknown as Win).__pdfStore as unknown as { goToPage(n: number): void }; s.goToPage(2); });
+    await page.waitForTimeout(400);
+    await page.evaluate(() => { const s = (window as unknown as Win).__pdfStore as unknown as { goToPage(n: number): void }; s.goToPage(1); });
+    await page.waitForTimeout(400);
+    await page.evaluate(() => { const s = (window as unknown as Win).__pdfStore as unknown as { goToPage(n: number): void }; s.goToPage(2); });
+    await page.waitForTimeout(2600);
+    const l = await labels(page);
+    expect(l).toEqual(['U1', 'p.2']);
+    await page.evaluate(() => (window as unknown as Win).__navHistory.store.setLayer('view', false));
+
+    await page.evaluate(() => (window as unknown as Win).__navHistory.store.setLayer('view', true));
+    await page.locator('[data-sidebar-tab="history"]').first().click();
+    const panel = page.getByTestId('history-panel');
+    const rows = panel.getByTestId('history-row');
+    await expect(rows).toHaveCount(2);
+    await panel.getByTestId('history-kind-pdfs').click();
+    await expect(rows).toHaveCount(1);
+    await expect(rows.nth(0)).toContainText('p.2');
+    await panel.getByTestId('history-kind-boards').click();
+    await expect(rows).toHaveCount(1);
+    await expect(rows.nth(0)).toContainText('U1');
+    await panel.getByTestId('history-kind-all').click();
+    await expect(rows).toHaveCount(2);
+    await page.evaluate(() => (window as unknown as Win).__navHistory.store.setLayer('view', false));
   });
 
   test('the PDF find field lists recent queries while focused and runs one on pick', async ({ page }) => {

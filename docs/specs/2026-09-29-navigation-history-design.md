@@ -500,6 +500,15 @@ row with a `fileId` reopens the file from the library on click and jumps
 after it loads. Not built: the Library search surface as a query entry, and
 the MCP `history_*` tools (backend work in `mcpserver`).
 
+**Dwell (2026-09-29, after review):** a viewpoint candidate — a settled
+board region, a turned PDF page, a tab arrived at — commits only after 2 s of
+standing still (`recordViewpoint`, `VIEW_DWELL_MS`); a newer candidate
+replaces it and any other visit drops it, because that visit's own entry
+already records the pose. Flipping through a document with PageDown leaves
+one row, for the page the user stopped on; the Fit button stays immediate.
+The History tab also gained a **Boards / PDFs** kind filter next to the scope
+pill — a list filter only, the shortcuts still walk both.
+
 Two mechanics settled in the build. The settle detector lives in the
 renderer's ticker, not on pixi-viewport's `moved` event: keyboard pans and
 several of our own handlers set the position without emitting it, so the

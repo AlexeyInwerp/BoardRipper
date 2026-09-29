@@ -9437,7 +9437,9 @@ body {
 .hist-chip:hover { background: var(--surface-hover); color: var(--text-primary); }
 .hist-chip.on { color: var(--accent-text); background: var(--surface-hover); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 .hist-chip-n { font-family: ui-monospace, monospace; font-size: 10px; opacity: 0.7; font-variant-numeric: tabular-nums; }
-.hist-scope { display: flex; gap: 0; padding: 2px 8px 8px; }
+.hist-scope-row { display: flex; flex-wrap: wrap; gap: 6px 10px; padding: 2px 8px 8px; }
+.hist-scope { display: flex; gap: 0; }
+.hist-scope-btn svg { vertical-align: -1px; margin-right: 2px; }
 .hist-scope-btn {
   font: inherit; font-size: 11px; padding: 2px 9px; border: 1px solid var(--border); background: transparent;
   color: var(--text-secondary); cursor: pointer;

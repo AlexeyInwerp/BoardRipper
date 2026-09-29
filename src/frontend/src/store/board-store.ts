@@ -1388,8 +1388,9 @@ class BoardStore extends Emitter {
     const tab = this._tabs.find(t => t.id === tabId);
     if (tab && this._activeTabId !== tabId) {
       this._activeTabId = tabId;
-      // Navigation history: arriving on another board is a viewpoint (layer 4).
-      navHistoryStore.record({
+      // Navigation history: arriving on another board is a viewpoint (layer 4),
+      // committed only if the user stays on it.
+      navHistoryStore.recordViewpoint({
         cause: 'view', label: tab.fileName,
         place: { kind: 'board', tabId: tab.id, fileKey: tab.cacheKey, fileId: tab.fileId, fileName: tab.fileName,
           side: tab.butterfly || (tab.showTop && tab.showBottom) ? 'both' : tab.showTop ? 'top' : 'bottom' },
