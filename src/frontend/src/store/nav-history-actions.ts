@@ -17,11 +17,17 @@ import { navHistoryStore } from './nav-history-store';
 import { activateLinkedPanel, boardPanelId, ensureBoardPanel, ensurePdfPanel, pdfPanelId } from './dockview-api';
 import { log } from './log-store';
 import { openBoardSearch } from '../panels/board-viewer-bridge';
+import { openLibraryFileById } from './file-actions';
 import type { NavEntry, BoardPlace, PdfPlace } from './nav-history';
+
+/** `name:size` — a library re-fetch may carry another mtime than the first open. */
+const keyHead = (k: string) => k.split(':').slice(0, 2).join(':');
 
 function tabFor(place: BoardPlace) {
   return boardStore.tabs.find(t => t.id === place.tabId)
     ?? boardStore.tabs.find(t => t.cacheKey && t.cacheKey === place.fileKey)
+    ?? boardStore.tabs.find(t => t.cacheKey && place.fileKey && keyHead(t.cacheKey) === keyHead(place.fileKey))
+    ?? boardStore.tabs.find(t => t.fileName === place.fileName)
     ?? null;
 }
 
@@ -141,12 +147,25 @@ function step(dir: -1 | 1): boolean {
 export function historyBack(): boolean { return step(-1); }
 export function historyForward(): boolean { return step(1); }
 
-/** Jump to a listed entry: the cursor moves there, nothing is appended. */
+/** Jump to a listed entry: the cursor moves there, nothing is appended. An
+ *  entry whose file is closed is reopened from the library first when it
+ *  carries a databank id, then jumped to. */
 export function historyJumpTo(id: number): boolean {
   const idx = navHistoryStore.indexOfId(id);
   if (idx < 0) return false;
   const e = navHistoryStore.entries[idx];
-  if (!entryReachable(e)) return false;
+  if (!entryReachable(e)) {
+    const fileId = e.place?.fileId;
+    if (fileId == null) {
+      boardStore.addToast(`${e.place?.fileName ?? 'That file'} is closed — open it to return here`, 'info');
+      return false;
+    }
+    boardStore.addToast(`Opening ${e.place?.fileName}…`, 'info', undefined, 3000);
+    openLibraryFileById(fileId, e.place?.kind === 'pdf' ? e.place.page : undefined)
+      .then(() => { setTimeout(() => historyJumpTo(id), 400); })
+      .catch(err => { log.ui.warn('history: reopen failed', err); boardStore.addToast(`Could not open ${e.place?.fileName}`, 'error'); });
+    return false;
+  }
   navHistoryStore.touchCurrentCamera();
   navHistoryStore.moveCursor(idx);
   log.ui.log(`history: jump → [${e.cause}] ${e.label} #${idx + 1}/${navHistoryStore.entries.length}`);

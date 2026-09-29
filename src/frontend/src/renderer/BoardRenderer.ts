@@ -45,6 +45,26 @@ import type { BorderBatch, PadGeometry } from './board-scene';
 import { registerRenderer, unregisterRenderer } from './renderer-registry';
 import { navHistoryStore, type BoardCameraProvider } from '../store/nav-history-store';
 import type { BoardCamera } from '../store/nav-history';
+
+/** The world rectangle a viewport pose shows on a `sw`×`sh` screen. */
+function viewRect(c: BoardCamera, sw: number, sh: number) {
+  const x0 = -c.x / c.scaleX, x1 = (sw - c.x) / c.scaleX;
+  const y0 = -c.y / c.scaleY, y1 = (sh - c.y) / c.scaleY;
+  return { minX: Math.min(x0, x1), maxX: Math.max(x0, x1), minY: Math.min(y0, y1), maxY: Math.max(y0, y1) };
+}
+
+/** Does pose `b` still show the view pose `a` showed? Zoom within 2× and at
+ *  least 30 % of the new view was inside the old one (design §3.5). */
+export function viewsOverlap(a: BoardCamera, b: BoardCamera, sw: number, sh: number): boolean {
+  if (!sw || !sh || !a.scaleX || !b.scaleX) return true;
+  const ratio = Math.abs(a.scaleX) / Math.abs(b.scaleX);
+  if (ratio > 2 || ratio < 0.5) return false;
+  const ra = viewRect(a, sw, sh), rb = viewRect(b, sw, sh);
+  const ix = Math.max(0, Math.min(ra.maxX, rb.maxX) - Math.max(ra.minX, rb.minX));
+  const iy = Math.max(0, Math.min(ra.maxY, rb.maxY) - Math.max(ra.minY, rb.minY));
+  const areaB = (rb.maxX - rb.minX) * (rb.maxY - rb.minY);
+  return areaB > 0 && (ix * iy) / areaB >= 0.3;
+}
 import { getFormat } from '../parsers/registry';
 import { log } from '../store/log-store';
 import { ensurePdfPanel } from '../store/dockview-api';
@@ -784,6 +804,14 @@ export class BoardRenderer {
     set: (cam) => this.animateToViewport(cam),
   };
 
+  /** Navigation history, layer 4: a user move that has settled becomes a
+   *  viewpoint when it left the previous view; a smaller one only refreshes
+   *  the current entry's pose. `programmaticMove` marks a fit / restore so
+   *  the next transform change is not read as the user's. */
+  private viewSettleTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastViewSig = '';
+  private programmaticMove = false;
+
   // Animated zoom state
   private zoomAnim: {
     fromX: number; fromY: number; fromScaleX: number; fromScaleY: number;
@@ -981,7 +1009,10 @@ export class BoardRenderer {
     }
 
     // Drive animated zoom
+    let animMoved = false;
+    let animDone = false;
     if (this.zoomAnim) {
+      animMoved = true;
       const a = this.zoomAnim;
       a.elapsed += ticker.deltaMS;
       const t = Math.min(a.elapsed / a.duration, 1);
@@ -999,7 +1030,25 @@ export class BoardRenderer {
       // zoom never changes their geometry. onZoomFrame hides them during the
       // anim and the settle timer redraws from the cached segments at the new
       // scale (renderNetLines re-derives the zoom-dependent draw params).
-      if (t >= 1) this.zoomAnim = null;
+      if (t >= 1) { this.zoomAnim = null; animDone = true; }
+    }
+
+    // Navigation history: classify every transform change as the user's or
+    // ours. Ours (animated jump, fit, restore) re-baselines; the user's
+    // starts the settle timer. Cheap: four numbers into a string per frame.
+    if (this.viewport) {
+      const vp = this.viewport;
+      const sig = `${vp.x.toFixed(1)},${vp.y.toFixed(1)},${vp.scale.x.toFixed(4)},${vp.scale.y.toFixed(4)}`;
+      if (sig !== this.lastViewSig) {
+        this.lastViewSig = sig;
+        if (animMoved || this.programmaticMove) {
+          this.programmaticMove = false;
+          if (this.viewSettleTimer) { clearTimeout(this.viewSettleTimer); this.viewSettleTimer = null; }
+        } else {
+          this.scheduleViewSettle();
+        }
+      }
+      if (animDone) this.noteArrivalPose();
     }
 
     // Detect active zooming by comparing scale between frames
@@ -3242,6 +3291,7 @@ export class BoardRenderer {
 
   private restoreViewportState(board: BoardData) {
     const state = this.viewportStates.get(board);
+    this.programmaticMove = true;
     if (state) {
       this.viewport.scale.set(state.scaleX, state.scaleY);
       this.viewport.position.set(state.x, state.y);
@@ -3802,6 +3852,60 @@ export class BoardRenderer {
     } catch (err) {
       log.render.error('onBoardUpdate crashed:', err);
     }
+  }
+
+  private scheduleViewSettle() {
+    if (this.viewSettleTimer) clearTimeout(this.viewSettleTimer);
+    this.viewSettleTimer = setTimeout(() => { this.viewSettleTimer = null; this.settleViewpoint(); }, 600);
+  }
+
+  /** The cursor entry, if it is this tab's. */
+  private currentNavEntryHere() {
+    const cur = navHistoryStore.current;
+    return cur?.place?.kind === 'board' && cur.place.tabId === this.tabId ? cur : null;
+  }
+
+  /** An animated jump has landed: the entry it served now records the pose it
+   *  arrived at (its record-time camera was the pose *before* the jump). */
+  private noteArrivalPose() {
+    if (navHistoryStore.isRestoring || !this.currentNavEntryHere()) return;
+    navHistoryStore.touchCurrentCamera();
+  }
+
+  private settleViewpoint() {
+    if (navHistoryStore.isRestoring || this.destroyed || !this.board || this.tabId == null || !this.viewport) return;
+    const tab = boardStore.tabs.find(t => t.id === this.tabId);
+    if (!tab) return;
+    const cam = this.navCamera.get();
+    const cur = this.currentNavEntryHere();
+    const prev = cur?.place?.kind === 'board' ? cur.place.camera : undefined;
+    const sw = this.containerEl.clientWidth, sh = this.containerEl.clientHeight;
+    const left = !prev || !viewsOverlap(prev, cam, sw, sh);
+    if (!left || !navHistoryStore.layers.view) {
+      // A small move, or the layer is off: the departure rule — the current
+      // entry simply remembers where it was left.
+      if (cur) navHistoryStore.touchCurrentCamera();
+      return;
+    }
+    const near = this.findLargestPartNearCenter();
+    navHistoryStore.record({
+      cause: 'view',
+      label: `${near ? `near ${near.name}` : 'region'} · ${Math.abs(cam.scaleX).toFixed(1)}×`,
+      place: { kind: 'board', tabId: tab.id, fileKey: tab.cacheKey, fileId: tab.fileId, fileName: tab.fileName,
+        side: tab.butterfly || (tab.showTop && tab.showBottom) ? 'both' : tab.showTop ? 'top' : 'bottom', camera: cam },
+    });
+  }
+
+  /** The Fit button: a deliberate "go to the overview" is a viewpoint. */
+  noteFitViewpoint() {
+    if (!this.board || this.tabId == null || !this.viewport) return;
+    const tab = boardStore.tabs.find(t => t.id === this.tabId);
+    if (!tab) return;
+    navHistoryStore.record({
+      cause: 'view', label: 'Fit board',
+      place: { kind: 'board', tabId: tab.id, fileKey: tab.cacheKey, fileId: tab.fileId, fileName: tab.fileName,
+        side: tab.butterfly || (tab.showTop && tab.showBottom) ? 'both' : tab.showTop ? 'top' : 'bottom', camera: this.navCamera.get() },
+    });
   }
 
   /**
@@ -7514,6 +7618,7 @@ export class BoardRenderer {
   fitToBoard(board?: BoardData) {
     const b = board?.bounds ?? this.board?.bounds;
     if (!b) return;
+    this.programmaticMove = true;
     // Defense-in-depth against the same reinit race the ResizeObserver guards:
     // a pending-fit timer could fire during reinitApp() when app.renderer isn't
     // ready / viewport is stale. reinitApp sizes the fresh viewport itself.
@@ -7580,6 +7685,7 @@ export class BoardRenderer {
    * center. Scale is unchanged. Animated via the existing zoomAnim slot.
    */
   private panToBounds(bounds: { minX: number; minY: number; maxX: number; maxY: number }, root?: Container) {
+    this.programmaticMove = true;
     const sw = this.containerEl.clientWidth;
     const sh = this.containerEl.clientHeight;
     if (sw === 0 || sh === 0) return;

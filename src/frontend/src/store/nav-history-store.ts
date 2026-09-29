@@ -14,13 +14,17 @@
 import { Emitter } from './emitter';
 import { log } from './log-store';
 import {
-  push, touchCamera, patchCursor, stepIndex, moveCursor, indexOfId, removeEntry, clear, listed, parseLayers,
-  EMPTY_STATE, DEFAULT_LAYERS,
+  push, touchCamera, patchCursor, stepIndex, moveCursor, indexOfId, removeEntry, clear, listed, parseLayers, withCamera,
+  EMPTY_STATE, DEFAULT_LAYERS, NAV_HISTORY_CAP,
   type NavHistoryState, type NavEntry, type NavVisit, type NavLayers, type NavCause, type NavPlace,
   type NavSurface, type BoardCamera, type PdfCamera, type NavCamera, type PdfMatchRef,
 } from './nav-history';
 
 const LAYERS_KEY = 'boardripper-history-layers';
+/** The timeline itself (phase 4): entries keyed by file, never by tab id. */
+const PERSIST_KEY = 'boardripper-nav-history';
+const PERSIST_VERSION = 1;
+const PERSIST_DEBOUNCE_MS = 500;
 
 /** A query is committed 1.5 s after the last keystroke (or sooner by a pick). */
 const QUERY_COMMIT_MS = 1500;
@@ -36,9 +40,38 @@ function loadLayers(): NavLayers {
   return { ...DEFAULT_LAYERS };
 }
 
+function loadTimeline(): NavHistoryState {
+  try {
+    const raw = localStorage.getItem(PERSIST_KEY);
+    if (!raw) return { ...EMPTY_STATE, entries: [] };
+    const j = JSON.parse(raw) as { version?: number; entries?: NavEntry[]; cursor?: number; nextId?: number };
+    if (j.version !== PERSIST_VERSION || !Array.isArray(j.entries)) return { ...EMPTY_STATE, entries: [] };
+    // Tab ids restart at 1 on every load, so a saved id would point at a
+    // stranger's tab: strip them; the restore side re-finds tabs by fileKey.
+    const entries = j.entries.slice(-NAV_HISTORY_CAP).map(e => e.place?.kind === 'board' ? { ...e, place: { ...e.place, tabId: -1 } } : e);
+    const cursor = Math.min(Math.max(typeof j.cursor === 'number' ? j.cursor : entries.length - 1, -1), entries.length - 1);
+    const nextId = Math.max(typeof j.nextId === 'number' ? j.nextId : 1, ...entries.map(e => e.id + 1));
+    return { entries, cursor, nextId };
+  } catch { return { ...EMPTY_STATE, entries: [] }; }
+}
+
 class NavHistoryStore extends Emitter {
-  private _state: NavHistoryState = { ...EMPTY_STATE, entries: [] };
+  private _state: NavHistoryState = loadTimeline();
   private _layers: NavLayers = loadLayers();
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
+
+  protected notify() {
+    super.notify();
+    if (this.persistTimer) clearTimeout(this.persistTimer);
+    this.persistTimer = setTimeout(() => { this.persistTimer = null; this.persist(); }, PERSIST_DEBOUNCE_MS);
+  }
+
+  private persist() {
+    try {
+      const { entries, cursor, nextId } = this._state;
+      localStorage.setItem(PERSIST_KEY, JSON.stringify({ version: PERSIST_VERSION, entries, cursor, nextId }));
+    } catch { /* quota */ }
+  }
 
   /** While a restore replays through the ordinary store methods, nothing is recorded. */
   isRestoring = false;
@@ -82,7 +115,15 @@ class NavHistoryStore extends Emitter {
   registerBoardCamera(tabId: number, p: BoardCameraProvider) {
     this.boardCams.set(tabId, p);
     const pending = this.pendingBoard.get(tabId);
-    if (pending) { this.pendingBoard.delete(tabId); p.set(pending); }
+    if (pending) { this.pendingBoard.delete(tabId); this.quietly(() => p.set(pending)); }
+  }
+
+  /** Run a pose write with recording suppressed — a restore that lands after
+   *  `isRestoring` was cleared (a panel mounting late) must not read as a visit. */
+  private quietly(fn: () => void) {
+    const was = this.isRestoring;
+    this.isRestoring = true;
+    try { fn(); } finally { this.isRestoring = was; }
   }
   unregisterBoardCamera(tabId: number, p?: BoardCameraProvider) {
     if (!p || this.boardCams.get(tabId) === p) this.boardCams.delete(tabId);
@@ -90,7 +131,7 @@ class NavHistoryStore extends Emitter {
   registerPdfCamera(fileName: string, p: PdfCameraProvider) {
     this.pdfCams.set(fileName, p);
     const pending = this.pendingPdf.get(fileName);
-    if (pending) { this.pendingPdf.delete(fileName); p.set(pending); }
+    if (pending) { this.pendingPdf.delete(fileName); this.quietly(() => p.set(pending)); }
   }
   unregisterPdfCamera(fileName: string, p?: PdfCameraProvider) {
     if (!p || this.pdfCams.get(fileName) === p) this.pdfCams.delete(fileName);
@@ -98,11 +139,11 @@ class NavHistoryStore extends Emitter {
 
   applyBoardCamera(tabId: number, cam: BoardCamera) {
     const p = this.boardCams.get(tabId);
-    if (p) p.set(cam); else this.pendingBoard.set(tabId, cam);
+    if (p) this.quietly(() => p.set(cam)); else this.pendingBoard.set(tabId, cam);
   }
   applyPdfCamera(fileName: string, cam: PdfCamera) {
     const p = this.pdfCams.get(fileName);
-    if (p) p.set(cam); else this.pendingPdf.set(fileName, cam);
+    if (p) this.quietly(() => p.set(cam)); else this.pendingPdf.set(fileName, cam);
   }
 
   /** The live pose of the panel an entry's place belongs to, if that panel is up. */
@@ -123,7 +164,10 @@ class NavHistoryStore extends Emitter {
     if (!cur) return;
     const cam = this.cameraOf(cur.place);
     if (!cam) return;
-    this._state = touchCamera(this._state, cam);
+    const next = touchCamera(this._state, cam);
+    if (next === this._state) return;
+    this._state = next;
+    this.notify();
   }
 
   // ---- recording ----------------------------------------------------------
@@ -135,6 +179,12 @@ class NavHistoryStore extends Emitter {
     this.flushQuery();
     const cur = this.current;
     const departure = visit.cause === 'view' ? undefined : this.cameraOf(cur?.place ?? null);
+    // The arrival pose is the entry's own camera until the departure rule
+    // overwrites it — a back right after a click needs no further capture.
+    if (visit.place && !visit.place.camera) {
+      const cam = this.cameraOf(visit.place);
+      if (cam) visit = { ...visit, place: withCamera(visit.place, cam) };
+    }
     const before = this._state.entries.length;
     this._state = push(this._state, visit, departure);
     const e = this.current!;

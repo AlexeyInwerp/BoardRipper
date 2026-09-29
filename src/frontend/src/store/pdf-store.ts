@@ -1035,7 +1035,24 @@ class PdfStore extends Emitter {
     if (n < 1 || n > active.pageCount) return;
     if (n === active.currentPage) return;
     active.currentPage = n;
+    this._scheduleViewNote(active);
     this.notify();
+  }
+
+  private _viewNoteTimer: ReturnType<typeof setTimeout> | null = null;
+  /** A page turned by hand (keys, scroll-flip, bookmark, agent) becomes a
+   *  viewpoint once it has settled for half a second — not a page reached by
+   *  a search or a history restore, which set `currentPage` directly. */
+  private _scheduleViewNote(d: PdfDocument) {
+    if (navHistoryStore.isRestoring) return;
+    if (this._viewNoteTimer) clearTimeout(this._viewNoteTimer);
+    this._viewNoteTimer = setTimeout(() => {
+      this._viewNoteTimer = null;
+      if (!this._documents.has(d.fileName)) return;
+      const cur = navHistoryStore.current;
+      if (cur?.place?.kind === 'pdf' && cur.place.fileName === d.fileName && cur.place.page === d.currentPage) return;
+      navHistoryStore.record({ cause: 'view', label: `p.${d.currentPage}`, place: { kind: 'pdf', fileName: d.fileName, fileId: d.fileId, page: d.currentPage } });
+    }, 500);
   }
 
   /** Rotate the named doc 90° in the given direction. While rotated the layout

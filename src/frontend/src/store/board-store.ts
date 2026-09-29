@@ -1385,8 +1385,15 @@ class BoardStore extends Emitter {
     // tab hidden before its scene was built is not blocking anyone; when it
     // is shown again the renderer re-marks it right before it builds.
     for (const id of [...this._sceneBuilding.keys()]) if (id !== tabId) this.clearSceneBuilding(id);
-    if (this._tabs.some(t => t.id === tabId) && this._activeTabId !== tabId) {
+    const tab = this._tabs.find(t => t.id === tabId);
+    if (tab && this._activeTabId !== tabId) {
       this._activeTabId = tabId;
+      // Navigation history: arriving on another board is a viewpoint (layer 4).
+      navHistoryStore.record({
+        cause: 'view', label: tab.fileName,
+        place: { kind: 'board', tabId: tab.id, fileKey: tab.cacheKey, fileId: tab.fileId, fileName: tab.fileName,
+          side: tab.butterfly || (tab.showTop && tab.showBottom) ? 'both' : tab.showTop ? 'top' : 'bottom' },
+      });
       this.notify();
     }
   }

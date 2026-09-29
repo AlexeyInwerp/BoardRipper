@@ -1,7 +1,9 @@
 # Navigation history — design
 
 **Date:** 2026-09-29
-**Status:** proposal, not started
+**Status:** shipped on main 2026-09-29 (phases 1–4; not yet in a release).
+Left out of the phase 4 as built: the Library search surface and the MCP
+`history_*` tools — see §11.
 **Scope:** a multi-layer history of where the user has been — part clicks,
 PDF lookups, searches, viewpoints — walkable with Preview's ⌘[ / ⌘] and
 browsable in a History tab with each layer switchable on and off.
@@ -486,6 +488,26 @@ Layer toggles persist from phase 1 (`boardripper-history-layers`).
 
 Each phase is a milestone commit; CLAUDE.md gets its paragraph when phase 1
 ships.
+
+**As built (2026-09-29).** Phases 1–3 as written. Phase 4: the timeline
+persists (`boardripper-nav-history`, version 1, 500 ms debounce) and is
+loaded at store construction with every board `tabId` stripped to −1 — tab
+ids restart at 1 on each load — so entries re-find their tab by `fileKey`
+(`name:size`, the mtime segment ignored because a library re-fetch may carry
+another) or, last, by file name. It does not ride the session-restore prompt:
+the timeline simply loads, and rows light up as their files open. A closed
+row with a `fileId` reopens the file from the library on click and jumps
+after it loads. Not built: the Library search surface as a query entry, and
+the MCP `history_*` tools (backend work in `mcpserver`).
+
+Two mechanics settled in the build. The settle detector lives in the
+renderer's ticker, not on pixi-viewport's `moved` event: keyboard pans and
+several of our own handlers set the position without emitting it, so the
+tick compares the transform with the last frame's and classifies a change as
+ours (the animated jump, a fit, a restore — `programmaticMove`) or the
+user's. And a restore that lands after `isRestoring` was cleared — a panel
+that mounts late and consumes a pending pose — runs under `quietly()`, or
+the `goToPage` it performs would read as a page the user turned.
 
 ---
 

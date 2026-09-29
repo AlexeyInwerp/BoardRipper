@@ -358,6 +358,8 @@ test.describe('activity rail', () => {
     await gotoApp(page);
     await page.focus(`${RAIL} ${tab('library')}`);
     await page.keyboard.press('ArrowDown');
+    await expect(page.locator(`${RAIL} ${tab('history')}`)).toBeFocused();
+    await page.keyboard.press('ArrowDown');
     await expect(page.locator(`${RAIL} ${tab('tools')}`)).toBeFocused();
     await page.keyboard.press('End');
     await expect(page.locator(`${RAIL} ${tab('settings')}`)).toBeFocused();

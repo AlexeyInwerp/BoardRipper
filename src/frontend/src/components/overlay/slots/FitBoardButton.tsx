@@ -5,7 +5,7 @@ export function FitBoardButton({ ctx }: { ctx: SlotCtx }) {
   return (
     <button
       className="board-netlines-toggle"
-      onClick={() => ctx.rendererRef.current?.fitToBoard()}
+      onClick={() => { const r = ctx.rendererRef.current; if (!r) return; r.fitToBoard(); r.noteFitViewpoint(); }}
       title="Zoom to fit board"
     >
       <IconObjectScan size={16} />

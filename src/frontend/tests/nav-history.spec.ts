@@ -284,6 +284,74 @@ test.describe('navigation history', () => {
     expect(await selectedName(page)).toBe('U1');
   });
 
+  test('viewpoints: a settled drag that leaves the view is a row only while the layer is on; a small one is not', async ({ page }) => {
+    await load(page);
+    await click(page, 'U1');
+    await page.waitForTimeout(300);
+    // Keyboard pans move a tenth of the panel per press and are user moves
+    // to the settle detector like a drag is; they are deterministic where a
+    // synthetic drag arms the inertia.
+    const arrived = await camera(page);
+    const drag = async (presses: number, dir: 'Left' | 'Right') => {
+      await page.locator('canvas').first().hover();
+      for (let i = 0; i < presses; i++) await page.keyboard.press(`Alt+Arrow${dir}`);
+      await page.waitForTimeout(900);    // 600 ms settle
+    };
+
+    // Layer off (the default): a big pan leaves no row, but the click entry
+    // remembers the pose it was left at (departure rule).
+    await drag(9, 'Left');
+    expect(await labels(page)).toEqual(['U1']);
+    const left = await camera(page);
+    expect(near(arrived, left, 6)).toBe(false);   // it did move
+    const recorded = await page.evaluate(() => (window as unknown as Win).__navHistory.store.entries[0].place!.camera!);
+    expect(near(recorded, left, 6)).toBe(true);
+
+    // Layer on: a big drag is a viewpoint named after the region, a nudge is not.
+    await page.evaluate(() => (window as unknown as Win).__navHistory.store.setLayer('view', true));
+    await drag(9, 'Right');
+    let l = await labels(page);
+    expect(l).toHaveLength(2);
+    expect(l[1]).toMatch(/^(near \S+|region) · \d+\.\d×$/);
+    await drag(1, 'Right');
+    l = await labels(page);
+    expect(l).toHaveLength(2);
+
+    // ⌘[ returns to U1 at the pose it was left in.
+    await page.keyboard.press(`${MOD}+BracketLeft`);
+    await page.waitForTimeout(700);
+    expect(await selectedName(page)).toBe('U1');
+    expect(near(await camera(page), left, 6)).toBe(true);
+    await page.evaluate(() => (window as unknown as Win).__navHistory.store.setLayer('view', false));
+  });
+
+  test('the timeline survives a reload; a row whose file is closed is greyed and skipped', async ({ page }) => {
+    await load(page);
+    await click(page, 'U1');
+    await click(page, 'C1');
+    await page.waitForTimeout(800);            // persist debounce
+    await page.reload();
+    await expect(page.getByTestId('toolbar')).toBeVisible({ timeout: 15000 });
+    const prompt = page.getByTestId('session-restore-prompt');
+    if (await prompt.count()) await page.getByTestId('session-discard').click();
+    await page.waitForTimeout(500);
+    expect(await labels(page)).toEqual(['U1', 'C1']);
+    await page.locator('[data-sidebar-tab="history"]').first().click();
+    const rows = page.getByTestId('history-panel').getByTestId('history-row');
+    await expect(rows).toHaveCount(2);
+    await expect(rows.nth(0)).toHaveClass(/closed/);
+    await expect(page.getByTestId('history-back')).toHaveCount(0);   // no board, no ribbon
+
+    // Open the same file again: the rows come back to life by file key.
+    await page.getByTestId('file-input').setInputFiles(BOARD);
+    await expect(page.getByTestId('statusbar')).toContainText('Components', { timeout: 20000 });
+    await page.waitForTimeout(1200);
+    await expect(rows.nth(0)).not.toHaveClass(/closed/);
+    await page.keyboard.press(`${MOD}+BracketLeft`);
+    await page.waitForTimeout(600);
+    expect(await selectedName(page)).toBe('U1');
+  });
+
   test('a PDF find is a search entry and comes back with its query and match', async ({ page }) => {
     test.skip(!fs.existsSync(PDF), 'pdf fixture missing');
     await load(page);

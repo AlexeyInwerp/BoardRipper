@@ -143,10 +143,15 @@ export function samePlace(a: NavPlace | null, b: NavPlace | null): boolean {
   if (!a || !b) return a === b;
   if (a.kind !== b.kind) return false;
   if (a.kind === 'board' && b.kind === 'board') {
-    return a.tabId === b.tabId
-      && (a.part ?? null) === (b.part ?? null)
-      && (a.pin ?? null) === (b.pin ?? null)
-      && (a.net ?? null) === (b.net ?? null);
+    if (a.tabId !== b.tabId) return false;
+    if ((a.part ?? null) !== (b.part ?? null) || (a.pin ?? null) !== (b.pin ?? null) || (a.net ?? null) !== (b.net ?? null)) return false;
+    // A camera-only place (a viewpoint) is identified by its pose.
+    if (!a.part && !a.net) {
+      if (!a.camera || !b.camera) return !a.camera && !b.camera;
+      return Math.abs(a.camera.x - b.camera.x) < 1 && Math.abs(a.camera.y - b.camera.y) < 1
+        && Math.abs(a.camera.scaleX - b.camera.scaleX) < 1e-4;
+    }
+    return true;
   }
   if (a.kind === 'pdf' && b.kind === 'pdf') {
     if (a.fileName !== b.fileName) return false;
@@ -180,7 +185,7 @@ function queryGrowth(prev: NavQuery | undefined, next: NavQuery | undefined): bo
 // ---------------------------------------------------------------------------
 // reducer
 
-function withCamera(place: NavPlace, camera: NavCamera | undefined): NavPlace {
+export function withCamera(place: NavPlace, camera: NavCamera | undefined): NavPlace {
   if (!camera) return place;
   if (place.kind === 'board') return { ...place, camera: camera as BoardCamera };
   return { ...place, camera: camera as PdfCamera, page: (camera as PdfCamera).page ?? place.page };

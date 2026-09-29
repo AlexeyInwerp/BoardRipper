@@ -202,8 +202,8 @@ export function HistoryPanel() {
                 data-cause={e.cause}
                 role="button"
                 tabIndex={0}
-                title={reachable ? (isCurrent ? 'You are here' : `Jump here · ${e.label}`) : `${file} is closed`}
-                onClick={() => { if (!isCurrent) historyJumpTo(e.id); }}
+                title={reachable ? (isCurrent ? 'You are here' : `Jump here · ${e.label}`) : (e.place?.fileId != null ? `${file} is closed · click to open it from the library` : `${file} is closed`)}
+                onClick={() => { if (!isCurrent || !reachable) historyJumpTo(e.id); }}
                 onKeyDown={ev => onRowKey(ev, e.id)}
               >
                 <span className={`hist-glyph hist-glyph-${e.cause}`}>{e.revisit ? <IconArrowBackUp size={14} stroke={1.8} /> : <CauseGlyph cause={e.cause} />}</span>
