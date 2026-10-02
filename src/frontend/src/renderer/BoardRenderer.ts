@@ -344,6 +344,9 @@ function rot90Parity(rotationDeg: number): number {
 }
 
 
+/** What `BoardRenderer.onViewChange` listeners receive. */
+export interface ViewChange { userPan: boolean; dx: number; dy: number }
+
 export class BoardRenderer {
   /** Whether top layer should be visible (accounts for butterfly mode) */
   private get isTopVisible() { return boardStore.showTop || boardStore.butterfly; }
@@ -1061,7 +1064,13 @@ export class BoardRenderer {
         this.lastViewSig = sig;
         // A user move at an unchanged scale is a pan — the minimap's trigger.
         if (!animMoved && !this.programmaticMove && !this.zoomTween &&
-            Math.abs(vp.scale.x) === this.viewPoseScale) this.viewUserPanned = true;
+            Math.abs(vp.scale.x) === this.viewPoseScale) {
+          this.viewUserPanned = true;
+          this.viewPanDx += vp.x - this.viewPanX;
+          this.viewPanDy += vp.y - this.viewPanY;
+        }
+        this.viewPanX = vp.x;
+        this.viewPanY = vp.y;
         this.viewPoseScale = Math.abs(vp.scale.x);
         if (animMoved || this.programmaticMove) {
           this.programmaticMove = false;
@@ -3930,29 +3939,37 @@ export class BoardRenderer {
 
   // ---- DOM overlays that follow the view (minimap, slide annotations) ----
 
-  private viewListeners = new Set<(e: { userPan: boolean }) => void>();
+  private viewListeners = new Set<(e: ViewChange) => void>();
   private viewEmitSig = '';
   private viewPoseScale = -1;
   private viewUserPanned = false;
+  private viewPanX = 0;
+  private viewPanDx = 0;
+  private viewPanDy = 0;
+  private viewPanY = 0;
 
   /** Called after any frame whose view (viewport pose, board transform or
    *  panel size) changed. `userPan` is true when the change was the user
-   *  panning — not a zoom, not one of our animated jumps. */
-  onViewChange(fn: (e: { userPan: boolean }) => void): () => void {
+   *  panning — not a zoom, not one of our animated jumps — and then `dx/dy`
+   *  is how far it panned (screen px) since the last call. */
+  onViewChange(fn: (e: ViewChange) => void): () => void {
     this.viewListeners.add(fn);
     return () => { this.viewListeners.delete(fn); };
   }
 
   private emitViewChange() {
     const userPan = this.viewUserPanned;
+    const dx = this.viewPanDx, dy = this.viewPanDy;
     this.viewUserPanned = false;
+    this.viewPanDx = 0;
+    this.viewPanDy = 0;
     if (!this.viewListeners.size || !this.viewport || !this.activeScene) return;
     const r = this.activeScene.root.localTransform;
     const b = boardStore.butterfly && this.activeScene.butterflyRoot ? this.activeScene.butterflyRoot.localTransform : null;
     const sig = `${this.lastViewSig}|${r.a},${r.b},${r.c},${r.d},${r.tx},${r.ty}|${b ? `${b.a},${b.b},${b.tx},${b.ty}` : '-'}|${this.containerEl.clientWidth}x${this.containerEl.clientHeight}`;
     if (sig === this.viewEmitSig && !userPan) return;
     this.viewEmitSig = sig;
-    for (const fn of this.viewListeners) fn({ userPan });
+    for (const fn of this.viewListeners) fn({ userPan, dx, dy });
   }
 
   /** Everything the minimap draws, in viewport-world space: the transform of
@@ -3982,6 +3999,11 @@ export class BoardRenderer {
       board: this.board, roots,
       view: { x: Math.min(tl.x, br.x), y: Math.min(tl.y, br.y), w: Math.abs(br.x - tl.x), h: Math.abs(br.y - tl.y) },
     };
+  }
+
+  /** Panel size in renderer px. */
+  viewSize(): { width: number; height: number } {
+    return { width: this.containerEl.clientWidth, height: this.containerEl.clientHeight };
   }
 
   /** Centre the screen on a viewport-world point (minimap click / drag). */

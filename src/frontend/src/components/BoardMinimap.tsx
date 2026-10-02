@@ -1,8 +1,9 @@
 /** Board minimap: the whole board in miniature with a box for what the screen
  *  shows. Two ways it appears:
  *    - `always` (slide mode): steady while composing a view;
- *    - `onPan` (ribbon toggle `minimap`): fades in at the top centre on the
- *      third pan gesture in a row (`PanActivity`) and out once panning stops.
+ *    - `onPan` (ribbon toggle `minimap`): fades in at the top centre when the
+ *      user, zoomed in to 2× the fit view or more, has panned 12 % of the
+ *      screen (`PanActivity`), and out once panning stops.
  *  Drawn from BoardData (outline + part boxes) through the board roots'
  *  transforms, so rotation, mirror and Butterfly come for free. The board is
  *  cached in an offscreen canvas and only the view box is redrawn per frame.
@@ -149,10 +150,18 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
   // Follow the view; in onPan mode, feed the gesture counter.
   useEffect(() => {
     if (!renderer || mode === 'off') return;
-    return renderer.onViewChange(({ userPan }) => {
+    return renderer.onViewChange(({ userPan, dx, dy }) => {
       if (mode === 'onPan' && userPan) {
         const now = performance.now();
-        if (activity.current.move(now)) {
+        const model = renderer.getViewModel();
+        const sz = renderer.viewSize();
+        // Zoom relative to the fit view: 1 when the whole board fits on screen.
+        let zoom = 0;
+        if (model) {
+          const cb = contentBounds(model);
+          zoom = Math.max(cb.w / model.view.w, cb.h / model.view.h);
+        }
+        if (activity.current.move(now, { dx, dy, width: sz.width, height: sz.height, zoom })) {
           setShown(true);
           if (hideTimer.current) clearTimeout(hideTimer.current);
           const arm = () => {

@@ -1,7 +1,7 @@
 /**
  * Slide mode (arrows / boxes / text over the view, saved as a PNG) and the
- * pan minimap (fades in on the third pan gesture in a row, out once panning
- * stops). Public KiCad sample, so it runs on a clean checkout.
+ * pan minimap (fades in when zoomed to 2× the fit view or more and panned 12 %
+ * of the screen, out once panning stops). Public KiCad sample, so it runs on a clean checkout.
  */
 import { test, expect, type Page } from '@playwright/test';
 import path from 'path';
@@ -129,13 +129,13 @@ test.describe('pan minimap', () => {
   async function panGesture(page: Page, x: number, y: number, dx: number) {
     await page.mouse.move(x, y);
     await page.mouse.down();
-    await page.mouse.move(x + dx, y + 10, { steps: 8 });
+    await page.mouse.move(x + dx, y, { steps: 8 });
     await page.mouse.up();
   }
 
-  test('fades in on the third pan gesture and out after panning stops', async ({ page }) => {
+  test('shows only when zoomed in and after real travel; hides when panning stops', async ({ page }) => {
     await page.addInitScript(() => {
-      // Inertia would keep "panning" after each release; this test counts gestures.
+      // Inertia would keep the board moving after each release; this test measures travel.
       try {
         const raw = localStorage.getItem('boardripper-render-settings');
         const s = raw ? JSON.parse(raw) : {};
@@ -148,14 +148,26 @@ test.describe('pan minimap', () => {
     const b = await canvasBox(page);
     const x = b.x + b.width / 2, y = b.y + b.height / 2;
 
-    await panGesture(page, x, y, 60);
-    await page.waitForTimeout(300);
-    await panGesture(page, x, y, -60);
+    // At the fit view a long pan is not enough: nothing is lost off screen.
+    await panGesture(page, x, y, 300);
     await page.waitForTimeout(300);
     await expect(map).toHaveAttribute('data-visible', 'false');
-    await panGesture(page, x, y, 60);
+
+    // Zoom in to 4× around the centre, then wait out the chain gap.
+    await page.evaluate(() => {
+      const r = (window as unknown as { __boardRenderer: { viewport: { scale: { x: number }; setZoom(s: number, c: boolean): void } } }).__boardRenderer;
+      r.viewport.setZoom(r.viewport.scale.x * 4, true);
+    });
+    await page.waitForTimeout(1700);
+
+    // A small nudge (well under 12 % of the width) does not show it …
+    await panGesture(page, x, y, Math.round(b.width * 0.05));
+    await page.waitForTimeout(300);
+    await expect(map).toHaveAttribute('data-visible', 'false');
+    // … but carrying on past 12 % does.
+    await panGesture(page, x, y, Math.round(b.width * 0.1));
     await expect(map).toHaveAttribute('data-visible', 'true');
-    // … and leaves once panning stops.
+    // … and it leaves once panning stops.
     await expect(map).toHaveAttribute('data-visible', 'false', { timeout: 3000 });
   });
 
