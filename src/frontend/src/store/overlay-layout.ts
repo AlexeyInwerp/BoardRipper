@@ -24,7 +24,7 @@
  *  open-ended `sep${number}` ids — see `isSeparatorId` below. */
 export type NamedSlotId =
   | 'sideSwitch' | 'butterfly' | 'rotateCCW' | 'rotateCW' | 'transformMenu' | 'history'
-  | 'pdfFollow' | 'scrollMode' | 'fitBoard'
+  | 'pdfFollow' | 'scrollMode' | 'fitBoard' | 'minimap' | 'slides'
   | 'hoverInfo' | 'netDim' | 'netLines' | 'ghosts' | 'diodeValues' | 'traces'
   | 'partsDropdown' | 'netsDropdown';
 
@@ -35,7 +35,7 @@ export interface OverlaySlot { id: OverlaySlotId; visible: boolean }
 
 const NAMED_SLOT_IDS: ReadonlySet<NamedSlotId> = new Set([
   'sideSwitch', 'butterfly', 'rotateCCW', 'rotateCW', 'transformMenu', 'history',
-  'pdfFollow', 'scrollMode', 'fitBoard',
+  'pdfFollow', 'scrollMode', 'fitBoard', 'minimap', 'slides',
   'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'traces',
   'partsDropdown', 'netsDropdown',
 ]);
@@ -54,6 +54,8 @@ export const SLOT_LABELS: Readonly<Record<NamedSlotId, string>> = {
   pdfFollow:     'Follow PDF',
   scrollMode:    'Scroll mode',
   fitBoard:      'Fit board',
+  minimap:       'Minimap',
+  slides:        'Slide mode',
   hoverInfo:     'Hover info',
   netDim:        'Spotlight',
   netLines:      'Net lines',
@@ -112,6 +114,8 @@ export const DEFAULT_OVERLAY_LAYOUT: ReadonlyArray<Readonly<OverlaySlot>> = [
   { id: 'pdfFollow',     visible: true },
   { id: 'scrollMode',    visible: true },
   { id: 'fitBoard',      visible: true },
+  { id: 'minimap',       visible: true },
+  { id: 'slides',        visible: true },
   { id: 'sep1',          visible: true },
   { id: 'hoverInfo',     visible: true },
   { id: 'netDim',        visible: true },

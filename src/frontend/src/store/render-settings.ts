@@ -452,6 +452,9 @@ export interface RenderSettings {
   /** Floating position, px from the board panel's top-left corner. */
   overlayFloatX: number;
   overlayFloatY: number;
+  /** Board minimap: fades in at the top centre while the user keeps panning
+   *  (third gesture in a row) and out once panning stops. Ribbon slot `minimap`. */
+  minimapOnPan: boolean;
   /** Auto-enable selection-dim while a search-driven selection (focusPart /
    *  focusNet) is active, even if the user's showNetDim toggle is off. */
   searchAutoDim: boolean;
@@ -758,6 +761,7 @@ export const DEFAULTS: RenderSettings = {
   overlayOrientation: 'horizontal',
   overlayFloatX: 8,
   overlayFloatY: 6,
+  minimapOnPan: true,
   searchAutoDim: true,
   autoMarkMechanical: true,
 };
@@ -1825,6 +1829,14 @@ class RenderSettingsStore extends Emitter {
   setOverlayOrientation(o: 'horizontal' | 'vertical') {
     if (this._global.overlayOrientation === o) return;
     this._global = { ...this._global, overlayOrientation: o };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  setMinimapOnPan(v: boolean) {
+    if (this._global.minimapOnPan === v) return;
+    this._global = { ...this._global, minimapOnPan: v };
     saveToStorage(this._global);
     this.recomputeEffective();
     this.notify();

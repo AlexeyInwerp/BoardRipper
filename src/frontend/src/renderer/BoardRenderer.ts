@@ -1059,6 +1059,10 @@ export class BoardRenderer {
       const sig = `${vp.x.toFixed(1)},${vp.y.toFixed(1)},${vp.scale.x.toFixed(4)},${vp.scale.y.toFixed(4)}`;
       if (sig !== this.lastViewSig) {
         this.lastViewSig = sig;
+        // A user move at an unchanged scale is a pan — the minimap's trigger.
+        if (!animMoved && !this.programmaticMove && !this.zoomTween &&
+            Math.abs(vp.scale.x) === this.viewPoseScale) this.viewUserPanned = true;
+        this.viewPoseScale = Math.abs(vp.scale.x);
         if (animMoved || this.programmaticMove) {
           this.programmaticMove = false;
           if (this.viewSettleTimer) { clearTimeout(this.viewSettleTimer); this.viewSettleTimer = null; }
@@ -1224,6 +1228,8 @@ export class BoardRenderer {
       this.perfAccum.frame += performance.now() - frameStart;
       this.perfSamples++;
     }
+
+    this.emitViewChange();
 
     // HUD update (DOM only, no GPU cost) — throttle to ~4 updates/sec
     this.hudThrottle += ticker.deltaMS;
@@ -3919,6 +3925,116 @@ export class BoardRenderer {
     }
   }
 
+  // ---- DOM overlays that follow the view (minimap, slide annotations) ----
+
+  private viewListeners = new Set<(e: { userPan: boolean }) => void>();
+  private viewEmitSig = '';
+  private viewPoseScale = -1;
+  private viewUserPanned = false;
+
+  /** Called after any frame whose view (viewport pose, board transform or
+   *  panel size) changed. `userPan` is true when the change was the user
+   *  panning — not a zoom, not one of our animated jumps. */
+  onViewChange(fn: (e: { userPan: boolean }) => void): () => void {
+    this.viewListeners.add(fn);
+    return () => { this.viewListeners.delete(fn); };
+  }
+
+  private emitViewChange() {
+    const userPan = this.viewUserPanned;
+    this.viewUserPanned = false;
+    if (!this.viewListeners.size || !this.viewport || !this.activeScene) return;
+    const r = this.activeScene.root.localTransform;
+    const b = boardStore.butterfly && this.activeScene.butterflyRoot ? this.activeScene.butterflyRoot.localTransform : null;
+    const sig = `${this.lastViewSig}|${r.a},${r.b},${r.c},${r.d},${r.tx},${r.ty}|${b ? `${b.a},${b.b},${b.tx},${b.ty}` : '-'}|${this.containerEl.clientWidth}x${this.containerEl.clientHeight}`;
+    if (sig === this.viewEmitSig && !userPan) return;
+    this.viewEmitSig = sig;
+    for (const fn of this.viewListeners) fn({ userPan });
+  }
+
+  /** Everything the minimap draws, in viewport-world space: the transform of
+   *  each board root (top, and the mirrored half in Butterfly) and the
+   *  rectangle the screen currently shows. */
+  getViewModel(): {
+    board: BoardData;
+    roots: Array<{ m: [number, number, number, number, number, number]; side: 'top' | 'bottom' | 'all' }>;
+    view: { x: number; y: number; w: number; h: number };
+  } | null {
+    if (!this.viewport || !this.activeScene || !this.board) return null;
+    const mat = (c: Container): [number, number, number, number, number, number] => {
+      const t = c.localTransform;
+      return [t.a, t.b, t.c, t.d, t.tx, t.ty];
+    };
+    const roots: Array<{ m: [number, number, number, number, number, number]; side: 'top' | 'bottom' | 'all' }> = [];
+    const broot = boardStore.butterfly ? this.activeScene.butterflyRoot : null;
+    if (broot) {
+      roots.push({ m: mat(this.activeScene.root), side: 'top' });
+      roots.push({ m: mat(broot), side: 'bottom' });
+    } else {
+      roots.push({ m: mat(this.activeScene.root), side: 'all' });
+    }
+    const tl = this.viewport.toWorld(0, 0);
+    const br = this.viewport.toWorld(this.containerEl.clientWidth, this.containerEl.clientHeight);
+    return {
+      board: this.board, roots,
+      view: { x: Math.min(tl.x, br.x), y: Math.min(tl.y, br.y), w: Math.abs(br.x - tl.x), h: Math.abs(br.y - tl.y) },
+    };
+  }
+
+  /** Centre the screen on a viewport-world point (minimap click / drag). */
+  centerOnWorld(x: number, y: number) {
+    if (!this.viewport) return;
+    this.zoomTween = null;
+    this.zoomAnim = null;
+    this.viewport.moveCenter(x, y);
+    this.viewport.emit('moved', { viewport: this.viewport, type: 'drag' });
+    this.needsRender = true;
+  }
+
+  /** Panel px → board-local (top root) coordinates, and back. Annotations are
+   *  stored in board space so they stay on the parts while the view moves. */
+  screenToBoard(x: number, y: number): { x: number; y: number } | null {
+    if (!this.activeScene) return null;
+    const p = this.activeScene.root.toLocal({ x, y });
+    return { x: p.x, y: p.y };
+  }
+  boardToScreen(x: number, y: number): { x: number; y: number } | null {
+    if (!this.activeScene) return null;
+    const p = this.activeScene.root.toGlobal({ x, y });
+    return { x: p.x, y: p.y };
+  }
+
+  /** The current view as pixels: the WebGL frame plus the Canvas2D label
+   *  layer, at the canvas's own backing resolution. `drawExtras` paints on
+   *  top in CSS px (the context is pre-scaled). The WebGL buffer is read in
+   *  the same task as the render, so no preserveDrawingBuffer is needed. */
+  captureView(drawExtras?: (ctx: CanvasRenderingContext2D) => void): HTMLCanvasElement | null {
+    if (!this.app?.renderer || !this.activeScene) return null;
+    const src = this.app.canvas as HTMLCanvasElement;
+    const cssW = this.containerEl.clientWidth, cssH = this.containerEl.clientHeight;
+    const scale = Math.max(1, window.devicePixelRatio || 1, src.width / Math.max(1, cssW));
+    const out = document.createElement('canvas');
+    out.width = Math.round(cssW * scale);
+    out.height = Math.round(cssH * scale);
+    const ctx = out.getContext('2d');
+    if (!ctx) return null;
+    try { this.app.render(); } catch (err) { this.handleRenderCrash(err); return null; }
+    ctx.drawImage(src, 0, 0, out.width, out.height);
+    const overlay = this.ensureLabelOverlay();
+    if (overlay && this.activeScene.labelModel) {
+      this.syncLabelOverlay(overlay, this.activeScene);
+      this.overlayDrawnView = { x: this.viewport.x, y: this.viewport.y, scale: Math.abs(this.viewport.scale.x) };
+      ctx.drawImage(overlay.element, 0, 0, out.width, out.height);
+    }
+    if (drawExtras) {
+      ctx.save();
+      ctx.scale(out.width / cssW, out.height / cssH);
+      drawExtras(ctx);
+      ctx.restore();
+    }
+    return out;
+  }
+
   private scheduleViewSettle() {
     if (this.viewSettleTimer) clearTimeout(this.viewSettleTimer);
     this.viewSettleTimer = setTimeout(() => { this.viewSettleTimer = null; this.settleViewpoint(); }, 600);
@@ -4744,6 +4860,7 @@ export class BoardRenderer {
         // floating bar must not rebuild — every rebuild is a chance to leave a
         // destroyed Graphics in the tree (the `_gpuData of null` crash).
         'overlayLayout', 'overlayPosition', 'overlayOrientation', 'overlayFloatX', 'overlayFloatY',
+        'minimapOnPan',
       ]);
       if (prev) {
         let visualChanged = false;

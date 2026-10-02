@@ -37,7 +37,7 @@ test.describe('Overlay layout reconciliation', () => {
 
     expect(result.map(s => s.id)).toEqual([
       'sideSwitch', 'butterfly', 'rotateCCW', 'rotateCW', 'transformMenu', 'history', 'sep0',
-      'pdfFollow', 'scrollMode', 'fitBoard', 'sep1',
+      'pdfFollow', 'scrollMode', 'fitBoard', 'minimap', 'slides', 'sep1',
       'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'traces', 'sep2',
       'partsDropdown', 'netsDropdown',
     ]);
@@ -90,7 +90,7 @@ test.describe('Overlay layout reconciliation', () => {
     // whole thing comes out in default order.
     expect(ids).toEqual([
       'sideSwitch', 'butterfly', 'rotateCCW', 'rotateCW', 'transformMenu', 'history', 'sep0',
-      'pdfFollow', 'scrollMode', 'fitBoard', 'sep1',
+      'pdfFollow', 'scrollMode', 'fitBoard', 'minimap', 'slides', 'sep1',
       'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'traces', 'sep2',
       'partsDropdown', 'netsDropdown',
     ]);
@@ -245,7 +245,7 @@ test.describe('Overlay customizer DnD', () => {
     expect(layout.every(s => s.visible)).toBe(true);
     expect(layout.map(s => s.id)).toEqual([
       'sideSwitch', 'butterfly', 'rotateCCW', 'rotateCW', 'transformMenu', 'history', 'sep0',
-      'pdfFollow', 'scrollMode', 'fitBoard', 'sep1',
+      'pdfFollow', 'scrollMode', 'fitBoard', 'minimap', 'slides', 'sep1',
       'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'traces', 'sep2',
       'partsDropdown', 'netsDropdown',
     ]);

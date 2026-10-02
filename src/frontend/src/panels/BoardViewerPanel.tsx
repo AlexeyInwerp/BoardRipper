@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback, useSyncExternalStore } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { BoardRenderer } from '../renderer/BoardRenderer';
 import { boardStore } from '../store/board-store';
@@ -22,6 +22,9 @@ import { useRenderSettings } from '../hooks/useRenderSettings';
 import { renderSettingsStore } from '../store/render-settings';
 import type { SlotCtx } from '../components/overlay/slot-ctx';
 import { ResizeModeBanner } from '../components/ResizeModeBanner';
+import { BoardMinimap } from '../components/BoardMinimap';
+import { SlideLayer } from '../components/slide/SlideLayer';
+import { slideStore } from '../store/slide-store';
 import {
   registerBoardSearchHandler,
   registerBoardSidebarTabHandler,
@@ -32,6 +35,11 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   const tabId = props.params.boardTabId;
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<BoardRenderer | null>(null);
+  // The renderer as state too, for the DOM layers that subscribe to it
+  // (minimap, slide annotations) — the ref alone would not re-render them.
+  const [liveRenderer, setLiveRenderer] = useState<BoardRenderer | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const slideOn = useSyncExternalStore(c => slideStore.subscribe(c), () => slideStore.snapshot()).enabled;
   const { tabs } = useBoardStore();
   const thisTab = tabId != null ? tabs.find(t => t.id === tabId) : undefined;
   const netLineMode = thisTab?.netLineMode ?? 'off';
@@ -166,7 +174,10 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
         // Only null the ref if it still points to THIS renderer — during
         // React StrictMode double-mount, mount 2 may have already replaced it.
         if (rendererRef.current === renderer) rendererRef.current = null;
-      } else if (!props.api.isVisible) {
+      } else {
+        setLiveRenderer(renderer);
+      }
+      if (!destroyed && !props.api.isVisible) {
         // Mounted already-hidden (e.g. background tab restored on reload):
         // onDidVisibilityChange won't fire, so arm deep-pause from initial state.
         renderer.scheduleDeepPause();
@@ -175,6 +186,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
 
     return () => {
       destroyed = true;
+      setLiveRenderer(prev => (prev === renderer ? null : prev));
       if (renderer) {
         renderer.destroy();
         if (rendererRef.current === renderer) rendererRef.current = null;
@@ -285,7 +297,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   }
 
   return (
-    <div className="board-panel-root">
+    <div className="board-panel-root" ref={rootRef}>
       <div
         ref={containerRef}
         className="board-panel-canvas"
@@ -298,6 +310,8 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
         </div>
       )}
       <ResizeModeBanner />
+      <SlideLayer tabId={tabId} renderer={liveRenderer} rootRef={rootRef} hostRef={containerRef} fileName={tabFileName} />
+      <BoardMinimap renderer={liveRenderer} mode={slideOn ? 'always' : renderSettings.minimapOnPan ? 'onPan' : 'off'} />
       <div className="board-sidebar-toggle-group">
         <button
           className={`board-sidebar-toggle ${sidebarOpen ? 'active' : ''}`}

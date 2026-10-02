@@ -9503,3 +9503,111 @@ body {
 .dv-tabs-and-actions-container, .context-menu, .quick-menu {
   touch-action: manipulation;
 }
+
+/* ── Board minimap (BoardMinimap.tsx) ───────────────────────────────────
+   Top centre, under the ribbon row. Fades in while panning (or stays in
+   slide mode) and never catches a pointer while faded out. */
+.board-minimap {
+  position: absolute;
+  top: 44px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-4px);
+  z-index: 9;
+  padding: 0;
+  background: var(--chip-bg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s ease, transform 0.35s ease;
+  cursor: crosshair;
+  overflow: hidden;
+}
+.board-minimap.visible {
+  opacity: 1;
+  transform: translateX(-50%);
+  pointer-events: auto;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.board-minimap canvas { display: block; }
+@media (prefers-reduced-motion: reduce) {
+  .board-minimap, .board-minimap.visible { transition: none; }
+}
+
+/* ── Slide mode (components/slide/SlideLayer.tsx) ───────────────────────
+   The drawing sheet shares the board canvas's counter-zoom, so its px are
+   the renderer's px; it never takes pointer events (the panel root's
+   capture listener decides who gets a press). */
+.slide-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  zoom: calc(1 / var(--ui-scale, 1));
+  pointer-events: none;
+  z-index: 4;
+}
+.slide-layer-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.slide-text-editor {
+  position: absolute;
+  pointer-events: auto;
+  min-width: 120px;
+  margin: 0;
+  padding: 0;
+  border: 1px dashed rgba(255, 255, 255, 0.7);
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.35);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-weight: 600;
+  line-height: 1.25;
+  resize: none;
+  outline: none;
+  field-sizing: content;
+}
+.slide-toolbar {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  max-width: calc(100% - 24px);
+  overflow-x: auto;
+  background: var(--chip-bg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+.slide-toolbar .board-netlines-toggle { flex: none; }
+.slide-toolbar .board-netlines-toggle:disabled { opacity: 0.35; cursor: default; }
+.slide-toolbar .slide-wide { width: auto; padding: 0 7px; gap: 4px; font-size: 12px; }
+.slide-toolbar-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 3px;
+  background: rgba(255, 255, 255, 0.12);
+  flex: none;
+}
+.slide-swatch {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4) inset;
+  cursor: pointer;
+  padding: 0;
+}
+.slide-swatch.active { border-color: var(--text-primary, #fff); }
+.slide-weight-dot { display: block; border-radius: 50%; background: currentColor; }

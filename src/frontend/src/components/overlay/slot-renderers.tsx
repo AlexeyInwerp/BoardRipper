@@ -15,6 +15,7 @@ import { PartsDropdown }    from './slots/PartsDropdown';
 import { NetsDropdown }     from './slots/NetsDropdown';
 import { SideSwitch }       from './slots/SideSwitch';
 import { HistoryButtons }   from './slots/HistoryButtons';
+import { MinimapButton, SlideModeButton } from './slots/SlideButtons';
 import { ButterflyButton, RotateCcwButton, RotateCwButton, TracesButton, TransformMenuButton } from './slots/TransformButtons';
 
 /**
@@ -35,6 +36,8 @@ export function renderOverlaySlot(id: OverlaySlotId, ctx: SlotCtx): ReactNode {
     case 'pdfFollow':     return <PdfFollowButton  ctx={ctx} />;
     case 'scrollMode':    return <ScrollModeButton ctx={ctx} />;
     case 'fitBoard':      return <FitBoardButton   ctx={ctx} />;
+    case 'minimap':       return <MinimapButton />;
+    case 'slides':        return <SlideModeButton />;
     case 'hoverInfo':     return <HoverInfoButton  ctx={ctx} />;
     case 'netDim':        return <NetDimButton     ctx={ctx} />;
     case 'netLines':      return <NetLinesButton   ctx={ctx} />;
