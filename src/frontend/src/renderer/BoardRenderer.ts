@@ -1368,6 +1368,9 @@ export class BoardRenderer {
       this.reinitApp();
       return;
     }
+    // init() failed (e.g. its WebGL chunk could not be fetched): there is no
+    // ticker to restart, and touching it would turn one error into another.
+    if (!this.initialized) return;
 
     const w = this.containerEl.clientWidth;
     const h = this.containerEl.clientHeight;

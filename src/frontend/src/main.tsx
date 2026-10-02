@@ -10,6 +10,7 @@ import App from './App';
 import { installBrowserZoomBlock } from './store/browser-zoom-block';
 import { startMcpBridgeIfEnabled } from './store/mcp-bridge';
 import { initSessionStore } from './store/session-store';
+import { installStaleBuildGuard } from './store/stale-build';
 
 // The boot gate in index.html has already written its message into #root when
 // this is set; mounting would paint the app over it and then fail somewhere
@@ -18,6 +19,7 @@ if (!window.__brUnsupported) {
   installBrowserZoomBlock();
   startMcpBridgeIfEnabled();
   initSessionStore();
+  installStaleBuildGuard();
 
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
