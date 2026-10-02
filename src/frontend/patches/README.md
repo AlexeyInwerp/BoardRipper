@@ -80,6 +80,47 @@ time, before they enter the operator stream. Net effect:
 targets readable source. Vite still minifies the worker chunk for prod,
 so there's no runtime cost.
 
+### Same patch — invisible-content elimination (2026-10-02)
+
+**Why:** some PDFs paint things that cannot be seen, and pdf.js pays the
+full price for them on every render and every tile. The specimen is
+`NR2201ZE_2.1.pdf` (Chrome/Skia print of a web schematic viewer): every
+page ends with a full-page *isolated transparency group* at `ca 0.6`,
+filled with a *tiling pattern* whose only tile is a 1258×835 image with an
+**all-zero `/SMask`**. pdf.js decodes the image, rasterises the pattern
+cell, allocates a page-sized scratch canvas for the group and composites
+it — measured 100–190 ms per full-page render in WebKit (an almost empty
+page: 218 → 32 ms at 6×), ~70 MB of scratch canvas at that zoom.
+
+**Three worker-side rules, all in `pdf.worker.mjs`, default on:**
+
+1. `buildPaintImageXObject` — an image whose `/SMask` decodes to all zeros
+   is not painted (no decode, no dependency, no op). Only checked for
+   plain filters (Flate/LZW/RL/A85/AHx) and the default `/Decode [0 1]`;
+   the SMask stream is read in 64 KB chunks with early exit and `reset()`
+   afterwards. Result cached per image ref on `xref._brTransparentImages`.
+2. Path painting — a fill/stroke whose paint is invisible becomes
+   `endPath` (so a pending `W` clip still applies); `fillStroke` variants
+   keep the visible half. Invisible = the current pattern is a tiling
+   pattern whose cell op list paints nothing (`_brFillPatInv` /
+   `_brStrokePatInv` on the `EvalState`, set in `handleTilingType` and its
+   cache path through `_brLastPatInv`, reset by any other colour op), or
+   `ca`/`CA` = 0 from an ExtGState (`brTrackAlpha`, fresh and cached path).
+3. `buildFormXObject` — a form/group whose ops contain nothing that paints
+   (`brRangeIsInvisible`: whitelist of state-only ops, `constructPath` with
+   `endPath`, `showText` with an empty glyph array) is truncated out of the
+   operator list, begin/end and OC wrapper included. Only when no chunk
+   was flushed in between, never for a soft mask (an empty mask is not
+   "no mask"); the optimizer is flushed before and reset after, and the
+   dropped `dependency` ids leave `operatorList.dependencies`.
+
+Text is never pruned (conservative). Toggle: `getDocument({
+brPruneInvisible: false })` (forwarded through `evaluatorOptions` in
+`pdf.mjs`). Counters: `globalThis.__brPruneStats` in the worker.
+**Verified** pixel-identical (on vs off, `@napi-rs/canvas`) on all of
+`NR2201ZE_2.1.pdf` sample pages and the first four pages of 39 random
+schematic PDFs from the NAS corpus; rule 3 fired on 7 of them.
+
 ---
 
 ## Updating the patch when pdf.js is upgraded
