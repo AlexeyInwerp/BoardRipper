@@ -565,6 +565,24 @@ export class BoardRenderer {
   private twoFingerDownAt = 0;
   private twoFingerMaxTravel = 0;
   private lastTwoFingerTapAt = 0;
+  /** Touch "right click" (2026-10-02): hold a finger on a part and tap a
+   *  second finger — the trackpad's two-finger click, done on glass. The long
+   *  press stays as the other way in; this one needs no waiting. A hold is a
+   *  first finger down at least HOLD_TAP_MIN_HOLD_MS before the second lands
+   *  (a two-finger tap lands both together and toggles the rotation lock —
+   *  that is how the two are told apart), the second finger is up within
+   *  TWO_FINGER_TAP_MS while the first stays down, and neither travels past a
+   *  tap. Any zoom the pinch path applied in between is undone. */
+  private static readonly HOLD_TAP_MIN_HOLD_MS = 200;
+  private holdDownAt = 0;
+  private holdTap: {
+    secondId: number; holdId: number; at: number; x: number; y: number;
+    cam: { x: number; y: number; sx: number; sy: number };
+  } | null = null;
+  private gestureHoldTap: {
+    at: number; x: number; y: number;
+    cam: { x: number; y: number; sx: number; sy: number };
+  } | null = null;
   private touchDownPos = new Map<number, { x: number; y: number }>();
   /** True once two or more fingers have been down during the gesture in
    *  progress, and until the next gesture begins.
@@ -1880,11 +1898,22 @@ export class BoardRenderer {
         this.activeTouchIds.set(e.pointerId, { x: e.clientX, y: e.clientY });
         if (e.isPrimary) this.touchDownPos.clear();
         this.touchDownPos.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (e.isPrimary) { this.holdDownAt = performance.now(); this.holdTap = null; }
       }
       if (this.activeTouchIds.size > 1) {
         if (this.activeTouchIds.size === 2) {
-          this.twoFingerDownAt = performance.now();
+          const now = performance.now();
+          this.twoFingerDownAt = now;
           this.twoFingerMaxTravel = 0;
+          // A first finger already resting on the board: the second may be a
+          // tap that asks for the menu under the first.
+          const holdId = [...this.activeTouchIds.keys()].find(id => id !== e.pointerId);
+          const holdPos = holdId != null ? this.touchDownPos.get(holdId) : undefined;
+          this.holdTap = (holdId != null && holdPos && now - this.holdDownAt >= BoardRenderer.HOLD_TAP_MIN_HOLD_MS)
+            ? { secondId: e.pointerId, holdId, at: now, x: holdPos.x, y: holdPos.y, cam: this.camSnapshot() }
+            : null;
+        } else {
+          this.holdTap = null;   // a third finger: not a tap any more
         }
         // Second finger of a pinch. The gesture is no longer a tap, and its
         // travel must keep being measured from where the FIRST finger landed
@@ -1952,6 +1981,21 @@ export class BoardRenderer {
       }
       if (this.activeTouchIds.size === 0 && this.gestureOwner !== 'none') {
         this.endGestureOwnership?.();
+      }
+      // Hold + tap: the second finger came up quickly, the first is still down.
+      const ht = this.holdTap;
+      if (ht) {
+        this.holdTap = null;
+        const quick = performance.now() - ht.at <= BoardRenderer.TWO_FINGER_TAP_MS;
+        if (e.type === 'pointerup' && e.pointerId === ht.secondId && this.activeTouchIds.has(ht.holdId)
+            && this.activeTouchIds.size === 1 && quick
+            && this.twoFingerMaxTravel <= BoardRenderer.TOUCH_CLICK_DRAG_TOLERANCE_PX) {
+          log.ui.log('touch: hold + second-finger tap — opening the context menu (stream=pointer)');
+          this.twoFingerDownAt = 0;
+          this.lastTwoFingerTapAt = 0;
+          this.restoreCam(ht.cam);
+          this.openTouchMenu(ht.x, ht.y);
+        }
       }
       // A two-finger tap: both fingers down and up within TAP_MS, neither
       // travelling further than a tap may, no rotation engaged. Two of them
@@ -2045,12 +2089,7 @@ export class BoardRenderer {
         this.longPressTimer = null;
         this.longPressStart = null;
         if (!start) return;
-        this.dragZoomConsumedClick = true;
-        const swallow = (ev: Event) => { ev.stopPropagation(); ev.preventDefault(); };
-        document.addEventListener('click', swallow, { capture: true, once: true });
-        // If no click ever arrives (some browsers), don't leave the trap armed.
-        setTimeout(() => document.removeEventListener('click', swallow, { capture: true }), 700);
-        this.handleRightClick({ clientX: start.x, clientY: start.y });
+        this.openTouchMenu(start.x, start.y);
       }, LONG_PRESS_MS);
     };
     this.boundLongPressMove = (e: PointerEvent) => {
@@ -2197,7 +2236,25 @@ export class BoardRenderer {
       if (this.gestureReleaseTimer) clearTimeout(this.gestureReleaseTimer);
       this.gestureReleaseTimer = setTimeout(releaseGesture, 400);
     };
-    this.boundGestureEnd = () => releaseGesture();
+    this.boundGestureEnd = (ev: Event) => {
+      // Hold + tap through WebKit's stream: the engine may claim the gesture
+      // before the second finger's pointerdown is dispatched, so the pointer
+      // path above never sees a second finger. A gesture that began over a
+      // resting finger and ends quickly, barely scaled or turned, is the tap.
+      const gh = this.gestureHoldTap;
+      this.gestureHoldTap = null;
+      const g = ev as GestureEvent;
+      if (gh && performance.now() - gh.at <= BoardRenderer.TWO_FINGER_TAP_MS
+          && Math.abs((g.scale ?? 1) - 1) < 0.08 && Math.abs(g.rotation ?? 0) < 8
+          && this.activeTouchIds.size <= 1) {
+        releaseGesture();
+        log.ui.log('touch: hold + second-finger tap — opening the context menu (stream=gesture)');
+        this.restoreCam(gh.cam);
+        this.openTouchMenu(gh.x, gh.y);
+        return;
+      }
+      releaseGesture();
+    };
 
     this.boundGestureStart = (ev: Event) => {
       const e = ev as GestureEvent;
@@ -2217,6 +2274,14 @@ export class BoardRenderer {
       }
       ev.preventDefault();
       ev.stopPropagation();
+      {
+        const only = [...this.activeTouchIds.keys()][0];
+        const pos = only != null ? this.touchDownPos.get(only) : undefined;
+        this.gestureHoldTap = (pos && this.activeTouchIds.size === 1
+          && performance.now() - this.holdDownAt >= BoardRenderer.HOLD_TAP_MIN_HOLD_MS)
+          ? { at: performance.now(), x: pos.x, y: pos.y, cam: this.camSnapshot() }
+          : null;
+      }
       this.gestureOwner = 'gesture';
       this.pinch = null;
       this.commitLiveRotation();   // a pointer-pair rotation this claim interrupts
@@ -7582,6 +7647,46 @@ export class BoardRenderer {
     if (partIndex == null) return;
     const part = this.board.parts[partIndex];
     if (part) this.triggerFollowPdf(part, true);
+  }
+
+  /**
+   * Open the board menu from a touch gesture (long press, or hold + second
+   * finger tap). The finger still on the glass will come up later and produce
+   * (a) pixi-viewport's `clicked`, which would change the selection under the
+   * menu, and (b) the browser's compatibility `click`, which would land on
+   * the menu or close it — both are swallowed once.
+   */
+  private openTouchMenu(x: number, y: number) {
+    this.dragZoomConsumedClick = true;
+    // The trap lives exactly as long as the held finger: it is disarmed a
+    // moment after that finger's pointerup, whether or not a click came of
+    // it. A fixed 700 ms window from the open ate the user's first tap on a
+    // menu row whenever the browser sent no compatibility click for the
+    // release (a hold that moved, a long hold) — the row did nothing.
+    const swallow = (ev: Event) => { ev.stopPropagation(); ev.preventDefault(); disarm(); };
+    const onUp = () => { window.removeEventListener('pointerup', onUp, true); setTimeout(disarm, 80); };
+    const disarm = () => {
+      document.removeEventListener('click', swallow, { capture: true });
+      window.removeEventListener('pointerup', onUp, true);
+      clearTimeout(cap);
+    };
+    document.addEventListener('click', swallow, { capture: true });
+    window.addEventListener('pointerup', onUp, true);
+    const cap = setTimeout(disarm, 10_000);   // never leave it armed for good
+    this.handleRightClick({ clientX: x, clientY: y });
+  }
+
+  private camSnapshot() {
+    return { x: this.viewport.x, y: this.viewport.y, sx: this.viewport.scale.x, sy: this.viewport.scale.y };
+  }
+
+  /** Undo the few px of zoom a tapping second finger fed the pinch path. */
+  private restoreCam(c: { x: number; y: number; sx: number; sy: number }) {
+    this.viewport.scale.set(c.sx, c.sy);
+    this.viewport.position.set(c.x, c.y);
+    this.programmaticMove = true;
+    this.needsRender = true;
+    this.netLinesDirty = true;
   }
 
   private handleRightClick(e: { clientX: number; clientY: number }) {

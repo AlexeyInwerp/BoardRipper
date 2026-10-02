@@ -139,11 +139,24 @@ export function ContextMenu() {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') contextMenuStore.hide();
     };
+    // A touch anywhere outside closes it too. iOS Safari dispatches no
+    // `click` for a tap on a non-interactive area, and a pan or pinch on the
+    // board produces none anywhere, so on a tablet the click listener alone
+    // left the menu open over the board (2026-10-02). Capture phase, so it
+    // closes before the board starts its own gesture. Mouse and pen keep the
+    // click behaviour they had.
+    const handlePointerDown = (e: PointerEvent) => {
+      if (e.pointerType !== 'touch') return;
+      if (menuRef.current && menuRef.current.contains(e.target as Node)) return;
+      contextMenuStore.hide();
+    };
     document.addEventListener('click', handleClick);
     document.addEventListener('keydown', handleKey);
+    document.addEventListener('pointerdown', handlePointerDown, true);
     return () => {
       document.removeEventListener('click', handleClick);
       document.removeEventListener('keydown', handleKey);
+      document.removeEventListener('pointerdown', handlePointerDown, true);
     };
   }, [state.visible]);
 
