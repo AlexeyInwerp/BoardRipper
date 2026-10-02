@@ -10,7 +10,10 @@
  *    no `click` for a tap on a non-interactive area, and a pan produces none
  *    anywhere, so the old click-only close left the menu open over the board.
  * 3. A double-tap must not zoom the page — opening a board from the Library
- *    is a double-tap, and Chrome and Safari zoomed the whole app on it.
+ *    is a double-tap, and Chrome and Safari zoomed the whole app on it. The
+ *    rule is `manipulation` on the chrome around the board, never on the
+ *    root: `pan-x pan-y` on html/body hid small net names when zooming the
+ *    board on the iPad (it is the board's ancestor too).
  *
  * Real multi-touch through CDP (Chromium only), on the public KiCad sample.
  */
@@ -158,11 +161,17 @@ test.describe('touch context menu', () => {
 });
 
 test.describe('touch page zoom', () => {
-  test('a double-tap does not zoom the page, and the root forbids touch page zoom', async ({ page }) => {
+  test('a double-tap does not zoom the page; the rule sits on the chrome, never on the root', async ({ page }) => {
     await page.goto('/');
     await expect(page.getByTestId('toolbar')).toBeVisible({ timeout: 15000 });
-    const ta = await page.evaluate(() => [getComputedStyle(document.documentElement).touchAction, getComputedStyle(document.body).touchAction]);
-    expect(ta).toEqual(['pan-x pan-y', 'pan-x pan-y']);
+    // The root must stay untouched: it is an ancestor of the board, and a
+    // root touch-action changed the board's own gestures on the iPad.
+    const ta = await page.evaluate(() => ({
+      root: [getComputedStyle(document.documentElement).touchAction, getComputedStyle(document.body).touchAction],
+      chrome: ['.toolbar', '.statusbar', '.activity-rail'].map(q => { const el = document.querySelector(q); return el ? getComputedStyle(el).touchAction : 'missing'; }),
+    }));
+    expect(ta.root).toEqual(['auto', 'auto']);
+    expect(ta.chrome).toEqual(['manipulation', 'manipulation', 'manipulation']);
     const sb = (await page.getByTestId('statusbar').boundingBox())!;
     const cdp = await page.context().newCDPSession(page);
     const p = { x: sb.x + sb.width / 2, y: sb.y + sb.height / 2 };

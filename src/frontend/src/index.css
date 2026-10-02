@@ -107,13 +107,6 @@ html, body, #root {
   height: 100%;
   overflow: hidden;
   overscroll-behavior: none;
-  /* No page zoom from a touch gesture (2026-10-02): a double-tap — the way a
-   * board is opened from the Library — made Chrome and Safari zoom the whole
-   * page. pan-x pan-y keeps every scroll and tap and drops double-tap and
-   * pinch zoom of the page; the browser's own menu zoom still works. The
-   * board and PDF surfaces set touch-action: none for their own gestures,
-   * which this does not touch (the effective value is the intersection). */
-  touch-action: pan-x pan-y;
   background: var(--canvas-bg);
   color: var(--text-primary);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
@@ -9497,3 +9490,16 @@ body {
 }
 .pdf-search-recent svg { color: var(--text-secondary); flex: none; }
 .pdf-search-recent.hi, .pdf-search-recent:hover { background: var(--surface-hover); }
+
+/* No double-tap page zoom on the interface around the board (2026-10-02).
+ * Opening a board from the Library is a double-tap, and Chrome and Safari
+ * zoomed the whole page on it. `manipulation` drops only double-tap zoom and
+ * keeps scroll, tap and pinch. It is deliberately NOT set on html/body: the
+ * first cut put `pan-x pan-y` on the root, which is an ancestor of the board
+ * and changed what WebKit delivers to the board's own gestures on the iPad
+ * — small net names stopped showing when zooming in on :1234. The board and
+ * PDF surfaces keep their own touch-action: none, untouched. */
+.sidebar, .activity-rail, .toolbar, .statusbar,
+.dv-tabs-and-actions-container, .context-menu, .quick-menu {
+  touch-action: manipulation;
+}
