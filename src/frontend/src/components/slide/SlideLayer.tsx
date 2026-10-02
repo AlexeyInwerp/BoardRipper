@@ -15,7 +15,7 @@ import type { BoardRenderer } from '../../renderer/BoardRenderer';
 import { slideStore, SLIDE_COLORS, STROKE_SIZES, type Pt, type SlideTool } from '../../store/slide-store';
 import { boardStore } from '../../store/board-store';
 import { log } from '../../store/log-store';
-import { hitAnnotation, hitHandle, paintAnnotations, type Handle, type ToScreen } from './annotation-draw';
+import { drawPartCaption, hitAnnotation, hitHandle, paintAnnotations, type Handle, type ToScreen } from './annotation-draw';
 
 interface Props {
   tabId: number;
@@ -32,6 +32,50 @@ type Drag =
 
 function useSlide() {
   return useSyncExternalStore(c => slideStore.subscribe(c), () => slideStore.snapshot());
+}
+
+function accentColor(): string {
+  return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#5aa0ff';
+}
+
+/** The minimap canvas, when it is showing. */
+function minimapCanvas(root: HTMLElement | null): HTMLCanvasElement | null {
+  return root?.querySelector<HTMLCanvasElement>('[data-testid="board-minimap"][data-visible="true"] canvas') ?? null;
+}
+
+/** The minimap's rect in renderer px. It lives outside the board canvas's
+ *  counter-zoom (UI scale), so its client rect is mapped through it. */
+function minimapRect(mm: HTMLCanvasElement | null, host: HTMLElement | null) {
+  if (!mm || !host) return null;
+  const hr = host.getBoundingClientRect(), r = mm.getBoundingClientRect();
+  if (!r.width || !hr.width) return null;
+  const k = host.clientWidth / hr.width;
+  return { x: (r.left - hr.left) * k, y: (r.top - hr.top) * k, w: r.width * k, h: r.height * k };
+}
+
+/** The selected part's name, large, over the view (live and in the PNG),
+ *  kept clear of the minimap. */
+function paintCaption(ctx: CanvasRenderingContext2D, renderer: BoardRenderer, avoid: ReturnType<typeof minimapRect>) {
+  const sel = renderer.selectedPartScreen();
+  if (sel) drawPartCaption(ctx, sel, renderer.viewSize(), accentColor(), avoid);
+}
+
+/** The minimap into the PNG, where it sits on screen. */
+function paintMinimap(ctx: CanvasRenderingContext2D, mm: HTMLCanvasElement, rect: NonNullable<ReturnType<typeof minimapRect>>) {
+  const { x, y, w, h } = rect;
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.4)';
+  ctx.shadowBlur = 10;
+  ctx.fillStyle = 'rgba(28,30,36,0.9)';
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, 8);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.drawImage(mm, x, y, w, h);
+  ctx.restore();
 }
 
 export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Props) {
@@ -59,11 +103,14 @@ export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Prop
     // The text being edited is drawn by the input, not twice.
     const ed = editingRef.current;
     const list = slideStore.list(tabId).filter(a => !(ed && a.id === ed.id));
+    paintCaption(ctx, renderer, minimapRect(minimapCanvas(rootRef.current), host));
     paintAnnotations(ctx, list, renderer, slideStore.selectedId);
-  }, [renderer, tabId, hostRef]);
+  }, [renderer, tabId, hostRef, rootRef]);
 
   useEffect(() => { paint(); }, [paint, slide.rev, slide.selectedId, editing]);
   useEffect(() => renderer?.onViewChange(() => paint()), [renderer, paint]);
+  // The part caption follows the selection.
+  useEffect(() => boardStore.subscribe(() => { if (slideStore.enabled) paint(); }), [paint]);
 
   // ---- pointer ----
   const localPoint = useCallback((e: PointerEvent): Pt | null => {
@@ -225,8 +272,14 @@ export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Prop
   // ---- export ----
   const capture = useCallback((): HTMLCanvasElement | null => {
     if (!renderer) return null;
-    return renderer.captureView(ctx => paintAnnotations(ctx, slideStore.list(tabId), renderer, null));
-  }, [renderer, tabId]);
+    return renderer.captureView(ctx => {
+      const mm = minimapCanvas(rootRef.current);
+      const mr = minimapRect(mm, hostRef.current);
+      paintCaption(ctx, renderer, mr);
+      paintAnnotations(ctx, slideStore.list(tabId), renderer, null);
+      if (mm && mr) paintMinimap(ctx, mm, mr);
+    });
+  }, [renderer, tabId, hostRef, rootRef]);
 
   const savePng = useCallback(() => {
     const cv = capture();

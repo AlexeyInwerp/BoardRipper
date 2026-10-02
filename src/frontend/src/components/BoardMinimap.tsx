@@ -82,9 +82,16 @@ function paintBoard(ctx: CanvasRenderingContext2D, model: Model, k: number, ox: 
     const sel = boardStore.selection.partIndex;
     if (sel !== null && board.parts[sel]) {
       const pb = board.parts[sel].bounds;
-      const pad = px * 3;
+      const pad = px * 2;
+      const rx = pb.minX - pad, ry = pb.minY - pad, rw = pb.maxX - pb.minX + 2 * pad, rh = pb.maxY - pb.minY + 2 * pad;
+      // Translucent fill + outline: a big part must not bury the view box.
+      ctx.globalAlpha = 0.35;
       ctx.fillStyle = accent;
-      ctx.fillRect(pb.minX - pad, pb.minY - pad, pb.maxX - pb.minX + 2 * pad, pb.maxY - pb.minY + 2 * pad);
+      ctx.fillRect(rx, ry, rw, rh);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = px * 1.5;
+      ctx.strokeRect(rx, ry, rw, rh);
     }
   }
   ctx.setTransform(1, 0, 0, 1, 0, 0);

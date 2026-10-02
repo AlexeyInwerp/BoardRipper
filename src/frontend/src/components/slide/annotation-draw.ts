@@ -193,3 +193,62 @@ export function paintAnnotations(ctx: CanvasRenderingContext2D, list: readonly A
   const sel = selectedId !== null ? list.find(a => a.id === selectedId) : undefined;
   if (sel) drawSelection(ctx, sel, toScreen);
 }
+
+/** The selected part's name as a caption: large, on a dark pill, beside the
+ *  part — above, below, left or right, whichever fits in the view first
+ *  without covering `avoid` (the minimap); failing all, a view corner. Drawn
+ *  live in slide mode and into the PNG, so a slide always says what it shows. */
+export function drawPartCaption(
+  ctx: CanvasRenderingContext2D,
+  sel: { name: string; x: number; y: number; w: number; h: number },
+  view: { width: number; height: number },
+  accent: string,
+  avoid: { x: number; y: number; w: number; h: number } | null = null,
+) {
+  // Off screen entirely: nothing to point at.
+  if (sel.x > view.width || sel.y > view.height || sel.x + sel.w < 0 || sel.y + sel.h < 0) return;
+  const size = 30;
+  ctx.save();
+  ctx.font = font(size);
+  const tw = ctx.measureText(sel.name).width;
+  const padX = 12, h = size + 14, w = tw + 2 * padX, gap = 10, m = 6;
+  const cx = sel.x + sel.w / 2 - w / 2, cy = sel.y + sel.h / 2 - h / 2;
+  const candidates = [
+    { x: cx, y: sel.y - gap - h },
+    { x: cx, y: sel.y + sel.h + gap },
+    { x: sel.x - gap - w, y: cy },
+    { x: sel.x + sel.w + gap, y: cy },
+    { x: m, y: view.height - h - m },
+    { x: view.width - w - m, y: view.height - h - m },
+    { x: m, y: m },
+  ];
+  const fits = (c: { x: number; y: number }) =>
+    c.x >= m && c.y >= m && c.x + w <= view.width - m && c.y + h <= view.height - m &&
+    !(avoid && c.x < avoid.x + avoid.w && c.x + w > avoid.x && c.y < avoid.y + avoid.h && c.y + h > avoid.y);
+  // Beside the part, sliding along its edge into the view when it is close
+  // to a border; then the corners as they are.
+  const slid = candidates.slice(0, 4).map(c => ({
+    x: Math.max(m, Math.min(view.width - w - m, c.x)),
+    y: Math.max(m, Math.min(view.height - h - m, c.y)),
+  }));
+  const overlapsPart = (c: { x: number; y: number }) =>
+    c.x < sel.x + sel.w && c.x + w > sel.x && c.y < sel.y + sel.h && c.y + h > sel.y;
+  const pos = slid.find(c => fits(c) && !overlapsPart(c))
+    ?? candidates.slice(4).find(fits)
+    ?? slid[0];
+  const { x, y } = pos;
+  ctx.shadowColor = 'rgba(0,0,0,0.5)';
+  ctx.shadowBlur = 10;
+  ctx.fillStyle = 'rgba(16,18,22,0.9)';
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, 7);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+  ctx.fillStyle = '#ffffff';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(sel.name, x + padX, y + h / 2 + 1);
+  ctx.restore();
+}

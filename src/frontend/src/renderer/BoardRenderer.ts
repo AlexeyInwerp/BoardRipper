@@ -4016,6 +4016,26 @@ export class BoardRenderer {
     this.needsRender = true;
   }
 
+  /** Screen box (renderer px) and name of the selected part, or null. In
+   *  Butterfly a part on the bottom side is measured through the mirrored half. */
+  selectedPartScreen(): { name: string; x: number; y: number; w: number; h: number } | null {
+    const idx = boardStore.selection.partIndex;
+    const part = idx !== null ? this.board?.parts[idx] : undefined;
+    if (!part || !this.activeScene) return null;
+    let root: Container = this.activeScene.root;
+    const broot = boardStore.butterfly ? this.activeScene.butterflyRoot : null;
+    if (broot && part.side !== 'both' && (part.side === 'bottom') !== (this.board!.primarySide === 'bottom')) root = broot;
+    // The body as drawn — part.bounds only spans the pin centres.
+    const rb = computePartRenderBounds(part, renderSettingsStore.settings);
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const [x, y] of [[rb.px, rb.py], [rb.px + rb.pw, rb.py], [rb.px + rb.pw, rb.py + rb.ph], [rb.px, rb.py + rb.ph]]) {
+      const p = root.toGlobal({ x, y });
+      minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+    }
+    return { name: part.name, x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  }
+
   /** Panel px → board-local (top root) coordinates, and back. Annotations are
    *  stored in board space so they stay on the parts while the view moves. */
   screenToBoard(x: number, y: number): { x: number; y: number } | null {
