@@ -111,6 +111,25 @@ Two caches, both module-level, both sized from the active quality preset:
 Both caches key on `cleanMode` because clean-mode renders apply a contrast
 filter and must not mix with normal renders.
 
+**One stand-in, and only an upgrade (2026-10-03).** While the exact tier
+renders, `renderPage` blits at most one stand-in — the sharper of
+`getBestPageCache` and the tier-1 preview — and only when it is wider than
+what the main canvas already holds for this page (`mainContentRef`: file,
+page, clean, rotation, cssW, backing width, and the canvas element itself).
+It used to blit the best copy and then the preview on top of it, so a settle
+at an uncached tier put the blurry preview over an already-sharp page. Safari
+saw it every time: it has no `requestIdleCallback`, so the idle prefetch runs
+on a 200 ms timer there and the preview is always cached.
+
+**A tile canvas that already shows its bitmap is only moved.** Assigning
+`canvas.width` clears the canvas even to the same value; every settle used to
+do that to every cached tile and redraw it, and Safari can composite the
+cleared tile for a frame with the blurrier layer beneath showing through.
+`tileBitmapRef` (a WeakMap canvas → bitmap) skips the clear+draw when the
+cache returns the same bitmap; an invalidated cache hands back a new bitmap,
+so a real change still redraws. E2E `tests/pdf-settle-no-blink.spec.ts`
+asserts both causes (the one-frame flash itself cannot be sampled).
+
 ## Tile cache (tile-manager.ts)
 
 A module-global LRU keyed by `(file, page, col, row, scale)`. Bounded by total

@@ -685,6 +685,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   // Board/PDF linking lives in the dockview tab (∞) — see components/PdfTab.tsx.
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  /** What the main canvas holds right now, so a stand-in is only drawn when it
+   *  is sharper (see renderPage). */
+  const mainContentRef = useRef<{ el: HTMLCanvasElement; file: string; page: number; clean: boolean; rot: number; cssW: number; width: number } | null>(null);
+  /** The bitmap each tile canvas was last drawn from (see renderTiledPage). */
+  const tileBitmapRef = useRef(new WeakMap<HTMLCanvasElement, ImageBitmap>());
   const highlightRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   /** The one element every pointer event targets — see the JSX comment. */
@@ -1432,7 +1437,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
    *  CSS sizes are scaled by current zoom so the wrapper layer rasterizes
    *  at displayed size on Safari. Old in-DOM elements are rescaled by the
    *  committed-zoom delta so they keep correct positions when zoom changes. */
-  const blitToCanvas = useCallback((entry: CachedRender) => {
+  const blitToCanvas = useCallback((entry: CachedRender, page: number) => {
     const canvas = canvasRef.current;
     const highlight = highlightRef.current;
     if (!canvas || !highlight) return;
@@ -1452,6 +1457,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.drawImage(entry.bitmap, 0, 0);
+    mainContentRef.current = { el: canvas, file: pdfFileName, page, clean: cleanMode, rot: rotationRef.current, cssW: entry.cssW, width: entry.width };
 
     if (highlight.width !== entry.width || highlight.height !== entry.height) {
       highlight.width = entry.width;
@@ -1473,7 +1479,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
     drawHighlightsRef.current();
     setRenderEpoch(e => e + 1);
-  }, [rescaleWrapperChildren, mirrorWidth]);
+  }, [rescaleWrapperChildren, mirrorWidth, pdfFileName, cleanMode]);
 
 
   const renderPage = useCallback(async () => {
@@ -1504,7 +1510,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       // Fast path: cache hit — instant blit, no pdf.js render
       const cached = getPageCache(cacheKey);
       if (cached && cached.cssW === containerWidth) {
-        blitToCanvas(cached);
+        blitToCanvas(cached, currentPage);
         const tHit = performance.now() - t0;
         // Cache hits are near-instant — feed EMA so adaptive zoom stays aggressive
         const prev = renderTimeEmaRef.current;
@@ -1513,21 +1519,25 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         return;
       }
 
-      // Best-available fallback: show highest-tier cached version while rendering
-      // (prevents blur flash when zooming out — sharp CSS downscale is better than tier-1 preview)
+      // Stand-in while the exact tier renders: the sharpest copy we have —
+      // the highest cached tier, else the tier-1 preview — and only when it is
+      // sharper than what the canvas already shows for this page. Both used
+      // to be blitted in turn, so the blurry preview landed on top of the
+      // sharp copy, and on top of a canvas that was already sharp: the blur
+      // blink after a zoom settles (worst in Safari, where the exact-tier
+      // render that ends it takes longest).
       const bestCached = getBestPageCache(pdfFileName, currentPage, cleanMode);
-      if (bestCached && bestCached.cssW === containerWidth) {
-        blitToCanvas(bestCached);
-      }
-
-      // Preview fallback: blit a tier-1 preview if available while hi-res renders
+      let standIn = bestCached && bestCached.cssW === containerWidth ? bestCached : undefined;
       if (resTier > 1) {
-        const pvKey = previewCacheKey(pdfFileName, currentPage, cleanMode);
-        const preview = getPreviewCache(pvKey);
-        if (preview && preview.cssW === containerWidth) {
-          blitToCanvas(preview);
-          log.perf.log(`preview-fallback ${pvKey}`);
-        }
+        const preview = getPreviewCache(previewCacheKey(pdfFileName, currentPage, cleanMode));
+        if (preview && preview.cssW === containerWidth && (!standIn || preview.width > standIn.width)) standIn = preview;
+      }
+      const shown = mainContentRef.current;
+      const shownWidth = shown && shown.el === canvasRef.current && shown.file === pdfFileName && shown.page === currentPage && shown.clean === cleanMode &&
+        shown.rot === rotationRef.current && shown.cssW === containerWidth ? shown.width : 0;
+      if (standIn && standIn.width > shownWidth) {
+        blitToCanvas(standIn, currentPage);
+        log.perf.log(`stand-in page=${currentPage} ${standIn.width}px over ${shownWidth}px`);
       }
 
       const page = await pdfStore.getPageFor(pdfFileName, currentPage);
@@ -1608,6 +1618,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       canvas.style.height = `${cssH * zCommitFP}px`;
       const ctx = canvas.getContext('2d');
       if (ctx) ctx.drawImage(sourceCanvas, 0, 0);
+      mainContentRef.current = { el: canvas, file: pdfFileName, page: currentPage, clean: cleanMode, rot: rotationRef.current, cssW, width: viewport.width };
 
       // Create bitmap AFTER the visible blit for cache storage only.
       // sourceCanvas might get stale pdf.js draws during this await — that's
@@ -1890,14 +1901,23 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             wrapper.appendChild(tileCanvas);
             tileContainerRef.current.set(key, tileCanvas);
           }
-          tileCanvas.width = cached.bitmap.width;
-          tileCanvas.height = cached.bitmap.height;
+          // A tile canvas already showing this very bitmap is only moved:
+          // assigning `width` clears a canvas even to the same value, and in
+          // Safari the cleared-then-redrawn tile can reach the screen as a
+          // blank frame — the old-scale tiles or the blurry main canvas
+          // beneath show through. Identity, not size, because an invalidated
+          // cache hands back a new bitmap for the same key.
+          if (tileBitmapRef.current.get(tileCanvas) !== cached.bitmap) {
+            tileCanvas.width = cached.bitmap.width;
+            tileCanvas.height = cached.bitmap.height;
+            const ctx = tileCanvas.getContext('2d');
+            if (ctx) ctx.drawImage(cached.bitmap, 0, 0);
+            tileBitmapRef.current.set(tileCanvas, cached.bitmap);
+          }
           tileCanvas.style.width = `${tileCssW * zCommit}px`;
           tileCanvas.style.height = `${tileCssH * zCommit}px`;
           tileCanvas.style.left = `${t.col * cssTileW * zCommit}px`;
           tileCanvas.style.top = `${t.row * cssTileH * zCommit}px`;
-          const ctx = tileCanvas.getContext('2d');
-          if (ctx) ctx.drawImage(cached.bitmap, 0, 0);
           tileCanvas.style.display = '';
         } else {
           if (tileCanvas) {
@@ -2054,6 +2074,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             tileCanvas.style.top = `${r.row * cssTileH * zCommit}px`;
             const ctx = tileCanvas.getContext('2d');
             if (ctx) ctx.drawImage(r.bitmap, 0, 0);
+            tileBitmapRef.current.set(tileCanvas, r.bitmap);
             tileCanvas.style.display = '';
           }
           // Cap total tile DOM elements — only evict when excessive.
