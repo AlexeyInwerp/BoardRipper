@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useMemo, useEffect, useSyncExternalStore, createContext, useContext } from 'react';
+import { setWatermarkTerms } from '../store/pdf-filter-actions';
 import { IconPalette, IconLayoutBoardSplit, IconKeyboard, IconBooks, IconSettings, IconPlug, IconClick } from '@tabler/icons-react';
 import { themeStore, THEMES, ACCENT_PRESETS } from '../store/themes';
 import { isHdrCapable, onHdrCapabilityChange } from '../renderer/hdr-selection-outline';
@@ -1474,18 +1475,6 @@ function parseWatermarkFilter(raw: string): string[] {
   return raw.split(/[\n,]/).map(t => t.trim()).filter(t => t.length > 0);
 }
 
-/** Push the current watermark term list to the backend config endpoint.
- *  No-op in Electron mode (no backend available). Fire-and-forget — errors
- *  are silently dropped (the backend key is advisory for the pdfium indexer). */
-function pushWatermarkTermsToBackend(terms: string[]): void {
-  if (!hasBackend()) return;
-  void fetch('/api/config', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ key: 'pdf_watermark_terms', value: JSON.stringify(terms) }),
-  }).catch(() => { /* best-effort */ });
-}
-
 function PdfWatermarkFilterEditor() {
   const storedTerms = renderSettingsStore.globalSettings.pdfWatermarkFilter;
   const [value, setValue] = useState(() => formatWatermarkFilter(storedTerms));
@@ -1502,14 +1491,11 @@ function PdfWatermarkFilterEditor() {
     pendingTerms.some((t, i) => t !== storedTerms[i]);
 
   const commit = useCallback(() => {
-    const current = renderSettingsStore.globalSnapshot();
     const next = parseWatermarkFilter(value);
-    renderSettingsStore.applyGlobal({ ...current, pdfWatermarkFilter: next });
+    // Also pushes the list to the backend so the pdfium indexer uses it.
+    setWatermarkTerms(next);
     // Normalise the textarea to the canonical form so the dirty flag clears.
     setValue(formatWatermarkFilter(next));
-
-    // Push to backend so the pdfium indexer uses the same terms.
-    pushWatermarkTermsToBackend(next);
 
     // Detect whether the committed terms changed vs the last commit.
     const prev = committedRef.current;

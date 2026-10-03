@@ -327,6 +327,18 @@ export interface RenderSettings {
    *  survives across reload, settings edits, and "off then on" cycles. */
   pdfWatermarkFilterEnabled: boolean;
 
+  /** Strip small images that look like watermarks (≤ 50 px) from a PDF
+   *  before parsing ("clean mode"). Builds a second parsed copy of the
+   *  document, so it applies when the PDF is (re)loaded — the filter menu
+   *  offers a reload when an open PDF was parsed under another value. */
+  pdfStripWatermarkImages: boolean;
+
+  /** Drop content that cannot be seen (fully transparent images, fills in
+   *  an invisible pattern or at zero opacity, groups left with nothing that
+   *  paints) in the pdf.js worker — see patches/README.md. Pixel-identical,
+   *  so this is an escape hatch, not a look. Applies on (re)load. */
+  pdfPruneInvisible: boolean;
+
   /** PDF render mode.
    *  - 'auto' (default): tile above 1.05× zoom, full-page below — crisp at deep zoom.
    *  - 'standard': always full-page, never tile. Smoother gesture feel; pixels go soft
@@ -706,6 +718,8 @@ export const DEFAULTS: RenderSettings = {
     'notebook-schematics.com',
   ],
   pdfWatermarkFilterEnabled: true,
+  pdfStripWatermarkImages: false,
+  pdfPruneInvisible: true,
 
   pdfRenderMode: 'standard',
   pdfEnableBoundaries: true,

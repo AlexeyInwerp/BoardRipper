@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useSyncExternalStore, useState } from 'react';
+import { addWatermarkTerm } from '../store/pdf-filter-actions';
 import { IconCopy, IconWorld, IconPin, IconPinFilled, IconShieldPlus } from '@tabler/icons-react';
 import { contextMenuStore } from '../store/context-menu-store';
 import type { ContextMenuState } from '../store/context-menu-store';
@@ -328,19 +329,12 @@ export function ContextMenu() {
     const term = state.query.trim();
     contextMenuStore.hide();
     if (!term) return;
-    const current = renderSettingsStore.globalSnapshot();
-    const existing = current.pdfWatermarkFilter ?? [];
-    if (existing.some(t => t === term)) {
+    // Shared with the PDF filter menu: also switches the filter on and pushes
+    // the list to the backend indexer.
+    if (!addWatermarkTerm(term)) {
       boardStore.addToast(`"${term}" is already a watermark term`, 'info');
       return;
     }
-    // Adding a term implies the user wants it filtered now — auto-enable
-    // the filter if the wand was previously toggled off.
-    renderSettingsStore.applyGlobal({
-      ...current,
-      pdfWatermarkFilter: [...existing, term],
-      pdfWatermarkFilterEnabled: true,
-    });
     boardStore.addToast(`Added "${term}" to watermark filter — reparsing`, 'info');
   };
 

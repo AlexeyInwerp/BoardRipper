@@ -12,6 +12,7 @@ import { IconHistory } from '@tabler/icons-react';
 import { fileInputRefs } from '../store/file-inputs';
 import { contextMenuStore } from '../store/context-menu-store';
 import { log } from '../store/log-store';
+import { PdfFilterMenu } from '../components/PdfFilterMenu';
 import type { GlyphDebugState, PageGlyphData } from '../pdf/glyph-types';
 import { DEFAULT_GLYPH_DEBUG_STATE } from '../pdf/glyph-types';
 import { extractPageGlyphs, clearFontCache } from '../pdf/glyph-extractor';
@@ -19,7 +20,7 @@ import { drawGlyphBoxes, drawGlyphOutlines, drawTextItems } from '../pdf/glyph-o
 import { drawSimplifiedGlyphs } from '../pdf/glyph-simplifier';
 import type { SimplifyStats } from '../pdf/glyph-simplifier';
 import { drawMonospaceReplacement } from '../pdf/glyph-replacer';
-import { IconArrowAutofitWidth, IconBookmarkPlus, IconWand, IconHandMove, IconZoomIn, IconRotateClockwise, IconFileStack, IconFile, IconSwitchHorizontal } from '@tabler/icons-react';
+import { IconArrowAutofitWidth, IconBookmarkPlus, IconHandMove, IconZoomIn, IconRotateClockwise, IconFileStack, IconFile, IconSwitchHorizontal } from '@tabler/icons-react';
 import {
   TILE_SIZE, computeTileGrid, tileRenderRequest,
   getTileCached, putTileCached, invalidateTileCache,
@@ -626,7 +627,7 @@ function PageScrubber({ currentPage, pageCount, onGoToPage, scrubberRef }: {
 
 export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string }>) {
   const pdfFileName = props.params.pdfFileName ?? '';
-  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, rotation, pageMode, mirror, searchQuery, matches, activeMatchIndex, matchNavSeq, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, lookupHint, crossProbeHint } = usePdfDoc(pdfFileName);
+  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, rotation, pageMode, mirror, searchQuery, matches, activeMatchIndex, matchNavSeq, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, parseGen, lookupHint, crossProbeHint } = usePdfDoc(pdfFileName);
   /** Effective single-page layout: explicit single mode OR forced while rotated. */
   const singlePageMode = pageMode === 'single' || rotation !== 0;
   /** Current user rotation, read imperatively inside render callbacks. */
@@ -957,7 +958,18 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     return () => window.removeEventListener('pdf-quality-changed', handler);
   }, [pdfFileName]);
 
-  // Sync wand button + caches with the store's watermark filter. Runs on
+  // A reparse (filter menu ▸ Reload & re-parse) swapped in new pdf.js
+  // documents: every cached bitmap and tile was drawn from the old ones.
+  const lastParseGenRef = useRef(parseGen);
+  useEffect(() => {
+    if (lastParseGenRef.current === parseGen) return;
+    lastParseGenRef.current = parseGen;
+    invalidatePageCache(pdfFileName);
+    invalidateTileCache(pdfFileName);
+    renderPageRef.current();
+  }, [parseGen, pdfFileName]);
+
+  // Sync caches with the store's watermark filter. Runs on
   // every render-settings change, but reference identity on the list AND the
   // enabled flag's primitive equality act as fast guards — no stringify per
   // notify.
@@ -970,7 +982,6 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       if (curFilter === prevFilter && curEnabled === prevEnabled) return;
       prevFilter = curFilter;
       prevEnabled = curEnabled;
-      setWmFilterActive(curEnabled !== false);
       // pdf.js keys intentStates only on rendering intent + annotation hash,
       // so a watermark-filter change alone doesn't invalidate the cached
       // operator list. Flush it explicitly so the worker re-parses with the
@@ -1003,20 +1014,6 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const [editingLabel, setEditingLabel] = useState('');
   const [glyphDebug] = useState<GlyphDebugState>(DEFAULT_GLYPH_DEBUG_STATE);
 
-  // Watermark filter toggle. `wmFilterActive` mirrors the persistent
-  // `pdfWatermarkFilterEnabled` flag. The user's term list is preserved across
-  // toggles — flipping the flag never touches `pdfWatermarkFilter`, so a wand
-  // off → reload → wand on cycle restores the exact terms the user had.
-  const [wmFilterActive, setWmFilterActive] = useState(() =>
-    renderSettingsStore.globalSettings.pdfWatermarkFilterEnabled !== false
-  );
-  const toggleWatermarkFilter = useCallback(() => {
-    const current = renderSettingsStore.globalSnapshot();
-    renderSettingsStore.applyGlobal({
-      ...current,
-      pdfWatermarkFilterEnabled: !current.pdfWatermarkFilterEnabled,
-    });
-  }, []);
   // glyphMenuOpen/glyphMenuTimerRef removed — legacy glyph-debug menu was
   // rendered inside the now-commented cleaner popup.
   const [fontDataLoaded, setFontDataLoaded] = useState(false);
@@ -3974,15 +3971,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         <div className="pdf-toolbar-spacer" />
 
         <div className="pdf-toolbar-group">
-          <div className="pdf-corrector-wrapper">
-            <button
-              className={`pdf-toolbar-btn pdf-corrector-btn${wmFilterActive ? ' has-active' : ''}`}
-              onClick={toggleWatermarkFilter}
-              title={wmFilterActive ? 'Watermark filter ON — click to disable' : 'Watermark filter OFF — click to enable'}
-            >
-              <IconWand size={14} />
-            </button>
-          </div>
+          <PdfFilterMenu fileName={pdfFileName} />
           <button
             className={`pdf-toolbar-btn pdf-night-btn${nightMode ? ' active' : ''}`}
             onClick={() => setNightMode(v => {

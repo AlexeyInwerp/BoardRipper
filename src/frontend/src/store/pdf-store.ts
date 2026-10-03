@@ -10,6 +10,7 @@ import { ensureIndexed } from '../pdf/pdf-index-client';
 import { scoreLookupCandidates, type LookupCandidate, type LookupContextHit } from './pdf-lookup-score';
 import { isOfflineBuild } from './build-mode';
 import { navHistoryStore } from './nav-history-store';
+import { renderSettingsStore } from './render-settings';
 import type { PdfPlace, PdfMatchRef } from './nav-history';
 
 // ES2025 shims that pdf.js calls on the main thread live in src/polyfills.ts
@@ -56,6 +57,21 @@ const _getDocOpts = _pdfjsBase
       wasmUrl: _pdfjsBase + 'wasm/',
     }
   : {};
+
+/** Parse-time options a document is opened with — global render settings,
+ *  read at open time. A document remembers the values it was parsed under
+ *  (`parsedWith`) so the filter menu can offer a reload when they change. */
+interface PdfParseOptions { prune: boolean; stripImages: boolean }
+function currentParseOptions(): PdfParseOptions {
+  const g = renderSettingsStore.globalSettings;
+  return { prune: g.pdfPruneInvisible !== false, stripImages: g.pdfStripWatermarkImages === true };
+}
+/** getDocument() options: the asset URLs plus the patched worker's
+ *  `brPruneInvisible` switch (see patches/README.md). Cast because the
+ *  option is ours, not part of pdf.js's typed parameters. */
+function docOpts(prune: boolean): object {
+  return { ..._getDocOpts, brPruneInvisible: prune };
+}
 
 let _workerReady: Promise<void> = Promise.resolve();
 // The dynamic import below makes Vite emit a SECOND, minified copy of the
@@ -436,6 +452,11 @@ interface PdfDocument {
   originalBuffer: ArrayBuffer;
   strippedDoc: PDFDocumentProxy | null;
   cleanMode: boolean;
+  /** Parse-time options `doc` (and `strippedDoc`) were opened with. */
+  parsedWith: PdfParseOptions;
+  /** Bumped when `reparse` swaps in freshly opened documents — the panel
+   *  drops its bitmap/tile caches on a change. */
+  parseGen: number;
   pageCount: number;
   currentPage: number;
   /** User rotation applied on top of each page's intrinsic rotation: 0/90/180/270 (CW degrees). */
@@ -747,7 +768,8 @@ class PdfStore extends Emitter {
       if (fileId == null) {
         boardCache.putPdfBytes(file.name, file.size, file.lastModified, buffer.slice(0)).catch(() => {});
       }
-      const doc = await pdfjsLib.getDocument({ data: bufferCopy, ..._getDocOpts }).promise;
+      const parseOpts = currentParseOptions();
+      const doc = await pdfjsLib.getDocument({ data: bufferCopy, ...docOpts(parseOpts.prune) }).promise;
 
       // Make the document available immediately — text is extracted in the background.
       const pdfDoc: PdfDocument = {
@@ -758,6 +780,8 @@ class PdfStore extends Emitter {
         originalBuffer: buffer,
         strippedDoc: null,
         cleanMode: false,
+        parsedWith: { prune: parseOpts.prune, stripImages: false },
+        parseGen: 0,
         pageCount: doc.numPages,
         currentPage: 1,
         rotation: 0,
@@ -787,6 +811,7 @@ class PdfStore extends Emitter {
       // Extract text from all pages in the background so search becomes available.
       // The viewer can render pages immediately without waiting for this.
       this._extractText(pdfDoc);
+      if (parseOpts.stripImages) void this.toggleClean(file.name, true);
     } catch (err) {
       log.pdf.error('loadFile failed:', err instanceof Error ? err.message : JSON.stringify(err));
       this._activeFileName = null;
@@ -935,7 +960,7 @@ class PdfStore extends Emitter {
     const doc = await pdfjsLib.getDocument({
       data: buffer,
       fontExtraProperties: true,
-      ..._getDocOpts,
+      ...docOpts(pdfDoc.parsedWith.prune),
     }).promise;
     pdfDoc.doc = doc;
     // Clean up old proxy (safe — only tears down worker connection)
@@ -1002,7 +1027,8 @@ class PdfStore extends Emitter {
       try {
         const stripped = await stripWatermarkImages(d.originalBuffer);
         const tStrip = performance.now();
-        d.strippedDoc = await pdfjsLib.getDocument({ data: stripped, ..._getDocOpts }).promise;
+        d.strippedDoc = await pdfjsLib.getDocument({ data: stripped, ...docOpts(d.parsedWith.prune) }).promise;
+        d.parsedWith = { ...d.parsedWith, stripImages: true };
         const tLoad = performance.now();
         const metrics = {
           file: fileName,
@@ -1027,8 +1053,67 @@ class PdfStore extends Emitter {
       d.strippedDoc = null;
       stripped.destroy().catch(() => {});
     }
+    if (!enabled) d.parsedWith = { ...d.parsedWith, stripImages: false };
 
     this.notify();
+  }
+
+  /** True when this document was opened under parse-time options that are no
+   *  longer the current global ones (see `currentParseOptions`). */
+  needsReparse(fileName: string): boolean {
+    const d = this._documents.get(fileName);
+    if (!d) return false;
+    const cur = currentParseOptions();
+    return d.parsedWith.prune !== cur.prune || d.parsedWith.stripImages !== cur.stripImages;
+  }
+
+  /** Open documents that `needsReparse`. */
+  staleDocuments(): string[] {
+    return [...this._documents.keys()].filter(n => this.needsReparse(n));
+  }
+
+  getDocParseGen(fileName: string): number {
+    return this._documents.get(fileName)?.parseGen ?? 0;
+  }
+
+  /** Reopen a document under the current parse-time options. Page, search,
+   *  rotation, bookmarks and extracted text all stay — only the pdf.js
+   *  proxies are swapped, and `parseGen` tells the panel to redraw. The old
+   *  proxies are destroyed a moment later so a render already in flight
+   *  against them can finish instead of failing. */
+  async reparse(fileName: string): Promise<void> {
+    const d = this._documents.get(fileName);
+    if (!d) return;
+    const opts = currentParseOptions();
+    const t0 = performance.now();
+    try {
+      const doc = await pdfjsLib.getDocument({ data: d.originalBuffer.slice(0), ...docOpts(opts.prune) }).promise;
+      let stripped: PDFDocumentProxy | null = null;
+      if (opts.stripImages) {
+        try {
+          const bytes = await stripWatermarkImages(d.originalBuffer);
+          stripped = await pdfjsLib.getDocument({ data: bytes, ...docOpts(opts.prune) }).promise;
+        } catch (err) {
+          log.pdf.error('stripWatermarkImages failed:', err);
+        }
+      }
+      if (this._documents.get(fileName) !== d) {           // closed meanwhile
+        doc.destroy().catch(() => {});
+        stripped?.destroy().catch(() => {});
+        return;
+      }
+      const old = [d.doc, d.strippedDoc];
+      d.doc = doc;
+      d.strippedDoc = stripped;
+      d.cleanMode = stripped != null;
+      d.parsedWith = { prune: opts.prune, stripImages: stripped != null };
+      d.parseGen++;
+      log.pdf.log(`reparsed ${fileName} (prune=${opts.prune}, stripImages=${stripped != null}) in ${Math.round(performance.now() - t0)} ms`);
+      this.notify();
+      setTimeout(() => { for (const p of old) p?.destroy().catch(() => {}); }, 2000);
+    } catch (err) {
+      log.pdf.error('reparse failed:', err instanceof Error ? err.message : String(err));
+    }
   }
 
   isDocClean(fileName: string): boolean {

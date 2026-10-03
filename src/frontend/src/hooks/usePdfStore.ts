@@ -65,6 +65,7 @@ export interface PdfDocSnapshot {
   textExtractProgress: number;
   bookmarks: PdfBookmark[];
   cleanMode: boolean;
+  parseGen: number;
   searchSource: 'user' | 'lookup' | null;
   lookupHint: string | null;
   crossProbeHint: string | null;
@@ -111,6 +112,7 @@ function getDocSnapshot(fileName: string): PdfDocSnapshot {
     textExtractProgress: pdfStore.getDocTextExtractProgress(fileName),
     bookmarks: pdfStore.getDocBookmarks(fileName),
     cleanMode: pdfStore.isDocClean(fileName),
+    parseGen: pdfStore.getDocParseGen(fileName),
     searchSource: pdfStore.getDocSearchSource(fileName),
     lookupHint: pdfStore.getDocLookupHint(fileName),
     crossProbeHint: pdfStore.getDocCrossProbeHint(fileName),
