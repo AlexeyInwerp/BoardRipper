@@ -16,13 +16,14 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
   IconPointer, IconArrowUpRight, IconSquare, IconTypography, IconPhotoDown, IconCopy,
-  IconArrowBackUp, IconTrash, IconX, IconPencil, IconSquaresSelected,
+  IconArrowBackUp, IconTrash, IconX, IconPencil, IconSquaresSelected, IconHelp,
 } from '@tabler/icons-react';
 import type { BoardRenderer } from '../../renderer/BoardRenderer';
 import { slideStore, SLIDE_COLORS, STROKE_SIZES, type Pt, type SlideTool } from '../../store/slide-store';
 import { boardStore } from '../../store/board-store';
 import { selectionSetStore } from '../../store/selection-set-store';
 import { log } from '../../store/log-store';
+import { isTouchPrimary } from '../../device-profile';
 import {
   drawCaption, hitAnnotation, hitHandle, layoutCaptions, paintAnnotations, readingsLine,
   type CaptionItem, type CaptionPlaced, type Handle, type Rect, type ToScreen,
@@ -61,9 +62,10 @@ function minimapCanvas(root: HTMLElement | null): HTMLCanvasElement | null {
   return root?.querySelector<HTMLCanvasElement>('[data-testid="board-minimap"][data-visible="true"] canvas') ?? null;
 }
 
-/** The minimap's rect in renderer px. It lives outside the board canvas's
- *  counter-zoom (UI scale), so its client rect is mapped through it. */
-function minimapRect(mm: HTMLCanvasElement | null, host: HTMLElement | null): Rect | null {
+/** A DOM element's rect in renderer px. The minimap and the guide live
+ *  outside the board canvas's counter-zoom (UI scale), so their client rects
+ *  are mapped through it. */
+function minimapRect(mm: Element | null, host: HTMLElement | null): Rect | null {
   if (!mm || !host) return null;
   const hr = host.getBoundingClientRect(), r = mm.getBoundingClientRect();
   if (!r.width || !hr.width) return null;
@@ -89,12 +91,12 @@ function captionItems(renderer: BoardRenderer, tabId: number): CaptionItem[] {
 }
 
 /** Captions for the selected parts. Returns where they went. */
-function paintCaptions(ctx: CanvasRenderingContext2D, renderer: BoardRenderer, tabId: number, avoid: Rect | null, live: boolean): CaptionPlaced[] {
+function paintCaptions(ctx: CanvasRenderingContext2D, renderer: BoardRenderer, tabId: number, avoid: readonly (Rect | null)[], live: boolean): CaptionPlaced[] {
   const items = captionItems(renderer, tabId);
   if (!items.length) return [];
   // Live, only the focused part's caption keeps room for its inputs.
   const focus = live ? slideStore.focusPart : null;
-  const placed = layoutCaptions(ctx, items, renderer.viewSize(), avoid ? [avoid] : [],
+  const placed = layoutCaptions(ctx, items, renderer.viewSize(), avoid.filter((r): r is Rect => !!r),
     k => (k === focus ? INPUT_ROW_H : 0), k => (k === focus ? INPUT_ROW_MIN_W : 0));
   const accent = accentColor();
   for (const pl of placed) drawCaption(ctx, items.find(i => i.key === pl.key)!, pl, accent);
@@ -155,6 +157,53 @@ function withHeader(view: HTMLCanvasElement, cssWidth: number, fileName: string)
   return out;
 }
 
+const GUIDE_KEY = 'boardripper-slide-guide-hidden';
+
+function loadGuideHidden(): boolean {
+  try { return localStorage.getItem(GUIDE_KEY) === '1'; } catch { return false; }
+}
+
+/** What to do now, for the tool in hand and the device in use. DOM only —
+ *  never in the PNG. */
+function SlideGuide({ tool, multi, onClose }: { tool: SlideTool; multi: boolean; onClose: () => void }) {
+  const touch = isTouchPrimary();
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+  const mod = mac ? '⌘' : 'Ctrl';
+  const tap = touch ? 'Tap' : 'Click';
+  const toolLine: Record<SlideTool, string> = {
+    select: touch
+      ? 'Drag an annotation to move it. Drag empty board to pan; tap a part to label it.'
+      : 'Drag an annotation to move it, its handles to resize. Drag empty board to pan; click a part to label it.',
+    arrow: 'Drag from the tail to the tip.',
+    rect: 'Drag out a box. Drag its border later to move it.',
+    text: `${tap} where the text goes, Enter to finish${touch ? '' : ' (Shift+Enter: new line)'}. ${tap} a text to edit it, drag it to move it.`,
+    pen: touch
+      ? 'Draw freehand. With a stylus, fingers keep panning and zooming.'
+      : 'Draw freehand.',
+  };
+  const parts = multi
+    ? `${tap} a part to add it. ${tap} a selected part once to type its readings, again to remove it.`
+    : touch
+      ? 'Several parts: turn on ▣ in the toolbar, then tap parts.'
+      : `${mod}+click a part to add it to the labels. Shift+click still adds to the worklist.`;
+  return (
+    <div className="slide-guide" data-testid="slide-guide" onPointerDown={e => e.stopPropagation()}>
+      <button className="slide-guide-close" title="Hide the guide (the ? in the toolbar brings it back)" aria-label="Hide the guide" onClick={onClose}>
+        <IconX size={13} />
+      </button>
+      <div className="slide-guide-title">Slide mode</div>
+      <p data-testid="slide-guide-tool">{toolLine[tool]}</p>
+      <p data-testid="slide-guide-parts">{parts}</p>
+      <p>Ω and ▷| under a label: readings for the part picked last. They print on its label.</p>
+      <p className="slide-guide-keys">
+        {touch
+          ? 'The bin deletes the selected annotation. PNG saves the view with its labels.'
+          : `⌫ delete · ${mod}Z undo · Esc leave · PNG saves the view with its labels`}
+      </p>
+    </div>
+  );
+}
+
 export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Props) {
   const slide = useSlide();
   const multiCount = useSyncExternalStore(c => selectionSetStore.subscribe(c), () => selectionSetStore.current.ordered.length);
@@ -169,6 +218,11 @@ export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Prop
   // Once a stylus has been seen, fingers pan and zoom while the pen tool is
   // on — the convention of every drawing app on a tablet.
   const penSeen = useRef(false);
+  const [guideHidden, setGuideHidden] = useState(loadGuideHidden);
+  const setGuide = useCallback((hidden: boolean) => {
+    setGuideHidden(hidden);
+    try { localStorage.setItem(GUIDE_KEY, hidden ? '1' : '0'); } catch { /* per-viewer convenience only */ }
+  }, []);
 
   const toScreen = useCallback<ToScreen>(p => renderer?.boardToScreen(p.x, p.y) ?? null, [renderer]);
 
@@ -187,14 +241,16 @@ export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Prop
     // The text being edited is drawn by the input, not twice.
     const ed = editingRef.current;
     const list = slideStore.list(tabId).filter(a => !(ed && a.id === ed.id));
-    const placed = paintCaptions(ctx, renderer, tabId, minimapRect(minimapCanvas(rootRef.current), host), true);
+    // Live labels keep clear of the minimap and the guide card (DOM, on top).
+    const guide = rootRef.current?.querySelector('[data-testid="slide-guide"]') ?? null;
+    const placed = paintCaptions(ctx, renderer, tabId, [minimapRect(minimapCanvas(rootRef.current), host), minimapRect(guide, host)], true);
     paintAnnotations(ctx, list, renderer, slideStore.selectedId);
     const slots = placed.filter(p => p.key === slideStore.focusPart).map(p => ({ key: p.key, x: Math.round(p.block.x), y: Math.round(p.pill.y + p.pill.h + 4), w: Math.round(p.block.w) }));
     const sig = JSON.stringify(slots);
     if (sig !== slotsSig.current) { slotsSig.current = sig; setInputSlots(slots); }
   }, [renderer, tabId, hostRef, rootRef]);
 
-  useEffect(() => { paint(); }, [paint, slide.rev, slide.selectedId, slide.enabled, slide.focusPart, editing]);
+  useEffect(() => { paint(); }, [paint, slide.rev, slide.selectedId, slide.enabled, slide.focusPart, editing, guideHidden, slide.tool, slide.multi]);
   useEffect(() => renderer?.onViewChange(() => paint()), [renderer, paint]);
   // Captions follow the selection and the multi-selection.
   // A new primary selection becomes the part in focus for readings.
@@ -410,7 +466,7 @@ export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Prop
     const view = renderer.captureView(ctx => {
       const mm = minimapCanvas(rootRef.current);
       const mr = minimapRect(mm, hostRef.current);
-      paintCaptions(ctx, renderer, tabId, mr, false);
+      paintCaptions(ctx, renderer, tabId, [mr], false);
       paintAnnotations(ctx, slideStore.list(tabId), renderer, null);
       if (mm && mr) paintMinimap(ctx, mm, mr);
     });
@@ -516,6 +572,7 @@ export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Prop
           />
         )}
       </div>
+      {!guideHidden && <SlideGuide tool={slide.tool} multi={slide.multi} onClose={() => setGuide(true)} />}
       <div className="slide-toolbar" data-testid="slide-toolbar" onPointerDown={e => e.stopPropagation()}>
         {tools.map(t => (
           <button
@@ -535,8 +592,10 @@ export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Prop
           data-testid="slide-multi"
           aria-pressed={slide.multi}
           title={slide.multi
-            ? 'Several parts: on — click parts to add or remove them (click to turn off)'
-            : `Several parts: click parts to add them to the selection (${navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+click works anytime)`}
+            ? `Several parts: on — ${isTouchPrimary() ? 'tap' : 'click'} a part to add it; on a selected part, once to type its readings, again to remove it`
+            : isTouchPrimary()
+              ? 'Several parts: tap parts to add them to the selection'
+              : `Several parts: click parts to add them to the selection (${/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'}+click works anytime; Shift+click stays the worklist's)`}
           onClick={() => slideStore.setMulti(!slide.multi)}
         >
           <IconSquaresSelected size={16} />
@@ -593,6 +652,15 @@ export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Prop
         </button>
         <button className="board-netlines-toggle" data-testid="slide-copy-png" title="Copy the current view to the clipboard" onClick={copyPng}>
           <IconCopy size={16} />
+        </button>
+        <button
+          className={`board-netlines-toggle ${guideHidden ? '' : 'active'}`}
+          data-testid="slide-guide-toggle"
+          aria-pressed={!guideHidden}
+          title={guideHidden ? 'Show the guide' : 'Hide the guide'}
+          onClick={() => setGuide(!guideHidden)}
+        >
+          <IconHelp size={16} />
         </button>
         <button className="board-netlines-toggle" title="Leave slide mode (Esc) — the annotations come back with it" onClick={() => slideStore.setEnabled(false)}>
           <IconX size={16} />

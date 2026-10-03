@@ -9646,3 +9646,42 @@ body {
   font-weight: 500;
 }
 .slide-readings input::placeholder { color: rgba(255, 255, 255, 0.35); }
+/* Slide-mode guide: lower-left of the board, above the toolbar's row. */
+.slide-guide {
+  position: absolute;
+  left: 12px;
+  bottom: 60px;
+  z-index: 11;
+  width: 270px;
+  max-width: calc(100% - 24px);
+  padding: 10px 26px 8px 12px;
+  background: var(--chip-bg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.slide-guide-title { color: var(--text-primary); font-weight: 600; margin-bottom: 4px; }
+.slide-guide p { margin: 0 0 5px; }
+.slide-guide p:last-child { margin-bottom: 0; }
+.slide-guide-keys { opacity: 0.75; }
+.slide-guide-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.slide-guide-close:hover { background: rgba(255, 255, 255, 0.08); color: var(--text-primary); }

@@ -7446,9 +7446,17 @@ export class BoardRenderer {
         if (primary !== null && selectionSetStore.current.ordered.length === 0 && primary !== hit.partIndex) {
           selectionSetStore.add(this.tabId, primary);
         }
+        // A selected part that is not the one in focus gets the focus (its
+        // reading boxes) first; picking it again removes it. Without this a
+        // tablet, which has no plain-click alternative while the toggle is on,
+        // could never get back to an earlier part's readings.
+        const name = this.board?.parts[hit.partIndex]?.name ?? null;
+        if (selectionSetStore.has(hit.partIndex) && slideStore.focusPart !== name) {
+          slideStore.setFocusPart(name);
+          return;
+        }
         selectionSetStore.toggle(this.tabId, hit.partIndex);
         // The part just picked is the one whose readings get typed in next.
-        const name = this.board?.parts[hit.partIndex]?.name ?? null;
         if (selectionSetStore.has(hit.partIndex)) slideStore.setFocusPart(name);
         else if (slideStore.focusPart === name) slideStore.setFocusPart(null);
       }

@@ -130,6 +130,7 @@ test.describe('slide mode: parts, readings, text and pen', () => {
   test('captions several parts with drafted readings; text drags with the text tool; the pen draws', async ({ page }) => {
     await openBoard(page);
     await page.getByTestId('slide-mode-toggle').click();
+    await page.getByTestId('slide-guide-toggle').click();   // the clicks below land where the guide sits
     await page.getByTestId('slide-tool-select').click();
 
     // The primary selection is in focus: its Ω / ▷| boxes show, with no words in them.
@@ -202,6 +203,77 @@ test.describe('slide mode: parts, readings, text and pen', () => {
       return w.__slideStore.list(w.__boardStore.activeTabId).find(a => a.kind === 'ink')?.points?.length ?? 0;
     });
     expect(ink).toBeGreaterThan(10);
+  });
+});
+
+async function partCenter(page: Page, name: string, fx = 0.5, fy = 0.5) {
+  const b = await canvasBox(page);
+  const r = await page.evaluate((n) => {
+    const w = window as unknown as { __boardRenderer: { board: { parts: { name: string }[] }; partScreenBox(i: number): { x: number; y: number; w: number; h: number } | null } };
+    return w.__boardRenderer.partScreenBox(w.__boardRenderer.board.parts.findIndex(p => p.name === n));
+  }, name);
+  if (!r) throw new Error(`no ${name}`);
+  return { x: b.x + r.x + r.w * fx, y: b.y + r.y + r.h * fy };
+}
+
+async function focusU9(page: Page) {
+  await page.evaluate(() => (window as unknown as { __boardStore: { focusPart(n: string): void } }).__boardStore.focusPart('U9'));
+  await expect(page.getByTestId('slide-readings-U9')).toBeVisible({ timeout: 5000 });
+}
+
+test.describe('slide mode on Windows and on a touch screen', () => {
+  test('Windows: Ctrl+click adds a part, and the guide says Ctrl', async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'Win32' });
+    });
+    await openBoard(page);
+    await page.getByTestId('slide-mode-toggle').click();
+    await page.getByTestId('slide-tool-select').click();
+    await expect(page.getByTestId('slide-guide-parts')).toContainText('Ctrl+click');
+    await focusU9(page);
+    const sw = await partCenter(page, 'SW2');
+    await page.keyboard.down('Control');
+    await page.mouse.click(sw.x, sw.y);
+    await page.keyboard.up('Control');
+    await expect(page.getByTestId('slide-multi-clear')).toContainText('2');
+    await expect(page.getByTestId('slide-readings-SW2')).toBeVisible();
+  });
+
+  test('touch: Several parts, taps add, a tap on a selected part focuses it, a second removes it', async ({ page }) => {
+    await openBoard(page);
+    await page.getByTestId('slide-mode-toggle').click();
+    await page.getByTestId('slide-tool-select').click();
+    await page.getByTestId('slide-multi').click();
+    await expect(page.getByTestId('slide-guide-parts')).toContainText('again to remove');
+    const cdp = await page.context().newCDPSession(page);
+    const tap = async (p: { x: number; y: number }) => {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: p.x, y: p.y }] });
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await page.waitForTimeout(400);   // two taps must not read as a double tap
+    };
+    // At the fit view, both parts are on screen.
+    const u9 = await partCenter(page, 'U9');
+    // Low on SW2: U9's label and reading boxes may sit over SW2's centre.
+    const sw = await partCenter(page, 'SW2', 0.5, 0.85);
+    await tap(u9);
+    await expect(page.getByTestId('slide-multi-clear')).toContainText('1');
+    await tap(sw);
+    await expect(page.getByTestId('slide-multi-clear')).toContainText('2');
+    await expect(page.getByTestId('slide-readings-SW2')).toBeVisible();
+    await expect(page.getByTestId('slide-readings-U9')).toHaveCount(0);
+    await tap(u9);                                     // selected, not in focus → focus
+    await expect(page.getByTestId('slide-readings-U9')).toBeVisible();
+    await expect(page.getByTestId('slide-multi-clear')).toContainText('2');
+    await tap(u9);                                     // in focus → removed
+    await expect(page.getByTestId('slide-multi-clear')).toContainText('1');
+
+    // The guide follows the tool and can be put away and brought back.
+    await page.getByTestId('slide-tool-pen').click();
+    await expect(page.getByTestId('slide-guide-tool')).toContainText('freehand');
+    await page.getByTestId('slide-guide-toggle').click();
+    await expect(page.getByTestId('slide-guide')).toHaveCount(0);
+    await page.getByTestId('slide-guide-toggle').click();
+    await expect(page.getByTestId('slide-guide')).toBeVisible();
   });
 });
 
