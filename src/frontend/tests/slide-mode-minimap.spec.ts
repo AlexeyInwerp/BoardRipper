@@ -132,9 +132,17 @@ test.describe('slide mode: parts, readings, text and pen', () => {
     await page.getByTestId('slide-mode-toggle').click();
     await page.getByTestId('slide-tool-select').click();
 
-    // Primary selection + a Shift+click on another part → both captioned with inputs.
+    // The primary selection is in focus: its Ω / ▷| boxes show, with no words in them.
     await page.evaluate(() => (window as unknown as { __boardStore: { focusPart(n: string): void } }).__boardStore.focusPart('U9'));
     await expect(page.getByTestId('slide-readings-U9')).toBeVisible({ timeout: 5000 });
+    expect(await page.getByTestId('slide-ohm-U9').getAttribute('placeholder')).toBeNull();
+    await page.getByTestId('slide-ohm-U9').fill('4.7k');
+    await page.getByTestId('slide-diode-U9').fill('0.452');
+    expect(await page.evaluate(() => {
+      const w = window as unknown as { __slideStore: { readings(t: number, n: string): unknown }; __boardStore: { activeTabId: number } };
+      return w.__slideStore.readings(w.__boardStore.activeTabId, 'U9');
+    })).toEqual({ ohm: '4.7k', diode: '0.452' });
+
     const b = await canvasBox(page);
     const sw = await page.evaluate(() => {
       const r = (window as unknown as { __boardRenderer: { board: { parts: { name: string }[] }; partScreenBox(i: number): { x: number; y: number; w: number; h: number } | null } }).__boardRenderer;
@@ -142,18 +150,25 @@ test.describe('slide mode: parts, readings, text and pen', () => {
       return r.partScreenBox(i);
     });
     expect(sw).not.toBeNull();
-    await page.keyboard.down('Shift');
-    await page.mouse.click(b.x + sw!.x + sw!.w / 2, b.y + sw!.y + sw!.h / 2);
-    await page.keyboard.up('Shift');
-    await expect(page.getByTestId('slide-readings-SW2')).toBeVisible();
-    await expect(page.getByTestId('slide-multi-clear')).toContainText('2');
+    const swX = b.x + sw!.x + sw!.w / 2, swY = b.y + sw!.y + sw!.h / 2;
 
-    await page.getByTestId('slide-ohm-U9').fill('4.7k');
-    await page.getByTestId('slide-diode-U9').fill('0.452');
-    expect(await page.evaluate(() => {
-      const w = window as unknown as { __slideStore: { readings(t: number, n: string): unknown }; __boardStore: { activeTabId: number } };
-      return w.__slideStore.readings(w.__boardStore.activeTabId, 'U9');
-    })).toEqual({ ohm: '4.7k', diode: '0.452' });
+    // ⌘/Ctrl+click adds it; the new part takes the input focus, and U9 keeps
+    // its caption (with its readings) but loses its empty-able boxes.
+    const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
+    await page.keyboard.down(mod);
+    await page.mouse.click(swX, swY);
+    await page.keyboard.up(mod);
+    await expect(page.getByTestId('slide-multi-clear')).toContainText('2');
+    await expect(page.getByTestId('slide-readings-SW2')).toBeVisible();
+    await expect(page.getByTestId('slide-readings-U9')).toHaveCount(0);
+
+    // Shift+click stays the worklist's: it goes to the worklist (which opens
+    // its panel) and leaves the slide selection as it was.
+    await page.keyboard.down('Shift');
+    await page.mouse.click(swX, swY);
+    await page.keyboard.up('Shift');
+    await expect(page.getByText(/Added 'SW2' to/)).toBeVisible();
+    await expect(page.getByTestId('slide-multi-clear')).toContainText('2');
 
     // Text: write it, then drag it with the text tool still on.
     const cx = b.x + b.width / 2, cy = b.y + b.height / 2;

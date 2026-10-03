@@ -280,15 +280,15 @@ function captionMetrics(ctx: CanvasRenderingContext2D, it: CaptionItem) {
 /** Place every caption beside its part — above, below, left or right, sliding
  *  along the edge into the view, else a free corner — never over its own
  *  part, over `avoid` (the minimap) or over a caption already placed.
- *  `reserveBelow` keeps room under each pill for the live reading inputs,
- *  `minWidth` makes the block at least that wide. */
+ *  `reserveBelow` keeps room under a pill for the live reading inputs and
+ *  `minWidth` makes that block at least so wide — both per caption key. */
 export function layoutCaptions(
   ctx: CanvasRenderingContext2D,
   items: readonly CaptionItem[],
   view: { width: number; height: number },
   avoid: readonly Rect[],
-  reserveBelow = 0,
-  minWidth = 0,
+  reserveBelow: (key: string) => number = () => 0,
+  minWidth: (key: string) => number = () => 0,
 ): CaptionPlaced[] {
   const placed: CaptionPlaced[] = [];
   const taken: Rect[] = [...avoid];
@@ -299,7 +299,7 @@ export function layoutCaptions(
     const b = it.box;
     if (b.x > view.width || b.y > view.height || b.x + b.w < 0 || b.y + b.h < 0) continue;
     const met = captionMetrics(ctx, it);
-    const w = Math.max(met.w, minWidth), h = met.h + reserveBelow;
+    const w = Math.max(met.w, minWidth(it.key)), h = met.h + reserveBelow(it.key);
     const cx = b.x + b.w / 2 - w / 2, cy = b.y + b.h / 2 - h / 2;
     const clamp = (c: { x: number; y: number }) => ({
       x: Math.max(m, Math.min(view.width - w - m, c.x)),

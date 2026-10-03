@@ -9,9 +9,10 @@
  *  Select) reach the board.
  *
  *  Selected parts — the primary selection and the multi-selection
- *  (Shift+click, or taps with the toolbar's multi-select on) — get a large
- *  caption, and while slide mode is on each caption has two inputs to draft
- *  an Ω and a diode reading, which the caption then shows (and the PNG). */
+ *  (⌘/Ctrl+click, or taps with the toolbar's Several parts on; Shift+click
+ *  stays the worklist's) — get a large caption. The part picked last also
+ *  gets two inputs, Ω and ▷|, to draft readings; a filled reading prints on
+ *  its caption (and the PNG) whether or not the part is the one in focus. */
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
   IconPointer, IconArrowUpRight, IconSquare, IconTypography, IconPhotoDown, IconCopy,
@@ -91,8 +92,10 @@ function captionItems(renderer: BoardRenderer, tabId: number): CaptionItem[] {
 function paintCaptions(ctx: CanvasRenderingContext2D, renderer: BoardRenderer, tabId: number, avoid: Rect | null, live: boolean): CaptionPlaced[] {
   const items = captionItems(renderer, tabId);
   if (!items.length) return [];
+  // Live, only the focused part's caption keeps room for its inputs.
+  const focus = live ? slideStore.focusPart : null;
   const placed = layoutCaptions(ctx, items, renderer.viewSize(), avoid ? [avoid] : [],
-    live ? INPUT_ROW_H : 0, live ? INPUT_ROW_MIN_W : 0);
+    k => (k === focus ? INPUT_ROW_H : 0), k => (k === focus ? INPUT_ROW_MIN_W : 0));
   const accent = accentColor();
   for (const pl of placed) drawCaption(ctx, items.find(i => i.key === pl.key)!, pl, accent);
   return placed;
@@ -186,15 +189,26 @@ export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Prop
     const list = slideStore.list(tabId).filter(a => !(ed && a.id === ed.id));
     const placed = paintCaptions(ctx, renderer, tabId, minimapRect(minimapCanvas(rootRef.current), host), true);
     paintAnnotations(ctx, list, renderer, slideStore.selectedId);
-    const slots = placed.map(p => ({ key: p.key, x: Math.round(p.block.x), y: Math.round(p.pill.y + p.pill.h + 4), w: Math.round(p.block.w) }));
+    const slots = placed.filter(p => p.key === slideStore.focusPart).map(p => ({ key: p.key, x: Math.round(p.block.x), y: Math.round(p.pill.y + p.pill.h + 4), w: Math.round(p.block.w) }));
     const sig = JSON.stringify(slots);
     if (sig !== slotsSig.current) { slotsSig.current = sig; setInputSlots(slots); }
   }, [renderer, tabId, hostRef, rootRef]);
 
-  useEffect(() => { paint(); }, [paint, slide.rev, slide.selectedId, slide.enabled, editing]);
+  useEffect(() => { paint(); }, [paint, slide.rev, slide.selectedId, slide.enabled, slide.focusPart, editing]);
   useEffect(() => renderer?.onViewChange(() => paint()), [renderer, paint]);
   // Captions follow the selection and the multi-selection.
-  useEffect(() => boardStore.subscribe(() => { if (slideStore.enabled) paint(); }), [paint]);
+  // A new primary selection becomes the part in focus for readings.
+  const lastPrimary = useRef<number | null>(null);
+  useEffect(() => boardStore.subscribe(() => {
+    if (boardStore.activeTabId === tabId) {
+      const idx = boardStore.selection.partIndex;
+      if (idx !== lastPrimary.current) {
+        lastPrimary.current = idx;
+        slideStore.setFocusPart(idx !== null ? renderer?.partScreenBox(idx)?.name ?? null : null);
+      }
+    }
+    if (slideStore.enabled) paint();
+  }), [paint, tabId, renderer]);
   useEffect(() => selectionSetStore.subscribe(() => { if (slideStore.enabled) paint(); }), [paint]);
 
   // ---- pointer ----
@@ -463,7 +477,6 @@ export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Prop
                 <input
                   data-testid={`slide-ohm-${slot.key}`}
                   value={r?.ohm ?? ''}
-                  placeholder="ohm"
                   onChange={e => slideStore.setReading(tabId, slot.key, 'ohm', e.target.value)}
                   onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') (e.target as HTMLInputElement).blur(); }}
                 />
@@ -473,7 +486,6 @@ export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Prop
                 <input
                   data-testid={`slide-diode-${slot.key}`}
                   value={r?.diode ?? ''}
-                  placeholder="diode"
                   onChange={e => slideStore.setReading(tabId, slot.key, 'diode', e.target.value)}
                   onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') (e.target as HTMLInputElement).blur(); }}
                 />
@@ -524,7 +536,7 @@ export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Prop
           aria-pressed={slide.multi}
           title={slide.multi
             ? 'Several parts: on — click parts to add or remove them (click to turn off)'
-            : 'Several parts: click parts to add them to the selection (Shift+click works anytime)'}
+            : `Several parts: click parts to add them to the selection (${navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+click works anytime)`}
           onClick={() => slideStore.setMulti(!slide.multi)}
         >
           <IconSquaresSelected size={16} />

@@ -345,6 +345,8 @@ function rot90Parity(rotationDeg: number): number {
 }
 
 
+const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+
 /** What `BoardRenderer.onViewChange` listeners receive. */
 export interface ViewChange { userPan: boolean; dx: number; dy: number }
 
@@ -465,6 +467,9 @@ export class BoardRenderer {
    *  handleClick (pixi-viewport's "clicked" event fires on pointerup but
    *  doesn't carry the down-time modifier reliably across browsers). */
   private lastPointerShift = false;
+  /** ⌘ (macOS) / Ctrl (elsewhere) held at pointerdown: slide mode's
+   *  add-to-selection modifier. Not Shift — that adds to the worklist. */
+  private lastPointerAddMod = false;
   /** Client (CSS) coords of the last primary pointerdown — used to place the
    *  Resize Mode popup at the real cursor (viewport.toScreen is in DPR-scaled
    *  device px, wrong for a position:fixed DOM popup). */
@@ -1971,6 +1976,7 @@ export class BoardRenderer {
         ? BoardRenderer.TOUCH_CLICK_DRAG_TOLERANCE_PX
         : BoardRenderer.CLICK_DRAG_TOLERANCE_PX;
       this.lastPointerShift = e.shiftKey;
+      this.lastPointerAddMod = IS_MAC ? e.metaKey : e.ctrlKey;
       this.lastPointerClient = { x: e.clientX, y: e.clientY };
       this.pointerTravelPx = 0;
       // A new gesture starts clean. The drag-zoom latch is set from a
@@ -7423,10 +7429,13 @@ export class BoardRenderer {
       this.handleResizeClick(world);
       return;
     }
-    // Slide mode: Shift+click (or any tap with the toolbar's multi-select on)
-    // adds a part to / removes it from the multi-selection instead of the
-    // worklist, so a slide can caption several parts at once.
-    if (slideStore.enabled && (this.lastPointerShift || slideStore.multi)) {
+    // Slide mode: ⌘+click (Ctrl+click off macOS), or any tap with the
+    // toolbar's Several parts toggle on, adds a part to / removes it from the
+    // multi-selection, so a slide can caption several parts at once. Shift
+    // is left alone: Shift+click still adds to the worklist here too.
+    const addMod = this.lastPointerAddMod;
+    this.lastPointerAddMod = false;
+    if (slideStore.enabled && !this.lastPointerShift && (addMod || slideStore.multi)) {
       this.lastPointerShift = false;
       this.clickCycle = null;
       this.clearPendingCycleAdvance();
@@ -7438,6 +7447,10 @@ export class BoardRenderer {
           selectionSetStore.add(this.tabId, primary);
         }
         selectionSetStore.toggle(this.tabId, hit.partIndex);
+        // The part just picked is the one whose readings get typed in next.
+        const name = this.board?.parts[hit.partIndex]?.name ?? null;
+        if (selectionSetStore.has(hit.partIndex)) slideStore.setFocusPart(name);
+        else if (slideStore.focusPart === name) slideStore.setFocusPart(null);
       }
       return;
     }

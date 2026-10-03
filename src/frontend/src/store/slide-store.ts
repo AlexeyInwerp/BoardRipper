@@ -45,6 +45,8 @@ export interface SlideSnapshot {
   selectedId: number | null;
   /** Taps on parts add them to / remove them from the multi-selection. */
   multi: boolean;
+  /** Refdes whose reading inputs are showing. */
+  focusPart: string | null;
   /** Bumped on every annotation change, so views can key a redraw on it. */
   rev: number;
 }
@@ -56,6 +58,7 @@ class SlideStore extends Emitter {
   private _weight = 1;
   private _selectedId: number | null = null;
   private _multi = false;
+  private _focusPart: string | null = null;
   private readingsByTab = new Map<number, Map<string, PartReadings>>();
   private _rev = 0;
   private nextId = 1;
@@ -64,7 +67,7 @@ class SlideStore extends Emitter {
   private _snapshot: SlideSnapshot = this.make();
 
   private make(): SlideSnapshot {
-    return { enabled: this._enabled, tool: this._tool, color: this._color, weight: this._weight, selectedId: this._selectedId, multi: this._multi, rev: this._rev };
+    return { enabled: this._enabled, tool: this._tool, color: this._color, weight: this._weight, selectedId: this._selectedId, multi: this._multi, focusPart: this._focusPart, rev: this._rev };
   }
   private changed() { this._snapshot = this.make(); this.notify(); }
 
@@ -74,6 +77,9 @@ class SlideStore extends Emitter {
   get color() { return this._color; }
   get selectedId() { return this._selectedId; }
   get multi() { return this._multi; }
+  /** The part whose Ω / diode inputs are showing: the last one picked. */
+  get focusPart() { return this._focusPart; }
+  setFocusPart(name: string | null) { if (this._focusPart !== name) { this._focusPart = name; this.changed(); } }
   setMulti(v: boolean) { if (this._multi !== v) { this._multi = v; this.changed(); } }
 
   /** Drafted Ω / diode readings for a part, by refdes. */
