@@ -963,6 +963,15 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     return () => window.removeEventListener('pdf-quality-changed', handler);
   }, [pdfFileName]);
 
+  // Back from the background: a browser may have purged canvas backing
+  // stores meanwhile (iOS does), so every tile is drawn again on the next
+  // pass instead of being trusted to still hold its bitmap.
+  useEffect(() => {
+    const onVis = () => { if (document.visibilityState === 'visible') tileBitmapRef.current = new WeakMap(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+
   // A reparse (filter menu ▸ Reload & re-parse) swapped in new pdf.js
   // documents: every cached bitmap and tile was drawn from the old ones.
   const lastParseGenRef = useRef(parseGen);
@@ -1906,8 +1915,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           // Safari the cleared-then-redrawn tile can reach the screen as a
           // blank frame — the old-scale tiles or the blurry main canvas
           // beneath show through. Identity, not size, because an invalidated
-          // cache hands back a new bitmap for the same key.
-          if (tileBitmapRef.current.get(tileCanvas) !== cached.bitmap) {
+          // cache hands back a new bitmap for the same key. A tile that was
+          // hidden is redrawn regardless: WebKit may have dropped the pixels
+          // of a canvas that was not on screen (so may any engine after the
+          // page sat in the background — see the visibilitychange reset).
+          if (tileBitmapRef.current.get(tileCanvas) !== cached.bitmap || tileCanvas.style.display === 'none') {
             tileCanvas.width = cached.bitmap.width;
             tileCanvas.height = cached.bitmap.height;
             const ctx = tileCanvas.getContext('2d');

@@ -38,6 +38,10 @@ export function PdfFilterMenu({ fileName }: { fileName: string }) {
 
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState('');
+  const draftRef = useRef('');
+  draftRef.current = draft;
+  /** A typed term the list already has: said in place, not silently kept. */
+  const [dupe, setDupe] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -48,7 +52,16 @@ export function PdfFilterMenu({ fileName }: { fileName: string }) {
   const pruneOn = g.pdfPruneInvisible !== false;
   const active = (textOn && terms.length > 0) || stripOn;
 
-  const close = useCallback(() => setOpen(false), []);
+  // Closing commits whatever was typed: an outside press unmounts the input
+  // before any blur, so without this a term typed and then clicked away from
+  // was lost.
+  const close = useCallback(() => {
+    if (draftRef.current.trim()) {
+      if (addWatermarkTerm(draftRef.current)) setDraft('');
+    }
+    setDupe(null);
+    setOpen(false);
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -80,7 +93,10 @@ export function PdfFilterMenu({ fileName }: { fileName: string }) {
   }, [open, terms.length]);
 
   const commitDraft = () => {
-    if (addWatermarkTerm(draft)) setDraft('');
+    const term = draft.trim();
+    if (!term) return;
+    if (addWatermarkTerm(term)) { setDraft(''); setDupe(null); }
+    else setDupe(term);
   };
 
   const reload = async () => {
@@ -141,10 +157,11 @@ export function PdfFilterMenu({ fileName }: { fileName: string }) {
               data-testid="pdf-filter-term-input"
               placeholder="Add term…"
               value={draft}
-              onChange={e => setDraft(e.target.value)}
+              onChange={e => { setDraft(e.target.value); if (dupe) setDupe(null); }}
               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitDraft(); } }}
               onBlur={() => { if (draft.trim()) commitDraft(); }}
             />
+            {dupe && <span className="pdf-filter-dupe" data-testid="pdf-filter-dupe">“{dupe}” is already listed</span>}
           </div>
           <button
             type="button"

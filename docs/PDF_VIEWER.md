@@ -127,7 +127,10 @@ do that to every cached tile and redraw it, and Safari can composite the
 cleared tile for a frame with the blurrier layer beneath showing through.
 `tileBitmapRef` (a WeakMap canvas → bitmap) skips the clear+draw when the
 cache returns the same bitmap; an invalidated cache hands back a new bitmap,
-so a real change still redraws. E2E `tests/pdf-settle-no-blink.spec.ts`
+so a real change still redraws. Two exceptions keep it honest: a tile that
+was `display:none` is always redrawn (WebKit may drop the pixels of a canvas
+that is not on screen), and the map is reset on `visibilitychange` → visible,
+because a page that sat in the background may have had every canvas purged. E2E `tests/pdf-settle-no-blink.spec.ts`
 asserts both causes (the one-frame flash itself cannot be sampled).
 
 ## Tile cache (tile-manager.ts)

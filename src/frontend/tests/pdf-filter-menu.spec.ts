@@ -99,3 +99,64 @@ test('filter menu: live terms, parse-time options and reload', async ({ page }) 
   await page.reload();
   expect((await storedSettings(page)).pdfPruneInvisible).toBe(false);
 });
+
+test('a typed term survives closing the menu by clicking away; a duplicate says so', async ({ page }) => {
+  await openFixture(page);
+  await page.getByTestId('pdf-filter-btn').click();
+  const input = page.getByTestId('pdf-filter-term-input');
+  await input.fill('ZZ-typed-away');
+  // Click the page, not the menu: the menu unmounts with the input in it.
+  const box = (await page.locator('.pdf-canvas-container').boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(page.getByTestId('pdf-filter-menu')).toHaveCount(0);
+  expect((await storedSettings(page)).pdfWatermarkFilter).toContain('ZZ-typed-away');
+
+  await page.getByTestId('pdf-filter-btn').click();
+  await input.fill('ZZ-typed-away');
+  await input.press('Enter');
+  await expect(page.getByTestId('pdf-filter-dupe')).toContainText('already listed');
+  await expect(page.getByTestId('pdf-filter-term').filter({ hasText: 'ZZ-typed-away' })).toHaveCount(1);
+  await page.getByRole('button', { name: 'Remove ZZ-typed-away' }).click();
+});
+
+test('strip images on open: no reload offered while the strip runs, and the page redraws from the stripped document', async ({ page }) => {
+  test.setTimeout(60000);
+  await page.addInitScript(() => {
+    try {
+      const raw = localStorage.getItem('boardripper-render-settings');
+      localStorage.setItem('boardripper-render-settings', JSON.stringify({ ...(raw ? JSON.parse(raw) : {}), pdfStripWatermarkImages: true }));
+    } catch { /* ignore */ }
+  });
+  await openFixture(page);
+  const S = () => page.evaluate(() => {
+    const s = (window as unknown as { __pdfStore: { staleDocuments(): string[]; getDocParseGen(n: string): number; isDocClean(n: string): boolean; _documents: Map<string, { strippedDoc: unknown }> } }).__pdfStore;
+    const name = [...s._documents.keys()][0];
+    return { stale: s.staleDocuments(), gen: s.getDocParseGen(name), clean: s.isDocClean(name), stripped: !!s._documents.get(name)?.strippedDoc };
+  });
+  // The strip is part of the open: never "reload needed" meanwhile.
+  await expect.poll(async () => (await S()).stripped, { timeout: 20000 }).toBe(true);
+  const after = await S();
+  expect(after.stale).toEqual([]);
+  expect(after.clean).toBe(true);
+  // … and the panel was told to redraw once the stripped document was in.
+  expect(after.gen).toBeGreaterThan(0);
+  await expect.poll(() => inkOnPage(page), { timeout: 15000 }).toBeGreaterThan(0);
+  await page.getByTestId('pdf-filter-btn').click();
+  await expect(page.getByTestId('pdf-filter-reload')).toBeDisabled();
+});
+
+test('two reloads of one document run once each, in turn', async ({ page }) => {
+  test.setTimeout(60000);
+  await openFixture(page);
+  await page.getByTestId('pdf-filter-btn').click();
+  await page.getByTestId('pdf-filter-prune').click();
+  const result = await page.evaluate(async () => {
+    const s = (window as unknown as { __pdfStore: { reparse(n: string): Promise<void>; getDocParseGen(n: string): number; _documents: Map<string, unknown> } }).__pdfStore;
+    const name = [...s._documents.keys()][0];
+    const before = s.getDocParseGen(name);
+    await Promise.all([s.reparse(name), s.reparse(name)]);
+    return s.getDocParseGen(name) - before;
+  });
+  // The second call finds nothing stale and does not reopen the document again.
+  expect(result).toBe(1);
+});

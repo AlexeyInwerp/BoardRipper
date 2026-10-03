@@ -79,3 +79,10 @@
 
 .pdf-filter-menu .pdf-filter-reload:not(:disabled) { color: var(--accent); }
 .pdf-filter-menu .pdf-filter-reload:not(:disabled):hover { color: var(--accent-fg); }
+
+.pdf-filter-dupe {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 0 2px;
+}

@@ -780,7 +780,9 @@ class PdfStore extends Emitter {
         originalBuffer: buffer,
         strippedDoc: null,
         cleanMode: false,
-        parsedWith: { prune: parseOpts.prune, stripImages: false },
+        // stripImages is recorded as applied now: the strip that follows is
+        // part of this open, and a reload offered meanwhile would only race it.
+        parsedWith: { prune: parseOpts.prune, stripImages: parseOpts.stripImages },
         parseGen: 0,
         pageCount: doc.numPages,
         currentPage: 1,
@@ -864,17 +866,30 @@ class PdfStore extends Emitter {
       const NOTIFY_INTERVAL = 5; // update UI every N pages
       for (let i = 1; i <= pdfDoc.pageCount; i++) {
         if (!this._documents.has(pdfDoc.fileName)) return; // closed
-        const page = await pdfDoc.doc.getPage(i);
+        // A reparse swaps `pdfDoc.doc` and destroys the old proxy two
+        // seconds later; a page read still streaming from it then rejects.
+        // That is a swap, not a broken page: read it again from the new one.
         const collected: TextItem[] = [];
-        const reader = page.streamTextContent().getReader();
-        try {
-          for (;;) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            for (const it of value.items) collected.push(it as TextItem);
+        for (;;) {
+          const doc = pdfDoc.doc;
+          try {
+            const page = await doc.getPage(i);
+            const reader = page.streamTextContent().getReader();
+            try {
+              for (;;) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                for (const it of value.items) collected.push(it as TextItem);
+              }
+            } finally {
+              reader.releaseLock();
+            }
+            break;
+          } catch (err) {
+            if (!this._documents.has(pdfDoc.fileName)) return;   // closed
+            if (pdfDoc.doc === doc) throw err;
+            collected.length = 0;
           }
-        } finally {
-          reader.releaseLock();
         }
         const items: PdfTextItem[] = [];
         for (const ti of collected) {
@@ -1016,8 +1031,24 @@ class PdfStore extends Emitter {
     }, delayMs));
   }
 
+  /** Per-file queue for the operations that swap pdf.js proxies (toggleClean,
+   *  reparse): two running at once on one document raced — each read the
+   *  proxies the other was replacing and one stripped document leaked. */
+  private _docOps = new Map<string, Promise<void>>();
+  private _serial(fileName: string, fn: () => Promise<void>): Promise<void> {
+    const prev = this._docOps.get(fileName) ?? Promise.resolve();
+    const run = prev.catch(() => {}).then(fn);
+    const tracked = run.finally(() => { if (this._docOps.get(fileName) === tracked) this._docOps.delete(fileName); });
+    this._docOps.set(fileName, tracked);
+    return run;
+  }
+
   /** Toggle clean mode: strip small watermark images from the PDF data. */
-  async toggleClean(fileName: string, enabled: boolean) {
+  toggleClean(fileName: string, enabled: boolean): Promise<void> {
+    return this._serial(fileName, () => this._toggleClean(fileName, enabled));
+  }
+
+  private async _toggleClean(fileName: string, enabled: boolean) {
     const d = this._documents.get(fileName);
     if (!d) return;
     d.cleanMode = enabled;
@@ -1027,8 +1058,14 @@ class PdfStore extends Emitter {
       try {
         const stripped = await stripWatermarkImages(d.originalBuffer);
         const tStrip = performance.now();
-        d.strippedDoc = await pdfjsLib.getDocument({ data: stripped, ...docOpts(d.parsedWith.prune) }).promise;
+        const strippedDoc = await pdfjsLib.getDocument({ data: stripped, ...docOpts(d.parsedWith.prune) }).promise;
+        if (this._documents.get(fileName) !== d) { strippedDoc.destroy().catch(() => {}); return; }   // closed meanwhile
+        d.strippedDoc = strippedDoc;
         d.parsedWith = { ...d.parsedWith, stripImages: true };
+        // The pages the panel drew (and cached under the clean key) while the
+        // strip ran came from the unstripped document; parseGen makes it
+        // drop them and draw from the stripped one.
+        d.parseGen++;
         const tLoad = performance.now();
         const metrics = {
           file: fileName,
@@ -1042,6 +1079,13 @@ class PdfStore extends Emitter {
       } catch (err) {
         log.pdf.error('stripWatermarkImages failed:', err);
         d.cleanMode = false;
+        // The attempt was made under the current setting: record it as such,
+        // or the filter menu offers a reload that only fails the same way.
+        d.parsedWith = { ...d.parsedWith, stripImages: currentParseOptions().stripImages };
+        void import('./board-store').then(({ boardStore }) =>
+          boardStore.addToast(`Could not strip images from ${fileName} — shown unstripped.`));
+        this.notify();
+        return;
       }
     } else if (!enabled && d.strippedDoc) {
       // Clean mode turned off — drop the second (stripped) PDFDocumentProxy so a
@@ -1051,7 +1095,9 @@ class PdfStore extends Emitter {
       // clean-mode change, so nothing is mid-render against it here.
       const stripped = d.strippedDoc;
       d.strippedDoc = null;
-      stripped.destroy().catch(() => {});
+      d.parseGen++;
+      // A render in flight against it may still finish.
+      setTimeout(() => stripped.destroy().catch(() => {}), 2000);
     }
     if (!enabled) d.parsedWith = { ...d.parsedWith, stripImages: false };
 
@@ -1081,10 +1127,21 @@ class PdfStore extends Emitter {
    *  proxies are swapped, and `parseGen` tells the panel to redraw. The old
    *  proxies are destroyed a moment later so a render already in flight
    *  against them can finish instead of failing. */
-  async reparse(fileName: string): Promise<void> {
+  reparse(fileName: string): Promise<void> {
+    return this._serial(fileName, () => this._reparse(fileName));
+  }
+
+  private async _reparse(fileName: string): Promise<void> {
     const d = this._documents.get(fileName);
     if (!d) return;
     const opts = currentParseOptions();
+    if (!this.needsReparse(fileName)) return;                // a queued reload already applied
+    if (d.parsedWith.prune === opts.prune) {
+      // Only the image strip changed: that is a second proxy added or
+      // dropped, not a reopen of the base document.
+      await this._toggleClean(fileName, opts.stripImages);
+      return;
+    }
     const t0 = performance.now();
     try {
       const doc = await pdfjsLib.getDocument({ data: d.originalBuffer.slice(0), ...docOpts(opts.prune) }).promise;
@@ -1095,6 +1152,8 @@ class PdfStore extends Emitter {
           stripped = await pdfjsLib.getDocument({ data: bytes, ...docOpts(opts.prune) }).promise;
         } catch (err) {
           log.pdf.error('stripWatermarkImages failed:', err);
+          void import('./board-store').then(({ boardStore }) =>
+            boardStore.addToast(`Could not strip images from ${fileName} — shown unstripped.`));
         }
       }
       if (this._documents.get(fileName) !== d) {           // closed meanwhile
@@ -1106,7 +1165,9 @@ class PdfStore extends Emitter {
       d.doc = doc;
       d.strippedDoc = stripped;
       d.cleanMode = stripped != null;
-      d.parsedWith = { prune: opts.prune, stripImages: stripped != null };
+      // Recorded as the setting asked for, even when the strip failed: the
+      // attempt was made, and a reload would only fail the same way.
+      d.parsedWith = { prune: opts.prune, stripImages: opts.stripImages };
       d.parseGen++;
       log.pdf.log(`reparsed ${fileName} (prune=${opts.prune}, stripImages=${stripped != null}) in ${Math.round(performance.now() - t0)} ms`);
       this.notify();
