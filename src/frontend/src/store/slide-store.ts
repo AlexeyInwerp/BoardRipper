@@ -10,13 +10,13 @@
  *  with the current tool; wheel zoom, pinch and the other buttons still pan. */
 import { Emitter } from './emitter';
 
-export type SlideTool = 'select' | 'arrow' | 'rect' | 'text';
+export type SlideTool = 'select' | 'arrow' | 'rect' | 'text' | 'pen';
 
 export interface Pt { x: number; y: number }
 
 export interface Annotation {
   id: number;
-  kind: 'arrow' | 'rect' | 'text';
+  kind: 'arrow' | 'rect' | 'text' | 'ink';
   /** Board-space anchor: arrow tail, rect corner, text top-left. */
   a: Pt;
   /** Board-space second point: arrow head, opposite rect corner (unused for text). */
@@ -25,7 +25,12 @@ export interface Annotation {
   /** Stroke width (arrow/rect) or font size (text), screen px. */
   size: number;
   text?: string;
+  /** Freehand stroke, board space (kind 'ink'). `a`/`b` are unused there. */
+  points?: Pt[];
 }
+
+/** Readings drafted onto a part for the slide (free text, as typed). */
+export interface PartReadings { ohm: string; diode: string }
 
 export const SLIDE_COLORS = ['#ff3b30', '#ffcc00', '#34c759', '#0a84ff', '#ffffff'] as const;
 export const STROKE_SIZES = [2, 4, 7] as const;
@@ -38,6 +43,8 @@ export interface SlideSnapshot {
   /** Index into STROKE_SIZES / TEXT_SIZES — one "weight" picker for both. */
   weight: number;
   selectedId: number | null;
+  /** Taps on parts add them to / remove them from the multi-selection. */
+  multi: boolean;
   /** Bumped on every annotation change, so views can key a redraw on it. */
   rev: number;
 }
@@ -48,6 +55,8 @@ class SlideStore extends Emitter {
   private _color: string = SLIDE_COLORS[0];
   private _weight = 1;
   private _selectedId: number | null = null;
+  private _multi = false;
+  private readingsByTab = new Map<number, Map<string, PartReadings>>();
   private _rev = 0;
   private nextId = 1;
   private byTab = new Map<number, Annotation[]>();
@@ -55,7 +64,7 @@ class SlideStore extends Emitter {
   private _snapshot: SlideSnapshot = this.make();
 
   private make(): SlideSnapshot {
-    return { enabled: this._enabled, tool: this._tool, color: this._color, weight: this._weight, selectedId: this._selectedId, rev: this._rev };
+    return { enabled: this._enabled, tool: this._tool, color: this._color, weight: this._weight, selectedId: this._selectedId, multi: this._multi, rev: this._rev };
   }
   private changed() { this._snapshot = this.make(); this.notify(); }
 
@@ -64,6 +73,23 @@ class SlideStore extends Emitter {
   get tool() { return this._tool; }
   get color() { return this._color; }
   get selectedId() { return this._selectedId; }
+  get multi() { return this._multi; }
+  setMulti(v: boolean) { if (this._multi !== v) { this._multi = v; this.changed(); } }
+
+  /** Drafted Ω / diode readings for a part, by refdes. */
+  readings(tabId: number, part: string): PartReadings | undefined {
+    return this.readingsByTab.get(tabId)?.get(part);
+  }
+  setReading(tabId: number, part: string, key: keyof PartReadings, value: string) {
+    let m = this.readingsByTab.get(tabId);
+    if (!m) { m = new Map(); this.readingsByTab.set(tabId, m); }
+    const cur = m.get(part) ?? { ohm: '', diode: '' };
+    if (cur[key] === value) return;
+    const next = { ...cur, [key]: value };
+    if (!next.ohm && !next.diode) m.delete(part); else m.set(part, next);
+    this._rev++;
+    this.changed();
+  }
   strokeSize() { return STROKE_SIZES[this._weight]; }
   textSize() { return TEXT_SIZES[this._weight]; }
 
@@ -194,7 +220,7 @@ class SlideStore extends Emitter {
   canUndo(tabId: number) { return (this.undoByTab.get(tabId)?.length ?? 0) > 0; }
 
   /** A closed tab's annotations go with it. */
-  dropTab(tabId: number) { this.byTab.delete(tabId); this.undoByTab.delete(tabId); }
+  dropTab(tabId: number) { this.byTab.delete(tabId); this.undoByTab.delete(tabId); this.readingsByTab.delete(tabId); }
 }
 
 export const slideStore = new SlideStore();

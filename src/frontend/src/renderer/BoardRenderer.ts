@@ -28,6 +28,7 @@ import { boardAntialias, boardMaxFps, boardPixelRatio } from '../device-profile'
 import { rotationLockStore } from '../store/rotation-lock-store';
 import { viewCommands, type PanDirection, type ZoomDirection } from '../store/view-commands';
 import { selectionSetStore } from '../store/selection-set-store';
+import { slideStore } from '../store/slide-store';
 import { partCompareStore } from '../store/part-compare-store';
 import type { PinDiffStatus } from '../store/part-compare';
 import { worklistStore, MARK_COLOR_HEX, MEAS_KINDS, type NetMeasurement } from '../store/worklist-store';
@@ -4016,10 +4017,9 @@ export class BoardRenderer {
     this.needsRender = true;
   }
 
-  /** Screen box (renderer px) and name of the selected part, or null. In
-   *  Butterfly a part on the bottom side is measured through the mirrored half. */
-  selectedPartScreen(): { name: string; x: number; y: number; w: number; h: number } | null {
-    const idx = boardStore.selection.partIndex;
+  /** Screen box (renderer px) and name of a part, or null. In Butterfly a
+   *  part on the bottom side is measured through the mirrored half. */
+  partScreenBox(idx: number | null): { name: string; x: number; y: number; w: number; h: number } | null {
     const part = idx !== null ? this.board?.parts[idx] : undefined;
     if (!part || !this.activeScene) return null;
     let root: Container = this.activeScene.root;
@@ -7421,6 +7421,24 @@ export class BoardRenderer {
     if (resizeModeStore.enabled) {
       this.lastPointerShift = false;
       this.handleResizeClick(world);
+      return;
+    }
+    // Slide mode: Shift+click (or any tap with the toolbar's multi-select on)
+    // adds a part to / removes it from the multi-selection instead of the
+    // worklist, so a slide can caption several parts at once.
+    if (slideStore.enabled && (this.lastPointerShift || slideStore.multi)) {
+      this.lastPointerShift = false;
+      this.clickCycle = null;
+      this.clearPendingCycleAdvance();
+      const hit = this.hitTestStack(world)[0];
+      if (hit && this.tabId !== null) {
+        // The first add keeps the part already selected in the set too.
+        const primary = boardStore.selection.partIndex;
+        if (primary !== null && selectionSetStore.current.ordered.length === 0 && primary !== hit.partIndex) {
+          selectionSetStore.add(this.tabId, primary);
+        }
+        selectionSetStore.toggle(this.tabId, hit.partIndex);
+      }
       return;
     }
     const shift = this.lastPointerShift;

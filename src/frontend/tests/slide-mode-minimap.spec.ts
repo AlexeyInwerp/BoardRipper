@@ -99,7 +99,8 @@ test.describe('slide mode', () => {
     expect(buf.subarray(1, 4).toString()).toBe('PNG');
     const w = buf.readUInt32BE(16), h = buf.readUInt32BE(20);
     expect(w).toBeGreaterThanOrEqual(Math.floor(b.width));
-    expect(h).toBeGreaterThanOrEqual(Math.floor(b.height));
+    // View plus the 40 px header band naming the file.
+    expect(h).toBeGreaterThanOrEqual(Math.floor(b.height) + 40);
 
     // The exported image has board content (not a blank frame): sample it.
     const distinct = await page.evaluate(async (b64) => {
@@ -122,6 +123,70 @@ test.describe('slide mode', () => {
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('slide-toolbar')).toHaveCount(0);
     expect((await annotations(page)).length).toBe(2);
+  });
+});
+
+test.describe('slide mode: parts, readings, text and pen', () => {
+  test('captions several parts with drafted readings; text drags with the text tool; the pen draws', async ({ page }) => {
+    await openBoard(page);
+    await page.getByTestId('slide-mode-toggle').click();
+    await page.getByTestId('slide-tool-select').click();
+
+    // Primary selection + a Shift+click on another part → both captioned with inputs.
+    await page.evaluate(() => (window as unknown as { __boardStore: { focusPart(n: string): void } }).__boardStore.focusPart('U9'));
+    await expect(page.getByTestId('slide-readings-U9')).toBeVisible({ timeout: 5000 });
+    const b = await canvasBox(page);
+    const sw = await page.evaluate(() => {
+      const r = (window as unknown as { __boardRenderer: { board: { parts: { name: string }[] }; partScreenBox(i: number): { x: number; y: number; w: number; h: number } | null } }).__boardRenderer;
+      const i = r.board.parts.findIndex(p => p.name === 'SW2');
+      return r.partScreenBox(i);
+    });
+    expect(sw).not.toBeNull();
+    await page.keyboard.down('Shift');
+    await page.mouse.click(b.x + sw!.x + sw!.w / 2, b.y + sw!.y + sw!.h / 2);
+    await page.keyboard.up('Shift');
+    await expect(page.getByTestId('slide-readings-SW2')).toBeVisible();
+    await expect(page.getByTestId('slide-multi-clear')).toContainText('2');
+
+    await page.getByTestId('slide-ohm-U9').fill('4.7k');
+    await page.getByTestId('slide-diode-U9').fill('0.452');
+    expect(await page.evaluate(() => {
+      const w = window as unknown as { __slideStore: { readings(t: number, n: string): unknown }; __boardStore: { activeTabId: number } };
+      return w.__slideStore.readings(w.__boardStore.activeTabId, 'U9');
+    })).toEqual({ ohm: '4.7k', diode: '0.452' });
+
+    // Text: write it, then drag it with the text tool still on.
+    const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+    await page.getByTestId('slide-tool-text').click();
+    await page.mouse.click(cx - 200, cy + 120);
+    await page.getByTestId('slide-text-editor').fill('Short here');
+    await page.keyboard.press('Enter');
+    const textAt = () => page.evaluate(() => {
+      const w = window as unknown as { __slideStore: { list(t: number): Array<{ kind: string; a: { x: number; y: number } }> }; __boardStore: { activeTabId: number }; __boardRenderer: { boardToScreen(x: number, y: number): { x: number; y: number } } };
+      const t = w.__slideStore.list(w.__boardStore.activeTabId).find(a => a.kind === 'text')!;
+      return w.__boardRenderer.boardToScreen(t.a.x, t.a.y);
+    });
+    const before = await textAt();
+    await page.mouse.move(b.x + before.x + 20, b.y + before.y + 8);
+    await page.mouse.down();
+    await page.mouse.move(b.x + before.x + 100, b.y + before.y + 48, { steps: 6 });
+    await page.mouse.up();
+    const after = await textAt();
+    expect(after.x - before.x).toBeGreaterThan(70);
+    expect(after.y - before.y).toBeGreaterThan(30);
+    await expect(page.getByTestId('slide-text-editor')).toHaveCount(0);   // a drag is not an edit
+
+    // Pen: a freehand stroke keeps its samples.
+    await page.getByTestId('slide-tool-pen').click();
+    await page.mouse.move(cx + 100, cy - 100);
+    await page.mouse.down();
+    for (let i = 1; i <= 20; i++) await page.mouse.move(cx + 100 + i * 6, cy - 100 + Math.sin(i / 3) * 30);
+    await page.mouse.up();
+    const ink = await page.evaluate(() => {
+      const w = window as unknown as { __slideStore: { list(t: number): Array<{ kind: string; points?: unknown[] }> }; __boardStore: { activeTabId: number } };
+      return w.__slideStore.list(w.__boardStore.activeTabId).find(a => a.kind === 'ink')?.points?.length ?? 0;
+    });
+    expect(ink).toBeGreaterThan(10);
   });
 });
 

@@ -3,19 +3,29 @@
  *  The layer is a Canvas2D sheet over the board (same CSS zoom as the board
  *  canvas, so its px are the renderer's px). It never takes pointer events
  *  itself: a capture-phase `pointerdown` on the panel root claims a primary
- *  press over the board when the current tool wants it — a draw tool always,
- *  the select tool only on an annotation — and lets everything else (wheel,
- *  pinch, other buttons, a press on empty board in select) reach the board. */
+ *  press over the board when slide mode wants it — a press on an annotation
+ *  (with any tool, to move it), or any press with a draw tool — and lets
+ *  everything else (wheel, pinch, other buttons, a press on empty board with
+ *  Select) reach the board.
+ *
+ *  Selected parts — the primary selection and the multi-selection
+ *  (Shift+click, or taps with the toolbar's multi-select on) — get a large
+ *  caption, and while slide mode is on each caption has two inputs to draft
+ *  an Ω and a diode reading, which the caption then shows (and the PNG). */
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
   IconPointer, IconArrowUpRight, IconSquare, IconTypography, IconPhotoDown, IconCopy,
-  IconArrowBackUp, IconTrash, IconX,
+  IconArrowBackUp, IconTrash, IconX, IconPencil, IconSquaresSelected,
 } from '@tabler/icons-react';
 import type { BoardRenderer } from '../../renderer/BoardRenderer';
 import { slideStore, SLIDE_COLORS, STROKE_SIZES, type Pt, type SlideTool } from '../../store/slide-store';
 import { boardStore } from '../../store/board-store';
+import { selectionSetStore } from '../../store/selection-set-store';
 import { log } from '../../store/log-store';
-import { drawPartCaption, hitAnnotation, hitHandle, paintAnnotations, type Handle, type ToScreen } from './annotation-draw';
+import {
+  drawCaption, hitAnnotation, hitHandle, layoutCaptions, paintAnnotations, readingsLine,
+  type CaptionItem, type CaptionPlaced, type Handle, type Rect, type ToScreen,
+} from './annotation-draw';
 
 interface Props {
   tabId: number;
@@ -26,9 +36,16 @@ interface Props {
 }
 
 type Drag =
-  | { kind: 'create'; id: number; startBoard: Pt }
-  | { kind: 'move'; id: number; lastBoard: Pt; moved: boolean }
+  | { kind: 'create'; id: number }
+  | { kind: 'ink'; id: number; points: Pt[]; last: Pt }
+  | { kind: 'move'; id: number; lastBoard: Pt; moved: boolean; editOnClick: boolean }
   | { kind: 'handle'; id: number; handle: Handle; moved: boolean };
+
+/** Room under each live caption for the two reading inputs. */
+const INPUT_ROW_H = 30;
+const INPUT_ROW_MIN_W = 196;
+/** PNG header band, CSS px (scaled with the capture). */
+const HEADER_H = 40;
 
 function useSlide() {
   return useSyncExternalStore(c => slideStore.subscribe(c), () => slideStore.snapshot());
@@ -45,7 +62,7 @@ function minimapCanvas(root: HTMLElement | null): HTMLCanvasElement | null {
 
 /** The minimap's rect in renderer px. It lives outside the board canvas's
  *  counter-zoom (UI scale), so its client rect is mapped through it. */
-function minimapRect(mm: HTMLCanvasElement | null, host: HTMLElement | null) {
+function minimapRect(mm: HTMLCanvasElement | null, host: HTMLElement | null): Rect | null {
   if (!mm || !host) return null;
   const hr = host.getBoundingClientRect(), r = mm.getBoundingClientRect();
   if (!r.width || !hr.width) return null;
@@ -53,15 +70,36 @@ function minimapRect(mm: HTMLCanvasElement | null, host: HTMLElement | null) {
   return { x: (r.left - hr.left) * k, y: (r.top - hr.top) * k, w: r.width * k, h: r.height * k };
 }
 
-/** The selected part's name, large, over the view (live and in the PNG),
- *  kept clear of the minimap. */
-function paintCaption(ctx: CanvasRenderingContext2D, renderer: BoardRenderer, avoid: ReturnType<typeof minimapRect>) {
-  const sel = renderer.selectedPartScreen();
-  if (sel) drawPartCaption(ctx, sel, renderer.viewSize(), accentColor(), avoid);
+/** Every selected part of this tab, primary first, as caption items. */
+function captionItems(renderer: BoardRenderer, tabId: number): CaptionItem[] {
+  if (boardStore.activeTabId !== tabId) return [];
+  const primary = boardStore.selection.partIndex;
+  const order = [...(primary !== null ? [primary] : []), ...selectionSetStore.current.ordered.filter(i => i !== primary)];
+  const out: CaptionItem[] = [];
+  for (const idx of order) {
+    const b = renderer.partScreenBox(idx);
+    if (!b) continue;
+    out.push({
+      key: b.name, name: b.name, box: { x: b.x, y: b.y, w: b.w, h: b.h },
+      detail: readingsLine(slideStore.readings(tabId, b.name)), primary: idx === primary,
+    });
+  }
+  return out;
+}
+
+/** Captions for the selected parts. Returns where they went. */
+function paintCaptions(ctx: CanvasRenderingContext2D, renderer: BoardRenderer, tabId: number, avoid: Rect | null, live: boolean): CaptionPlaced[] {
+  const items = captionItems(renderer, tabId);
+  if (!items.length) return [];
+  const placed = layoutCaptions(ctx, items, renderer.viewSize(), avoid ? [avoid] : [],
+    live ? INPUT_ROW_H : 0, live ? INPUT_ROW_MIN_W : 0);
+  const accent = accentColor();
+  for (const pl of placed) drawCaption(ctx, items.find(i => i.key === pl.key)!, pl, accent);
+  return placed;
 }
 
 /** The minimap into the PNG, where it sits on screen. */
-function paintMinimap(ctx: CanvasRenderingContext2D, mm: HTMLCanvasElement, rect: NonNullable<ReturnType<typeof minimapRect>>) {
+function paintMinimap(ctx: CanvasRenderingContext2D, mm: HTMLCanvasElement, rect: Rect) {
   const { x, y, w, h } = rect;
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.4)';
@@ -78,13 +116,56 @@ function paintMinimap(ctx: CanvasRenderingContext2D, mm: HTMLCanvasElement, rect
   ctx.restore();
 }
 
+/** The view with a header band naming the board file, for the PNG. */
+function withHeader(view: HTMLCanvasElement, cssWidth: number, fileName: string): HTMLCanvasElement {
+  const k = view.width / Math.max(1, cssWidth);
+  const hh = Math.round(HEADER_H * k);
+  const out = document.createElement('canvas');
+  out.width = view.width;
+  out.height = view.height + hh;
+  const ctx = out.getContext('2d');
+  if (!ctx) return view;
+  ctx.fillStyle = '#16181d';
+  ctx.fillRect(0, 0, out.width, hh);
+  ctx.fillStyle = accentColor();
+  ctx.fillRect(0, hh - Math.max(1, Math.round(2 * k)), out.width, Math.max(1, Math.round(2 * k)));
+  ctx.scale(k, k);
+  ctx.textBaseline = 'middle';
+  const font = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  const date = new Date().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  ctx.font = `400 13px ${font}`;
+  const dw = ctx.measureText(date).width;
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.fillText(date, cssWidth - 14 - dw, HEADER_H / 2);
+  ctx.font = `600 17px ${font}`;
+  ctx.fillStyle = '#ffffff';
+  // Long names are cut with an ellipsis rather than running into the date.
+  let name = fileName || 'board';
+  const room = cssWidth - 14 - dw - 24 - 14;
+  if (ctx.measureText(name).width > room) {
+    while (name.length > 4 && ctx.measureText(name + '…').width > room) name = name.slice(0, -1);
+    name += '…';
+  }
+  ctx.fillText(name, 14, HEADER_H / 2);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(view, 0, hh);
+  return out;
+}
+
 export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Props) {
   const slide = useSlide();
+  const multiCount = useSyncExternalStore(c => selectionSetStore.subscribe(c), () => selectionSetStore.current.ordered.length);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dragRef = useRef<Drag | null>(null);
   const [editing, setEditing] = useState<{ id: number | null; at: Pt; screen: Pt; text: string } | null>(null);
   const editingRef = useRef(editing);
   editingRef.current = editing;
+  // Where the live captions went: the reading inputs sit under each.
+  const [inputSlots, setInputSlots] = useState<Array<{ key: string; x: number; y: number; w: number }>>([]);
+  const slotsSig = useRef('');
+  // Once a stylus has been seen, fingers pan and zoom while the pen tool is
+  // on — the convention of every drawing app on a tablet.
+  const penSeen = useRef(false);
 
   const toScreen = useCallback<ToScreen>(p => renderer?.boardToScreen(p.x, p.y) ?? null, [renderer]);
 
@@ -103,14 +184,18 @@ export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Prop
     // The text being edited is drawn by the input, not twice.
     const ed = editingRef.current;
     const list = slideStore.list(tabId).filter(a => !(ed && a.id === ed.id));
-    paintCaption(ctx, renderer, minimapRect(minimapCanvas(rootRef.current), host));
+    const placed = paintCaptions(ctx, renderer, tabId, minimapRect(minimapCanvas(rootRef.current), host), true);
     paintAnnotations(ctx, list, renderer, slideStore.selectedId);
+    const slots = placed.map(p => ({ key: p.key, x: Math.round(p.block.x), y: Math.round(p.pill.y + p.pill.h + 4), w: Math.round(p.block.w) }));
+    const sig = JSON.stringify(slots);
+    if (sig !== slotsSig.current) { slotsSig.current = sig; setInputSlots(slots); }
   }, [renderer, tabId, hostRef, rootRef]);
 
-  useEffect(() => { paint(); }, [paint, slide.rev, slide.selectedId, editing]);
+  useEffect(() => { paint(); }, [paint, slide.rev, slide.selectedId, slide.enabled, editing]);
   useEffect(() => renderer?.onViewChange(() => paint()), [renderer, paint]);
-  // The part caption follows the selection.
+  // Captions follow the selection and the multi-selection.
   useEffect(() => boardStore.subscribe(() => { if (slideStore.enabled) paint(); }), [paint]);
+  useEffect(() => selectionSetStore.subscribe(() => { if (slideStore.enabled) paint(); }), [paint]);
 
   // ---- pointer ----
   const localPoint = useCallback((e: PointerEvent): Pt | null => {
@@ -139,6 +224,12 @@ export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Prop
     }
   }, [tabId]);
 
+  const startEdit = useCallback((id: number) => {
+    const ann = slideStore.list(tabId).find(a => a.id === id);
+    const s = ann ? toScreen(ann.a) : null;
+    if (ann && s) setEditing({ id, at: ann.a, screen: s, text: ann.text ?? '' });
+  }, [tabId, toScreen]);
+
   useEffect(() => {
     const root = rootRef.current, host = hostRef.current;
     if (!root || !host || !renderer) return;
@@ -147,74 +238,99 @@ export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Prop
       if (e.button !== 0 || !e.isPrimary) return;
       if (!(e.target instanceof Node) || !host.contains(e.target)) return;
       if (editingRef.current) { commitEdit(); e.stopPropagation(); e.preventDefault(); return; }
+      if (e.pointerType === 'pen') penSeen.current = true;
+      const tool = slideStore.tool;
+      if (tool === 'pen' && e.pointerType === 'touch' && penSeen.current) return;   // finger pans
       const p = localPoint(e);
       if (!p) return;
       const bp = renderer.screenToBoard(p.x, p.y);
       if (!bp) return;
-      const tool = slideStore.tool;
       const list = slideStore.list(tabId);
       let drag: Drag | null = null;
 
-      if (tool === 'select') {
-        const sel = slideStore.selectedId !== null ? list.find(a => a.id === slideStore.selectedId) : undefined;
-        const h = sel ? hitHandle(sel, p, toScreen) : null;
-        if (sel && h) {
-          drag = { kind: 'handle', id: sel.id, handle: h, moved: false };
-        } else {
-          const hit = hitAnnotation(list, p, toScreen);
-          if (!hit) { slideStore.select(null); return; }   // empty board: let it pan
-          slideStore.select(hit.id);
-          if (e.detail >= 2 && hit.kind === 'text') {
-            const s = toScreen(hit.a);
-            if (s) setEditing({ id: hit.id, at: hit.a, screen: s, text: hit.text ?? '' });
-            e.stopPropagation(); e.preventDefault();
-            return;
-          }
-          drag = { kind: 'move', id: hit.id, lastBoard: bp, moved: false };
+      // A handle of the selected annotation, then any annotation: those move
+      // with every tool except the pen, which always draws.
+      const sel = slideStore.selectedId !== null ? list.find(a => a.id === slideStore.selectedId) : undefined;
+      const h = sel && tool !== 'pen' ? hitHandle(sel, p, toScreen) : null;
+      const hit = tool !== 'pen' && !h ? hitAnnotation(list, p, toScreen) : null;
+      if (sel && h) {
+        drag = { kind: 'handle', id: sel.id, handle: h, moved: false };
+      } else if (hit) {
+        slideStore.select(hit.id);
+        if (e.detail >= 2 && hit.kind === 'text') {
+          startEdit(hit.id);
+          e.stopPropagation(); e.preventDefault();
+          return;
         }
+        // Text tool: a click on a text edits it, a drag moves it.
+        drag = { kind: 'move', id: hit.id, lastBoard: bp, moved: false, editOnClick: tool === 'text' && hit.kind === 'text' };
+      } else if (tool === 'select') {
+        slideStore.select(null);
+        return;                                   // empty board: let it pan / select parts
       } else if (tool === 'text') {
-        const hit = hitAnnotation(list, p, toScreen);
-        if (hit?.kind === 'text') {
-          const s = toScreen(hit.a);
-          slideStore.select(hit.id);
-          if (s) setEditing({ id: hit.id, at: hit.a, screen: s, text: hit.text ?? '' });
-        } else {
-          setEditing({ id: null, at: bp, screen: p, text: '' });
-        }
+        setEditing({ id: null, at: bp, screen: p, text: '' });
         e.stopPropagation(); e.preventDefault();
         return;
+      } else if (tool === 'pen') {
+        slideStore.select(null);
+        const id = slideStore.add(tabId, {
+          kind: 'ink', a: bp, b: bp, points: [bp], color: slideStore.color, size: slideStore.strokeSize(),
+        });
+        drag = { kind: 'ink', id, points: [bp], last: p };
       } else {
         const id = slideStore.add(tabId, {
           kind: tool, a: bp, b: bp, color: slideStore.color, size: slideStore.strokeSize(),
         });
-        drag = { kind: 'create', id, startBoard: bp };
+        drag = { kind: 'create', id };
       }
 
       e.stopPropagation();
       e.preventDefault();
       dragRef.current = drag;
+      const pointerId = e.pointerId;
       const startScreen = p;
       const onMove = (ev: PointerEvent) => {
+        if (ev.pointerId !== pointerId) return;
         const d = dragRef.current;
+        if (!d) return;
+        if (d.kind === 'ink') {
+          // Coalesced samples: a pen reports far more than one per frame.
+          const evs = typeof ev.getCoalescedEvents === 'function' ? ev.getCoalescedEvents() : [];
+          for (const ce of evs.length ? evs : [ev]) {
+            const q = localPoint(ce);
+            if (!q || Math.hypot(q.x - d.last.x, q.y - d.last.y) < 1.5) continue;
+            const b = renderer.screenToBoard(q.x, q.y);
+            if (!b) continue;
+            d.points.push(b);
+            d.last = q;
+          }
+          slideStore.update(tabId, d.id, { points: d.points.slice() }, false);
+          return;
+        }
         const q = localPoint(ev);
-        if (!d || !q) return;
+        if (!q) return;
         const b = renderer.screenToBoard(q.x, q.y);
         if (!b) return;
-        // A press that never moves records no undo step.
-        if (d.kind !== 'create' && !d.moved) { d.moved = true; slideStore.checkpoint(tabId); }
         if (d.kind === 'create') {
           slideStore.update(tabId, d.id, { b }, false);
-        } else if (d.kind === 'move') {
-          const ann = slideStore.list(tabId).find(a => a.id === d.id);
-          if (!ann) return;
+          return;
+        }
+        // A press that never moves records no undo step.
+        if (!d.moved) {
+          if (Math.hypot(q.x - startScreen.x, q.y - startScreen.y) < 3) return;
+          d.moved = true;
+          slideStore.checkpoint(tabId);
+        }
+        const ann = slideStore.list(tabId).find(a => a.id === d.id);
+        if (!ann) return;
+        if (d.kind === 'move') {
           const dx = b.x - d.lastBoard.x, dy = b.y - d.lastBoard.y;
           d.lastBoard = b;
           slideStore.update(tabId, d.id, {
             a: { x: ann.a.x + dx, y: ann.a.y + dy }, b: { x: ann.b.x + dx, y: ann.b.y + dy },
+            ...(ann.points ? { points: ann.points.map(pt => ({ x: pt.x + dx, y: pt.y + dy })) } : {}),
           }, false);
         } else {
-          const ann = slideStore.list(tabId).find(a => a.id === d.id);
-          if (!ann) return;
           const m = d.handle.moves;
           slideStore.update(tabId, d.id, {
             a: { x: m.ax ? b.x : ann.a.x, y: m.ay ? b.y : ann.a.y },
@@ -223,19 +339,24 @@ export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Prop
         }
       };
       const onUp = (ev: PointerEvent) => {
+        if (ev.pointerId !== pointerId) return;
         window.removeEventListener('pointermove', onMove, true);
         window.removeEventListener('pointerup', onUp, true);
         window.removeEventListener('pointercancel', onUp, true);
         const d = dragRef.current;
         dragRef.current = null;
-        if (d?.kind !== 'create') return;
+        if (!d) return;
+        if (d.kind === 'move' && !d.moved && d.editOnClick) { startEdit(d.id); return; }
+        if (d.kind === 'ink') {
+          // A cancelled stroke (a second finger landing) is not a drawing.
+          if (ev.type === 'pointercancel') slideStore.abandon(tabId, d.id);
+          return;
+        }
+        if (d.kind !== 'create') return;
         const q = localPoint(ev) ?? startScreen;
         // A click without a drag makes nothing — an empty arrow is noise.
-        if (Math.hypot(q.x - startScreen.x, q.y - startScreen.y) < 6) {
-          slideStore.abandon(tabId, d.id);
-        } else {
-          slideStore.select(d.id);
-        }
+        if (Math.hypot(q.x - startScreen.x, q.y - startScreen.y) < 6) slideStore.abandon(tabId, d.id);
+        else slideStore.select(d.id);
       };
       window.addEventListener('pointermove', onMove, true);
       window.addEventListener('pointerup', onUp, true);
@@ -243,7 +364,7 @@ export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Prop
     };
     root.addEventListener('pointerdown', onDown, true);
     return () => root.removeEventListener('pointerdown', onDown, true);
-  }, [renderer, rootRef, hostRef, tabId, localPoint, toScreen, commitEdit]);
+  }, [renderer, rootRef, hostRef, tabId, localPoint, toScreen, commitEdit, startEdit]);
 
   // ---- keys: delete / undo / escape, only for the active board ----
   useEffect(() => {
@@ -272,14 +393,15 @@ export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Prop
   // ---- export ----
   const capture = useCallback((): HTMLCanvasElement | null => {
     if (!renderer) return null;
-    return renderer.captureView(ctx => {
+    const view = renderer.captureView(ctx => {
       const mm = minimapCanvas(rootRef.current);
       const mr = minimapRect(mm, hostRef.current);
-      paintCaption(ctx, renderer, mr);
+      paintCaptions(ctx, renderer, tabId, mr, false);
       paintAnnotations(ctx, slideStore.list(tabId), renderer, null);
       if (mm && mr) paintMinimap(ctx, mm, mr);
     });
-  }, [renderer, tabId, hostRef, rootRef]);
+    return view ? withHeader(view, renderer.viewSize().width, fileName) : null;
+  }, [renderer, tabId, hostRef, rootRef, fileName]);
 
   const savePng = useCallback(() => {
     const cv = capture();
@@ -316,16 +438,49 @@ export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Prop
   if (!slide.enabled) return null;
 
   const tools: Array<{ id: SlideTool; icon: typeof IconPointer; title: string }> = [
-    { id: 'select', icon: IconPointer, title: 'Select · move, resize, double-click text to edit' },
+    { id: 'select', icon: IconPointer, title: 'Select · move and resize; on empty board, pan and pick parts' },
     { id: 'arrow', icon: IconArrowUpRight, title: 'Arrow · drag from tail to tip' },
     { id: 'rect', icon: IconSquare, title: 'Rectangle · drag a box' },
-    { id: 'text', icon: IconTypography, title: 'Text · click where it goes' },
+    { id: 'text', icon: IconTypography, title: 'Text · click where it goes; click a text to edit, drag it to move' },
+    { id: 'pen', icon: IconPencil, title: 'Pen · draw freehand (with a stylus, fingers keep panning)' },
   ];
 
   return (
     <>
       <div className="slide-layer" data-testid="slide-layer">
         <canvas ref={canvasRef} className="slide-layer-canvas" />
+        {inputSlots.map(slot => {
+          const r = slideStore.readings(tabId, slot.key);
+          return (
+            <div
+              key={slot.key}
+              className="slide-readings"
+              data-testid={`slide-readings-${slot.key}`}
+              style={{ left: slot.x, top: slot.y, width: slot.w }}
+            >
+              <label title={`Resistance of ${slot.key}`}>
+                <span>Ω</span>
+                <input
+                  data-testid={`slide-ohm-${slot.key}`}
+                  value={r?.ohm ?? ''}
+                  placeholder="ohm"
+                  onChange={e => slideStore.setReading(tabId, slot.key, 'ohm', e.target.value)}
+                  onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') (e.target as HTMLInputElement).blur(); }}
+                />
+              </label>
+              <label title={`Diode-mode reading of ${slot.key}`}>
+                <span>▷|</span>
+                <input
+                  data-testid={`slide-diode-${slot.key}`}
+                  value={r?.diode ?? ''}
+                  placeholder="diode"
+                  onChange={e => slideStore.setReading(tabId, slot.key, 'diode', e.target.value)}
+                  onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') (e.target as HTMLInputElement).blur(); }}
+                />
+              </label>
+            </div>
+          );
+        })}
         {editing && (
           <textarea
             className="slide-text-editor"
@@ -362,6 +517,28 @@ export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Prop
             <t.icon size={16} />
           </button>
         ))}
+        <span className="slide-toolbar-sep" />
+        <button
+          className={`board-netlines-toggle ${slide.multi ? 'active' : ''}`}
+          data-testid="slide-multi"
+          aria-pressed={slide.multi}
+          title={slide.multi
+            ? 'Several parts: on — click parts to add or remove them (click to turn off)'
+            : 'Several parts: click parts to add them to the selection (Shift+click works anytime)'}
+          onClick={() => slideStore.setMulti(!slide.multi)}
+        >
+          <IconSquaresSelected size={16} />
+        </button>
+        {multiCount > 0 && (
+          <button
+            className="board-netlines-toggle slide-wide"
+            data-testid="slide-multi-clear"
+            title="Clear the multi-selection"
+            onClick={() => selectionSetStore.clear(tabId)}
+          >
+            <span>{multiCount}</span><IconX size={13} />
+          </button>
+        )}
         <span className="slide-toolbar-sep" />
         {SLIDE_COLORS.map(c => (
           <button

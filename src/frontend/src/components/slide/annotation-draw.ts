@@ -68,8 +68,52 @@ function withHalo(ctx: CanvasRenderingContext2D, fn: () => void) {
   ctx.restore();
 }
 
+/** Screen points of a freehand stroke. */
+export function inkPoints(ann: Annotation, toScreen: ToScreen): Pt[] {
+  const out: Pt[] = [];
+  for (const p of ann.points ?? []) { const q = toScreen(p); if (q) out.push(q); }
+  return out;
+}
+
+/** Smooth a stroke through its sample midpoints (quadratic segments). */
+function strokeInk(ctx: CanvasRenderingContext2D, pts: Pt[]) {
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  if (pts.length < 3) {
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    if (pts.length === 1) ctx.lineTo(pts[0].x + 0.01, pts[0].y);   // a dot
+  } else {
+    for (let i = 1; i < pts.length - 1; i++) {
+      const mx = (pts[i].x + pts[i + 1].x) / 2, my = (pts[i].y + pts[i + 1].y) / 2;
+      ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+    }
+    const last = pts[pts.length - 1];
+    ctx.lineTo(last.x, last.y);
+  }
+  ctx.stroke();
+}
+
+function bboxOf(pts: Pt[]): Rect {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of pts) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
 export function drawAnnotation(ctx: CanvasRenderingContext2D, ann: Annotation, toScreen: ToScreen) {
+  if (ann.kind === 'ink') {
+    const pts = inkPoints(ann, toScreen);
+    if (!pts.length) return;
+    withHalo(ctx, () => {
+      ctx.strokeStyle = ann.color;
+      ctx.lineWidth = ann.size;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      strokeInk(ctx, pts);
+    });
+    return;
+  }
   if (ann.kind === 'arrow') {
+
     const a = toScreen(ann.a), b = toScreen(ann.b);
     if (!a || !b) return;
     withHalo(ctx, () => drawArrow(ctx, a, b, ann.color, ann.size));
@@ -122,7 +166,11 @@ export function drawSelection(ctx: CanvasRenderingContext2D, ann: Annotation, to
     ctx.restore();
   };
   for (const h of handlesOf(ann, toScreen)) handle(h.p);
-  if (ann.kind === 'text') {
+  if (ann.kind === 'ink') {
+    const b = bboxOf(inkPoints(ann, toScreen));
+    const pad = ann.size / 2 + 4;
+    if (Number.isFinite(b.x)) ctx.strokeRect(b.x - pad, b.y - pad, b.w + 2 * pad, b.h + 2 * pad);
+  } else if (ann.kind === 'text') {
     const b = textBox(ann, toScreen);
     if (b) ctx.strokeRect(b.x, b.y, b.w, b.h);
   } else if (ann.kind === 'rect') {
@@ -165,7 +213,12 @@ function distToSegment(p: Pt, a: Pt, b: Pt): number {
 export function hitAnnotation(list: readonly Annotation[], p: Pt, toScreen: ToScreen, tol = 7): Annotation | null {
   for (let i = list.length - 1; i >= 0; i--) {
     const ann = list[i];
-    if (ann.kind === 'arrow') {
+    if (ann.kind === 'ink') {
+      const pts = inkPoints(ann, toScreen);
+      const t = tol + ann.size / 2;
+      if (pts.length === 1 && Math.hypot(p.x - pts[0].x, p.y - pts[0].y) <= t) return ann;
+      for (let k = 1; k < pts.length; k++) if (distToSegment(p, pts[k - 1], pts[k]) <= t) return ann;
+    } else if (ann.kind === 'arrow') {
       const a = toScreen(ann.a), b = toScreen(ann.b);
       if (a && b && distToSegment(p, a, b) <= tol + ann.size / 2) return ann;
     } else if (ann.kind === 'rect') {
@@ -194,49 +247,97 @@ export function paintAnnotations(ctx: CanvasRenderingContext2D, list: readonly A
   if (sel) drawSelection(ctx, sel, toScreen);
 }
 
-/** The selected part's name as a caption: large, on a dark pill, beside the
- *  part — above, below, left or right, whichever fits in the view first
- *  without covering `avoid` (the minimap); failing all, a view corner. Drawn
- *  live in slide mode and into the PNG, so a slide always says what it shows. */
-export function drawPartCaption(
-  ctx: CanvasRenderingContext2D,
-  sel: { name: string; x: number; y: number; w: number; h: number },
-  view: { width: number; height: number },
-  accent: string,
-  avoid: { x: number; y: number; w: number; h: number } | null = null,
-) {
-  // Off screen entirely: nothing to point at.
-  if (sel.x > view.width || sel.y > view.height || sel.x + sel.w < 0 || sel.y + sel.h < 0) return;
-  const size = 30;
-  ctx.save();
+export interface Rect { x: number; y: number; w: number; h: number }
+
+/** One selected part's caption: its refdes and any drafted readings. */
+export interface CaptionItem {
+  key: string;
+  name: string;
+  /** The part's drawn body on screen. */
+  box: Rect;
+  /** Second line (readings), empty when there are none. */
+  detail: string;
+  primary: boolean;
+}
+
+/** Where a caption went: the pill, plus the block that includes the room
+ *  reserved under it. */
+export interface CaptionPlaced { key: string; pill: Rect; block: Rect }
+
+const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+
+function captionMetrics(ctx: CanvasRenderingContext2D, it: CaptionItem) {
+  const size = it.primary ? 30 : 22;
+  const dsize = Math.round(size * 0.62);
   ctx.font = font(size);
-  const tw = ctx.measureText(sel.name).width;
-  const padX = 12, h = size + 14, w = tw + 2 * padX, gap = 10, m = 6;
-  const cx = sel.x + sel.w / 2 - w / 2, cy = sel.y + sel.h / 2 - h / 2;
-  const candidates = [
-    { x: cx, y: sel.y - gap - h },
-    { x: cx, y: sel.y + sel.h + gap },
-    { x: sel.x - gap - w, y: cy },
-    { x: sel.x + sel.w + gap, y: cy },
-    { x: m, y: view.height - h - m },
-    { x: view.width - w - m, y: view.height - h - m },
-    { x: m, y: m },
-  ];
-  const fits = (c: { x: number; y: number }) =>
-    c.x >= m && c.y >= m && c.x + w <= view.width - m && c.y + h <= view.height - m &&
-    !(avoid && c.x < avoid.x + avoid.w && c.x + w > avoid.x && c.y < avoid.y + avoid.h && c.y + h > avoid.y);
-  // Beside the part, sliding along its edge into the view when it is close
-  // to a border; then the corners as they are.
-  const slid = candidates.slice(0, 4).map(c => ({
-    x: Math.max(m, Math.min(view.width - w - m, c.x)),
-    y: Math.max(m, Math.min(view.height - h - m, c.y)),
-  }));
-  const overlapsPart = (c: { x: number; y: number }) =>
-    c.x < sel.x + sel.w && c.x + w > sel.x && c.y < sel.y + sel.h && c.y + h > sel.y;
-  const pos = slid.find(c => fits(c) && !overlapsPart(c))
-    ?? candidates.slice(4).find(fits)
-    ?? slid[0];
-  const { x, y } = pos;
+  let tw = ctx.measureText(it.name).width;
+  if (it.detail) { ctx.font = font(dsize); tw = Math.max(tw, ctx.measureText(it.detail).width); }
+  const padX = Math.round(size * 0.4);
+  const h = Math.round(size + 14 + (it.detail ? dsize * 1.3 : 0));
+  return { size, dsize, padX, w: tw + 2 * padX, h };
+}
+
+/** Place every caption beside its part — above, below, left or right, sliding
+ *  along the edge into the view, else a free corner — never over its own
+ *  part, over `avoid` (the minimap) or over a caption already placed.
+ *  `reserveBelow` keeps room under each pill for the live reading inputs,
+ *  `minWidth` makes the block at least that wide. */
+export function layoutCaptions(
+  ctx: CanvasRenderingContext2D,
+  items: readonly CaptionItem[],
+  view: { width: number; height: number },
+  avoid: readonly Rect[],
+  reserveBelow = 0,
+  minWidth = 0,
+): CaptionPlaced[] {
+  const placed: CaptionPlaced[] = [];
+  const taken: Rect[] = [...avoid];
+  const m = 6, gap = 10;
+  let stacked = 0;
+  ctx.save();
+  for (const it of items) {
+    const b = it.box;
+    if (b.x > view.width || b.y > view.height || b.x + b.w < 0 || b.y + b.h < 0) continue;
+    const met = captionMetrics(ctx, it);
+    const w = Math.max(met.w, minWidth), h = met.h + reserveBelow;
+    const cx = b.x + b.w / 2 - w / 2, cy = b.y + b.h / 2 - h / 2;
+    const clamp = (c: { x: number; y: number }) => ({
+      x: Math.max(m, Math.min(view.width - w - m, c.x)),
+      y: Math.max(m, Math.min(view.height - h - m, c.y)),
+    });
+    const beside = [
+      { x: cx, y: b.y - gap - h }, { x: cx, y: b.y + b.h + gap },
+      { x: b.x - gap - w, y: cy }, { x: b.x + b.w + gap, y: cy },
+    ].map(clamp);
+    const corners = [
+      { x: m, y: view.height - h - m }, { x: view.width - w - m, y: view.height - h - m },
+      { x: m, y: m }, { x: view.width - w - m, y: m },
+    ];
+    const free = (c: { x: number; y: number }) => {
+      const r = { x: c.x, y: c.y, w, h };
+      return r.x >= m - 0.5 && r.y >= m - 0.5 && r.x + w <= view.width - m + 0.5 && r.y + h <= view.height - m + 0.5 &&
+        !taken.some(t => overlaps(r, t));
+    };
+    let pos = beside.find(c => free(c) && !overlaps({ x: c.x, y: c.y, w, h }, b)) ?? corners.find(free);
+    if (!pos) {
+      // Nothing is free: stack up from the bottom-left corner.
+      pos = { x: m, y: Math.max(m, view.height - m - h - stacked * (h + 4)) };
+      stacked++;
+    }
+    const block = { x: pos.x, y: pos.y, w, h };
+    taken.push(block);
+    placed.push({ key: it.key, pill: { x: pos.x, y: pos.y, w: met.w, h: met.h }, block });
+  }
+  ctx.restore();
+  return placed;
+}
+
+/** One caption pill: refdes large, readings on a second line. Primary in the
+ *  accent colour, the rest of the multi-selection in the board's cyan. */
+export function drawCaption(ctx: CanvasRenderingContext2D, it: CaptionItem, pl: CaptionPlaced, accent: string) {
+  const met = captionMetrics(ctx, it);
+  const { x, y, w, h } = pl.pill;
+  ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.5)';
   ctx.shadowBlur = 10;
   ctx.fillStyle = 'rgba(16,18,22,0.9)';
@@ -244,11 +345,27 @@ export function drawPartCaption(
   ctx.roundRect(x, y, w, h, 7);
   ctx.fill();
   ctx.shadowBlur = 0;
-  ctx.strokeStyle = accent;
-  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = it.primary ? accent : '#00e5ff';
+  ctx.lineWidth = it.primary ? 2.5 : 2;
   ctx.stroke();
   ctx.fillStyle = '#ffffff';
   ctx.textBaseline = 'middle';
-  ctx.fillText(sel.name, x + padX, y + h / 2 + 1);
+  ctx.font = font(met.size);
+  ctx.fillText(it.name, x + met.padX, y + 7 + met.size / 2 + 1);
+  if (it.detail) {
+    ctx.font = font(met.dsize);
+    ctx.fillStyle = '#ffd60a';
+    ctx.fillText(it.detail, x + met.padX, y + 7 + met.size + met.dsize * 0.7);
+  }
   ctx.restore();
+}
+
+/** The readings line under a refdes: "4.7 kΩ · ▷| 0.452". */
+export function readingsLine(r: { ohm: string; diode: string } | undefined): string {
+  if (!r) return '';
+  const parts: string[] = [];
+  const ohm = r.ohm.trim(), diode = r.diode.trim();
+  if (ohm) parts.push(/[Ωω]|ohm/i.test(ohm) ? ohm : `${ohm} Ω`);
+  if (diode) parts.push(`▷| ${diode}`);
+  return parts.join('  ·  ');
 }
