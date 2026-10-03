@@ -1292,6 +1292,11 @@ export class BoardRenderer {
     if (this.wheelIdleTimer) clearTimeout(this.wheelIdleTimer);
     this.wheelIdleTimer = setTimeout(() => {
       this.wheelIdleTimer = null;
+      // A zoom tween or glide still running is part of the gesture: let it land.
+      if (this.zoomTween || this.zoomAnim || (this.viewport?.plugins.get('decelerate') as { isActive?(): boolean } | null)?.isActive?.()) {
+        this.scheduleWheelIdlePause();
+        return;
+      }
       // Only auto-pause if this renderer's panel is NOT the active board tab
       if (boardStore.activeTabId !== this.tabId && this.app.ticker.started) {
         this.stopTicker();
@@ -4465,6 +4470,11 @@ export class BoardRenderer {
       this.containerEl.removeEventListener('wheel', this.boundShiftWheel, true);
     }
     this.boundShiftWheel = (e: WheelEvent) => {
+      // Wake a paused (inactive-panel) board first. The wake listener on the
+      // canvas never sees an event this handler consumes below, which since
+      // the smooth wheel zoom (2026-07-19) is every zoom-bound and modifier
+      // wheel: the board took the zoom and drew nothing (regression of #6).
+      this.boundWheelWake?.(e);
       if (e.ctrlKey) return;
 
       const s = renderSettingsStore.settings;
