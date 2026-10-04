@@ -7,7 +7,9 @@ Date: 2026-09-28. Baseline: `main` at 6e16bdb (v0.43.2 + touch work), `PARSER_VE
 - **Step 2 (#37) landed** by cherry-pick (`8680270`..`5550d53`), plus `f48c611`: the JSON tail's part renames hid legacy readings on three files, and a purely numeric net alias is no longer applied. Local corpus (350 files): diode readings 73,753 → 144,707, no file loses one, part and pin counts unchanged, eight files change net names (GB2312 now decodes; XZZ's own net-rename table now reaches past 4 KB).
 - **Step 4 (#38) parser side landed** (`7ce1f6d`, `fb563dd`): 17 tables on 11 files, 34 files with a net glossary. `0643f1e` makes both survive a board-cache hit.
 - **#38 UI landed as the board sidebar's Notes tab** (`b4ad6de`), not in the Info tab: see `docs/specs/2026-09-29-board-knowledge-layer-review.md`. Tab shown only when a knowledge source has content.
-- **Open:** step 1 / #36 (the translate crash is wider than the pin table: the History panel crashes too; under investigation), step 3 / #39 (test points).
+- **Step 1 / #36 fixed** (`96e69e9`), wider than the pin table: History footer, Worklist finder and the status bar (whole window) crashed too. Per-site fixes + `dom-translate-guard.ts` + a root error boundary; `tests/page-translation.spec.ts`.
+- **Step 3 / #39 landed** (`73e7840`, parser version 101; E2E `tests/xzz-test-points.spec.ts`): 16,302 test points on 49 corpus files, each file gains exactly its nail count, no reading changes. iPadAir3 538 (8 `NC`), Black Shark3 267, Xbox 360 Trinity 492.
+- **Open:** the test-point naming on files whose pad numbers repeat (Xbox: `TP1`…`TP1-492`) — kept as is; issue comments and closing; pre-flight on :1234 and the v0.48.0 release.
 
 ## The issues, by importance
 
