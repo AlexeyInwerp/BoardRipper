@@ -9714,20 +9714,67 @@ body {
 /* Whole-app fallback (RootErrorBoundary.tsx): fills the window, same look as a panel's. */
 .root-error-boundary { position: fixed; inset: 0; background: var(--bg-primary); }
 
-/* Library search: "N files found" above the folder tree. Sticky so it stays
-   reachable while the tree scrolls under it; its own scroll past ~40%. */
-.library-hits { position: sticky; top: 0; z-index: 2; background: var(--bg-primary); border-bottom: 1px solid var(--border); margin-bottom: 2px; }
-.library-hits-head { display: flex; align-items: center; gap: 4px; width: 100%; padding: 4px 8px; background: none; border: 0; color: var(--text-secondary); font-size: 11px; text-align: left; cursor: pointer; }
-.library-hits-head:hover { color: var(--text-primary); }
-.library-hits-list { max-height: 40vh; overflow-y: auto; padding-bottom: 4px; }
-.library-hit { display: flex; align-items: center; gap: 6px; padding: 2px 8px 2px 12px; cursor: pointer; font-size: 12px; min-width: 0; }
-.library-hit:hover { background: var(--bg-secondary); }
-.library-hit.selected { background: var(--surface-active, var(--bg-tertiary)); }
+/* Library search: "N files found" above the folder tree. Sticky, so it stays
+   reachable while the tree scrolls under it; at most a third of the
+   Library's own height (container units on .library-content, the window
+   height as the fallback), with its own scroll beyond that. */
+.library-content { container-type: size; }
+.library-hits {
+  position: sticky; top: 0; z-index: 2;
+  margin: 2px 6px 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 10px -6px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+.library-hits-head {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 5px 8px; background: none; border: 0; cursor: pointer;
+  color: var(--text-primary); font-size: 11px; font-weight: 600; text-align: left;
+}
+.library-hits.open .library-hits-head { border-bottom: 1px solid var(--border); }
+.library-hits-head:hover { background: var(--surface-hover); }
+.library-hits-count { flex: 1; min-width: 0; }
+.library-hits-hint { color: var(--text-secondary); font-weight: 400; font-size: 10px; opacity: 0; transition: opacity 0.12s; }
+.library-hits-head:hover .library-hits-hint, .library-hits.closed .library-hits-hint { opacity: 1; }
+.library-hits-list {
+  max-height: 33vh;
+  max-height: calc(33cqh - 28px);
+  overflow-y: auto;
+  padding: 3px 0;
+}
+/* A fade at the bottom edge while more lies below. */
+.library-hits-list.more-below {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent);
+}
+.library-hit { display: flex; align-items: center; gap: 6px; padding: 2px 8px; cursor: pointer; font-size: 12px; min-width: 0; border-left: 2px solid transparent; }
+.library-hit:hover { background: var(--surface-hover); }
+.library-hit.selected { background: var(--surface-active, var(--bg-tertiary)); border-left-color: var(--accent); }
 .library-hit-name { color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 0; }
 .library-hit-folder { color: var(--text-secondary); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; flex: 1 1 0; min-width: 40px; }
-.library-hits-more { margin: 2px 12px; padding: 2px 6px; font-size: 11px; background: none; border: 1px solid var(--border); border-radius: 3px; color: var(--text-secondary); cursor: pointer; }
+.library-hits-more { display: block; margin: 4px 8px 2px; padding: 2px 8px; font-size: 11px; background: none; border: 1px solid var(--border); border-radius: 10px; color: var(--text-secondary); cursor: pointer; }
+.library-hits-more:hover { color: var(--text-primary); border-color: var(--text-secondary); }
+
+/* Thin, theme-coloured scrollbars in the Library (the found list and the
+   tree), instead of the system's wide grey bar. */
+.library-scroll, .library-content { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.library-scroll::-webkit-scrollbar, .library-content::-webkit-scrollbar { width: 8px; }
+.library-scroll::-webkit-scrollbar-track, .library-content::-webkit-scrollbar-track { background: transparent; }
+.library-scroll::-webkit-scrollbar-thumb, .library-content::-webkit-scrollbar-thumb {
+  background: var(--border); border-radius: 4px; border: 2px solid transparent; background-clip: padding-box;
+}
+.library-scroll::-webkit-scrollbar-thumb:hover, .library-content::-webkit-scrollbar-thumb:hover { background-color: var(--text-secondary); }
+
 /* Files next to a hit that did not match the search themselves. */
 .library-file-row.neighbour { opacity: 0.62; }
 .library-file-row.neighbour:hover, .library-file-row.neighbour.selected { opacity: 1; }
-.library-neighbours-toggle { display: flex; align-items: center; gap: 4px; width: 100%; padding-top: 2px; padding-bottom: 2px; background: none; border: 0; color: var(--text-secondary); font-size: 11px; text-align: left; cursor: pointer; }
-.library-neighbours-toggle:hover { color: var(--text-primary); }
+.library-neighbours-toggle {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-top: 1px; margin-bottom: 2px; padding: 1px 8px 1px 5px;
+  background: none; border: 1px dashed var(--border); border-radius: 10px;
+  color: var(--text-secondary); font-size: 10.5px; text-align: left; cursor: pointer;
+}
+.library-neighbours-toggle:hover { color: var(--text-primary); border-color: var(--text-secondary); }
+.library-neighbours-toggle.open { border-style: solid; }

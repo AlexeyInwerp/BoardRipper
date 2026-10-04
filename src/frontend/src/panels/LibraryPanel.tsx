@@ -2824,16 +2824,42 @@ function LibraryHitList({ hits, selectedFileId, onReveal, onOpen }: {
 }) {
   const [open, setOpen] = useState(true);
   const [showAll, setShowAll] = useState(false);
+  // Fade the bottom edge only while there is more to scroll to.
+  const [moreBelow, setMoreBelow] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
+  const measure = useCallback(() => {
+    const el = listRef.current;
+    setMoreBelow(!!el && el.scrollHeight - el.scrollTop - el.clientHeight > 2);
+  }, []);
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [measure, open, showAll, hits.length]);
   if (hits.length === 0) return null;
   const shown = showAll ? hits : hits.slice(0, HIT_LIST_CAP);
   return (
-    <div className="library-hits" data-testid="library-hits">
-      <button type="button" className="library-hits-head" onClick={() => setOpen(o => !o)} aria-expanded={open}>
-        <span className="library-tree-arrow">{open ? '▼' : '▶'}</span>
-        <span>{`${hits.length} file${hits.length === 1 ? '' : 's'} found`}</span>
+    <div className={`library-hits ${open ? 'open' : 'closed'}`} data-testid="library-hits">
+      <button
+        type="button"
+        className="library-hits-head"
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        title={open ? 'Hide the list' : 'Show the list'}
+      >
+        <IconChevronDown size={13} className={`library-statsbar-caret ${open ? 'open' : ''}`} />
+        <span className="library-hits-count">{`${hits.length} file${hits.length === 1 ? '' : 's'} found`}</span>
+        <span className="library-hits-hint">{open ? 'hide' : 'show'}</span>
       </button>
       {open && (
-        <div className="library-hits-list">
+        <div
+          ref={listRef}
+          className={`library-hits-list library-scroll ${moreBelow ? 'more-below' : ''}`}
+          onScroll={measure}
+        >
           {shown.map(h => (
             <div
               key={h.file.id}
@@ -3038,13 +3064,16 @@ function FolderNodeView({ node, depth, expanded, selectedFileId, filterFile, fil
           {neighbours.length > NEIGHBOUR_LIMIT && (
             <button
               type="button"
-              className="library-neighbours-toggle"
+              className={`library-neighbours-toggle ${showNeighbours ? 'open' : ''}`}
               data-testid="library-neighbours-toggle"
-              style={{ paddingLeft: (depth + 1) * 16 + 20 }}
+              style={{ marginLeft: (depth + 1) * 16 + 20 }}
               onClick={() => setShowNeighbours(v => !v)}
+              aria-expanded={showNeighbours}
             >
-              <span className="library-tree-arrow">{showNeighbours ? '▼' : '▶'}</span>
-              <span>{`${neighbours.length} more file${neighbours.length === 1 ? '' : 's'} in this folder`}</span>
+              <IconChevronDown size={12} className={`library-statsbar-caret ${showNeighbours ? 'open' : ''}`} />
+              <span>{showNeighbours
+                ? `Hide the other ${neighbours.length} files in this folder`
+                : `${neighbours.length} more file${neighbours.length === 1 ? '' : 's'} in this folder`}</span>
             </button>
           )}
           {neighboursOpen && neighbours.map(f => (
