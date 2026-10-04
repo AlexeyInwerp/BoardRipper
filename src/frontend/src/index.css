@@ -5884,14 +5884,14 @@ body {
   overflow-y: auto;
   border-top: 1px solid var(--border);
   background: var(--bg-secondary);
-  padding: 0 10px 10px;
+  padding: 0 10px 6px;
   font-size: 12px;
 }
 
 .library-detail-head {
   position: sticky; top: 0; z-index: 1;
   background: var(--bg-secondary);
-  padding: 8px 0 4px;
+  padding: 6px 0 2px;
 }
 .library-detail-title { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
 .library-detail-title .library-file-icon { margin-top: 1px; flex-shrink: 0; }
@@ -5908,7 +5908,7 @@ body {
   overflow: hidden;
 }
 .library-detail-summary {
-  margin: 3px 0 0 22px;
+  margin: 1px 0 0 22px;
   color: var(--text-secondary);
   font-size: 11px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -5929,7 +5929,7 @@ body {
 /* "Details" spoiler. */
 .library-detail-more {
   display: flex; align-items: center; gap: 4px;
-  margin: 2px 0 0; padding: 2px 0;
+  margin: 0; padding: 1px 0;
   background: none; border: 0; cursor: pointer;
   color: var(--text-secondary); font-size: 11px;
 }
@@ -5952,7 +5952,7 @@ body {
   grid-template-columns: auto 1fr;
   column-gap: 10px;
   row-gap: 2px;
-  margin: 6px 0;
+  margin: 3px 0;
   font-size: 11px;
 }
 .library-detail-facts dt { color: var(--text-secondary); }
@@ -6005,15 +6005,15 @@ body {
 
 .library-detail-bindings {
   border-top: 1px solid var(--border);
-  margin-top: 6px;
-  padding-top: 6px;
+  margin-top: 3px;
+  padding-top: 3px;
 }
 
 .library-detail-bindings-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 4px;
+  margin-bottom: 1px;
   color: var(--text-secondary);
   font-size: 11px;
 }
@@ -9815,7 +9815,7 @@ body {
 .library-neighbours-toggle.open { border-style: solid; }
 
 /* A block of its own in the file-detail pane (OpenBoardData). */
-.library-detail-section { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 6px; }
+.library-detail-section { border-top: 1px solid var(--border); margin-top: 3px; padding-top: 3px; }
 
 /* OpenBoardData in the file-detail pane: two lines (ObdSection.tsx). */
 .obd-card { font-size: 11px; }
@@ -9833,3 +9833,9 @@ body {
 .obd-card-upstream:hover { color: var(--text-primary); }
 .obd-card-stale { color: var(--warn, #c80); border: 1px solid currentColor; border-radius: 6px; padding: 0 4px; font-size: 10px; cursor: help; }
 .obd-card-counts { color: var(--text-secondary); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: help; }
+
+/* Inside the file-detail pane: group labels and rows tight, the pane is small. */
+.library-detail .library-binding-group-header { padding: 2px 0 0; }
+.library-detail .library-binding-row { padding: 1px 4px; }
+.library-detail .library-history-divider { margin: 2px 0; }
+.library-detail .library-binding-empty { padding: 0 4px; }
