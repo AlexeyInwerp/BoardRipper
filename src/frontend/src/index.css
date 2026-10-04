@@ -9713,3 +9713,21 @@ body {
 
 /* Whole-app fallback (RootErrorBoundary.tsx): fills the window, same look as a panel's. */
 .root-error-boundary { position: fixed; inset: 0; background: var(--bg-primary); }
+
+/* Library search: "N files found" above the folder tree. Sticky so it stays
+   reachable while the tree scrolls under it; its own scroll past ~40%. */
+.library-hits { position: sticky; top: 0; z-index: 2; background: var(--bg-primary); border-bottom: 1px solid var(--border); margin-bottom: 2px; }
+.library-hits-head { display: flex; align-items: center; gap: 4px; width: 100%; padding: 4px 8px; background: none; border: 0; color: var(--text-secondary); font-size: 11px; text-align: left; cursor: pointer; }
+.library-hits-head:hover { color: var(--text-primary); }
+.library-hits-list { max-height: 40vh; overflow-y: auto; padding-bottom: 4px; }
+.library-hit { display: flex; align-items: center; gap: 6px; padding: 2px 8px 2px 12px; cursor: pointer; font-size: 12px; min-width: 0; }
+.library-hit:hover { background: var(--bg-secondary); }
+.library-hit.selected { background: var(--surface-active, var(--bg-tertiary)); }
+.library-hit-name { color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 0; }
+.library-hit-folder { color: var(--text-secondary); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; flex: 1 1 0; min-width: 40px; }
+.library-hits-more { margin: 2px 12px; padding: 2px 6px; font-size: 11px; background: none; border: 1px solid var(--border); border-radius: 3px; color: var(--text-secondary); cursor: pointer; }
+/* Files next to a hit that did not match the search themselves. */
+.library-file-row.neighbour { opacity: 0.62; }
+.library-file-row.neighbour:hover, .library-file-row.neighbour.selected { opacity: 1; }
+.library-neighbours-toggle { display: flex; align-items: center; gap: 4px; width: 100%; padding-top: 2px; padding-bottom: 2px; background: none; border: 0; color: var(--text-secondary); font-size: 11px; text-align: left; cursor: pointer; }
+.library-neighbours-toggle:hover { color: var(--text-primary); }

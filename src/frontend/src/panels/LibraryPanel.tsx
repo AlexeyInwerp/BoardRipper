@@ -20,7 +20,7 @@ import { FolderLibraryChip, FolderLibraryEmptyState } from '../components/Folder
 
 /** Persisted tree expansion state — survives tab switches and page reloads.
  *  Closing a parent keeps children's keys in the Set so re-opening restores them. */
-function usePersistedExpanded(storageKey: string, defaultKeys: string[] = []): [Set<string>, (key: string) => void, () => void] {
+function usePersistedExpanded(storageKey: string, defaultKeys: string[] = []): [Set<string>, (key: string) => void, () => void, (keys: string[]) => void] {
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     try {
       const raw = localStorage.getItem(storageKey);
@@ -45,7 +45,18 @@ function usePersistedExpanded(storageKey: string, defaultKeys: string[] = []): [
     try { localStorage.setItem(storageKey, '[]'); } catch { /* ignore */ }
   }, [storageKey]);
 
-  return [expanded, toggle, collapseAll];
+  /** Opens every key in `keys` (a path's ancestors), leaving the rest as is. */
+  const expandPaths = useCallback((keys: string[]) => {
+    setExpanded(prev => {
+      if (keys.every(k => prev.has(k))) return prev;
+      const next = new Set(prev);
+      for (const k of keys) next.add(k);
+      try { localStorage.setItem(storageKey, JSON.stringify([...next])); } catch { /* ignore */ }
+      return next;
+    });
+  }, [storageKey]);
+
+  return [expanded, toggle, collapseAll, expandPaths];
 }
 
 /** Returns `value` after `delayMs` ms of stillness — empty values short-circuit
@@ -2616,6 +2627,7 @@ function MetadataView({ groups, unrecognizedTree, selectedFileId, filterFile, se
                 expanded={expanded}
                 selectedFileId={selectedFileId}
                 filterFile={filterFile}
+                filtering={searchFilter.trim() !== ''}
                 onToggleExpand={toggle}
                 onSelectFile={onSelectFile}
                 onOpenFile={onOpenFile}
@@ -2765,17 +2777,88 @@ function resolveNodeFiles(node: FolderNode): DatabankFile[] {
   return out;
 }
 
-/** Recursively remove folders whose filtered file lists and all descendant
- *  folder file lists are empty. Used when a filter is active so empty
- *  directories disappear from the tree. */
+/** Recursively remove folders with no hit in them or below them. Used when a
+ *  filter is active so empty directories disappear from the tree.
+ *
+ *  A folder that holds a hit keeps ALL its files, not only the hits: a board
+ *  that matched usually sits next to its schematic, datasheets and photos,
+ *  whose names say nothing the search could match. FolderNodeView shows them
+ *  as the hit's neighbours, behind a toggle when there are many. */
 function pruneEmptyFolders(node: FolderNode, filter: (f: DatabankFile) => boolean): FolderNode | null {
-  const files = resolveNodeFiles(node).filter(filter);
+  const all = resolveNodeFiles(node);
+  const hasHit = all.some(filter);
   const children = (node.children ?? [])
     .map(c => pruneEmptyFolders(c, filter))
     .filter((c): c is FolderNode => c !== null);
-  if (files.length === 0 && children.length === 0) return null;
+  if (!hasHit && children.length === 0) return null;
   // Strip file_ids — pruning has materialized files into the `files` field.
-  return { ...node, files, file_ids: undefined, children };
+  return { ...node, files: hasHit ? all : [], file_ids: undefined, children };
+}
+
+interface LibraryHit { file: DatabankFile; folder: string; ancestors: string[] }
+
+/** Every hit in a pruned tree, with the folder keys that have to be open for
+ *  the tree to show it. Tree order (folder by folder), so the list reads like
+ *  the tree it jumps into. */
+function collectHits(root: FolderNode, filter: (f: DatabankFile) => boolean): LibraryHit[] {
+  const out: LibraryHit[] = [];
+  const walk = (n: FolderNode, chain: string[]) => {
+    const here = [...chain, n.path];
+    for (const c of n.children ?? []) walk(c, here);
+    for (const f of resolveNodeFiles(n)) if (filter(f)) out.push({ file: f, folder: n.path, ancestors: here });
+  };
+  walk(root, []);
+  return out;
+}
+
+const HIT_LIST_CAP = 100;
+
+/** "Found N files" above the tree while a search is active. A click opens the
+ *  branch the file lives in, selects it and scrolls it into view; a double
+ *  click opens it — the same as a row in the tree. */
+function LibraryHitList({ hits, selectedFileId, onReveal, onOpen }: {
+  hits: LibraryHit[];
+  selectedFileId: number | null;
+  onReveal: (h: LibraryHit) => void;
+  onOpen: (f: DatabankFile) => void;
+}) {
+  const [open, setOpen] = useState(true);
+  const [showAll, setShowAll] = useState(false);
+  if (hits.length === 0) return null;
+  const shown = showAll ? hits : hits.slice(0, HIT_LIST_CAP);
+  return (
+    <div className="library-hits" data-testid="library-hits">
+      <button type="button" className="library-hits-head" onClick={() => setOpen(o => !o)} aria-expanded={open}>
+        <span className="library-tree-arrow">{open ? '▼' : '▶'}</span>
+        <span>{`${hits.length} file${hits.length === 1 ? '' : 's'} found`}</span>
+      </button>
+      {open && (
+        <div className="library-hits-list">
+          {shown.map(h => (
+            <div
+              key={h.file.id}
+              className={`library-hit ${h.file.id === selectedFileId ? 'selected' : ''}`}
+              data-testid="library-hit"
+              onClick={() => onReveal(h)}
+              onDoubleClick={() => onOpen(h.file)}
+              title={`${h.file.path}\nClick to show it in the tree, double-click to open`}
+            >
+              <span className={`library-file-icon ${h.file.file_type === 'board' ? 'library-icon-board' : 'library-icon-pdf'}`}>
+                {h.file.file_type === 'board' ? 'B' : 'P'}
+              </span>
+              <span className="library-hit-name" translate="no">{h.file.filename}</span>
+              <span className="library-hit-folder" translate="no">{h.folder || '/'}</span>
+            </div>
+          ))}
+          {!showAll && hits.length > HIT_LIST_CAP && (
+            <button type="button" className="library-hits-more" onClick={() => setShowAll(true)}>
+              {`Show all ${hits.length}`}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function FolderView({ tree, treeLoading, selectedFileId, filterFile, searchFilter, onSelectFile, onOpenFile, onIndexFolder, registerCollapseAll }: {
@@ -2791,7 +2874,9 @@ function FolderView({ tree, treeLoading, selectedFileId, filterFile, searchFilte
   onIndexFolder?: (folderPath: string) => void;
   registerCollapseAll?: (fn: (() => void) | null, hasExpanded: boolean) => void;
 }) {
-  const [expanded, toggle, collapseAll] = usePersistedExpanded('boardripper-tree-folders', ['']);
+  const [expanded, toggle, collapseAll, expandPaths] = usePersistedExpanded('boardripper-tree-folders', ['']);
+  const treeRef = useRef<HTMLDivElement>(null);
+  const pendingRevealRef = useRef<number | null>(null);
   useEffect(() => {
     registerCollapseAll?.(collapseAll, expanded.size > 0);
     return () => registerCollapseAll?.(null, false);
@@ -2799,10 +2884,31 @@ function FolderView({ tree, treeLoading, selectedFileId, filterFile, searchFilte
 
   // Only prune when the user is actively filtering — otherwise let empty
   // directories stay visible (browsing a fresh library should show structure).
+  const filtering = searchFilter.trim() !== '';
   const visibleTree = useMemo(
-    () => (searchFilter.trim() && tree ? pruneEmptyFolders(tree, filterFile) : tree),
-    [searchFilter, tree, filterFile],
+    () => (filtering && tree ? pruneEmptyFolders(tree, filterFile) : tree),
+    [filtering, tree, filterFile],
   );
+  const hits = useMemo(
+    () => (filtering && visibleTree ? collectHits(visibleTree, filterFile) : []),
+    [filtering, visibleTree, filterFile],
+  );
+
+  const reveal = useCallback((h: LibraryHit) => {
+    expandPaths(h.ancestors);
+    onSelectFile(h.file);
+    pendingRevealRef.current = h.file.id;
+  }, [expandPaths, onSelectFile]);
+
+  // After the branch has rendered open, bring the row into view.
+  useEffect(() => {
+    const id = pendingRevealRef.current;
+    if (id == null) return;
+    const el = treeRef.current?.querySelector<HTMLElement>(`[data-file-id="${id}"]`);
+    if (!el) return;
+    pendingRevealRef.current = null;
+    el.scrollIntoView({ block: 'center' });
+  });
 
   // First-paint loading: render the same bar+text strip the library load uses,
   // with an indeterminate fill (no progress signal — fetchTree is one HTTP
@@ -2829,13 +2935,17 @@ function FolderView({ tree, treeLoading, selectedFileId, filterFile, searchFilte
   }
 
   return (
-    <div className="library-tree">
+    <div className="library-tree" ref={treeRef}>
+      {filtering && (
+        <LibraryHitList hits={hits} selectedFileId={selectedFileId} onReveal={reveal} onOpen={onOpenFile} />
+      )}
       <FolderNodeView
         node={visibleTree}
         depth={0}
         expanded={expanded}
         selectedFileId={selectedFileId}
         filterFile={filterFile}
+        filtering={filtering}
         onIndexFolder={onIndexFolder}
         onToggleExpand={toggle}
         onSelectFile={onSelectFile}
@@ -2845,12 +2955,15 @@ function FolderView({ tree, treeLoading, selectedFileId, filterFile, searchFilte
   );
 }
 
-function FolderNodeView({ node, depth, expanded, selectedFileId, filterFile, onToggleExpand, onSelectFile, onOpenFile, onIndexFolder }: {
+function FolderNodeView({ node, depth, expanded, selectedFileId, filterFile, filtering = false, onToggleExpand, onSelectFile, onOpenFile, onIndexFolder }: {
   node: FolderNode;
   depth: number;
   expanded: Set<string>;
   selectedFileId: number | null;
   filterFile: (f: DatabankFile) => boolean;
+  /** A search is active: files that matched are listed first, the rest of the
+   *  folder after them (muted, behind a toggle past NEIGHBOUR_LIMIT). */
+  filtering?: boolean;
   onToggleExpand: (path: string) => void;
   onSelectFile: (f: DatabankFile) => void;
   onOpenFile: (f: DatabankFile) => void;
@@ -2861,6 +2974,11 @@ function FolderNodeView({ node, depth, expanded, selectedFileId, filterFile, onT
   const hasChildren = (node.children && node.children.length > 0) || nodeFiles.length > 0;
 
   const filteredFiles = nodeFiles.filter(filterFile);
+  // While searching, the rest of a hit's folder: likely its schematic and
+  // documents. Collapsed when there are more than a handful.
+  const neighbours = filtering && filteredFiles.length > 0 ? nodeFiles.filter(f => !filterFile(f)) : [];
+  const [showNeighbours, setShowNeighbours] = useState(false);
+  const neighboursOpen = neighbours.length <= NEIGHBOUR_LIMIT || showNeighbours;
 
   // Skip the idx button on the synthetic root node (node.path === '') — the
   // existing global "index all PDFs" toolbar button already covers that, and
@@ -2898,6 +3016,7 @@ function FolderNodeView({ node, depth, expanded, selectedFileId, filterFile, onT
               expanded={expanded}
               selectedFileId={selectedFileId}
               filterFile={filterFile}
+              filtering={filtering}
               onToggleExpand={onToggleExpand}
               onSelectFile={onSelectFile}
               onOpenFile={onOpenFile}
@@ -2911,6 +3030,31 @@ function FolderNodeView({ node, depth, expanded, selectedFileId, filterFile, onT
               selected={f.id === selectedFileId}
               indent={depth + 1}
               showPreview={f.file_type === 'pdf'}
+              hit={filtering}
+              onSelect={onSelectFile}
+              onOpen={onOpenFile}
+            />
+          ))}
+          {neighbours.length > NEIGHBOUR_LIMIT && (
+            <button
+              type="button"
+              className="library-neighbours-toggle"
+              data-testid="library-neighbours-toggle"
+              style={{ paddingLeft: (depth + 1) * 16 + 20 }}
+              onClick={() => setShowNeighbours(v => !v)}
+            >
+              <span className="library-tree-arrow">{showNeighbours ? '▼' : '▶'}</span>
+              <span>{`${neighbours.length} more file${neighbours.length === 1 ? '' : 's'} in this folder`}</span>
+            </button>
+          )}
+          {neighboursOpen && neighbours.map(f => (
+            <FileRow
+              key={f.id}
+              file={f}
+              selected={f.id === selectedFileId}
+              indent={depth + 1}
+              showPreview={f.file_type === 'pdf'}
+              neighbour
               onSelect={onSelectFile}
               onOpen={onOpenFile}
             />
@@ -2923,11 +3067,17 @@ function FolderNodeView({ node, depth, expanded, selectedFileId, filterFile, onT
 
 // --- File Row ---
 
-function FileRow({ file, selected, indent, showPreview, copyCount = 0, copyPaths, onSelect, onOpen }: {
+const NEIGHBOUR_LIMIT = 5;
+
+function FileRow({ file, selected, indent, showPreview, hit = false, neighbour = false, copyCount = 0, copyPaths, onSelect, onOpen }: {
   file: DatabankFile;
   selected: boolean;
   indent: number;
   showPreview?: boolean;
+  /** Matched the active search. */
+  hit?: boolean;
+  /** In the folder of a hit but did not match it (shown muted). */
+  neighbour?: boolean;
   /** When > 0, this row stands in for a byte-identical content group and the
    *  badge reports how many redundant copies were collapsed away. */
   copyCount?: number;
@@ -2942,7 +3092,9 @@ function FileRow({ file, selected, indent, showPreview, copyCount = 0, copyPaths
 
   return (
     <div
-      className={`library-file-row ${selected ? 'selected' : ''}`}
+      className={`library-file-row ${selected ? 'selected' : ''} ${hit ? 'hit' : ''} ${neighbour ? 'neighbour' : ''}`}
+      data-file-id={file.id}
+      data-testid={neighbour ? 'library-neighbour' : undefined}
       style={{ paddingLeft: indent * 16 + 20 }}
       onClick={() => onSelect ? onSelect(file) : onOpen(file)}
       onDoubleClick={() => onOpen(file)}
