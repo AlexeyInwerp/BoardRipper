@@ -37,8 +37,8 @@ export function ObdSection({ boardNumber }: { boardNumber: string }) {
   const d = firstFetched?.data;
   const counts = d
     ? [
-        `${d.nets.length} nets`,
-        `${d.components.length} components`,
+        `${d.nets.length} net${d.nets.length === 1 ? '' : 's'}`,
+        `${d.components.length} component${d.components.length === 1 ? '' : 's'}`,
         d.sections && d.sections.length > 0 ? `${d.sections.length} repair section${d.sections.length === 1 ? '' : 's'}` : '',
       ].filter(Boolean).join(' · ')
     : 'not fetched yet — click the board number';

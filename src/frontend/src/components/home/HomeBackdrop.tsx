@@ -952,8 +952,11 @@ function InterfaceColorPickers() {
 // Library stats — read from databankStore.stats (populated by /api/databank/stats)
 // ─────────────────────────────────────────────────────────────
 
-function compactNumber(n: number): string {
-  return n.toLocaleString();
+/** A count from the stats endpoint. Tolerates a missing field: an older or
+ *  partial answer (a field the backend did not send) took the whole window
+ *  down from here, the home page being outside every panel boundary. */
+function compactNumber(n: number | undefined | null): string {
+  return typeof n === 'number' && Number.isFinite(n) ? n.toLocaleString() : '—';
 }
 
 function LibraryStats() {

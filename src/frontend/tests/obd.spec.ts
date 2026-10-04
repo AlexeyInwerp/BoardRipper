@@ -58,6 +58,9 @@ const MOCK_CONFIG = { library_dir: '/data', _scan_root: '/data' };
  *  registered afterwards can shadow it.
  */
 async function stubBackend(page: import('@playwright/test').Page) {
+  // The stubs below answer the bulk loader (GET /api/databank/files); the
+  // default streaming loader would read the catch-all's {} as an empty library.
+  await page.addInitScript(() => { localStorage.setItem('br.libraryLoadMode', 'bulk'); });
   // Catch-all for any other /api/* route the app issues (update/status, etc.)
   // — registered first so it has lowest priority.
   await page.route('**/api/**', route => route.fulfill({ json: {} }));
@@ -81,7 +84,13 @@ async function stubBackend(page: import('@playwright/test').Page) {
  *  becomes visible.  Returns without clicking the file row itself. */
 async function navigateToMetadataTab(page: import('@playwright/test').Page) {
   await page.goto('/');
-  await page.waitForSelector('.library-tabs-row');
+  await page.waitForSelector('.library-tabs-row', { state: 'attached' });
+  // The Library panel can be mounted but hidden (the rail keeps every panel
+  // mounted); open it only when it is not showing — clicking the active
+  // destination would hide it.
+  if (!(await page.locator('.library-panel').isVisible())) {
+    await page.locator('[data-sidebar-tab="library"]').first().click();
+  }
 
   // Switch to Board # (metadata) view — matches the tab label used in the
   // existing library-panel.spec.ts: `{ hasText: 'Board #' }`.
@@ -94,7 +103,9 @@ async function navigateToMetadataTab(page: import('@playwright/test').Page) {
   // Expand manufacturer node (Apple).
   await page.locator('.library-tree-mfr', { hasText: 'Apple' }).click();
 
-  // Expand board-number node (820-00045).
+  // Expand the model node under it (Board # groups manufacturer → model →
+  // board number), then the board-number node (820-00045).
+  await page.locator('.library-tree-model').first().click();
   await page.locator('.library-tree-board-num', { hasText: '820-00045' }).click();
 }
 
@@ -120,7 +131,7 @@ test('OBD section is hidden when index is not synced', async ({ page }) => {
   await page.locator('.library-file-row', { hasText: '820-00045.brd' }).click();
 
   // Wait for FileDetailPane to appear (board_number text is rendered inside it).
-  await page.waitForSelector('text=Board: 820-00045');
+  await expect(page.getByTestId('library-detail')).toContainText('820-00045');
 
   // ObdSection must NOT render when index is unsynced and matches is empty.
   await expect(page.getByTestId('obd-section')).toHaveCount(0);
@@ -129,7 +140,7 @@ test('OBD section is hidden when index is not synced', async ({ page }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Test B: OBD chip + table render after fetch
 // ─────────────────────────────────────────────────────────────────────────────
-test('OBD chip and measurement table render after fetch', async ({ page }) => {
+test('OBD chip fetches and the card counts what arrived', async ({ page }) => {
   await stubBackend(page);
 
   const BPATH = 'laptops/apple/820-00045';
@@ -193,7 +204,7 @@ test('OBD chip and measurement table render after fetch', async ({ page }) => {
   await page.locator('.library-file-row', { hasText: '820-00045.brd' }).click();
 
   // Wait for FileDetailPane.
-  await page.waitForSelector('text=Board: 820-00045');
+  await expect(page.getByTestId('library-detail')).toContainText('820-00045');
 
   // OBD section must be visible (index is synced, matches present).
   await expect(page.getByTestId('obd-section')).toBeVisible();
@@ -201,8 +212,9 @@ test('OBD chip and measurement table render after fetch', async ({ page }) => {
   // Click the chip to fetch OBD data (POST /api/obd/fetch).
   await page.getByTestId('obd-chip-820-00045').click();
 
-  // After fetch completes, the measurement table must appear and contain the net.
-  const table = page.getByTestId('obd-table');
-  await expect(table).toBeVisible();
-  await expect(table).toContainText('PP3V3_S0_REG');
+  // After the fetch the chip reads as fetched and the card's second line
+  // counts what arrived. (The measurement table moved to the board's Info
+  // tab long ago; the Library card only says what is available.)
+  await expect(page.getByTestId('obd-chip-820-00045')).toHaveAttribute('data-fetched', 'true');
+  await expect(page.getByTestId('obd-summary')).toContainText('1 net ·');
 });
