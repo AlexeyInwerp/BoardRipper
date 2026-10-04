@@ -1,5 +1,59 @@
 # BoardRipper changelog
 
+## v0.47.0 — 2026-10-04
+
+### Added
+
+- **Slide mode.** A new ribbon button marks up the board view and saves it
+  as a PNG — for a repair ticket, a message to a colleague, a lesson. Draw
+  arrows, boxes, freehand with a pen, and text in five colours and three
+  weights; everything stays pinned to the parts while you pan, zoom or
+  rotate. Every selected part gets a large label with its name, and
+  ⌘+click (Ctrl+click on Windows, or the *Several parts* toggle on a
+  tablet) labels several at once; under the label of the part you picked
+  last are two boxes to note an Ω and a diode reading, which print on the
+  label. The PNG carries the board file name and the date in a header, the
+  labels, your annotations and the minimap. Copy puts the same picture on
+  the clipboard. A guide card explains the tool in hand; Esc leaves, and
+  the annotations come back when you return.
+- **Minimap.** Zoomed in past twice the fit view, a pan of more than an
+  eighth of the screen fades in a small map of the whole board at the top
+  with a box for what you are looking at — click or drag on it to move.
+  It leaves when panning stops, stays up in slide mode, and the ribbon
+  button turns it off.
+- **PDF filters in one menu.** The wand on the PDF toolbar opens a menu
+  with the watermark text filter and its terms, *Strip small watermark
+  images* (which had no control before) and *Skip invisible content*.
+  The two parse-time options show a *Reload & re-parse* row when an open
+  PDF was opened under other values; page, search and extracted text
+  survive the reload.
+- **Touch: a right click on glass.** Hold a finger on a part and tap with
+  a second one to open its menu. Any touch outside closes it.
+
+### Changed
+
+- **PDFs render faster where it hurt most.** Some PDFs end every page with
+  a page-sized invisible overlay that pdf.js still decoded, rasterised and
+  composited on every render — 100–190 ms per render on an iPad. It is
+  dropped before it reaches the renderer; the picture is pixel-identical.
+
+### Fixed
+
+- **No more blurry blink after a zoom.** When a zoom settled where sharp
+  pixels already existed, the viewer put the blurry preview on top of
+  them for a moment, and in Safari a cleared tile could reach the screen
+  for a frame. Both causes are gone.
+- **Scrolling over a board next to a PDF works again.** With the PDF the
+  active panel, a wheel over the board took the zoom and drew nothing. A
+  regression from July.
+- **An old tab after a server update** said nothing and failed to open
+  boards; it now says the server was updated and offers a reload.
+- **Small net names on the iPad** stopped showing when zooming in; they
+  are back.
+- **Strip small watermark images** applied to the first pages only after
+  a zoom change; a failed strip left a permanent "reload needed"; a term
+  typed in the filter menu and clicked away from was lost.
+
 ## v0.46.0 — 2026-09-29
 
 ### Added
