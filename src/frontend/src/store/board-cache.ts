@@ -118,7 +118,7 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 //     "common problems" boards draw as loose text are reconstructed into
 //     BoardData.annotations. A cached board from v97 simply has no annotations.
 // 99: XZZ `===信号` net glossary read into BoardData.netDescriptions.
-// 100: XZZ diode join also tries a renamed part's original name (legacy
+// 100: cache keeps XZZ annotations + netDescriptions. XZZ diode join also tries a renamed part's original name (legacy
 //     records are keyed by it); purely numeric net aliases are not applied.
 const PARSER_VERSION = 100;
 
@@ -173,6 +173,10 @@ interface SerializedBoardData {
   /** XZZ diode-value channel descriptor — added in PARSER_VERSION 74. Gates the
    *  on-pin diode overlay's UI; pin-level readings live inside `parts`. */
   diodeReference?: DiodeReferenceChannel;
+  /** XZZ repair tables + notes (PARSER_VERSION 98) and the `===信号` net
+   *  glossary (99). Without these a cached board opened without them. */
+  annotations?: BoardData['annotations'];
+  netDescriptions?: Array<[string, string]>;
 }
 
 interface SerializedRevision {
@@ -232,6 +236,8 @@ function serialize(board: BoardData): SerializedBoardData {
     flipAxis: board.flipAxis,
     primarySide: board.primarySide,
     diodeReference: board.diodeReference,
+    annotations: board.annotations,
+    netDescriptions: board.netDescriptions ? Array.from(board.netDescriptions.entries()) : undefined,
   };
 }
 
@@ -279,6 +285,8 @@ function deserialize(data: SerializedBoardData): BoardData | null {
       flipAxis: data.flipAxis,
       primarySide: data.primarySide,
       diodeReference: data.diodeReference,
+      annotations: data.annotations,
+      netDescriptions: data.netDescriptions ? new Map(data.netDescriptions) : undefined,
     };
   } catch {
     return null;
