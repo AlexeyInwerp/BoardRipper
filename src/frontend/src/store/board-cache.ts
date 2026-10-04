@@ -118,7 +118,9 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 //     "common problems" boards draw as loose text are reconstructed into
 //     BoardData.annotations. A cached board from v97 simply has no annotations.
 // 99: XZZ `===信号` net glossary read into BoardData.netDescriptions.
-const PARSER_VERSION = 99;
+// 100: XZZ diode join also tries a renamed part's original name (legacy
+//     records are keyed by it); purely numeric net aliases are not applied.
+const PARSER_VERSION = 100;
 
 interface CachedBoard {
   key: string;

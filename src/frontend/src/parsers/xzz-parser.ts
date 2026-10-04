@@ -2920,6 +2920,12 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   // onto a name a *different* part already holds — a rename whose target is
   // itself being vacated by another rename is fine, so collisions are tested
   // against (existing names − names being vacated).
+  // Original binary name of every renamed part. The legacy `=mV=REF(pin)`
+  // records are keyed by that name, and a tail can carry them next to the
+  // JSON whose aliases rename the part (iPhone14_14Plus YiDianTong: 1,713
+  // legacy readings, 1,081 of them unreachable by the new name), so the
+  // diode join below tries it as a third key.
+  const renamedFrom = new Map<typeof parts[number], string>();
   if (tail.partAliases.size > 0) {
     const byName = new Map<string, typeof parts[number]>();
     for (const p of parts) byName.set(p.name, p);
@@ -2932,6 +2938,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       if (!part) continue;                       // binary already uses the alias, or part absent
       if ((byName.has(alias) && !vacating.has(alias)) || claimed.has(alias)) { skipped++; continue; }
       claimed.add(alias);
+      renamedFrom.set(part, part.name);
       part.name = alias;
       renamed++;
     }
@@ -2951,6 +2958,11 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     const claimed = new Set<string>();
     for (const [name, alias] of tail.netAliases) {
       if (!existing.has(name)) continue;
+      // An alias exists to name an anonymous net (`Net21` → `PP_VDD_MAIN`).
+      // A bare number says less than any name it would replace — iPhone15
+      // AP+BB Boardview's one alias turns `90_PCIE_GP1_AP_FROM_BB_RX_P` into
+      // `380` — so it is not applied.
+      if (/^\d+$/.test(alias)) continue;
       if ((existing.has(alias) && !tail.netAliases.has(alias)) || claimed.has(alias)) continue;
       claimed.add(alias);
       apply.set(name, alias);
@@ -2990,9 +3002,11 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     // `unmatched` line up with `tail.diodes.size`.
     const matchedReadings = new Set<DiodeReading>();
     for (const part of parts) {
+      const orig = renamedFrom.get(part);
       for (const pin of part.pins) {
         const key = `${part.name}(${pin.number})`;
-        const r = tail.diodes.get(key) ?? tail.diodesByAlias.get(key);
+        const r = tail.diodes.get(key) ?? tail.diodesByAlias.get(key)
+          ?? (orig !== undefined ? tail.diodes.get(`${orig}(${pin.number})`) : undefined);
         if (r) { pin.diode = r; matchedReadings.add(r); }
       }
     }
