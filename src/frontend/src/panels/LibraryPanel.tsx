@@ -1956,9 +1956,7 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBindin
       </div>
 
       {isBoard && detail.board_number && (
-        <div className="library-detail-section">
-          <ObdSection boardNumber={detail.board_number} />
-        </div>
+        <ObdSection boardNumber={detail.board_number} />
       )}
     </div>
   );

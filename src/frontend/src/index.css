@@ -9816,3 +9816,20 @@ body {
 
 /* A block of its own in the file-detail pane (OpenBoardData). */
 .library-detail-section { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 6px; }
+
+/* OpenBoardData in the file-detail pane: two lines (ObdSection.tsx). */
+.obd-card { font-size: 11px; }
+.obd-card-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.obd-card-label { font-weight: 600; color: var(--text-primary); }
+.obd-card-variant { display: inline-flex; align-items: center; gap: 3px; }
+.obd-card-chip {
+  padding: 0 7px; line-height: 16px; border-radius: 9px; font-size: 10.5px; cursor: pointer;
+  border: 1px solid var(--border); background: transparent; color: var(--text-primary);
+}
+.obd-card-chip.fetched { border-color: var(--green, #3a5); color: var(--green, #3a5); }
+.obd-card-chip:hover:not(:disabled) { background: var(--surface-hover); }
+.obd-card-chip:disabled { cursor: wait; opacity: 0.7; }
+.obd-card-upstream { color: var(--text-secondary); text-decoration: none; font-size: 11px; }
+.obd-card-upstream:hover { color: var(--text-primary); }
+.obd-card-stale { color: var(--warn, #c80); border: 1px solid currentColor; border-radius: 6px; padding: 0 4px; font-size: 10px; cursor: help; }
+.obd-card-counts { color: var(--text-secondary); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: help; }
