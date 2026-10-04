@@ -1807,35 +1807,30 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBindin
   );
 
   return (
-    <div className="library-detail">
-      <div className="library-detail-header">
-        <span className="library-detail-filename">{detail.filename}</span>
-        <button
-          className="library-detail-edit"
-          onClick={() => setShowEditModal(true)}
-          title="Edit metadata"
-        >
-          Edit
-        </button>
-        <button
-          className="library-detail-open"
-          onClick={() => onOpen(detail)}
-          title="Open in viewer"
-        >
-          Open
-        </button>
-        {isElectron() ? (
-          <RevealButton path={detail.path} />
-        ) : (
-          <a
-            className="library-detail-open library-detail-download"
-            href={`/api/files/path/${detail.path.split('/').map(encodeURIComponent).join('/')}?download=1`}
-            download={detail.filename}
-            title="Download file"
-          >
-            Download
-          </a>
-        )}
+    <div className="library-detail library-scroll" data-testid="library-detail">
+      {/* Sticky: the name and the actions stay put while the rest scrolls. */}
+      <div className="library-detail-head">
+        <div className="library-detail-title">
+          <span className={`library-file-icon ${isBoard ? 'library-icon-board' : 'library-icon-pdf'}`}>{isBoard ? 'B' : 'P'}</span>
+          <span className="library-detail-filename" title={detail.filename} translate="no">{detail.filename}</span>
+        </div>
+        <div className="library-detail-actions">
+          <button className="library-detail-open" onClick={() => onOpen(detail)} title="Open in viewer">Open</button>
+          {isElectron() ? (
+            <RevealButton path={detail.path} />
+          ) : (
+            <a
+              className="library-detail-open library-detail-download"
+              href={`/api/files/path/${detail.path.split('/').map(encodeURIComponent).join('/')}?download=1`}
+              download={detail.filename}
+              title="Download file"
+            >
+              Download
+            </a>
+          )}
+          <button className="library-detail-edit" onClick={() => setShowEditModal(true)} title="Edit metadata">Edit</button>
+          {detail.file_type === 'pdf' && <DonorToggle fileId={detail.id} />}
+        </div>
       </div>
 
       {detail.has_preview && (
@@ -1844,30 +1839,29 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBindin
         </div>
       )}
 
-      <div className="library-detail-meta">
-        {detail.board_number && <span>Board: {detail.board_number}</span>}
+      <dl className="library-detail-facts">
         {(() => {
           const resolved = detail.board_number ? lookupBoard(detail.board_number) : undefined;
-          if (!resolved) return null;
-          return <>
-            <span className="library-detail-model-resolved">{resolved.a_number} {resolved.model}</span>
-            <span className="library-detail-model-info" title={resolved.info}>{resolved.info}</span>
-          </>;
+          const rows: Array<[string, React.ReactNode]> = [];
+          if (detail.board_number) rows.push(['Board', <span translate="no">{detail.board_number}</span>]);
+          if (resolved) rows.push(['Device', <span><span className="library-detail-model-resolved">{`${resolved.a_number} ${resolved.model}`}</span>{resolved.info ? <span className="library-detail-model-info">{` · ${resolved.info}`}</span> : null}</span>]);
+          if (detail.model) rows.push(['Model', <span>{detail.model}</span>]);
+          if (detail.manufacturer) rows.push(['Maker', <span>{detail.manufacturer}</span>]);
+          if (detail.board_color) rows.push(['Colour', <span>{detail.board_color}</span>]);
+          if (detail.part_count != null || detail.net_count != null) {
+            rows.push(['Contents', <span>{[
+              detail.part_count != null ? `${detail.part_count} parts` : '',
+              detail.net_count != null ? `${detail.net_count} nets` : '',
+            ].filter(Boolean).join(' · ')}</span>]);
+          }
+          rows.push(['Size', <span>{formatSize(detail.size)}</span>]);
+          return rows.map(([k, v]) => [
+            <dt key={`k-${k}`}>{k}</dt>,
+            <dd key={`v-${k}`}>{v}</dd>,
+          ]);
         })()}
-        {detail.manufacturer && <span>Mfr: {detail.manufacturer}</span>}
-        {detail.board_color && <span>Color: {detail.board_color}</span>}
-        {detail.model && <span>Model: {detail.model}</span>}
-        {detail.part_count != null && <span>{detail.part_count} parts</span>}
-        {detail.net_count != null && <span>{detail.net_count} nets</span>}
-        <span>{formatSize(detail.size)}</span>
-      </div>
+      </dl>
       <FileDetailPath path={detail.path} />
-
-      {detail.file_type === 'pdf' && (
-        <div className="library-detail-donor-row">
-          <DonorToggle fileId={detail.id} />
-        </div>
-      )}
 
       {showEditModal && (
         <MetadataEditModal detail={detail} onClose={() => setShowEditModal(false)} />
@@ -2872,8 +2866,10 @@ function LibraryHitList({ hits, selectedFileId, onReveal, onOpen }: {
               <span className={`library-file-icon ${h.file.file_type === 'board' ? 'library-icon-board' : 'library-icon-pdf'}`}>
                 {h.file.file_type === 'board' ? 'B' : 'P'}
               </span>
-              <span className="library-hit-name" translate="no">{h.file.filename}</span>
-              <span className="library-hit-folder" translate="no">{h.folder || '/'}</span>
+              <span className="library-hit-text">
+                <span className="library-hit-name" translate="no">{h.file.filename}</span>
+                <span className="library-hit-folder" translate="no">{h.folder || '/'}</span>
+              </span>
             </div>
           ))}
           {!showAll && hits.length > HIT_LIST_CAP && (
