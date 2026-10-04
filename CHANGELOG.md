@@ -1,5 +1,55 @@
 # BoardRipper changelog
 
+## v0.48.0 — 2026-10-05
+
+### Added
+
+- **Board notes.** A new tab with a book icon in the board sidebar shows
+  what the board file knows beyond its geometry. Today that is XZZ's
+  "Common problems" boards: the repair table drawn on the board
+  (symptom, fault point, fix) and the net glossary — what each net does,
+  filterable, with the highlighted net's description at the top. Part and
+  net names in it are clickable. The tab appears only on boards that carry
+  notes, and it is plain text, so the browser's *Translate page* can
+  translate the Chinese.
+- **XZZ test points.** Test points stored outside any part are now drawn,
+  selectable and part of their net — on the iPad Air 3 boards a net that
+  showed only a BGA ball now shows its probe point too. Records that only
+  repeat an existing pin are left out.
+- **Library search.** While you search the Folders view, a list of the
+  files found sits above the tree; a click opens the branch, selects the
+  file and scrolls to it. A folder with a hit also shows its other files
+  (the schematic next to a board, say), dimmed, behind a toggle when there
+  are more than five.
+
+### Changed
+
+- **The file pane under the Library** is tidier: open and download are
+  icon buttons beside the name, one line says what the file is, and the
+  rest (facts, path, *Edit metadata*, *Mark as donor*) is behind
+  *Details*. OpenBoardData takes two lines. The pane scrolls under a fixed
+  header and takes at most 45 % of the Library.
+- **Space to flip:** holding it past half a second (was 0.35 s) peeks.
+
+### Fixed
+
+- **XZZ diode readings:** BGA balls get their readings (iPhone 14 `U1000`:
+  none before, over a thousand now), files carrying both reading formats
+  keep both, and renamed parts keep theirs. Across the local test library
+  the number of readings roughly doubled.
+- **XZZ Chinese text:** part values, names and labels written in GB2312
+  read correctly instead of being dropped; `Ω` values show.
+- **"Translate page" crashed BoardRipper** — a panel when picking a pin,
+  the whole window when switching board tabs. Fixed throughout, with a
+  recovery page for any crash outside the panels.
+- **Rotating a board froze it for a second or two** on dense boards: a
+  90° turn rebuilt the whole scene. It now only moves the labels that
+  depend on the turn.
+- **A quick Space tap peeked back** the first time after a board opened,
+  because the flip's own work made the press look long.
+- **A partial answer from the server** could blank the window (home page
+  statistics) or fail the library load (donor list).
+
 ## v0.47.0 — 2026-10-04
 
 ### Added
