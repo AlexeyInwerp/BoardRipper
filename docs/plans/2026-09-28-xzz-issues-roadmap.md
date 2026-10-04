@@ -2,6 +2,13 @@
 
 Date: 2026-09-28. Baseline: `main` at 6e16bdb (v0.43.2 + touch work), `PARSER_VERSION` 93.
 
+## Status (2026-10-04)
+
+- **Step 2 (#37) landed** by cherry-pick (`8680270`..`5550d53`), plus `f48c611`: the JSON tail's part renames hid legacy readings on three files, and a purely numeric net alias is no longer applied. Local corpus (350 files): diode readings 73,753 → 144,707, no file loses one, part and pin counts unchanged, eight files change net names (GB2312 now decodes; XZZ's own net-rename table now reaches past 4 KB).
+- **Step 4 (#38) parser side landed** (`7ce1f6d`, `fb563dd`): 17 tables on 11 files, 34 files with a net glossary. `0643f1e` makes both survive a board-cache hit.
+- **#38 UI landed as the board sidebar's Notes tab** (`b4ad6de`), not in the Info tab: see `docs/specs/2026-09-29-board-knowledge-layer-review.md`. Tab shown only when a knowledge source has content.
+- **Open:** step 1 / #36 (the translate crash is wider than the pin table: the History panel crashes too; under investigation), step 3 / #39 (test points).
+
 ## The issues, by importance
 
 All four open issues come from @sjohnson1021, filed 2026-09-23, each with a
