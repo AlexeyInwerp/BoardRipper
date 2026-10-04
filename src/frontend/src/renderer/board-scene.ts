@@ -37,7 +37,7 @@ import {
   isOutlineOnlyNet,
 } from '../store/render-settings';
 import type { RenderSettings } from '../store/render-settings';
-import { pushLabel, sortLabelModel, type LabelModel, type LabelRecord } from './label-model';
+import { pushLabel, sortLabelModel, type LabelModel, type LabelRecord, type RotLayout } from './label-model';
 import { capsuleParams, isOblongRoundPad, capsuleGrowForRadius, type CapsuleParams } from './pad-capsule';
 import { DEFAULT_LAYER_PALETTE } from '../store/layer-store';
 import { themeStore, hexToInt } from '../store/themes';
@@ -1373,26 +1373,35 @@ export function buildBoardScene(
     // e.g. a QFP's left/right edge pin columns — so the grouping axis transposes
     // with the view. Without this, those runs land one pin per bucket, every pin
     // gets column 0, and the whole edge renders un-staggered.
-    const pinColIndex: number[] = new Array(part.pins.length).fill(0);
-    if (isMultiPin && showPinNumbers && minPinSpacing < Infinity) {
-      // Map rowKey → list of pin indices in that row
+    //
+    // Both groupings are computed — rows along board X (unturned view) and
+    // along board Y (90°/270°) — so the label records can carry both
+    // placements and a 90° turn moves labels instead of rebuilding the scene.
+    const colIndexFor = (swapped: boolean): number[] => {
+      const out: number[] = new Array(part.pins.length).fill(0);
       const rowMap = new Map<number, number[]>();
       for (let i = 0; i < part.pins.length; i++) {
         const pos = part.pins[i].position;
-        const rowKey = Math.round((axesSwapped ? pos.x : pos.y) / minPinSpacing);
+        const rowKey = Math.round((swapped ? pos.x : pos.y) / minPinSpacing);
         const row = rowMap.get(rowKey);
         if (row) row.push(i); else rowMap.set(rowKey, [i]);
       }
       // Within each row, sort along the run and assign column index
       for (const indices of rowMap.values()) {
-        indices.sort((a, b) => axesSwapped
+        indices.sort((a, b) => swapped
           ? part.pins[a].position.y - part.pins[b].position.y
           : part.pins[a].position.x - part.pins[b].position.x);
-        for (let col = 0; col < indices.length; col++) {
-          pinColIndex[indices[col]] = col;
-        }
+        for (let col = 0; col < indices.length; col++) out[indices[col]] = col;
       }
+      return out;
+    };
+    let pinColN: number[] = new Array(part.pins.length).fill(0);
+    let pinColS: number[] = pinColN;
+    if (isMultiPin && showPinNumbers && minPinSpacing < Infinity) {
+      pinColN = colIndexFor(false);
+      pinColS = colIndexFor(true);
     }
+    const pinColIndex = axesSwapped ? pinColS : pinColN;
 
     for (let pni = 0; pni < part.pins.length; pni++) {
       const pin    = part.pins[pni];
@@ -1561,6 +1570,7 @@ export function buildBoardScene(
         // Centred fallback for the overlay while the net name is hidden (see
         // LabelRecord.alt). Only set when the number is shifted for a net name.
         let numAlt: { x: number; y: number; anchorY: number } | undefined;
+        let numRot: RotLayout | undefined;
 
         if (isTwoPinPart) {
           // 2-pin: fit pin number inside the pad rectangle.
@@ -1596,6 +1606,12 @@ export function buildBoardScene(
             numAlt = { x: pin.position.x, y: pin.position.y, anchorY: 0.5 };
             const up = even ? -bgaHalfGap : bgaHalfGap;
             if (axesSwapped) pinX += up * swapUpSign; else pinY += up;
+            const evenN = pinColN[pni] % 2 === 0, evenS = pinColS[pni] % 2 === 0;
+            numRot = {
+              cx: pin.position.x, cy: pin.position.y,
+              nUp: evenN ? -bgaHalfGap : bgaHalfGap, nA: evenN ? 1.0 : 0.0,
+              sUp: evenS ? -bgaHalfGap : bgaHalfGap, sA: evenS ? 1.0 : 0.0,
+            };
           }
         }
 
@@ -1610,6 +1626,7 @@ export function buildBoardScene(
             alt: numAlt,
             pitch: minPinSpacing < Infinity ? minPinSpacing : undefined,
             stacked: bgaAlternate,
+            ...(numRot ? { rot: numRot } : {}),
           };
           if (!(labelModel && pushLabel(labelModel, isBottom ? 'bottom' : 'top', numRec))) {
             const pinLabel = new BitmapText({
@@ -1634,6 +1651,7 @@ export function buildBoardScene(
       if (hasNet) {
         let netFontSize: number;
         let nx: number, ny: number;
+        let netRot: RotLayout | undefined;
         const anchorX = 0.5;
         let anchorY = 0.5;
 
@@ -1673,6 +1691,13 @@ export function buildBoardScene(
             const bgaHalfGap = (r * s.bgaLabelGapFactor) / 2;
             const down = even ? bgaHalfGap : -bgaHalfGap;
             if (axesSwapped) nx += down * -swapUpSign; else ny += down;
+            const evenN = pinColN[pni] % 2 === 0, evenS = pinColS[pni] % 2 === 0;
+            netRot = {
+              cx: pin.position.x, cy: pin.position.y,
+              nUp: evenN ? bgaHalfGap : -bgaHalfGap, nA: evenN ? 0.0 : 1.0,
+              // turned: x = cx + down·(−sign) = cx + (−down)·sign
+              sUp: evenS ? -bgaHalfGap : bgaHalfGap, sA: evenS ? 0.0 : 1.0,
+            };
           } else if (isSinglePin) {
             // Testpoint/fiducial: the part name is the only other label on this
             // pin, so the two straddle the pin centre exactly like a BGA's
@@ -1714,6 +1739,7 @@ export function buildBoardScene(
             bg: isTwoPinPart ? s.twoPinNetLabelBg : s.pinNetLabelBg,  // same condition the wrapper Graphics is created under
             pitch: minPinSpacing < Infinity ? minPinSpacing : undefined,
             stacked: bgaAlternate,
+            ...(netRot ? { rot: netRot } : {}),
           }))) {
             const netLabel = new BitmapText({
               text: pin.net,

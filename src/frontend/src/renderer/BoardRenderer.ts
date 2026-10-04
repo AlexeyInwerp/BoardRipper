@@ -39,7 +39,7 @@ import { LabelOverlay } from './label-overlay';
 import { focusHaloGeometry } from './focus-halo';
 import { isOblongRoundPad, capsuleGrowForRadius, capsulePolygon } from './pad-capsule';
 import { HdrSelectionOutline, isHdrCapable, rungForIntensity, type ScreenPoint } from './hdr-selection-outline';
-import type { LabelModel } from './label-model';
+import { applyRotationLayout, rotLayoutKey, type LabelModel } from './label-model';
 import { compareStackHits, type StackHit } from './hit-test-ranking';
 import { buildTraceGrid, queryTraceGrid, type TraceGrid } from './trace-grid';
 import type { BorderBatch, PadGeometry } from './board-scene';
@@ -895,6 +895,10 @@ export class BoardRenderer {
    *  pin labels were built for. Compared against the live rotation so a
    *  90°/270° change rebuilds the label stagger on the right axis. */
   private sceneRot90Parity = 0;
+  /** Which rotation layout each label model's staggered labels are in (see
+   *  `RotLayout`). A 90° turn moves those labels in place instead of
+   *  rebuilding the scene, which on a dense board froze the app for 1–2 s. */
+  private labelRotKeys = new WeakMap<LabelModel, 0 | 1 | 3>();
   /** Reference snapshot of `boardStore.partOverrides`. The store replaces the
    *  Map on every change, so an identity-equality compare in `onBoardUpdate`
    *  detects right-click hide/send-to-back actions without a deep diff. */
@@ -2696,9 +2700,23 @@ export class BoardRenderer {
    *  the per-side label-layer world transforms (so rotate/mirror/butterfly work
    *  for free — bottomLabelLayer.worldTransform includes the butterfly chain).
    *  Called from onTick AFTER app.render() so worldTransforms are current. */
+  /** Puts a label model's staggered labels in the layout for the current
+   *  rotation. Cheap when already there (one map lookup); also covers a
+   *  cached scene shown again after the rotation changed. */
+  private syncLabelRotation(model: LabelModel): void {
+    const want = rotLayoutKey(boardStore.rotation);
+    if (this.labelRotKeys.get(model) === want) return;
+    applyRotationLayout(model, want);
+    this.labelRotKeys.set(model, want);
+    this.overlayDirty = true;
+    this.overlayContentDirty = true;
+    this.needsRender = true;
+  }
+
   private syncLabelOverlay(overlay: LabelOverlay, scene: BoardScene): void {
     const s = renderSettingsStore.settings;
     const model = scene.labelModel!;
+    this.syncLabelRotation(model);
     const wtTop = scene.topLabelLayer.worldTransform;
     const wtBot = scene.bottomLabelLayer.worldTransform;
     const dm = boardStore.dimMode;
@@ -3301,6 +3319,7 @@ export class BoardRenderer {
       // (0/180 ↔ 90/270) transposes the screen axes and needs a rebuild so the
       // pin-label stagger follows (see onBoardUpdate's rotated branch).
       this.sceneRot90Parity = rot90Parity(boardStore.rotation);
+      if (graph.labelModel) this.labelRotKeys.set(graph.labelModel, rotLayoutKey(boardStore.rotation));
       const elapsed = (performance.now() - t0).toFixed(0);
       log.render.log(`Scene built in ${elapsed}ms: ${board.parts.length} parts, ${graph.topLabels.length + graph.bottomLabels.length} labels`);
       // Surface the scene-build cost on the load-progress overlay when one
@@ -3803,7 +3822,13 @@ export class BoardRenderer {
         // pin-number/net-name stagger was computed for the wrong axis (it is
         // baked into label positions at build time). Rebuild — debounced, so
         // spinning through rotations coalesces into one rebuild.
-        if (rotated && rot90Parity(newRotation) !== this.sceneRot90Parity) {
+        //
+        // Text fast mode (the default) needs no rebuild: the label records
+        // carry both layouts and are moved in place. Only the BitmapText path,
+        // whose labels are scene objects, still rebuilds.
+        if (rotated && this.textFastMode && this.activeScene.labelModel) {
+          this.syncLabelRotation(this.activeScene.labelModel);
+        } else if (rotated && rot90Parity(newRotation) !== this.sceneRot90Parity) {
           this.scheduleRebuild();
         }
 

@@ -35,12 +35,16 @@ let _lastMouseY = 0;
  *     flipped, no hint); at or over = hold (revert to original + dismiss
  *     hint).
  *
- * 350 ms sits comfortably above a "gentle" tap (a slow, controlled press
- * can run 200–300 ms — the original 180 ms threshold was too tight). Still
- * well under the natural human "I'm holding this" reflex of ~500 ms.
- * Tune up if normal taps still register as peeks.
+ * 500 ms: a slow, controlled tap runs 200–300 ms, and 350 still caught some
+ * (2026-10-05, "peek interval should be a bit longer"); a deliberate hold is
+ * past it anyway.
+ *
+ * The press is timed with the EVENTS' own timestamps, never with the clock
+ * when the handlers run. The first flip after a board renders does heavy
+ * synchronous work, so the keyup sits in the queue behind it; timed at
+ * handler time, a quick tap measured as a long hold and peeked back.
  */
-const SPACE_HOLD_PEEK_MS = 350;
+const SPACE_HOLD_PEEK_MS = 500;
 /** How long the hint chip stays visible after it first appears. Auto-hides
  *  even if the user keeps holding Space, so a long peek doesn't leave a
  *  permanent label cluttering the canvas. */
@@ -303,11 +307,14 @@ export function useKeyboardShortcuts() {
             // on the press record so keyup/blur can cancel it cleanly.
             const press: SpaceFlipPress = {
               wasUiTopVisible: uiTopVisible,
-              pressedAt: performance.now(),
+              pressedAt: e.timeStamp,
               hintTimer: null,
               hintHideTimer: null,
             };
             press.hintTimer = setTimeout(() => {
+              // A timer can fire late, after the main thread was busy; only
+              // show the hint if the key is really still down by now.
+              if (_spaceFlipPress !== press) return;
               peekHintStore.show();
               press.hintHideTimer = setTimeout(() => {
                 peekHintStore.hide();
@@ -495,7 +502,9 @@ export function useKeyboardShortcuts() {
       if (press.hintTimer) clearTimeout(press.hintTimer);
       if (press.hintHideTimer) clearTimeout(press.hintHideTimer);
       peekHintStore.hide();
-      const heldMs = performance.now() - press.pressedAt;
+      // Event time, not handler time: a keyup that waited behind the flip's
+      // own work is still a tap.
+      const heldMs = e.timeStamp - press.pressedAt;
       if (heldMs < SPACE_HOLD_PEEK_MS) return; // tap: keep flipped state
       // Hold: restore the side that was visible before the press.
       if (press.wasUiTopVisible) boardStore.selectTop();

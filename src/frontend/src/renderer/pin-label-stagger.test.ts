@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { buildBoardScene } from './board-scene';
 import { DEFAULTS } from '../store/render-settings';
 import type { BoardData } from '../parsers/types';
-import type { LabelRecord } from './label-model';
+import { applyRotationLayout, rotLayoutKey, type LabelRecord } from './label-model';
 
 /**
  * A QFP-shaped part: one pin run along X (board-horizontal, "top edge") and one
@@ -110,4 +110,35 @@ describe('pin-label stagger follows the view rotation', () => {
     const rot270 = pinNumbers(270, 0.6);
     expect(Math.sign(rot270.runB[0].x - COL_X)).toBe(-Math.sign(rot.runB[0].x - COL_X));
   });
+});
+
+describe('a turn moves staggered labels instead of rebuilding the scene', () => {
+  /** Every pin number and net name with its placement, keyed by kind + text. */
+  function placements(model: { top: LabelRecord[]; bottom: LabelRecord[] }) {
+    const out = new Map<string, [number, number, number]>();
+    for (const l of [...model.top, ...model.bottom]) {
+      if (l.kind !== 'circleNum' && l.kind !== 'circleNet') continue;
+      out.set(`${l.kind}:${l.text}`, [l.x, l.y, l.anchorY]);
+    }
+    return out;
+  }
+  const build = (rotationDeg: number) => buildBoardScene(qfpBoard(), {
+    ...DEFAULTS, textFastMode: true, showPinNumbers: true, showNetNames: true, bgaLabelGapFactor: 0.6,
+  }, undefined, undefined, undefined, rotationDeg).labelModel!;
+
+  for (const [from, to] of [[0, 90], [0, 270], [90, 0], [90, 270], [270, 180], [180, 90]] as const) {
+    it(`built at ${from}°, switched to ${to}°, equals a scene built at ${to}°`, () => {
+      const model = build(from);
+      applyRotationLayout(model, rotLayoutKey(to));
+      const got = placements(model), want = placements(build(to));
+      expect(got.size).toBe(want.size);
+      expect(got.size).toBeGreaterThan(20);
+      for (const [k, v] of want) {
+        const g = got.get(k)!;
+        expect(g[0], `${k} x`).toBeCloseTo(v[0], 6);
+        expect(g[1], `${k} y`).toBeCloseTo(v[1], 6);
+        expect(g[2], `${k} anchorY`).toBe(v[2]);
+      }
+    });
+  }
 });
