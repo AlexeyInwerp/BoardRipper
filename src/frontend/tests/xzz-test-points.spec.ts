@@ -29,9 +29,11 @@ test('test points are parts on their net', async ({ page }) => {
       net124: b.parts.filter(p => p.pins.some(q => q.net === 'NET124')).map(p => p.name),
     };
   });
-  expect(r.tps).toBe(538);
+  // 538 records; 42 sit inside a same-net part pin's pad (a copy of that pin,
+  // e.g. on BGA ball N121.AH27) or have no net, and are not drawn twice.
+  expect(r.tps).toBe(496);
   expect(r.nails).toBe(538);   // the status bar's count is kept
-  expect(r.withNet).toBe(530); // the other 8 are NC
+  expect(r.withNet).toBe(490);  // the other 6 are isolated NC pads (8 NC records in all)
   expect(r.net124.some(n => n.startsWith('TP'))).toBe(true);
   expect(r.net124.length).toBeGreaterThanOrEqual(2);
 });

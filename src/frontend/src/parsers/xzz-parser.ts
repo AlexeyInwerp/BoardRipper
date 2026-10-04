@@ -611,6 +611,8 @@ interface PinData {
   /** Pad shape from the 1-byte code at (28 + nameLen + 8): 0x01 = round (BGA),
    *  0x02 = rect (SMD). Unknown codes fall through to 'rect'. */
   padShape: 'round' | 'rect';
+  /** A reading the record itself carries (top-level test pads only). */
+  diode?: DiodeReading;
 }
 /** Structural subset of PinData used by normalizeOblongPads (exported for tests). */
 export interface OblongPinLike {
@@ -751,6 +753,8 @@ interface PartData {
   /** BOM value ("22uF", "100K") when the exporter wrote one into a body
    *  label sub-block. See readLabelSubBlock / parsePartBlock. */
   value?: string;
+  /** Made from a top-level 0x09 test pad, not a part block. */
+  testPoint?: boolean;
 }
 
 /** Longest string still plausible as a BOM value. Anything longer is a sign
@@ -992,6 +996,8 @@ export interface TestPadData {
    *  record — the same fields a part's pin sub-block carries. */
   name: string; drill: number; padAngleDeg: number;
   padW: number; padH: number; padShape: 'round' | 'rect';
+  /** The optional trailing `u32 len, char reading[len]` (`OL`, `375`). */
+  reading?: DiodeReading;
   /** Set by the board-pack pass, like PartData.boardIndex. */
   boardIndex?: number;
 }
@@ -1021,7 +1027,17 @@ export function parseTestPadBlock(data: Uint8Array): TestPadData | null {
   }
   ptr += 27 + 5; // three (w, h, shape) pad records + terminator
   const netIndex = ptr + 4 <= data.length ? ru32(data, ptr) : 0;
-  return { x, y, netIndex, name, drill, padAngleDeg, padW, padH, padShape };
+  ptr += 4;
+  // Optional reading after the net index (XZZ_FORMAT.md: e.g. `OL`, `375` on
+  // Y93-PD1818 YiDianTong). Same value grammar as the tail's diode records.
+  let reading: DiodeReading | undefined;
+  if (ptr + 4 <= data.length) {
+    const len = ru32(data, ptr);
+    if (len > 0 && len <= 64 && ptr + 4 + len <= data.length) {
+      reading = classifyXzzDiode(rstr(data, ptr + 4, len)) ?? undefined;
+    }
+  }
+  return { x, y, netIndex, name, drill, padAngleDeg, padW, padH, padShape, ...(reading ? { reading } : {}) };
 }
 
 interface ViaData { x: number; y: number; outer: number; netIndex: number; mirrored?: boolean; }
@@ -2637,14 +2653,62 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   // Name: "TP" + the record's pad number; the pad number alone ("76") would
   // read as a part name and can collide with one. Pad numbers repeat on some
   // files (five "1"s on iPadAir3 820-01531), so repeats get a suffix.
+  //
+  // Some deliveries write a 0x09 record on top of pins that already exist as
+  // part pins (iPhone13ProMax BB Boardview: 5,401 net-less records, every one
+  // on a real pin; iPhoneSE2 PCB layer: 1,913 on a same-net pin). As parts
+  // they double-draw the pin, inflate net pin counts and win the click
+  // (smallest-area ranking). A record within half its pad (≥ 1.5 mil) of a
+  // part pin whose net it shares, or that has no net, is that pin's copy and
+  // is not emitted; it still counts as a nail.
+  const noNet = (idx: number) => {
+    const n = netDict.get(idx) ?? '';
+    return n === '' || n === 'NC' || n === 'UNCONNECTED';
+  };
+  const CELL = 20;
+  const pinGrid = new Map<string, Array<{ x: number; y: number; netIndex: number }>>();
+  for (const pd of partDataList) for (const p of pd.pins) {
+    const k = `${Math.floor(p.x / CELL)},${Math.floor(p.y / CELL)}`;
+    let b = pinGrid.get(k); if (!b) pinGrid.set(k, b = []);
+    b.push(p);
+  }
+  const copiesPin = (tp: TestPadData): boolean => {
+    const tol = Math.max(1.5, Math.min(tp.padW || 0, tp.padH || 0) / 2);
+    const cx = Math.floor(tp.x / CELL), cy = Math.floor(tp.y / CELL);
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+      for (const p of pinGrid.get(`${cx + dx},${cy + dy}`) ?? []) {
+        if (Math.hypot(p.x - tp.x, p.y - tp.y) > tol) continue;
+        if (p.netIndex === tp.netIndex || noNet(tp.netIndex)) return true;
+      }
+    }
+    return false;
+  };
+  const standalone = testPads.filter(tp => !copiesPin(tp));
+  if (standalone.length < testPads.length) {
+    log.parser.log(`(pcb test points) ${testPads.length - standalone.length} of ${testPads.length} sit on an existing pin — not drawn as parts`);
+  }
+  // Test points are judged for placeholder pad geometry on their own: part
+  // pads can be placeholders on a file whose test pads carry real sizes.
+  let tpGeom: TestPadData | undefined, tpUniform = true, tpGeomCount = 0;
+  for (const tp of standalone) {
+    if (tp.padW <= 0 || tp.padH <= 0) continue;
+    tpGeomCount++;
+    if (!tpGeom) { tpGeom = tp; continue; }
+    if (tp.padW !== tpGeom.padW || tp.padH !== tpGeom.padH || tp.padShape !== tpGeom.padShape || tp.padAngleDeg !== tpGeom.padAngleDeg) { tpUniform = false; break; }
+  }
+  const tpPlaceholderGeom = tpUniform && tpGeomCount >= 100 && tpGeom !== undefined
+    && tpGeom.padShape === 'round' && tpGeom.padW === tpGeom.padH && tpGeom.padW <= 15;
+
   const tpSeen = new Map<string, number>();
-  const testPointParts: PartData[] = testPads.map((tp, i) => {
+  const testPointParts: PartData[] = standalone.map((tp, i) => {
     const base = `TP${tp.name || i + 1}`;
     const n = (tpSeen.get(base) ?? 0) + 1; tpSeen.set(base, n);
     return { name: n === 1 ? base : `${base}-${n}`, side: tp.side ?? 'top', groupName: '', silkLines: [],
     ...(tp.boardIndex !== undefined ? { boardIndex: tp.boardIndex } : {}),
+    testPoint: true,
     pins: [{ name: '1', x: tp.x, y: tp.y, netIndex: tp.netIndex, drill: tp.drill,
-      padW: tp.padW, padH: tp.padH, padAngleDeg: tp.padAngleDeg, padShape: tp.padShape }],
+      padW: tp.padW, padH: tp.padH, padAngleDeg: tp.padAngleDeg, padShape: tp.padShape,
+      ...(tp.reading ? { diode: tp.reading } : {}) }],
     };
   });
 
@@ -2658,7 +2722,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       // sprite) instead of a generic circle. Mirrors the Pad emission below;
       // also stops the pin-circle peeking out from under the copper overlay
       // when "Show pads" is on (the doubling fix).
-      const hasGeom = !placeholderPadGeom && p.padW > 0 && p.padH > 0;
+      const hasGeom = !(pd.testPoint ? tpPlaceholderGeom : placeholderPadGeom) && p.padW > 0 && p.padH > 0;
       const r = hasGeom ? Math.max(0.5, Math.min(p.padW, p.padH) / 2) : 8;
       const halfW = p.padW / 2, halfH = p.padH / 2;
       const a = (p.padAngleDeg % 360) * Math.PI / 180;
@@ -2676,6 +2740,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         // the 1-based index when the file carries no name.
         name: '', number: p.name || String(i + 1),
         position: { x: p.x, y: p.y }, radius: r, side: pd.side, net,
+        ...(p.diode ? { diode: p.diode } : {}),
         ...(p.drill > 0 ? { drill: p.drill } : {}),
         ...(padBounds ? { padBounds } : {}),
         ...(hasGeom ? {

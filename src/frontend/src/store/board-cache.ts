@@ -123,7 +123,10 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 // 101: XZZ top-level test points (0x09) become single-pin parts named TP<n>,
 //     so they draw, select and join their net; legacy-folded boards now
 //     mirror them onto the bottom side.
-const PARSER_VERSION = 101;
+// 102: XZZ test points that copy a part pin (same net or no net, inside its
+//     pad) are not emitted; test points read their own reading and are judged
+//     for placeholder pad geometry separately from part pins.
+const PARSER_VERSION = 102;
 
 interface CachedBoard {
   key: string;

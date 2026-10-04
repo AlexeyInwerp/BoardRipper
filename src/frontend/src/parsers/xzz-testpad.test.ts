@@ -44,4 +44,14 @@ describe('parseTestPadBlock', () => {
       name: '76', padW: 20, padH: 20, padShape: 'round', drill: 0,
     });
   });
+
+  it('reads the trailing reading as a diode value', () => {
+    expect(parseTestPadBlock(testPad(955, 'OL'))?.reading).toMatchObject({ kind: 'open' });
+    expect(parseTestPadBlock(testPad(955, '375'))?.reading).toMatchObject({ kind: 'value', mv: 375 });
+  });
+
+  it('has no reading when the section is absent or empty', () => {
+    expect(parseTestPadBlock(testPad(955))?.reading).toBeUndefined();
+    expect(parseTestPadBlock(testPad(955, ''))?.reading).toBeUndefined();
+  });
 });
