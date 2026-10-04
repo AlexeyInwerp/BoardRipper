@@ -9710,3 +9710,6 @@ body {
 .bn-glossary-text { padding-left: 2px; color: var(--text-primary); }
 .bn-offboard { font-family: monospace; font-size: 10px; color: var(--text-secondary); }
 .bn-empty { color: var(--text-secondary); padding: 6px 2px; }
+
+/* Whole-app fallback (RootErrorBoundary.tsx): fills the window, same look as a panel's. */
+.root-error-boundary { position: fixed; inset: 0; background: var(--bg-primary); }

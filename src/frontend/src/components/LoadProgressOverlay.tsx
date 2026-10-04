@@ -117,8 +117,8 @@ export function LoadProgressOverlay() {
           {failed ? '✕ Load failed' : '⟳ Loading board'}
         </h3>
         <div style={{ color: '#bbb', marginBottom: '0.25rem', wordBreak: 'break-all' }}>
-          <code style={{ fontSize: '11px' }}>{state.fileName ?? ''}</code>
-          {state.fileSize != null && state.fileSize > 0 ? ` — ${fmtBytes(state.fileSize)}` : ''}
+          <code style={{ fontSize: '11px' }} translate="no">{state.fileName ?? ''}</code>
+          <span>{state.fileSize != null && state.fileSize > 0 ? ` — ${fmtBytes(state.fileSize)}` : ''}</span>
         </div>
         <div style={{ color: '#888', marginBottom: '0.5rem' }}>Elapsed: {fmtMs(total)}</div>
 
@@ -130,9 +130,14 @@ export function LoadProgressOverlay() {
             }}>
               <span style={{ display: 'inline-block', width: '1.25rem' }}>{phaseIcon(p)}</span>
               <strong>{p.name}</strong>
-              {p.detail ? ` — ${p.detail}` : ''}
-              {p.status === 'done' && p.elapsedMs != null ? ` (${fmtMs(p.elapsedMs)})` : ''}
-              {p.status === 'running' ? ` (${fmtMs(performance.now() - p.startedAt)})` : ''}
+              {/* One element per run: a phase going from running to done
+                  swapped one text node for another next to a translated one
+                  (issue #36 — this overlay has no error boundary). */}
+              <span>{p.detail ? ` — ${p.detail}` : ''}</span>
+              <span>{
+                p.status === 'done' && p.elapsedMs != null ? ` (${fmtMs(p.elapsedMs)})`
+                  : p.status === 'running' ? ` (${fmtMs(performance.now() - p.startedAt)})` : ''
+              }</span>
             </li>
           ))}
         </ol>

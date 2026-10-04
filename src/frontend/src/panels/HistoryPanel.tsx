@@ -236,7 +236,7 @@ export function HistoryPanel() {
 
       {entries.length > 0 && (
         <div className="hist-foot">
-          <span className="hist-foot-n">{entries.length} visit{entries.length === 1 ? '' : 's'}{cursorIndex >= 0 ? ` · at ${cursorIndex + 1}` : ''}</span>
+          <span className="hist-foot-n">{`${entries.length} visit${entries.length === 1 ? '' : 's'}${cursorIndex >= 0 ? ` · at ${cursorIndex + 1}` : ''}`}</span>
           <button type="button" className="hist-foot-btn" onClick={() => setConfirmClear(true)} data-testid="history-clear">Clear</button>
         </div>
       )}

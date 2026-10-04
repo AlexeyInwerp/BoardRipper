@@ -394,7 +394,7 @@ function App() {
         <div className="toast-container">
           {toasts.map(t => (
             <div key={t.id} className={`toast toast-${t.type}`} onClick={() => boardStore.dismissToast(t.id)}>
-              {t.message}
+              <span>{t.message}</span>
               {t.action && (
                 <button
                   className="toast-action"

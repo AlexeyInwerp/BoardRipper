@@ -12,8 +12,11 @@ export function StatusBar() {
     <div className="statusbar" data-testid="statusbar">
       {board ? (
         <>
-          <span title="Board file format">
-            {board.format}{board.formatVersion ? ` (${board.formatVersion})` : ''}
+          {/* One string, not two text nodes: switching tabs removed the
+              version node beside a translated format name and React threw,
+              which unmounted the whole app (issue #36). A format is a name. */}
+          <span title="Board file format" translate="no">
+            {board.formatVersion ? `${board.format} (${board.formatVersion})` : board.format}
           </span>
           <span className="statusbar-sep">|</span>
           <span title="BoardRipper version">v{__APP_VERSION__}</span>

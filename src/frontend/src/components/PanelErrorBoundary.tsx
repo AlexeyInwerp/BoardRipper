@@ -49,8 +49,7 @@ export class PanelErrorBoundary extends Component<
         <div className="panel-error-boundary" data-testid="panel-error-boundary">
           <div className="panel-error-title">This panel crashed</div>
           <div className="panel-error-message">
-            {this.props.label ? `${this.props.label}: ` : ''}
-            {this.state.error.message || 'An unexpected error occurred while rendering this panel.'}
+            {`${this.props.label ? `${this.props.label}: ` : ''}${this.state.error.message || 'An unexpected error occurred while rendering this panel.'}`}
           </div>
           <button className="panel-error-reset" onClick={this.reset}>
             Reload panel
