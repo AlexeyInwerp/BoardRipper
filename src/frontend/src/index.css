@@ -9685,3 +9685,28 @@ body {
   justify-content: center;
 }
 .slide-guide-close:hover { background: rgba(255, 255, 255, 0.08); color: var(--text-primary); }
+
+/* ── Board sidebar ▸ Notes (BoardNotesTab.tsx) ───────────────────────────
+   Board knowledge from every source; today an XZZ file's repair tables,
+   loose notes and net glossary. Theme tokens only. */
+.bn { padding: 8px 10px 16px; font-size: 11px; line-height: 1.45; color: var(--text-primary); }
+.bn-source + .bn-source { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border); }
+.bn-source-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary); margin-bottom: 6px; }
+.bn-net-card { border: 1px solid var(--accent); border-radius: 4px; padding: 6px 8px; margin-bottom: 10px; background: var(--bg-secondary); }
+.bn-net-card-name { margin-bottom: 3px; }
+.bn-net-card-text { color: var(--text-primary); }
+.bn-table { width: 100%; border-collapse: collapse; table-layout: fixed; margin-bottom: 10px; }
+.bn-table caption { caption-side: top; text-align: left; font-weight: 600; padding: 2px 0 4px; }
+.bn-table th, .bn-table td { border: 1px solid var(--border); padding: 3px 5px; vertical-align: top; overflow-wrap: anywhere; }
+.bn-table th { background: var(--bg-tertiary); text-align: left; font-weight: 600; }
+.bn-block { margin-top: 8px; }
+.bn-block > summary { cursor: pointer; color: var(--text-secondary); padding: 2px 0; }
+.bn-block > summary:hover { color: var(--text-primary); }
+.bn-notes { margin: 4px 0; padding-left: 16px; }
+.bn-notes li { margin-bottom: 2px; }
+.bn-filter { width: 100%; box-sizing: border-box; margin: 6px 0; padding: 4px 6px; font-size: 11px; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 3px; }
+.bn-glossary-row { padding: 4px 2px; border-bottom: 1px solid var(--border); }
+.bn-glossary-net { overflow-wrap: anywhere; }
+.bn-glossary-text { padding-left: 2px; color: var(--text-primary); }
+.bn-offboard { font-family: monospace; font-size: 10px; color: var(--text-secondary); }
+.bn-empty { color: var(--text-secondary); padding: 6px 2px; }

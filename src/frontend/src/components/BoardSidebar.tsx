@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import {
   IconPin, IconPinFilled, IconChevronRight, IconChevronDown,
-  IconInfoCircle, IconStack2, IconEye, IconSearch, IconVersions, IconChecklist,
+  IconInfoCircle, IconStack2, IconEye, IconSearch, IconVersions, IconChecklist, IconBook2,
 } from '@tabler/icons-react';
 import { IconHistory } from '@tabler/icons-react';
 import { useBoardStore } from '../hooks/useBoardStore';
@@ -17,11 +17,13 @@ import { obdBoardNumberFor } from '../store/obd-store';
 import { boardHasDiodeData, diodeMode, cycleDiodeMode, diodeModeTitle } from '../store/diode-readings';
 import { ComponentInfoBody } from './ComponentInfoBody';
 import { WorklistPanel } from '../panels/WorklistPanel';
+import { BoardNotesTab } from './BoardNotesTab';
+import { boardKnowledge } from '../store/board-knowledge';
 import { bomReasonLabel, type BoardData, type Part } from '../parsers';
 import { pinDisplayId } from '../parsers/types';
 import { setActiveSearchInput, getActiveSearchInput } from './BoardSidebar.utils';
 
-type SidebarTab = 'layers' | 'info' | 'search' | 'revisions' | 'worklist';
+type SidebarTab = 'layers' | 'info' | 'search' | 'revisions' | 'worklist' | 'notes';
 
 const EMPTY_GHOST_SWAPS: ReadonlySet<string> = new Set();
 const EMPTY_BOM_SELECTIONS: ReadonlyMap<string, string> = new Map();
@@ -82,6 +84,9 @@ export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied }: Boa
   const hasGhosts = (board?.ghosts?.length ?? 0) > 0;
   const hasBomClusters = (board?.bomClusters?.length ?? 0) > 0;
   const showRevisionsTab = hasRevisions || hasGhosts || hasBomClusters;
+  // Notes appears only when a knowledge source has something for this board
+  // (today: an XZZ file's repair tables, notes or net glossary).
+  const showNotesTab = boardKnowledge(board).count > 0;
   // LayersTab hosts ALL visibility toggles (Traces, Vias, Silkscreen, Pads,
   // etc.) and not just the per-layer rows. Previously the entire tab was
   // hidden when layerStates was empty (single-layer XZZ / BRD), leaving
@@ -127,11 +132,11 @@ export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied }: Boa
   useEffect(() => {
     // Layers/View tab is always available now; only fall back from
     // Revisions when that tab goes away.
-    if (activeTab === 'revisions' && !showRevisionsTab) {
+    if ((activeTab === 'revisions' && !showRevisionsTab) || (activeTab === 'notes' && !showNotesTab)) {
       const frame = requestAnimationFrame(() => setActiveTab('info'));
       return () => cancelAnimationFrame(frame);
     }
-  }, [activeTab, showRevisionsTab, hasLayers]);
+  }, [activeTab, showRevisionsTab, showNotesTab, hasLayers]);
 
   // Drag-to-resize for the right-anchored overlay sidebar: dragging the left
   // handle leftward widens it. Width persists to localStorage. Mirrors the
@@ -228,6 +233,18 @@ export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied }: Boa
               {(hasGhosts || hasBomClusters) && <span className="tab-badge">!</span>}
             </button>
           )}
+          {showNotesTab && (
+            <button
+              className={`library-tab icon-tab ${activeTab === 'notes' ? 'active' : ''}`}
+              data-board-tab="notes"
+              onClick={() => pickTab('notes')}
+              aria-label="Notes"
+              data-title="Board notes"
+            >
+              <IconBook2 size={16} />
+              {activeTab === 'notes' && <span className="icon-tab-caption">Notes</span>}
+            </button>
+          )}
           <button
             className={`library-tab icon-tab ${activeTab === 'worklist' ? 'active' : ''}`}
             data-board-tab="worklist"
@@ -246,6 +263,7 @@ export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied }: Boa
         {activeTab === 'search' && <SearchTab tabId={tabId} />}
         {activeTab === 'revisions' && showRevisionsTab && <RevisionsTab tabId={tabId} />}
         {activeTab === 'worklist' && <WorklistPanel />}
+        {activeTab === 'notes' && showNotesTab && <NotesTab tabId={tabId} />}
       </div>
     </div>
   );
@@ -661,6 +679,13 @@ function LayersTab({ tabId }: { tabId: number }) {
       </div>
     </div>
   );
+}
+
+function NotesTab({ tabId }: { tabId: number }) {
+  const { tabs } = useBoardStore();
+  const tab = tabs.find(t => t.id === tabId);
+  if (!tab?.board) return <div className="panel-empty">No board loaded</div>;
+  return <BoardNotesTab board={tab.board} highlightedNet={tab.selection?.highlightedNet ?? null} />;
 }
 
 function InfoTab({ tabId }: { tabId: number }) {
