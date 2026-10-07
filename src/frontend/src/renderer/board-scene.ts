@@ -2172,7 +2172,13 @@ export function buildBoardScene(
   }
 
   // Add part containers above pins, triangles, and borders
+  // In text fast mode (the default) a part container has no children — its
+  // one child is the BitmapText name, which the label model replaces — yet
+  // all 3369 of them on a dense Allegro board were tested by the culler and
+  // re-transformed on every frame of a pan (~4 ms a frame at 4× CPU
+  // throttle, 2026-10-06). An empty one is not added at all.
   for (const { container, isBottom } of partQueue) {
+    if (container.children.length === 0) { container.destroy(); continue; }
     (isBottom ? bottomLabelLayer : topLabelLayer).addChild(container);
   }
 

@@ -746,6 +746,13 @@ export class BoardRenderer {
    *  selection blink to decide how many full renders it may afford. */
   private lastRenderMs = 0;
   private perfDisplay = { lod: 0, selection: 0, netLines: 0, gpuRender: 0, frame: 0 };
+  /** Frames that actually drew, for the perf overlay's "what limits the
+   *  frame rate" line: JS time per drawn frame vs the interval between two
+   *  drawn frames. When the interval is much longer than the JS, the time
+   *  goes to the GPU or the compositor — something no JS timer can see, and
+   *  the question an iPad report needs answered first. */
+  private perfDrawn = { n: 0, js: 0, interval: 0, intervalN: 0, lastDrewAt: 0 };
+  private renderedThisTick = false;
   private perfThrottle = 0;
 
   // Elevated labels — persistent BitmapText + background Graphics for selected part/pin
@@ -1165,6 +1172,7 @@ export class BoardRenderer {
         return;
       }
       this.lastRenderMs = performance.now() - renderStart;
+      this.renderedThisTick = true;
       if (perf) this.perfAccum.gpuRender += performance.now() - t0;
       // After rendering a freshly-activated scene, keep rendering for a few more
       // frames so the CullerPlugin re-culls with the now-updated world transforms
@@ -1244,9 +1252,19 @@ export class BoardRenderer {
     if (hdr && this.activeScene) this.syncHdrOverlay(hdr, this.activeScene);
 
     if (perf) {
-      this.perfAccum.frame += performance.now() - frameStart;
+      const now = performance.now();
+      this.perfAccum.frame += now - frameStart;
       this.perfSamples++;
+      if (this.renderedThisTick) {
+        const d = this.perfDrawn;
+        d.n++; d.js += now - frameStart;
+        // Only back-to-back draws measure the frame rate; a draw after an
+        // idle stretch would read as a long frame.
+        if (d.lastDrewAt && frameStart - d.lastDrewAt < 250) { d.interval += frameStart - d.lastDrewAt; d.intervalN++; }
+        d.lastDrewAt = frameStart;
+      }
     }
+    this.renderedThisTick = false;
 
     this.emitViewChange();
 
@@ -2544,13 +2562,28 @@ export class BoardRenderer {
 
     const f = (ms: number) => ms < 0.01 ? '0' : ms.toFixed(2);
     const d = this.perfDisplay;
+    // What limits the frame rate while the board is moving.
+    const dr = this.perfDrawn;
+    let boundLine = '';
+    if (dr.intervalN >= 5) {
+      const js = dr.js / dr.n, iv = dr.interval / dr.intervalN;
+      const verdict = iv < 20 ? 'keeping up'
+        : js > iv * 0.6 ? 'CPU-bound (JS)'
+        : 'GPU/compositor-bound';
+      boundLine = `\nmoving: ${Math.round(1000 / iv)} fps · js ${js.toFixed(1)} of ${iv.toFixed(1)} ms → ${verdict}`;
+    }
+    this.perfDrawn = { n: 0, js: 0, interval: 0, intervalN: 0, lastDrewAt: dr.lastDrewAt };
+    const rr = this.app.renderer as unknown as { name?: string; resolution: number };
+    const s = renderSettingsStore.settings;
+    const setupLine = `\n${rr.name ?? '?'} · ${rr.resolution}× · ${s.boardAntialiasing ? 'MSAA' : 'no MSAA'} · ` +
+      `cap ${this.app.ticker.maxFPS || 'none'} · corners ${s.traceCorners}`;
     this.perfOverlayEl.textContent =
       `frame: ${f(d.frame)}ms` +
       ` | lod: ${f(d.lod)}ms` +
       ` | sel: ${f(d.selection)}ms` +
       ` | net: ${f(d.netLines)}ms` +
-      ` | gpu: ${f(d.gpuRender)}ms` +
-      labelLine;
+      ` | render (CPU): ${f(d.gpuRender)}ms` +
+      labelLine + boundLine + setupLine;
     this.perfOverlayEl.style.display = '';
   }
 

@@ -162,6 +162,26 @@ test('iPad-class frame cost on a dense board', async ({ page }) => {
       walk(r.app.stage, '', 0);
       return out;
     });
+    const census = await page.evaluate(() => {
+      const r = (window as any).__boardRenderer;
+      const c: Record<string, number> = { total: 0, visible: 0, culled: 0, cullable: 0, graphics: 0, batchableGfx: 0, batchableVerts: 0 };
+      const walk = (o: any, vis: boolean) => {
+        c.total++;
+        const v = vis && o.visible !== false && !o.culled;
+        if (v) c.visible++;
+        if (o.culled) c.culled++;
+        if (o.cullable) c.cullable++;
+        if (o.context && v) {
+          c.graphics++;
+          const g = r.app.renderer.graphicsContext.updateGpuContext(o.context);
+          if (g.isBatchable) { c.batchableGfx++; c.batchableVerts += g.geometryData?.vertices?.length ?? 0; }
+        }
+        for (const ch of o.children ?? []) walk(ch, v);
+      };
+      walk(r.app.stage, true);
+      return c;
+    });
+    console.log('census', JSON.stringify(census));
     for (const [k, v] of Object.entries(dump).sort((a, b) => b[1].idx - a[1].idx).slice(0, 25)) console.log(`${String(v.idx).padStart(9)} idx  ${String(v.n).padStart(6)} gfx  ${k}`);
   }
   const isChromium = page.context().browser()?.browserType().name() === 'chromium';
@@ -182,7 +202,22 @@ test('iPad-class frame cost on a dense board', async ({ page }) => {
       await zoomTo(k);
       await page.waitForTimeout(1500);
       await cdp.send('Emulation.setCPUThrottlingRate', { rate: THROTTLE });
+      if (process.env.PERF_PROFILE) { await cdp.send('Profiler.enable'); await cdp.send('Profiler.setSamplingInterval', { interval: 200 }); await cdp.send('Profiler.start'); }
       const pan = await phase(page, 'pan', 90);
+      if (process.env.PERF_PROFILE) {
+        const { profile } = await (cdp as any).send('Profiler.stop');
+        const byId = new Map<number, any>(profile.nodes.map((n: any) => [n.id, n]));
+        const self = new Map<string, number>();
+        const dt = profile.timeDeltas as number[];
+        profile.samples.forEach((id: number, i: number) => {
+          const n = byId.get(id); const cf = n.callFrame;
+          const k = `${cf.functionName || '(anon)'} ${cf.url.split('/').pop()?.split('?')[0]}:${cf.lineNumber}`;
+          self.set(k, (self.get(k) ?? 0) + (dt[i] ?? 0) / 1000);
+        });
+        const top = [...self.entries()].filter(([k]) => !k.startsWith('(idle)') && !k.startsWith('(program)')).sort((a, b) => b[1] - a[1]).slice(0, 18);
+        console.log(`profile ${label}:\n` + top.map(([k, v]) => `  ${v.toFixed(0).padStart(6)} ms  ${k}`).join('\n'));
+      }
+      if (cfg.set.showPerfOverlay) console.log('overlay:', (await page.locator('.board-perf-overlay').first().textContent())?.replace(/\n/g, ' ⏎ '));
       const zoom = await phase(page, 'zoom', 80);
       await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
       await zoomTo(k);
