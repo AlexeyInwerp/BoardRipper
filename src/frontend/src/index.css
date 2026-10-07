@@ -7678,6 +7678,25 @@ body {
     letter-spacing: 0.05em;
   }
 }
+/* Board quality preset card — same shell as the Interface scale and HDR
+   cards beside it; four equal buttons, the matching preset lit. */
+.home-quality-buttons { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.home-quality-btn {
+  padding: 5px 4px;
+  font-size: 0.82rem;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.home-quality-btn:hover { border-color: var(--accent); }
+.home-quality-btn.active {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+
 /* HDR selection outline card — shares the .ui-scale-full shell with the
    Interface scale card directly above it (both live in .home-ui-scale-row).
    Always rendered; the readout carries the detection result. One row: the
@@ -9839,3 +9858,7 @@ body {
 .library-detail .library-binding-row { padding: 1px 4px; }
 .library-detail .library-history-divider { margin: 2px 0; }
 .library-detail .library-binding-empty { padding: 0 4px; }
+
+/* Board quality preset inside Settings ▸ Performance — the start page's card,
+   given a little room from the rows below. */
+.settings-quality-preset { margin: 2px 0 10px; }

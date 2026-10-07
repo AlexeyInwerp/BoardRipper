@@ -74,4 +74,14 @@ describe('device profile', () => {
     pretend('fine', 2);
     expect(boardMaxFps(true, false)).toBe(60);
   });
+
+  it('applies the user\'s resolution cap on every device, below the touch ceiling', () => {
+    pretend('fine', 2);
+    expect(boardPixelRatio(true, 1)).toBe(1);
+    expect(boardPixelRatio(true, 0)).toBe(2);
+    pretend('coarse', 2);
+    expect(boardPixelRatio(true, 1)).toBe(1);
+    expect(boardPixelRatio(true, 1.75)).toBe(1.5);
+    expect(boardPixelRatio(false, 1.75)).toBe(1.75);
+  });
 });

@@ -54,11 +54,14 @@ export function isTouchPrimary(): boolean {
  *  cuts the fragment count by 44 % against the panel's native 2×. */
 export const TOUCH_MAX_PIXEL_RATIO = 1.5;
 
-/** Resolution to hand `Application.init({ resolution })`. */
-export function boardPixelRatio(touchPerfMode: boolean): number {
-  const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
-  if (touchPerfMode && isTouchPrimary()) return Math.min(dpr, TOUCH_MAX_PIXEL_RATIO);
-  return dpr;
+/** Resolution to hand `Application.init({ resolution })`. `cap` is the
+ *  user's own ceiling (`boardResolutionCap`, set by the quality preset);
+ *  0 = none. It applies on every device, the touch ceiling only on a tablet. */
+export function boardPixelRatio(touchPerfMode: boolean, cap = 0): number {
+  let r = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+  if (touchPerfMode && isTouchPrimary()) r = Math.min(r, TOUCH_MAX_PIXEL_RATIO);
+  if (cap > 0) r = Math.min(r, cap);
+  return r;
 }
 
 /** Whether to ask for a multisampled default framebuffer. Always — the touch

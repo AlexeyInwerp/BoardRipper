@@ -270,6 +270,20 @@ export interface RenderSettings {
    *  next opened. */
   boardAntialiasing: boolean;
 
+  /** Ceiling on the WebGL board's render resolution, in device pixels per
+   *  CSS pixel; 0 = no ceiling of its own (the touch profile's 1.5 still
+   *  applies on a tablet). The fragment count goes with its square: 1 draws
+   *  44 % of what 1.5 does. Board text is unaffected — the label overlay has
+   *  its own pixel ratio. Read at `Application.init`; takes effect when a
+   *  board panel is next opened. Set by the quality preset. */
+  boardResolutionCap: number;
+
+  /** How trace bends and ends are stroked. `round` fans a semicircle at
+   *  every bend and end; `simple` bevels the bends and squares the ends,
+   *  about a fifth of the geometry — invisible at overview zoom, square
+   *  corners deep in. Set by the quality preset. */
+  traceCorners: 'round' | 'simple';
+
   /** Show the per-phase frame-time overlay on the board canvas. Same toggle
    *  as the small "i" button at the bottom-left of each board panel. */
   showPerfOverlay: boolean;
@@ -698,6 +712,8 @@ export const DEFAULTS: RenderSettings = {
   cap60Fps: false,
   touchPerformanceMode: true,
   boardAntialiasing: true,
+  boardResolutionCap: 0,
+  traceCorners: 'round',
   showPerfOverlay: false,
 
   circleLabelMinScreenPx: 8,

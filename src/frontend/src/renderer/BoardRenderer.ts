@@ -1591,7 +1591,7 @@ export class BoardRenderer {
         width: this.containerEl.clientWidth || 1,
         height: this.containerEl.clientHeight || 1,
         antialias: boardAntialias(renderSettingsStore.settings.touchPerformanceMode, renderSettingsStore.settings.boardAntialiasing),
-        resolution: boardPixelRatio(renderSettingsStore.settings.touchPerformanceMode),
+        resolution: boardPixelRatio(renderSettingsStore.settings.touchPerformanceMode, renderSettingsStore.settings.boardResolutionCap),
         autoDensity: true,
         powerPreference: 'high-performance',
         ...(RENDERER_PREFERENCE ? { preference: RENDERER_PREFERENCE } : {}),
@@ -1769,7 +1769,7 @@ export class BoardRenderer {
       width: this.containerEl.clientWidth,
       height: this.containerEl.clientHeight,
       antialias: boardAntialias(renderSettingsStore.settings.touchPerformanceMode, renderSettingsStore.settings.boardAntialiasing),
-      resolution: boardPixelRatio(renderSettingsStore.settings.touchPerformanceMode),
+      resolution: boardPixelRatio(renderSettingsStore.settings.touchPerformanceMode, renderSettingsStore.settings.boardResolutionCap),
       autoDensity: true,
       powerPreference: 'high-performance',
       ...(RENDERER_PREFERENCE ? { preference: RENDERER_PREFERENCE } : {}),
@@ -4913,6 +4913,16 @@ export class BoardRenderer {
       if (this.app?.ticker && this.app.ticker.maxFPS !== targetMax) {
         this.app.ticker.maxFPS = targetMax;
       }
+      // Live-sync the render resolution (quality preset / touch profile).
+      // PixiJS v8 resizes the backing store on assignment; MSAA, by
+      // contrast, is fixed at context creation and waits for the next panel.
+      const targetRes = boardPixelRatio(cur.touchPerformanceMode, cur.boardResolutionCap);
+      if (this.app?.renderer && this.app.renderer.resolution !== targetRes) {
+        this.app.renderer.resolution = targetRes;
+        this.overlayDirty = true;
+        this.overlayContentDirty = true;
+        this.needsRender = true;
+      }
 
       // Live-sync perf overlay — single source of truth lives in the setting,
       // both the canvas "i" button and the Settings checkbox flow through here.
@@ -4936,6 +4946,9 @@ export class BoardRenderer {
       const INTERACTION_ONLY = new Set<string>([
         'twoFingerPan', 'wheelShiftAction', 'wheelMetaAction', 'wheelDetection', 'wheelSmooth', 'disableInertia', 'dragToZoom',
         'cap60Fps', 'showPerfOverlay', 'smoothZoom',
+        // Live-synced above (resolution) or read only at Application.init
+        // (MSAA): neither changes a single vertex of the scene.
+        'touchPerformanceMode', 'boardResolutionCap', 'boardAntialiasing',
         // Overlay-only: read at label-overlay draw time (OverlayThresholds), so
         // a change needs an overlay repaint, NOT a scene rebuild. Rebuilding on
         // this needlessly redraws all geometry (and can hit the vertex ceiling

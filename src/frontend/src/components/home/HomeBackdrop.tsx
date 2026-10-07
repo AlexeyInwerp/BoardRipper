@@ -12,6 +12,7 @@ import { renderSettingsStore, type RenderSettings } from '../../store/render-set
 import { themeStore, ACCENT_PRESETS } from '../../store/themes';
 import { isHdrCapable, onHdrCapabilityChange, rungForIntensity } from '../../renderer/hdr-selection-outline';
 import { InterfaceScaleSlider } from '../InterfaceScaleSlider';
+import { QualityPresetCard } from '../QualityPresetCard';
 import { FolderLibraryOpenButton } from '../FolderLibraryControls';
 import { ReleaseNotes } from '../ReleaseNotes';
 import {
@@ -1151,6 +1152,7 @@ export function HomeBackdrop() {
           <Banner />
           <div className="home-ui-scale-row">
             <InterfaceScaleSlider />
+            <QualityPresetCard />
             <HdrGlowCard />
           </div>
           {isLiteBuild() && <LiteOpenCard />}

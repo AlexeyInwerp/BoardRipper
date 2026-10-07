@@ -171,6 +171,97 @@ function chainTraceSegments(traces: { start: Point; end: Point }[]): Point[][] {
   return polylines;
 }
 
+/** Traces per cull tile, roughly. Below this a board keeps one Graphics per
+ *  layer — the tiles' extra draw calls would cost more than culling saves. */
+const TRACE_TILE_TARGET = 1000;
+
+/** Stroke a layer's traces into a grid of cullable tiles.
+ *
+ *  A trace layer used to be ONE Graphics, so the culler could never skip any
+ *  of it: on a 39k-trace Allegro board that is 2.35 M indices through the GPU
+ *  every frame, and still all of them at 16× zoom where a tenth is on screen
+ *  (measured 2026-10-06, the A12Z iPad's 20–30 fps). Chaining stays global,
+ *  so no polyline is cut at a tile border (a cut would add two overlapping
+ *  caps — a darker dot at alpha 0.85); each whole polyline goes to the tile
+ *  holding its bbox centre, and each tile's cullArea is the union of what it
+ *  actually holds, padded by the stroke, so a long trace leaving its tile is
+ *  never culled while visible.
+ *
+ *  `simple` corners stroke with bevel joins and square caps: ~2 triangles a
+ *  segment instead of a round fan at every bend and end — about a fifth of
+ *  the geometry. Indistinguishable at overview zoom; square corners show only
+ *  deep in. The quality preset's "Fast" picks it. */
+function strokeTraceTiles(
+  parent: Container,
+  traces: readonly { start: Point; end: Point; width: number }[],
+  color: number,
+  simple: boolean,
+): void {
+  const byWidth = new Map<number, { start: Point; end: Point; width: number }[]>();
+  for (const t of traces) {
+    let arr = byWidth.get(t.width);
+    if (!arr) { arr = []; byWidth.set(t.width, arr); }
+    arr.push(t);
+  }
+  type Chain = { pts: Point[]; w: number; minX: number; minY: number; maxX: number; maxY: number };
+  const chains: Chain[] = [];
+  let gMinX = Infinity, gMinY = Infinity, gMaxX = -Infinity, gMaxY = -Infinity;
+  for (const [width, group] of byWidth) {
+    const w = Math.min(width, MAX_TRACE_WIDTH);
+    for (const pts of chainTraceSegments(group)) {
+      if (pts.length < 2) continue;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const p of pts) {
+        if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+      }
+      chains.push({ pts, w, minX, minY, maxX, maxY });
+      if (minX < gMinX) gMinX = minX; if (maxX > gMaxX) gMaxX = maxX;
+      if (minY < gMinY) gMinY = minY; if (maxY > gMaxY) gMaxY = maxY;
+    }
+  }
+  if (chains.length === 0) return;
+  const n = Math.max(1, Math.min(12, Math.round(Math.sqrt(traces.length / TRACE_TILE_TARGET))));
+  const cw = (gMaxX - gMinX) / n || 1, ch = (gMaxY - gMinY) / n || 1;
+  const tiles = new Map<number, Chain[]>();
+  for (const c of chains) {
+    const tx = Math.min(n - 1, Math.max(0, Math.floor(((c.minX + c.maxX) / 2 - gMinX) / cw)));
+    const ty = Math.min(n - 1, Math.max(0, Math.floor(((c.minY + c.maxY) / 2 - gMinY) / ch)));
+    const k = ty * n + tx;
+    let arr = tiles.get(k);
+    if (!arr) { arr = []; tiles.set(k, arr); }
+    arr.push(c);
+  }
+  const join = simple ? 'bevel' : 'round';
+  const cap = simple ? 'square' : 'round';
+  for (const tile of tiles.values()) {
+    const gfx = new Graphics();
+    // Stroke per width, in first-seen order — the same batching as before.
+    const byW = new Map<number, Chain[]>();
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, pad = 0;
+    for (const c of tile) {
+      let arr = byW.get(c.w);
+      if (!arr) { arr = []; byW.set(c.w, arr); }
+      arr.push(c);
+      if (c.minX < minX) minX = c.minX; if (c.maxX > maxX) maxX = c.maxX;
+      if (c.minY < minY) minY = c.minY; if (c.maxY > maxY) maxY = c.maxY;
+      if (c.w > pad) pad = c.w;
+    }
+    for (const [w, group] of byW) {
+      for (const c of group) {
+        gfx.moveTo(c.pts[0].x, c.pts[0].y);
+        for (let i = 1; i < c.pts.length; i++) gfx.lineTo(c.pts[i].x, c.pts[i].y);
+      }
+      gfx.stroke({ width: w, color, alpha: 0.85, join, cap });
+    }
+    if (n > 1) {
+      gfx.cullable = true;
+      gfx.cullArea = new Rectangle(minX - pad, minY - pad, maxX - minX + 2 * pad, maxY - minY + 2 * pad);
+    }
+    parent.addChild(gfx);
+  }
+}
+
 /** Lay down a pad's geometry on a Graphics using its actual shape. Used by
  *  the pad-layer rendering and by the pin-selection highlight so both reads
  *  the same primitive (a round D-code becomes a circle, not a square AABB).
@@ -950,27 +1041,11 @@ export function buildBoardScene(
       for (const [layerIdx, layerTraces] of byLayer) {
         const layerContainer = new Container();
         layerContainer.label = `trace-layer-${layerIdx}`;
-        const gfx = new Graphics();
-        // Group by width for batched strokes
-        const byWidth = new Map<number, typeof layerTraces>();
-        for (const t of layerTraces) {
-          let arr = byWidth.get(t.width);
-          if (!arr) { arr = []; byWidth.set(t.width, arr); }
-          arr.push(t);
-        }
         // Use palette color for this layer
         const layerColor = board.layerNames && layerIdx < board.layerNames.length
           ? DEFAULT_LAYER_PALETTE[layerIdx % DEFAULT_LAYER_PALETTE.length]
           : 0xcc3333;
-        for (const [width, traces] of byWidth) {
-          for (const polyline of chainTraceSegments(traces)) {
-            if (polyline.length < 2) continue;
-            gfx.moveTo(polyline[0].x, polyline[0].y);
-            for (let i = 1; i < polyline.length; i++) gfx.lineTo(polyline[i].x, polyline[i].y);
-          }
-          gfx.stroke({ width: Math.min(width, MAX_TRACE_WIDTH), color: layerColor, alpha: 0.85, join: 'round', cap: 'round' });
-        }
-        layerContainer.addChild(gfx);
+        strokeTraceTiles(layerContainer, layerTraces, layerColor, s.traceCorners === 'simple');
         traceLayer.addChild(layerContainer);
         // Ensure array is big enough
         while (traceLayerContainers.length <= layerIdx) traceLayerContainers.push(null!);
@@ -980,22 +1055,7 @@ export function buildBoardScene(
     } else {
       // Single-layer: one container with default red
       traceLayer = new Container();
-      const traceGfx = new Graphics();
-      const byWidth = new Map<number, typeof board.traces>();
-      for (const t of board.traces) {
-        let arr = byWidth.get(t.width);
-        if (!arr) { arr = []; byWidth.set(t.width, arr); }
-        arr.push(t);
-      }
-      for (const [width, traces] of byWidth) {
-        for (const polyline of chainTraceSegments(traces)) {
-          if (polyline.length < 2) continue;
-          traceGfx.moveTo(polyline[0].x, polyline[0].y);
-          for (let i = 1; i < polyline.length; i++) traceGfx.lineTo(polyline[i].x, polyline[i].y);
-        }
-        traceGfx.stroke({ width: Math.min(width, MAX_TRACE_WIDTH), color: 0xcc3333, alpha: 0.85, join: 'round', cap: 'round' });
-      }
-      traceLayer.addChild(traceGfx);
+      strokeTraceTiles(traceLayer, board.traces, 0xcc3333, s.traceCorners === 'simple');
       root.addChild(traceLayer);
     }
   }
@@ -1108,12 +1168,39 @@ export function buildBoardScene(
     const topDrillGfx = new Graphics();
     const botDrillGfx = new Graphics();
     let anyDrill = false;
-    const getOrCreate = (m: Map<number, Graphics>, key: number): Graphics => {
+    // Spatial tiles, as for traces: one Graphics per (tile, colour) instead
+    // of per colour, each with a cullArea of what it holds, so a zoomed view
+    // stops sending every pad on the board through the GPU (517 k indices
+    // on a 3369-part Allegro board, all of them at any zoom, before).
+    const padTiles = Math.max(1, Math.min(12, Math.round(Math.sqrt(board.pads.length / 800))));
+    const pbMinX = board.bounds.minX, pbMinY = board.bounds.minY;
+    const ptW = (board.bounds.maxX - pbMinX) / padTiles || 1;
+    const ptH = (board.bounds.maxY - pbMinY) / padTiles || 1;
+    const padGfxBounds = new Map<Graphics, { minX: number; minY: number; maxX: number; maxY: number }>();
+    let curPad: (typeof board.pads)[number] | null = null;
+    let curTile = 0;
+    const getOrCreate = (m: Map<number, Graphics>, color: number): Graphics => {
+      const key = curTile * 0x1000000 + color;
       let g = m.get(key);
       if (!g) { g = new Graphics(); m.set(key, g); }
+      if (padTiles > 1 && curPad) {
+        const b = curPad.bounds;
+        const e = padGfxBounds.get(g);
+        if (!e) padGfxBounds.set(g, { minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY });
+        else {
+          if (b.minX < e.minX) e.minX = b.minX; if (b.maxX > e.maxX) e.maxX = b.maxX;
+          if (b.minY < e.minY) e.minY = b.minY; if (b.maxY > e.maxY) e.maxY = b.maxY;
+        }
+      }
       return g;
     };
     for (const p of board.pads) {
+      curPad = p;
+      if (padTiles > 1) {
+        const tx = Math.min(padTiles - 1, Math.max(0, Math.floor(((p.bounds.minX + p.bounds.maxX) / 2 - pbMinX) / ptW)));
+        const ty = Math.min(padTiles - 1, Math.max(0, Math.floor(((p.bounds.minY + p.bounds.maxY) / 2 - pbMinY) / ptH)));
+        curTile = ty * padTiles + tx;
+      }
       const aabbW = p.bounds.maxX - p.bounds.minX;
       const aabbH = p.bounds.maxY - p.bounds.minY;
       if (aabbW <= 0 || aabbH <= 0) continue;
@@ -1167,10 +1254,19 @@ export function buildBoardScene(
         anyDrill = true;
       }
     }
-    for (const [color, gfx] of topPadByColor)  { gfx.fill({ color, alpha: PAD_ALPHA }); padsTop.addChild(gfx); }
-    for (const [color, gfx] of botPadByColor)  { gfx.fill({ color, alpha: PAD_ALPHA }); padsBottom.addChild(gfx); }
-    for (const [color, gfx] of topDropByColor) { gfx.fill({ color, alpha: DROP_ALPHA }); copperDropsTop.addChild(gfx); }
-    for (const [color, gfx] of botDropByColor) { gfx.fill({ color, alpha: DROP_ALPHA }); copperDropsBottom.addChild(gfx); }
+    const cullPadGfx = (gfx: Graphics): Graphics => {
+      const b = padGfxBounds.get(gfx);
+      if (b) {
+        gfx.cullable = true;
+        gfx.cullArea = new Rectangle(b.minX, b.minY, b.maxX - b.minX, b.maxY - b.minY);
+      }
+      return gfx;
+    };
+    const colorOf = (key: number): number => key % 0x1000000;
+    for (const [key, gfx] of topPadByColor)  { gfx.fill({ color: colorOf(key), alpha: PAD_ALPHA }); padsTop.addChild(cullPadGfx(gfx)); }
+    for (const [key, gfx] of botPadByColor)  { gfx.fill({ color: colorOf(key), alpha: PAD_ALPHA }); padsBottom.addChild(cullPadGfx(gfx)); }
+    for (const [key, gfx] of topDropByColor) { gfx.fill({ color: colorOf(key), alpha: DROP_ALPHA }); copperDropsTop.addChild(cullPadGfx(gfx)); }
+    for (const [key, gfx] of botDropByColor) { gfx.fill({ color: colorOf(key), alpha: DROP_ALPHA }); copperDropsBottom.addChild(cullPadGfx(gfx)); }
     if (anyDrill) {
       topDrillGfx.fill({ color: DRILL_COLOR, alpha: DRILL_ALPHA });
       botDrillGfx.fill({ color: DRILL_COLOR, alpha: DRILL_ALPHA });
