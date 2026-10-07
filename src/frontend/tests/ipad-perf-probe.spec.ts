@@ -31,7 +31,7 @@ const THROTTLE = Number(process.env.PERF_THROTTLE ?? 4);
 test.use({
   viewport: { width: 1194, height: 834 },
   deviceScaleFactor: 2,
-  launchOptions: { args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] },
+  ...(process.env.PERF_WEBKIT ? {} : { launchOptions: { args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] } }),
 });
 
 type Overrides = Record<string, unknown>;
