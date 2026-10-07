@@ -2370,7 +2370,7 @@ export function SettingsPanel() {
         <Slider label="Render resolution limit" value={draft.boardResolutionCap} min={0} max={2} step={0.25} field="boardResolutionCap" onUpdate={updateGlobal} unit="×"
           title="Ceiling on the board's render resolution in device pixels per CSS pixel. 0 = no limit of its own (a tablet still gets the touch profile's 1.5×). 1 draws 44 % of the pixels 1.5 does. Board text is unaffected." />
         <Toggle label="Simple trace corners" value={draft.traceCorners === 'simple'} field="traceCorners"
-          onUpdate={(p) => updateGlobal({ traceCorners: (p.traceCorners === true || p.traceCorners === 'simple') ? 'simple' : 'round' })}
+          onUpdate={(p) => { const v: unknown = p.traceCorners; updateGlobal({ traceCorners: (v === true || v === 'simple') ? 'simple' : 'round' }); }}
           title="Bevelled bends and square ends instead of rounded ones: about half the trace geometry. Invisible when zoomed out; corners look square deep in." />
         <Toggle label="Edge smoothing (MSAA)" value={draft.boardAntialiasing} field="boardAntialiasing" onUpdate={updateGlobal}
           title="Multisampled rendering for the board. Keep it on: thin lines such as the board outline are thinner than a pixel when zoomed out and break into jaggies without it. Turning it off saves GPU work on a machine that cannot afford it. Takes effect when a board panel is next opened." />
