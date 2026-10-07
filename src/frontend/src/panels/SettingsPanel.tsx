@@ -23,7 +23,6 @@ import { InterfaceScaleSlider } from '../components/InterfaceScaleSlider';
 import { SidebarNavSwitch } from '../components/SidebarNavSwitch';
 import type { MockupSectionId } from './SettingsMockup';
 import { shortcuts, formatShortcut, CATEGORY_LABELS, CATEGORY_ORDER } from '../store/keyboard-shortcuts';
-import { useBoardStore } from '../hooks/useBoardStore';
 import { boardStore } from '../store/board-store';
 import { startMcpBridge, stopMcpBridge, getMcpClientIdentity, setMcpClientLabel } from '../store/mcp-bridge';
 import { copyText } from '../clipboard';
@@ -49,6 +48,9 @@ import { pdfIndexClient } from '../pdf/pdf-index-client';
 import { fmtIndexEta } from './LibraryPanel';
 import { isElectron, hasBackend } from '../store/databank-store';
 import { isLiteBuild } from '../store/build-mode';
+
+const subscribeBoardName = (cb: () => void) => boardStore.subscribe(cb);
+const getBoardFileName = () => boardStore.fileName;
 
 /** Silently disable the SettingsMockup render preview without removing
  *  it from the tree. Flip to true to bring the preview back in one line. */
@@ -1765,7 +1767,8 @@ function CacheControlBar({ hasBoard }: { hasBoard: boolean }) {
 }
 
 export function SettingsPanel() {
-  const { fileName: activeFileName } = useBoardStore();
+  // The active file name only, not the whole board snapshot.
+  const activeFileName = useSyncExternalStore(subscribeBoardName, getBoardFileName);
   const hasBoard = !!activeFileName;
 
   // Mode: global settings vs per-board overrides
@@ -2362,7 +2365,7 @@ export function SettingsPanel() {
         <Toggle label="Two-finger rotation" value={draft.twoFingerRotate} field="twoFingerRotate" onUpdate={updateGlobal}
           title="On a touch screen, turning two fingers turns the board about the point between them. Starts locked: a turn past the unlock angle unlocks it, a two-finger double-tap locks it again and squares the board. The angle is kept when the fingers lift, snapped to the nearest right angle when within the snap window. Off: two fingers only zoom and pan." />
         <Slider label="Rotation unlock angle" value={draft.rotateUnlockDeg} min={4} max={45} step={1} field="rotateUnlockDeg" onUpdate={updateGlobal} unit="°"
-          title="While rotation is locked, two fingers must turn this far before it unlocks. Every pinch turns a little; too low and zooming starts rotating, too high and unlocking takes a deliberate twist. Default 12°." />
+          title="While rotation is locked, two fingers must turn this far before it unlocks. Every pinch turns a little; too low and zooming starts rotating, too high and unlocking takes a deliberate twist. Default 24°." />
         <Slider label="Rotation snap window" value={draft.rotateSnapDeg} min={0} max={45} step={1} field="rotateSnapDeg" onUpdate={updateGlobal} unit="°"
           title="When the fingers lift within this many degrees of 0°, 90°, 180° or 270°, the board snaps to that right angle. 0 never snaps. Default 10°." />
         <Toggle label="Touch device performance mode" value={draft.touchPerformanceMode} field="touchPerformanceMode" onUpdate={updateGlobal}

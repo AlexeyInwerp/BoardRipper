@@ -184,6 +184,11 @@ test.describe('WebKit / iPadOS', () => {
       const r = (window as unknown as { __boardRenderer?: { activeScene?: { root: { rotation: number } } } }).__boardRenderer;
       return (r?.activeScene?.root.rotation ?? 0) * 180 / Math.PI;
     });
+    // Pinned to 12° — the arithmetic below is built on it (the shipped default is 24°).
+    await page.evaluate(() => {
+      const rs = (window as unknown as { __renderSettings: { globalSnapshot(): Record<string, unknown>; applyGlobal(s: unknown): void } }).__renderSettings;
+      const snap = rs.globalSnapshot(); snap.rotateUnlockDeg = 12; rs.applyGlobal(snap);
+    });
     const before = await rootDeg();
     await gestureOn(page, 'gesturestart', 1, at, 0);
     // One-degree steps, so the unlock fires at 12° exactly and the arithmetic below is exact.

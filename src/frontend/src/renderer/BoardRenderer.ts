@@ -4656,7 +4656,7 @@ export class BoardRenderer {
       const turnedDeg = Math.abs(targetRad) * 180 / Math.PI;
       if (rotationLockStore.locked) {
         if (turnedDeg < renderSettingsStore.settings.rotateUnlockDeg) return;
-        // Unlock, and turn on from here — the 12° already turned are the
+        // Unlock, and turn on from here — the degrees already turned (rotateUnlockDeg) are the
         // unlock gesture, not rotation the board should catch up on.
         rotationLockStore.setLocked(false);
         lr.baseRad = targetRad;

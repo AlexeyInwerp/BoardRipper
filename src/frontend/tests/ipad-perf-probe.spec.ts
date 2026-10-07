@@ -52,7 +52,7 @@ async function applySettings(page: Page, set: Overrides) {
 }
 
 /** One phase: `frames` animation frames, each moving the view by `step`. */
-async function phase(page: Page, kind: 'pan' | 'zoom' | 'idle', frames: number) {
+async function phase(page: Page, kind: 'pan' | 'zoom' | 'rotate' | 'idle', frames: number) {
   return page.evaluate(async ({ kind, frames }) => {
     const r = (window as any).__boardRenderer;
     const vp = r.viewport;
@@ -88,6 +88,10 @@ async function phase(page: Page, kind: 'pan' | 'zoom' | 'idle', frames: number) 
       if (kind === 'pan') {
         vp.x += (i % 60 < 30 ? 9 : -9); vp.y += (i % 40 < 20 ? 4 : -4);
         vp.emit('moved', { viewport: vp, type: 'drag' });
+      } else if (kind === 'rotate') {
+        // A live two-finger turn: 1° a frame about the centre, unlocked.
+        r.rotateLive((20 + i) * Math.PI / 180, cx, cy, 'pointer', 20 + i);
+        vp.emit('moved', { viewport: vp, type: 'pinch' });
       } else if (kind === 'zoom') {
         const f = i % 40 < 20 ? 1.03 : 1 / 1.03;
         const before = vp.toWorld(cx, cy);
@@ -219,6 +223,58 @@ test('iPad-class frame cost on a dense board', async ({ page }) => {
       }
       if (cfg.set.showPerfOverlay) console.log('overlay:', (await page.locator('.board-perf-overlay').first().textContent())?.replace(/\n/g, ' ⏎ '));
       const zoom = await phase(page, 'zoom', 80);
+      if (process.env.PERF_ROTATE) {
+        await page.evaluate((lit) => {
+          (window as any).__rotationLock?.setLocked?.(false);
+          if (lit) {
+            const st = (window as any).__boardStore; const b = st.board;
+            while (st.netLineMode !== 'star') st.cycleNetLineMode();
+            let best: [number, number] | null = null; let bn = 0;
+            b.parts.forEach((p: any, pi: number) => p.pins.forEach((pin: any, i: number) => { const n = pin.net && b.nets.get(pin.net)?.pinIndices.length; if (n && n > bn && n < 200 && !/GND/i.test(pin.net)) { bn = n; best = [pi, i]; } }));
+            st.selectPin(best![0], best![1]);
+          }
+        }, !!process.env.PERF_LIT);
+        await page.waitForTimeout(1500);
+        const rot = await phase(page, 'rotate', 60);
+        console.log(`rotate ${label}: ${rot.fps}fps tick ${rot.tick}/${rot.tick90} render ${rot.render}/${rot.render90} ovl ${rot.overlay}/${rot.overlay90}`);
+        // The release: commit the free angle to the store. Long tasks around it.
+        if (process.env.PERF_PROFILE_COMMIT) { await cdp.send('Profiler.enable'); await cdp.send('Profiler.setSamplingInterval', { interval: 100 }); await cdp.send('Profiler.start'); }
+        const commit = await page.evaluate(async () => {
+          const r = (window as any).__boardRenderer;
+          const longs: number[] = [];
+          const po = new PerformanceObserver((l) => { for (const e of l.getEntries()) longs.push(Math.round(e.duration)); });
+          po.observe({ type: 'longtask' });
+          const t = performance.now();
+          r.commitLiveRotation();
+          const sync = performance.now() - t;
+          await new Promise((res) => setTimeout(res, 1500));
+          po.disconnect();
+          return { sync: Math.round(sync), longs };
+        });
+        if (process.env.PERF_PROFILE_COMMIT) {
+          const { profile } = await (cdp as any).send('Profiler.stop');
+          const byId = new Map<number, any>(profile.nodes.map((n: any) => [n.id, n]));
+          const parent = new Map<number, number>();
+          for (const n of profile.nodes) for (const c of n.children ?? []) parent.set(c, n.id);
+          // Inclusive time per function (each sample counted once per distinct frame on its stack).
+          const incl = new Map<string, number>();
+          const dt = profile.timeDeltas as number[];
+          profile.samples.forEach((id: number, i: number) => {
+            const seen = new Set<string>();
+            for (let n: number | undefined = id; n != null; n = parent.get(n)) {
+              const cf = byId.get(n).callFrame;
+              if (!cf.url.includes('/src/')) continue;
+              const k = `${cf.functionName || '(anon)'} ${cf.url.split('/').pop()?.split('?')[0]}:${cf.lineNumber + 1}`;
+              if (seen.has(k)) continue; seen.add(k);
+              incl.set(k, (incl.get(k) ?? 0) + (dt[i] ?? 0) / 1000);
+            }
+          });
+          console.log(`commit-profile ${label}:\n` + [...incl.entries()].sort((a, b) => b[1] - a[1]).slice(0, 22).map(([k, v]) => `  ${v.toFixed(0).padStart(5)} ms  ${k}`).join('\n'));
+        }
+        console.log(`rotate-commit ${label}: sync ${commit.sync} ms, long tasks ${JSON.stringify(commit.longs)}`);
+        await page.evaluate(() => (window as any).__boardStore.setRotation(0));
+        await page.waitForTimeout(1500);
+      }
       await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
       await zoomTo(k);
       await page.waitForTimeout(800);

@@ -755,7 +755,7 @@ export const DEFAULTS: RenderSettings = {
   smoothZoom: true,
   twoFingerPan: true,
   twoFingerRotate: true,
-  rotateUnlockDeg: 12,
+  rotateUnlockDeg: 24,   // was 12 — zooming pinches unlocked too easily (iPad, 2026-10-07)
   rotateSnapDeg: 10,
   wheelShiftAction: 'pan',
   wheelMetaAction: 'zoom',
@@ -1399,6 +1399,10 @@ const PIN_LABEL_FLOOR_BUMPED_KEY = 'boardripper-pinlabel-floor-8';
  *  defaults never change a gesture under an existing user. A fresh install
  *  sets the marker and gets the new defaults. */
 const SCROLL_SLOTS_V2_KEY = 'boardripper-scroll-slots-v2';
+/** One-time bump of an untouched `rotateUnlockDeg` 12 → 24 (2026-10-07):
+ *  same reason as the pin-label floor — a changed default alone never
+ *  reaches an install that has stored settings. */
+const ROTATE_UNLOCK_BUMPED_KEY = 'boardripper-rotate-unlock-24';
 let pendingTextFastGraduationNotice = false;
 /** True exactly once, on the first boot where the graduation migration ran
  *  against a pre-existing installation — drives the one-time "text rendering
@@ -1470,6 +1474,13 @@ function loadFromStorage(): RenderSettings {
         }
       } catch { /* ignore quota/private-mode errors */ }
       try {
+        if (!localStorage.getItem(ROTATE_UNLOCK_BUMPED_KEY)) {
+          localStorage.setItem(ROTATE_UNLOCK_BUMPED_KEY, '1');
+          if (parsed.rotateUnlockDeg === 12) {
+            parsed.rotateUnlockDeg = DEFAULTS.rotateUnlockDeg;
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+          }
+        }
         if (!localStorage.getItem(PIN_LABEL_FLOOR_BUMPED_KEY)) {
           localStorage.setItem(PIN_LABEL_FLOOR_BUMPED_KEY, '1');
           if (parsed.circleLabelMinScreenPx === 3) {

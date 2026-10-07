@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
-import { useBoardStore } from '../../hooks/useBoardStore';
 import { useDatabank } from '../../hooks/useDatabank';
 import { databankStore } from '../../store/databank-store';
 import { isLiteBuild } from '../../store/build-mode';
@@ -1139,11 +1138,16 @@ function Footer() {
 // Top-level backdrop
 // ─────────────────────────────────────────────────────────────
 
+const subscribeBoardTabs = (cb: () => void) => boardStore.subscribe(cb);
+const getBoardTabCount = () => boardStore.tabs.length;
+
 export function HomeBackdrop() {
-  const { tabs } = useBoardStore();
+  // The tab count only — not the whole board snapshot, which re-rendered
+  // this hidden page (and re-parsed its Markdown) on every board change.
+  const tabCount = useSyncExternalStore(subscribeBoardTabs, getBoardTabCount);
   const pdfCount = usePdfCount();
   const dockPanelCount = useDockviewPanelCount();
-  const visible = tabs.length === 0 && pdfCount === 0 && dockPanelCount === 0;
+  const visible = tabCount === 0 && pdfCount === 0 && dockPanelCount === 0;
 
   return (
     <div className={`home-backdrop${visible ? '' : ' hidden'}`} aria-hidden={!visible}>

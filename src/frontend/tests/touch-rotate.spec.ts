@@ -25,6 +25,8 @@ const have = fs.existsSync(BOARD);
 
 type Pt = { x: number; y: number };
 
+const UNLOCK = 12;
+
 test.use({ hasTouch: true, viewport: { width: 1200, height: 900 } });
 
 async function touch(cdp: CDPSession, type: string, points: Pt[]) {
@@ -47,6 +49,12 @@ async function load(page: Page): Promise<Pt> {
   const devHooks = await page.evaluate(
     () => '__boardStore' in (window as unknown as Record<string, unknown>));
   test.skip(!devHooks, 'board store is a DEV-only global');
+  // The specs below test the mechanics at a 12° unlock (their arithmetic is
+  // built on it); the shipped default is 24° and is asserted on its own.
+  await page.evaluate((deg) => {
+    const rs = (window as unknown as { __renderSettings: { globalSnapshot(): Record<string, unknown>; applyGlobal(s: unknown): void } }).__renderSettings;
+    const snap = rs.globalSnapshot(); snap.rotateUnlockDeg = deg; rs.applyGlobal(snap);
+  }, UNLOCK);
   await page.getByTestId('file-input').setInputFiles(BOARD);
   await expect(page.getByTestId('statusbar')).toContainText('Components', { timeout: 30000 });
   await page.waitForTimeout(1500);
@@ -109,7 +117,6 @@ async function twoFingerTap(page: Page, cdp: CDPSession, at: Pt) {
   await touch(cdp, 'touchEnd', []);
 }
 
-const UNLOCK = 12;
 /** The unlock fires on the first move EVENT past 12°, and a CDP step of
  *  deg/steps arrives as two pointer moves (one per finger), so the board
  *  turns on from somewhere within one step past 12°. */
@@ -319,4 +326,23 @@ test.describe('two-finger rotation', () => {
     await turn(page, cdp, at, 45, 12);
     expect(await storeRotation(page)).toBe(0);
   });
+});
+
+test('the shipped unlock angle is 24°, and an install still at the old 12° is moved to it once', async ({ page }) => {
+  await page.goto('/');
+  const fresh = await page.evaluate(() =>
+    (window as unknown as { __renderSettings: { globalSettings: { rotateUnlockDeg: number } } }).__renderSettings.globalSettings.rotateUnlockDeg);
+  expect(fresh).toBe(24);
+  // An install that stored the old default.
+  await page.evaluate(() => {
+    const keys = Object.keys(localStorage).filter(k => k.includes('rotate-unlock'));
+    for (const k of keys) localStorage.removeItem(k);
+    for (const k of Object.keys(localStorage)) {
+      try { const v = JSON.parse(localStorage.getItem(k) ?? ''); if (v && typeof v === 'object' && 'rotateUnlockDeg' in v) { v.rotateUnlockDeg = 12; localStorage.setItem(k, JSON.stringify(v)); } } catch { /* not JSON */ }
+    }
+  });
+  await page.reload();
+  const migrated = await page.evaluate(() =>
+    (window as unknown as { __renderSettings: { globalSettings: { rotateUnlockDeg: number } } }).__renderSettings.globalSettings.rotateUnlockDeg);
+  expect(migrated).toBe(24);
 });
