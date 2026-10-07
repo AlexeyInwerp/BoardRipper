@@ -791,7 +791,11 @@ export class BoardRenderer {
   // Hide-text-during-zoom: detect actual zooming via per-frame scale comparison
   private zoomSettleTimer: ReturnType<typeof setTimeout> | null = null;
   private textHiddenForZoom = false;
+  /** Net lines are drawn at a stale stroke width (or, mid-rotation, cleared)
+   *  until the zoom settles — see onZoomFrame. */
   private netLinesHiddenForZoom = false;
+  /** Viewport scale the net lines were last stroked at during a zoom. */
+  private netLinesStrokeScale = 0;
   private prevTickScale = -1;
   // Pulse animations (net lines + cross-side ghosts) freeze for a short window
   // after viewport motion so pan/zoom don't pay the per-frame Graphics rebuild.
@@ -1041,7 +1045,7 @@ export class BoardRenderer {
       this.viewport.x += t.anchorScreenX - sp.x;
       this.viewport.y += t.anchorScreenY - sp.y;
       this.needsRender = true;
-      this.netLinesDirty = true;
+      // No netLinesDirty: a pan or zoom never moves the world-space segments (rotateLive marks them when it turns the board), and a dirty flag holds off the in-zoom re-stroke (onZoomFrame).
       this.viewport.emit('moved', { viewport: this.viewport, type: 'animate' });
       if (next === t.targetScale) this.zoomTween = null;
     }
@@ -2372,7 +2376,7 @@ export class BoardRenderer {
       }
       this.viewport.emit('moved', { viewport: this.viewport, type: 'pinch' });
       this.needsRender = true;
-      this.netLinesDirty = true;
+      // No netLinesDirty: a pan or zoom never moves the world-space segments (rotateLive marks them when it turns the board), and a dirty flag holds off the in-zoom re-stroke (onZoomFrame).
     };
     this.containerEl.addEventListener('gesturestart', this.boundGestureStart, { passive: false });
     this.containerEl.addEventListener('gesturechange', this.boundGestureChange, { passive: false });
@@ -2808,17 +2812,35 @@ export class BoardRenderer {
         scene.bottomTwoPinNetLayer.visible = false;
       }
     }
-    // Hide net lines during active zoom instead of redrawing every frame.
-    // The geometry changes with viewport scale (line widths are scale-dependent),
-    // so deferring to the settle timer avoids expensive per-frame Graphics redraws.
-    if (!this.netLinesHiddenForZoom && this.netLineSegments.length > 0) {
+    // Net (connection) lines stay on screen while the zoom runs. They used to
+    // be cleared on the first zoom frame and redrawn only once the zoom had
+    // been still for 32 ms — invisible for a wheel notch, but a two-finger
+    // pinch changes the scale for as long as the fingers move, so on a
+    // tablet the lines were gone for the whole unzoom (field report
+    // 2026-10-07: "the connections overlay vanishes completely").
+    //
+    // The segments are world-space children of the viewport, so they stay in
+    // place by themselves; only the stroke width (screen px ÷ scale) goes
+    // stale. A lit net is a few dozen segments, so they are simply re-stroked
+    // at the new width each zoom frame; a big one only when the scale has
+    // moved 20 % since its last stroke. Never from here when the segments
+    // themselves are dirty (that recompute is the expensive part and waits
+    // for the settle), and not during a live two-finger rotation, which
+    // moves the roots the segments were projected through — then the lines
+    // are cleared as before, because a misplaced line is worse than none.
+    if (this.netLineSegments.length > 0) {
+      if (this.liveRotate?.engaged) {
+        if (!this.netLinesHiddenForZoom) { this.netLinesGfx.clear(); this.netLinesPulseGfx?.clear(); this.netLineBakeSig = ''; }
+      } else if (!this.netLinesDirty) {
+        const k = Math.abs(this.viewport.scale.x);
+        const ratio = this.netLinesStrokeScale > 0 ? k / this.netLinesStrokeScale : Infinity;
+        if (this.netLineSegments.length <= 300 || ratio > 1.2 || ratio < 1 / 1.2) {
+          this.renderNetLines();
+          this.netLinesStrokeScale = k;
+        }
+      }
+      // Stale until the settle redraw (also holds the pulse off meanwhile).
       this.netLinesHiddenForZoom = true;
-      // Net line geometry depends on viewport scale (line widths are 1/scale),
-      // so it must be cleared and redrawn at the new scale on settle.
-      // Ghost geometry uses world-space stroke widths and stays visually correct
-      // at any zoom — leave it drawn so the user sees a frozen ghost during zoom
-      // instead of a vanish/reappear flash.
-      this.netLinesGfx.clear();
       this.needsRender = true;
     }
     // Rescale elevated selection labels to maintain constant screen-pixel size
@@ -4563,7 +4585,7 @@ export class BoardRenderer {
 
       this.viewport.emit('moved', { viewport: this.viewport, type: 'wheel' });
       this.needsRender = true;
-      this.netLinesDirty = true;
+      // No netLinesDirty: a pan or zoom never moves the world-space segments (rotateLive marks them when it turns the board), and a dirty flag holds off the in-zoom re-stroke (onZoomFrame).
       e.preventDefault();
       e.stopPropagation();
     };
@@ -4786,7 +4808,7 @@ export class BoardRenderer {
 
       this.viewport.emit('moved', { viewport: this.viewport, type: 'pinch' });
       this.needsRender = true;
-      this.netLinesDirty = true;
+      // No netLinesDirty: a pan or zoom never moves the world-space segments (rotateLive marks them when it turns the board), and a dirty flag holds off the in-zoom re-stroke (onZoomFrame).
     };
     this.containerEl.addEventListener('pointermove', this.boundTouchPinchMove, { capture: true });
   }
