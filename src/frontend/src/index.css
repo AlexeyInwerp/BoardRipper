@@ -2102,6 +2102,15 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.4px;
 }
+.settings-cache-hint {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+.settings-cache-btn.settings-cache-btn-danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
 .settings-cache-bar-buttons {
   display: flex;
   gap: 4px;

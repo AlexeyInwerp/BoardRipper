@@ -229,7 +229,7 @@ export const SETTINGS_INDEX: IndexEntry[] = [
   S('system', 'updates', 'Drop-to-update recovery', ['update bundle', 'offline update', 'brupdate', 'drag and drop update']),
 
   // Troubleshooting (standalone collapsible — cache/render resets)
-  S('system', 'troubleshooting', 'Troubleshooting', ['cache', 'reset caches', 'restart render', 'reset pdf caches', 'clear cache', 'indexeddb']),
+  S('system', 'troubleshooting', 'Troubleshooting', ['cache', 'reset caches', 'restart render', 'reset pdf caches', 'clear cache', 'indexeddb', 'reset settings', 'reset all', 'local settings', 'defaults', 'factory reset', 'clear settings', 'localstorage']),
 
   // OpenBoardData (standalone collapsible)
   S('library', 'obd', 'OpenBoardData', ['obd', 'diagnostic', 'voltage', 'diode', 'resistance', 'measurements']),

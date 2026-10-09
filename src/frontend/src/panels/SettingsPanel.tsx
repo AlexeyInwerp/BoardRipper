@@ -19,6 +19,7 @@ import {
 import type { RenderSettings, PartType, PadShape, BodyShape, PinGroup, PinGroupRule } from '../store/render-settings';
 import { SettingsMockup } from './SettingsMockup';
 import { QualityPresetCard } from '../components/QualityPresetCard';
+import { resetLocalSettings } from '../store/reset-local-settings';
 import { InterfaceScaleSlider } from '../components/InterfaceScaleSlider';
 import { SidebarNavSwitch } from '../components/SidebarNavSwitch';
 import type { MockupSectionId } from './SettingsMockup';
@@ -1766,6 +1767,38 @@ function CacheControlBar({ hasBoard }: { hasBoard: boolean }) {
   );
 }
 
+/**
+ * Wipes every preference this browser stored and reloads — the way back from
+ * a setting that broke the board, without clearing site data by hand. Two
+ * clicks: the first arms it, the second (within 5 s) runs it.
+ */
+function LocalSettingsResetBar() {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 5000);
+    return () => clearTimeout(t);
+  }, [armed]);
+  return (
+    <div className="settings-cache-bar" role="group" aria-label="Local settings">
+      <div className="settings-cache-bar-title">Local settings</div>
+      <div className="settings-cache-hint">
+        Every setting this browser saved — view, theme, layout, panels — back to its default, then the page reloads.
+        Recent files, favourites, history, worklists, bookmarks and cached boards are kept.
+      </div>
+      <div className="settings-cache-bar-buttons">
+        <button
+          className={`settings-cache-btn${armed ? ' settings-cache-btn-danger' : ''}`}
+          data-testid="reset-local-settings"
+          onClick={() => { if (armed) resetLocalSettings(); else setArmed(true); }}
+        >
+          {armed ? 'Click again to reset and reload' : 'Reset all local settings'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function SettingsPanel() {
   // The active file name only, not the whole board snapshot.
   const activeFileName = useSyncExternalStore(subscribeBoardName, getBoardFileName);
@@ -2424,6 +2457,7 @@ export function SettingsPanel() {
           <StandaloneCollapsibleSection title="Troubleshooting" defaultOpen={false}
             storageKey="troubleshooting" searchSectionId="troubleshooting">
             <CacheControlBar hasBoard={hasBoard} />
+            <LocalSettingsResetBar />
           </StandaloneCollapsibleSection>
         </>
       )}
