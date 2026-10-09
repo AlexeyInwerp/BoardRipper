@@ -29,8 +29,9 @@ import { startMcpBridge, stopMcpBridge, getMcpClientIdentity, setMcpClientLabel 
 import { copyText } from '../clipboard';
 import { useDatabank } from '../hooks/useDatabank';
 import { databankStore } from '../store/databank-store';
-import { PDF_QUALITY_KEY, PDF_RENDER_QUALITY_OPTIONS, loadPdfQuality, getPdfQualityConfig, PDF_INERTIA_KEY, loadPdfInertia } from './PdfViewerPanel';
-import type { PdfRenderQuality } from './PdfViewerPanel';
+import { PDF_INERTIA_KEY, loadPdfInertia } from './PdfViewerPanel';
+import { PDF_QUALITY_LABELS, PDF_RENDER_QUALITY_OPTIONS, getPdfQualityConfig, pdfQualityDescription, setPdfQuality } from '../store/pdf-quality';
+import { usePdfQuality } from '../components/PdfQualityCard';
 import {
   ACTION_COLOR, ACTION_LABEL, SLOT_LABEL, SHIFT_SCROLL_NOTE, SCROLL_ACTIONS, SCROLL_SLOTS, SCROLL_BINDINGS_EVENT,
   DEFAULT_SCROLL_BINDINGS, DEFAULT_BOARD_SCROLL_BINDINGS, BOARD_SCROLL_ACTIONS, isMacPlatform,
@@ -1374,36 +1375,11 @@ function ScrollBindingsEditor() {
 }
 
 // ---- PDF render quality selector ----
-
-const QUALITY_LABELS: Record<PdfRenderQuality, string> = {
-  max: 'Max',
-  high: 'High',
-  medium: 'Medium',
-  low: 'Low',
-};
-
-// Derived from QUALITY_CONFIGS so the copy can't drift from the real caps.
-function qualityDescription(q: PdfRenderQuality): string {
-  const t = getPdfQualityConfig(q).maxMainTier;
-  switch (q) {
-    case 'max':    return `Pixel-perfect up to ${t}× zoom. High GPU usage. Desktop with dedicated GPU.`;
-    case 'high':   return `Crisp text up to ${t}× zoom. Good for modern laptops.`;
-    case 'medium': return `Softens above ${t}× zoom. Smooth on integrated GPUs and tablets.`;
-    case 'low':    return `Softens above ${t}× zoom. Best for older machines or battery saving.`;
-  }
-}
+// The same four presets as the start page's PDF card (store/pdf-quality.ts).
 
 function PdfQualitySelector() {
-  const [quality, setQuality] = useState<PdfRenderQuality>(loadPdfQuality);
-
-  const handleChange = useCallback((next: PdfRenderQuality) => {
-    setQuality(next);
-    try { localStorage.setItem(PDF_QUALITY_KEY, next); } catch { /* ignore */ }
-    window.dispatchEvent(new CustomEvent('pdf-quality-changed', { detail: next }));
-  }, []);
-
+  const quality = usePdfQuality();
   const cfg = getPdfQualityConfig(quality);
-
   return (
     <div className="pdf-quality-selector">
       <div className="settings-btn-group">
@@ -1411,16 +1387,17 @@ function PdfQualitySelector() {
           <button
             key={q}
             className={`settings-btn-option${quality === q ? ' active' : ''}`}
-            onClick={() => handleChange(q)}
-            title={qualityDescription(q)}
+            onClick={() => setPdfQuality(q)}
+            title={pdfQualityDescription(q)}
+            data-testid={`settings-pdf-quality-${q}`}
           >
-            {QUALITY_LABELS[q]}
+            {PDF_QUALITY_LABELS[q]}
           </button>
         ))}
       </div>
-      <p className="settings-hint">{qualityDescription(quality)}</p>
-      <div className="pdf-quality-details">
-        <span>Main tier: {cfg.maxMainTier}× | Adj tier: {cfg.maxAdjTier}× | Cache: {cfg.cacheMaxEntries} pages / {Math.round(cfg.cacheMaxPixels / 1_000_000)}MP</span>
+      <p className="settings-hint">{pdfQualityDescription(quality)}</p>
+      <div className="pdf-quality-details" translate="no">
+        <span>{`Page up to ${cfg.maxMainTier}× · neighbours ${cfg.maxAdjTier}× near, ${cfg.neighbourFarTier}× far · cache ${cfg.cacheMaxEntries} pages / ${Math.round(cfg.cacheMaxPixels / 1_000_000)} MP`}</span>
       </div>
     </div>
   );

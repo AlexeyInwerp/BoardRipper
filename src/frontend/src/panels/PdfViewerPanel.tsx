@@ -31,7 +31,6 @@ import { renderSettingsStore, isPdfWatermarkText, getActiveWatermarkFilter } fro
 import { invertScrollBindings, scrollSwapTooltip, useBareScrollAction } from '../store/scroll-mode';
 import { databankStore } from '../store/databank-store';
 import { showSidebarTab } from '../components/Sidebar.utils';
-import { isTouchPrimary } from '../device-profile';
 
 const DRAG_THRESHOLD = 3;
 const TOUCH_PINCH_FACTOR = 1;       // 1:1 with the fingers — see note below
@@ -62,72 +61,11 @@ export function loadPdfInertia(): boolean {
   try { return localStorage.getItem(PDF_INERTIA_KEY) !== 'false'; } catch { return true; }
 }
 
-// ---------------------------------------------------------------------------
-// PDF Render Quality Settings
-// ---------------------------------------------------------------------------
-// These control how pdf.js renders pages at different zoom levels.
-// The render pipeline works as follows:
-//
-//   1. User zooms to level Z (e.g. 5x)
-//   2. mainTierFromZoom(Z) computes the render tier: min(Z, maxTier)
-//   3. quantiseTier() snaps to discrete steps to maximize cache hits
-//   4. hysteresisFilter() prevents tier thrashing at boundaries
-//   5. pdf.js renders the page at baseScale * tier into an offscreen canvas
-//   6. The canvas is displayed via CSS transform: scale(Z / tier) for any gap
-//   7. Adjacent pages render after a settle delay at their own tier (adjTier)
-//
-// When "drawing optimization" (future work: tiled viewport rendering) is
-// implemented, the tier system will be replaced by fixed-size tiles rendered
-// only for the visible viewport region. The settings below will then control
-// tile size, tile budget, and tile priority — but the user-facing labels
-// (Quality / Performance / Battery) remain the same.
-// ---------------------------------------------------------------------------
-
-/**
- * Render quality presets. Each preset balances sharpness vs GPU/CPU cost.
- *
- * - **max**:   Tier tracks zoom 1:1 up to 16×. Pixel-perfect text at all zoom
- *              levels. High GPU memory and render time. Best for desktop with
- *              dedicated GPU.
- *
- * - **high**:  Tier tracks zoom up to 8×. Crisp text in most scenarios.
- *              Good balance for modern laptops. (Default)
- *
- * - **medium**: Tier capped at 4×. Text may soften above 400% zoom. Smooth
- *              on integrated GPUs and tablets.
- *
- * - **low**:   Tier capped at 2×. Noticeable softness above 200% zoom. Best
- *              for older machines or battery-sensitive contexts.
- *
- * When future optimizations land (OffscreenCanvas workers, tiled viewport
- * rendering, WebGL tile compositing), these presets will be updated to also
- * control tile budget and worker count, but the preset names stay stable.
- */
-export type PdfRenderQuality = 'max' | 'high' | 'medium' | 'low';
-export const PDF_RENDER_QUALITY_OPTIONS: PdfRenderQuality[] = ['max', 'high', 'medium', 'low'];
-
-export interface PdfQualityConfig {
-  /** Max render tier for the main (current) page */
-  maxMainTier: number;
-  /** Max render tier for adjacent (prev/next) pages */
-  maxAdjTier: number;
-  /** Delay (ms) before adjacent pages re-render after zoom settles */
-  adjSettleMs: number;
-  /** Max entries in the page render cache */
-  cacheMaxEntries: number;
-  /** Max total pixels across all cached page bitmaps */
-  cacheMaxPixels: number;
-  /** Max canvas dimension (px) — controls render resolution ceiling */
-  maxCanvasDim: number;
-}
-
-// Higher tiers = crisper text. maxCanvasDim controls the resolution ceiling per preset.
-const QUALITY_CONFIGS: Record<PdfRenderQuality, PdfQualityConfig> = {
-  max:    { maxMainTier: 16, maxAdjTier: 6,  adjSettleMs: 100, cacheMaxEntries: 24, cacheMaxPixels: 200_000_000, maxCanvasDim: 16384 },
-  high:   { maxMainTier: 10, maxAdjTier: 4,  adjSettleMs: 150, cacheMaxEntries: 16, cacheMaxPixels: 120_000_000, maxCanvasDim: 8192  },
-  medium: { maxMainTier: 6,  maxAdjTier: 2,  adjSettleMs: 200, cacheMaxEntries: 10, cacheMaxPixels: 60_000_000,  maxCanvasDim: 4096  },
-  low:    { maxMainTier: 4,  maxAdjTier: 1,  adjSettleMs: 300, cacheMaxEntries: 6,  cacheMaxPixels: 30_000_000,  maxCanvasDim: 2048  },
-};
+// PDF render quality presets live in store/pdf-quality.ts (shared with the
+// start page and Settings, which must not import this panel).
+export { PDF_QUALITY_KEY, PDF_RENDER_QUALITY_OPTIONS, loadPdfQuality, getPdfQualityConfig } from '../store/pdf-quality';
+export type { PdfRenderQuality, PdfQualityConfig } from '../store/pdf-quality';
+import { getPdfQualityConfig, loadPdfQuality, type PdfRenderQuality } from '../store/pdf-quality';
 
 // The full-page bitmap cache and the tile cache are used in mutually-exclusive
 // zoom regimes (full-page when zoomed out, tiles when zoomed in), so giving each
@@ -138,42 +76,6 @@ const QUALITY_CONFIGS: Record<PdfRenderQuality, PdfQualityConfig> = {
 // on a single bitmap's dimensions still uses the full cacheMaxPixels, so render
 // sharpness is unchanged.
 const TILE_CACHE_BUDGET_FRACTION = 0.6;
-
-export const PDF_QUALITY_KEY = 'boardripper-pdf-render-quality';
-
-export function loadPdfQuality(): PdfRenderQuality {
-  try {
-    const raw = localStorage.getItem(PDF_QUALITY_KEY) as PdfRenderQuality | null;
-    if (raw && raw in QUALITY_CONFIGS) return raw;
-  } catch { /* ignore */ }
-  // A tablet gets 'medium'. 'high' budgets 120 MP of cached page bitmaps plus
-  // 72 MP of tiles — roughly 750 MB of ImageBitmap backing store — which is a
-  // desktop figure, and the usual brake does not apply: Safari does not
-  // implement `navigator.deviceMemory`, so applyDeviceMemoryScaling sees
-  // `undefined` and scales nothing. An explicit choice in Settings still wins,
-  // because this is only the default for a profile that has never set one.
-  return isTouchPrimary() ? 'medium' : 'high';
-}
-
-/** Scale cache limits by device memory (navigator.deviceMemory).
- *  Low-RAM devices (≤2GB) get halved pixel budgets to prevent OOM. */
-function applyDeviceMemoryScaling(cfg: PdfQualityConfig): PdfQualityConfig {
-  const mem = (navigator as { deviceMemory?: number }).deviceMemory;
-  // Unknown memory on a touch device means Safari on an iPad, where the tab's
-  // real ceiling is far below the machine's RAM and an over-budget cache is
-  // killed rather than swapped. Treat it as the 2 GB case.
-  if (mem === undefined && isTouchPrimary()) {
-    return { ...cfg, cacheMaxEntries: Math.max(4, Math.round(cfg.cacheMaxEntries * 0.5)),
-             cacheMaxPixels: Math.round(cfg.cacheMaxPixels * 0.5) };
-  }
-  if (!mem || mem >= 4) return cfg; // 4GB+ or unknown — use full config
-  const scale = mem <= 2 ? 0.5 : 0.75;
-  return {
-    ...cfg,
-    cacheMaxEntries: Math.max(4, Math.round(cfg.cacheMaxEntries * scale)),
-    cacheMaxPixels: Math.round(cfg.cacheMaxPixels * scale),
-  };
-}
 
 /** Detect WebKit/Safari (including iOS Safari, iPad Safari, and macOS Safari).
  *  Used as a belt-and-suspenders cap in case the canvas-area probe doesn't
@@ -225,14 +127,6 @@ function clampFullPageScale(pageW: number, pageH: number, scale: number, presetM
   return clampCanvasScale(pageW, pageH, scale, Math.min(presetMaxDim, PROBED_MAX_CANVAS_DIM));
 }
 
-export function getPdfQualityConfig(q: PdfRenderQuality): PdfQualityConfig {
-  // No probe-clamp here. The preset's `maxCanvasDim` is used as a memory
-  // budget for the tile path (where each tile renders into its own 1024px
-  // canvas, well under any browser limit). The single full-page canvas
-  // path applies the probe-clamp via `clampFullPageScale` at its call
-  // sites so Safari's stricter limit doesn't shrink the tile-path budget.
-  return applyDeviceMemoryScaling(QUALITY_CONFIGS[q]);
-}
 
 const TIER_DEBOUNCE_MS = 60; // trailing debounce — guarantees final crisp frame after zoom
 
@@ -398,10 +292,6 @@ function getPageCacheAliased(key: string): CachedRender | undefined {
  *  same page was rendered twice at once. */
 const _neighbourInflight = new Map<string, Promise<CachedRender>>();
 
-/** A neighbour page that is not on screen is only ever seen at a page edge, as
- *  a page flips in: it renders at most at this tier. The main page and an
- *  on-screen neighbour keep the full tier. */
-const NEIGHBOUR_OFFSCREEN_TIER = 2;
 
 /** Find the best (highest-tier) cached render for a page, regardless of tier. */
 function getBestPageCache(file: string, page: number, clean: boolean): CachedRender | undefined {
@@ -1110,6 +1000,44 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const [adjTrigger, setAdjTrigger] = useState(0);
   const adjDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  /** The tier a neighbour page at `offset` should have now: the full
+   *  neighbour tier when it is on screen or within the preset's near margin,
+   *  else the preset's far cap. One rule for the adjacent effect and for the
+   *  pan check below, so they cannot disagree about what "sharp" means. */
+  const neighbourTierFor = useCallback((offset: number): number => {
+    const cfg = qcfgRef.current;
+    const near = quantiseTier(Math.min(renderTierRef.current, cfg.maxAdjTier));
+    const far = quantiseTier(Math.min(near, cfg.neighbourFarTier));
+    const container = containerRef.current;
+    const pageH = pageCssHRef.current * zoomRef.current;
+    if (!container || pageH <= 0) return near;
+    const viewH = container.clientHeight;
+    const margin = viewH * cfg.neighbourNearMargin;
+    const top = panRef.current.y + offset * pageH;
+    return top < viewH + margin && top + pageH > -margin ? near : far;
+  }, []);
+
+  /** After a pan settles, a neighbour that has come near the viewport is
+   *  upgraded to the full tier — a page edge must not stay soft while the
+   *  user looks at it. Debounced on the pan, so a fling does not render
+   *  every neighbour it passes. */
+  const neighbourCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleNeighbourCheck = useCallback(() => {
+    if (neighbourCheckTimerRef.current) clearTimeout(neighbourCheckTimerRef.current);
+    neighbourCheckTimerRef.current = setTimeout(() => {
+      neighbourCheckTimerRef.current = null;
+      // A pan only. While a zoom is waiting for its render (the wrapper still
+      // carries a transient scale) the main render's own settle re-runs the
+      // neighbours; checking here started renders the next zoom step cancelled.
+      if (Math.abs(zoomRef.current / committedZoomRef.current - 1) > 1e-3) return;
+      const current = pdfStore.getDocCurrentPage(pdfFileName);
+      for (const [pageNum, entry] of adjCanvasMapRef.current) {
+        if (entry.tier < neighbourTierFor(pageNum - current)) { setAdjTrigger(t => t + 1); return; }
+      }
+    }, 150);
+  }, [neighbourTierFor, pdfFileName]);
+  useEffect(() => () => { if (neighbourCheckTimerRef.current) clearTimeout(neighbourCheckTimerRef.current); }, []);
+
   /** Clamp pan so the page stays within view boundaries.
    *
    *  Single-page PDFs use *loose* clamps with a margin overshoot on both axes
@@ -1283,7 +1211,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       });
     }
     if (shouldUseTilesRef.current()) scheduleTierRenderRef.current();
-  }, [clampPan, mirrorWidth]);
+    scheduleNeighbourCheck();
+  }, [clampPan, mirrorWidth, scheduleNeighbourCheck]);
 
   /** Schedule a re-render at exact zoom resolution.
    *  Adaptive throttle: renders at a rate the system can sustain (based on EMA of
@@ -1785,7 +1714,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const pfId = ++prefetchIdRef.current;
       // Neighbours are prefetched at the tier the adjacent effect will ask for
       // while they are off screen, so the two land on one cache key.
-      const adjPfTier = quantiseTier(Math.min(resTier, qcfgRef.current.maxAdjTier, NEIGHBOUR_OFFSCREEN_TIER));
+      const adjPfTier = quantiseTier(Math.min(resTier, qcfgRef.current.maxAdjTier, qcfgRef.current.neighbourFarTier));
       const idlePrefetch = () => {
         if (prefetchIdRef.current !== pfId) return; // stale
 
@@ -2358,11 +2287,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const containerWidth = container.clientWidth;
     if (containerWidth === 0) return;
 
-    // Adjacent pages render at main tier, capped by quality config — and, when
-    // not on screen, at NEIGHBOUR_OFFSCREEN_TIER (see tierFor below).
-    // The debounce (adjDebounceRef) prevents mid-zoom cascade.
-    const onScreenTier = quantiseTier(Math.min(renderTierRef.current, qcfgRef.current.maxAdjTier));
-    const offScreenTier = quantiseTier(Math.min(onScreenTier, NEIGHBOUR_OFFSCREEN_TIER));
+    // Adjacent pages render at main tier, capped by the preset — the full
+    // neighbour tier when near the viewport, the preset's far cap otherwise
+    // (neighbourTierFor). The debounce (adjDebounceRef) prevents mid-zoom cascade.
 
     // How many pages fit in the viewport at current zoom? Render enough to
     // cover. Once one page fills the viewport, ±1 is all a scroll or a page
@@ -2373,13 +2300,6 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const pageH = cssH * zoom;
     const pagesInView = Math.ceil(containerH / pageH);
     const adjCount = pageH >= containerH ? 1 : Math.max(1, Math.ceil(pagesInView / 2) + 1);
-    // A neighbour's rect in container coordinates: the wrapper is translated
-    // by the pan and the current page starts at 0.
-    const panY = panRef.current.y;
-    const tierFor = (offset: number) => {
-      const top = panY + offset * pageH;
-      return top < containerH && top + pageH > 0 ? onScreenTier : offScreenTier;
-    };
 
     const ac = new AbortController();
     const adjMap = adjCanvasMapRef.current;
@@ -2439,6 +2359,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       canvas.height = entry.height;
       canvas.style.width = `${entry.cssW * zCommit}px`;
       canvas.style.height = `${entry.cssH * zCommit}px`;
+      canvas.dataset.cssW = String(entry.cssW);
+      canvas.dataset.cssH = String(entry.cssH);
       canvas.style.position = 'absolute';
       canvas.style.left = '0';
       canvas.style.top = `${yOffset * zCommit}px`;
@@ -2461,10 +2383,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         if (ac.signal.aborted) break;
         const offset = pageNum - currentPage;
         const yOffset = offset * cssH;
-        const tier = tierFor(offset);
+        const tier = neighbourTierFor(offset);
         let existing = adjMap.get(pageNum);
 
-        if (existing && existing.tier === tier) {
+        // A canvas already at this tier or sharper is kept: a neighbour that
+        // drifted from near to far must not be redrawn softer.
+        if (existing && existing.tier >= tier) {
           // Already rendered at the right tier — reposition it. Width and
           // height go with the offset: all three are committed-zoom-scaled, so
           // updating only `top` leaves the page at the scale it had when the
@@ -2473,11 +2397,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           // than a standing bug — but a saturated tier (the `medium` preset
           // caps at 6, and a tablet defaults to `medium`) holds it still while
           // the zoom keeps going.
+          // The page's CSS size rides on the canvas (set when it was drawn),
+          // so a kept canvas is sized right even after its bitmap left the cache.
           const zCommit = committedZoomRef.current;
-          const cached = getPageCache(pageCacheKey(pdfFileName, pageNum, tier, cleanMode));
-          if (cached) {
-            existing.canvas.style.width = `${cached.cssW * zCommit}px`;
-            existing.canvas.style.height = `${cached.cssH * zCommit}px`;
+          const cw = Number(existing.canvas.dataset.cssW), ch = Number(existing.canvas.dataset.cssH);
+          if (cw > 0 && ch > 0) {
+            existing.canvas.style.width = `${cw * zCommit}px`;
+            existing.canvas.style.height = `${ch * zCommit}px`;
           }
           existing.canvas.style.top = `${yOffset * zCommit}px`;
           continue;
@@ -2496,7 +2422,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     })();
 
     return () => { ac.abort(); };
-  }, [isLoaded, currentPage, pageCount, pdfFileName, cleanMode, renderPageToBitmap, adjTrigger, singlePageMode]);
+  }, [isLoaded, currentPage, pageCount, pdfFileName, cleanMode, renderPageToBitmap, adjTrigger, singlePageMode, neighbourTierFor]);
 
   // Sync search input when searchQuery changes externally (e.g. pre-populated from library)
   useEffect(() => {
