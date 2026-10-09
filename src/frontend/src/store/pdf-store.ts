@@ -833,9 +833,14 @@ class PdfStore extends Emitter {
       const parseOpts = currentParseOptions();
       this.setLoadPhase(file.name, 'parsing');
       const doc = await pdfjsLib.getDocument({ data: bufferCopy, ...docOpts(parseOpts.prune) }).promise;
-      // Cleared by markFirstPaint when the panel has the first page on screen.
+      // Cleared by markFirstPaint when the panel has the first page on screen —
+      // or here, after a while, for a panel that is not on screen to paint
+      // (Dockview unmounts inactive tabs) and would otherwise hold the banner up.
       this._loads.set(file.name, { name: file.name, phase: 'rendering' });
       this._rebuildLoads();
+      setTimeout(() => {
+        if (this._loads.get(file.name)?.phase === 'rendering') this.endLoad(file.name);
+      }, PdfStore.RENDERING_PHASE_MAX_MS);
 
       // Make the document available immediately — text is extracted in the background.
       const pdfDoc: PdfDocument = {
@@ -1137,6 +1142,8 @@ class PdfStore extends Emitter {
     }, delayMs));
   }
 
+  /** Longest the 'rendering' load phase stays up without a first paint. */
+  private static readonly RENDERING_PHASE_MAX_MS = 8000;
   /** Pages within this distance of the current one keep their parsed state. */
   private static readonly CLEANUP_KEEP_RADIUS = 3;
   /** Parsed pages above which the idle cleanup frees the whole document. */

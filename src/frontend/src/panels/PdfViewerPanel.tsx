@@ -1426,7 +1426,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const prefetchIdRef = useRef(0);
   /** The full-page render in flight: its effective cache key and the token a
    *  later identical request adopts (see renderPage). */
-  const mainRenderInflightRef = useRef<{ key: string; cssW: number; token: { id: number } } | null>(null);
+  const mainRenderInflightRef = useRef<{
+    key: string; cssW: number; token: { id: number };
+    /** What else decides the pixels: the page proxy (a reparse or font
+     *  reload swaps it), the rotation and the active watermark terms. A render
+     *  is adopted only when all of them match too. */
+    page: unknown; rot: number; wm: string;
+  } | null>(null);
 
   /** Render a single page to an ImageBitmap (shared by main render + prefetch) */
   const renderPageToBitmap = useCallback(async (
@@ -1637,14 +1643,16 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         log.perf.log(`cache-hit (clamped) ${cacheKey} → ${effKey}`);
         return;
       }
+      const wmSig = JSON.stringify(getActiveWatermarkFilter(renderSettingsStore.globalSettings));
       const inflight = mainRenderInflightRef.current;
-      if (inflight && inflight.key === effKey && inflight.cssW === containerWidth) {
+      if (inflight && inflight.key === effKey && inflight.cssW === containerWidth &&
+          inflight.page === page && inflight.rot === rot && inflight.wm === wmSig) {
         inflight.token.id = renderId;           // same pixels already on the way
         log.perf.log(`render adopted ${cacheKey} → ${effKey}`);
         return;
       }
       renderTaskRef.current?.cancel();
-      mainRenderInflightRef.current = { key: effKey, cssW: containerWidth, token };
+      mainRenderInflightRef.current = { key: effKey, cssW: containerWidth, token, page, rot, wm: wmSig };
 
       // Render to pooled offscreen buffer
       const offscreen = acquireCanvas(viewport.width, viewport.height);
@@ -1812,7 +1820,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           if (!getPageCache(pfKey) && !_neighbourInflight.has(pfKey)) {
             const p = renderPageToBitmap(pNum, containerWidth, adjPfTier, cleanMode)
               .then(result => {
-                if (prefetchIdRef.current !== pfId) { result.bitmap.close(); throw new DOMException('stale', 'AbortError'); }
+                // A newer main render does not make this neighbour bitmap
+                // wrong — the adjacent effect may be waiting on it. Only a
+                // closed document does.
+                if (!pdfStore.hasDocument(pdfFileName)) { result.bitmap.close(); throw new DOMException('closed', 'AbortError'); }
                 putPageCache(pfKey, result);
                 log.perf.log(`prefetched page ${pNum} tier=${adjPfTier}`);
                 return result;
@@ -1833,6 +1844,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         return;
       }
       log.pdf.error('renderPage failed:', err);
+      // The panel shows the error; the load indicator must not stay up.
+      pdfStore.endLoad(pdfFileName);
       setError(String(err));
     }
   }, [pdfFileName, isLoaded, currentPage, cleanMode, pageCount, renderPageToBitmap, blitToCanvas, rescaleWrapperChildren, mirrorWidth]);
