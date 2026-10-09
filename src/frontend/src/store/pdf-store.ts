@@ -506,6 +506,19 @@ export interface LookupContextTerm {
   kind: 'net' | 'pin';
 }
 
+export type PdfLoadPhase = 'downloading' | 'reading' | 'parsing' | 'rendering' | 'failed';
+export interface PdfLoad { name: string; phase: PdfLoadPhase; error?: string }
+export interface PdfLoadsSnapshot { count: number; names: string[]; byName: Record<string, PdfLoad> }
+
+/** What a load phase says to a user. */
+export const PDF_LOAD_PHASE_TEXT: Record<PdfLoadPhase, string> = {
+  downloading: 'Downloading',
+  reading: 'Reading the file',
+  parsing: 'Opening',
+  rendering: 'Drawing the first page',
+  failed: 'Could not open',
+};
+
 class PdfStore extends Emitter {
   private _documents: Map<string, PdfDocument> = new Map();
   /** Text extraction waits on these: the panel's first painted page (markFirstPaint). */
@@ -516,6 +529,7 @@ class PdfStore extends Emitter {
   markFirstPaint(fileName: string): void {
     const w = this._firstPaintWaiters.get(fileName);
     if (w) { this._firstPaintWaiters.delete(fileName); w(); }
+    if (this._loads.has(fileName)) this.endLoad(fileName);
   }
 
   /** Per-file debounce timers for idle page-resource cleanup (see scheduleIdleCleanup). */
@@ -581,6 +595,43 @@ class PdfStore extends Emitter {
   }
   get isLoaded(): boolean { return this._active?.doc != null; }
   get loading(): boolean { return this._loading; }
+
+  // ── Load indicator ────────────────────────────────────────────────────
+  // Per file, from the moment an open starts until its first page is on
+  // screen. Opening a PDF used to show nothing for 0.3–1.2 s locally and the
+  // whole download from a NAS (review 2026-10-03, section 4): `_loading` is
+  // one boolean nobody read, and the panel only existed once the load was done.
+  private _loads = new Map<string, PdfLoad>();
+  private _loadsSnapshot: PdfLoadsSnapshot = { count: 0, names: [], byName: {} };
+
+  hasDocument(fileName: string): boolean { return this._documents.has(fileName); }
+
+  /** Loads in progress (failed ones are listed in `byName` but not counted). */
+  get loads(): PdfLoadsSnapshot { return this._loadsSnapshot; }
+
+  /** Begin or advance a file's load phase. */
+  setLoadPhase(fileName: string, phase: PdfLoadPhase, error?: string): void {
+    const cur = this._loads.get(fileName);
+    if (cur && cur.phase === phase && cur.error === error) return;
+    this._loads.set(fileName, { name: fileName, phase, error });
+    this._rebuildLoads();
+  }
+
+  /** The file's load is over (first page painted, panel closed, gave up). */
+  endLoad(fileName: string): void {
+    if (this._loads.delete(fileName)) this._rebuildLoads();
+  }
+
+  private _rebuildLoads(): void {
+    const byName: Record<string, PdfLoad> = {};
+    const names: string[] = [];
+    for (const l of this._loads.values()) {
+      byName[l.name] = l;
+      if (l.phase !== 'failed') names.push(l.name);
+    }
+    this._loadsSnapshot = { count: names.length, names, byName };
+    this.notify();
+  }
   /** True while background text extraction is still running (search may return partial results). */
   get textExtracting(): boolean {
     const d = this._active;
@@ -758,13 +809,14 @@ class PdfStore extends Emitter {
     // Already loaded? Just switch.
     if (this._documents.has(file.name)) {
       this._activeFileName = file.name;
+      this.endLoad(file.name);   // a caller's "downloading" for a doc we already have
       this.notify();
       return;
     }
 
     this._loading = true;
     this._activeFileName = file.name;
-    this.notify();
+    this.setLoadPhase(file.name, 'reading');   // notifies
 
     try {
       // Ensure the worker module is loaded before first getDocument() call (Electron/file://)
@@ -779,7 +831,11 @@ class PdfStore extends Emitter {
         boardCache.putPdfBytes(file.name, file.size, file.lastModified, buffer.slice(0)).catch(() => {});
       }
       const parseOpts = currentParseOptions();
+      this.setLoadPhase(file.name, 'parsing');
       const doc = await pdfjsLib.getDocument({ data: bufferCopy, ...docOpts(parseOpts.prune) }).promise;
+      // Cleared by markFirstPaint when the panel has the first page on screen.
+      this._loads.set(file.name, { name: file.name, phase: 'rendering' });
+      this._rebuildLoads();
 
       // Make the document available immediately — text is extracted in the background.
       const pdfDoc: PdfDocument = {
@@ -838,7 +894,9 @@ class PdfStore extends Emitter {
       log.pdf.error('loadFile failed:', err instanceof Error ? err.message : JSON.stringify(err));
       this._activeFileName = null;
       this._loading = false;
-      this.notify();
+      // Kept (as failed) so a panel opened for this file can say what happened
+      // instead of sitting on "Loading…"; the panel ends it when it closes.
+      this.setLoadPhase(file.name, 'failed', err instanceof Error ? err.message : String(err));
       throw err;
     }
   }
@@ -2178,6 +2236,7 @@ class PdfStore extends Emitter {
 
   /** Close a specific document by filename */
   closeFile(fileName: string) {
+    this.endLoad(fileName);   // a failed or half-finished load ends with its panel
     const d = this._documents.get(fileName);
     if (!d) return;
     const t = this._cleanupTimers.get(fileName);

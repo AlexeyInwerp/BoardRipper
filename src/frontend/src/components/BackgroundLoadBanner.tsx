@@ -1,4 +1,6 @@
+import { useSyncExternalStore } from 'react';
 import { useBoardStore } from '../hooks/useBoardStore';
+import { pdfStore, PDF_LOAD_PHASE_TEXT } from '../store/pdf-store';
 
 /**
  * "Another board is loading" — shown in every visible board panel while a
@@ -13,18 +15,36 @@ import { useBoardStore } from '../hooks/useBoardStore';
  * the freeze begins; the banner itself only explains the wait, it takes no
  * input.
  */
+const subscribePdf = (cb: () => void) => pdfStore.subscribe(cb);
+const getPdfLoads = () => pdfStore.loads;
+
+/** PDFs too (2026-10-09): a PDF opened from the library, or auto-loaded with
+ *  its board, used to load with nothing on screen at all — the panel only
+ *  appeared once the file was parsed. Its phase comes from pdfStore.loads. */
 export function BackgroundLoadBanner() {
   const { backgroundLoads } = useBoardStore();
-  if (backgroundLoads.count === 0) return null;
-  const label = backgroundLoads.count === 1
-    ? `Loading ${backgroundLoads.names[0]}…`
-    : `Loading ${backgroundLoads.count} boards…`;
+  const pdfLoads = useSyncExternalStore(subscribePdf, getPdfLoads);
+  const total = backgroundLoads.count + pdfLoads.count;
+  if (total === 0) return null;
+  const names = [...backgroundLoads.names, ...pdfLoads.names];
+  let label: string;
+  if (total > 1) {
+    label = backgroundLoads.count === 0 ? `Loading ${total} PDFs…`
+      : pdfLoads.count === 0 ? `Loading ${total} boards…`
+      : `Loading ${total} files…`;
+  } else if (backgroundLoads.count === 1) {
+    label = `Loading ${backgroundLoads.names[0]}…`;
+  } else {
+    const l = pdfLoads.byName[pdfLoads.names[0]];
+    label = `${PDF_LOAD_PHASE_TEXT[l.phase]} ${l.name}…`;
+  }
   return (
     <div className="background-load-banner" role="status" data-testid="background-load-banner"
-         title={backgroundLoads.names.join('\n')}>
+         title={names.join('\n')}>
       <span className="background-load-spinner" aria-hidden="true" />
       <span className="background-load-banner-text">
-        {label} <span className="background-load-banner-hint">the view may pause until it is ready</span>
+        <span translate="no">{label}</span>
+        {backgroundLoads.count > 0 && <> <span className="background-load-banner-hint">the view may pause until it is ready</span></>}
       </span>
     </div>
   );

@@ -1,7 +1,7 @@
-import { useRef, useEffect, useCallback, useState, useMemo } from 'react';
+import { useRef, useEffect, useCallback, useState, useMemo, useSyncExternalStore } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { usePdfDoc } from '../hooks/usePdfStore';
-import { pdfStore, pdfFontSize } from '../store/pdf-store';
+import { pdfStore, pdfFontSize, PDF_LOAD_PHASE_TEXT } from '../store/pdf-store';
 import { boardStore } from '../store/board-store';
 import { boardPanelId, activateLinkedPanel, isAutoSwitchLinked } from '../store/dockview-api';
 import { pickLinkedBoardTab } from '../store/linked-panel';
@@ -657,8 +657,13 @@ function PageScrubber({ currentPage, pageCount, onGoToPage, scrubberRef }: {
   );
 }
 
+const subscribePdfStore = (cb: () => void) => pdfStore.subscribe(cb);
+
 export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string }>) {
   const pdfFileName = props.params.pdfFileName ?? '';
+  // This file's load phase (pdfStore.loads), from the open until the first
+  // page is on screen.
+  const load = useSyncExternalStore(subscribePdfStore, () => pdfStore.loads.byName[pdfFileName]);
   const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, rotation, pageMode, mirror, searchQuery, matches, activeMatchIndex, matchNavSeq, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, parseGen, lookupHint, crossProbeHint } = usePdfDoc(pdfFileName);
   /** Effective single-page layout: explicit single mode OR forced while rotated. */
   const singlePageMode = pageMode === 'single' || rotation !== 0;
@@ -2721,7 +2726,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     });
     observer.observe(containerRef.current);
     return () => observer.disconnect();
-  }, [pdfFileName, syncTransform]);
+    // isLoaded: the panel can mount before its document (it is opened first
+    // to show the load state) and the container exists only once it is loaded.
+  }, [pdfFileName, syncTransform, isLoaded]);
 
   // Reload PDF with fontExtraProperties when glyph debug is first activated
   useEffect(() => {
@@ -3201,7 +3208,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       if (gestureReleaseTimerRef.current) clearTimeout(gestureReleaseTimerRef.current);
       gestureOwnerRef.current = 'none';
     };
-  }, [pdfFileName, syncTransform, scheduleTierRender]);
+    // isLoaded: see the ResizeObserver effect — without it a panel opened
+    // before its document never attached the gesture listeners.
+  }, [pdfFileName, syncTransform, scheduleTierRender, isLoaded]);
 
 
   /** Re-seed the pinch baseline from whichever two pointers are tracked now.
@@ -3824,9 +3833,27 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   }, [handleLabelEditSubmit]);
 
   if (!isLoaded) {
+    // The panel is created before the load, so this is what an open looks
+    // like until the document is parsed: the file, the phase, or the failure.
+    if (load?.phase === 'failed') {
+      return (
+        <div className="pdf-viewer pdf-empty" data-testid="pdf-load-state" data-phase="failed">
+          <div className="pdf-load-state">
+            <span className="pdf-load-title">Could not open <span translate="no">{pdfFileName}</span></span>
+            {load.error && <span className="pdf-load-detail">{load.error}</span>}
+          </div>
+        </div>
+      );
+    }
     return (
-      <div className="pdf-viewer pdf-empty">
-        <span>{pdfFileName ? `Loading ${pdfFileName}...` : 'No PDF loaded.'}</span>
+      <div className="pdf-viewer pdf-empty" data-testid="pdf-load-state" data-phase={load?.phase ?? 'waiting'}>
+        {pdfFileName ? (
+          <div className="pdf-load-state">
+            <span className="pdf-load-spinner" aria-hidden="true" />
+            <span className="pdf-load-title" translate="no">{pdfFileName}</span>
+            <span className="pdf-load-detail">{`${PDF_LOAD_PHASE_TEXT[load?.phase ?? 'reading']}…`}</span>
+          </div>
+        ) : <span>No PDF loaded.</span>}
       </div>
     );
   }
@@ -4150,6 +4177,18 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       {textExtracting && (
         <div className="pdf-text-extract-bar" title={`Indexing text: ${Math.round(textExtractProgress * 100)}%`}>
           <div className="pdf-text-extract-fill" style={{ width: `${textExtractProgress * 100}%` }} />
+        </div>
+      )}
+      {textExtracting && (
+        <div className="pdf-text-extract-chip" data-testid="pdf-text-extract-chip"
+             title="Search and lookups find what has been indexed so far">
+          {`Indexing text ${Math.round(textExtractProgress * 100)} %`}
+        </div>
+      )}
+      {load?.phase === 'rendering' && (
+        <div className="pdf-load-overlay" data-testid="pdf-load-overlay" role="status">
+          <span className="pdf-load-spinner" aria-hidden="true" />
+          <span>{`${PDF_LOAD_PHASE_TEXT.rendering}…`}</span>
         </div>
       )}
 

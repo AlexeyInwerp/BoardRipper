@@ -4417,6 +4417,7 @@ body {
 
 /* PDF Viewer */
 .pdf-viewer {
+  position: relative;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -9871,3 +9872,57 @@ body {
 /* Board quality preset inside Settings ▸ Performance — the start page's card,
    given a little room from the rows below. */
 .settings-quality-preset { margin: 2px 0 10px; }
+
+/* PDF load state (PdfViewerPanel, pdfStore.loads): the panel exists from the
+   moment an open starts and says which phase it is in. */
+.pdf-load-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: 80%;
+  text-align: center;
+}
+.pdf-load-title { color: var(--text-primary); font-weight: 600; overflow-wrap: anywhere; }
+.pdf-load-detail { color: var(--text-secondary); font-size: 0.9em; overflow-wrap: anywhere; }
+.pdf-load-spinner {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--border-color, rgba(255,255,255,0.15));
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: pdf-load-spin 0.8s linear infinite;
+  flex: none;
+}
+@keyframes pdf-load-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .pdf-load-spinner { animation-duration: 2.4s; } }
+.pdf-load-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--chip-bg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(4px);
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+.pdf-text-extract-chip {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 45;
+  padding: 3px 8px;
+  border-radius: 10px;
+  background: var(--chip-bg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+  font-size: 11px;
+  pointer-events: none;
+}

@@ -8,7 +8,7 @@ import type { PdfIndexFailedEntry } from '../pdf/pdf-index-client';
 import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
 import { ensurePdfPanel, ensureBoardPanel } from '../store/dockview-api';
-import { loadLibraryBoard, openFolderFileFromCache } from '../store/file-actions';
+import { beginPdfOpen, loadLibraryBoard, openFolderFileFromCache } from '../store/file-actions';
 import { loadBoardWithAscSiblings } from '../store/asc-open';
 import { lookupBoard } from '../store/apple-boards';
 import { IconStack2, IconHistory, IconFolder, IconHash, IconPin, IconPinFilled, IconSettings, IconChevronsUp, IconChevronDown, IconDatabase, IconDeviceDesktop, IconCheck, IconFileText, IconExternalLink, IconDownload, IconFolderOpen, IconPencil } from '@tabler/icons-react';
@@ -501,11 +501,14 @@ export function LibraryPanel() {
   const handleOpenFile = useCallback(async (file: DatabankFile, pageNum?: number) => {
     databankStore.selectFile(file.id);
     databankStore.addToHistory(file);
+    let pdfFailed: ((err: unknown) => void) | null = null;
     try {
       // A board or PDF that is already cached opens without the folder —
       // which is the difference between "pick the folder again" once per
       // session and once per file.
       if (await openFolderFileFromCache(file)) return;
+      // A PDF's panel and load state start before the download.
+      if (file.file_type === 'pdf') pdfFailed = beginPdfOpen(file.filename, { downloading: true });
       const fileObj = await databankStore.fetchFileBuffer(file);
       if (file.file_type === 'board') {
         // Split .asc deliveries open as one board — see loadLibraryBoard.
@@ -520,11 +523,17 @@ export function LibraryPanel() {
               try {
                 const pdfFile = databankStore.fileById(binding.pdf_file_id);
                 if (!pdfFile) continue;
-                const pdfObj = await databankStore.fetchFileBuffer(pdfFile);
-                boardStore.addPdf(pdfObj);
-                boardStore.addPdfBinding(boardStore.activeTabId!, pdfObj.name);
-                await pdfStore.loadFile(pdfObj, pdfFile.id);
-                ensurePdfPanel(pdfObj.name);
+                const failed = beginPdfOpen(pdfFile.filename, { panel: false, downloading: true });
+                try {
+                  const pdfObj = await databankStore.fetchFileBuffer(pdfFile);
+                  boardStore.addPdf(pdfObj);
+                  boardStore.addPdfBinding(boardStore.activeTabId!, pdfObj.name);
+                  await pdfStore.loadFile(pdfObj, pdfFile.id);
+                  ensurePdfPanel(pdfObj.name);
+                } catch (err) {
+                  failed(err);
+                  throw err;
+                }
               } catch (err) {
                 log.ui.error('Failed to load bound PDF:', err);
               }
@@ -593,6 +602,7 @@ export function LibraryPanel() {
       }
     } catch (err) {
       log.ui.error('Failed to open file:', err);
+      pdfFailed?.(err);
       // A local-folder library whose index outlived its file access fails
       // here and nowhere else — the Debug panel is not where the user is
       // looking, so say it where they clicked.
