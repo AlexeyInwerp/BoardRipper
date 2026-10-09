@@ -508,6 +508,16 @@ export interface LookupContextTerm {
 
 class PdfStore extends Emitter {
   private _documents: Map<string, PdfDocument> = new Map();
+  /** Text extraction waits on these: the panel's first painted page (markFirstPaint). */
+  private _firstPaintWaiters = new Map<string, () => void>();
+
+  /** The panel has a page on screen for this file. Starts the deferred text
+   *  extraction (loadFile) and ends the file's load indicator. */
+  markFirstPaint(fileName: string): void {
+    const w = this._firstPaintWaiters.get(fileName);
+    if (w) { this._firstPaintWaiters.delete(fileName); w(); }
+  }
+
   /** Per-file debounce timers for idle page-resource cleanup (see scheduleIdleCleanup). */
   private _cleanupTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private _links = new PdfLinks();
@@ -810,9 +820,19 @@ class PdfStore extends Emitter {
       this._loading = false;
       this.notify();
 
-      // Extract text from all pages in the background so search becomes available.
-      // The viewer can render pages immediately without waiting for this.
-      this._extractText(pdfDoc);
+      // Extract text from all pages in the background so search becomes
+      // available — but only once the first page is on screen: the one pdf.js
+      // worker interleaves text streaming with the first page's operator
+      // list, which made the first render 1.8–3x slower (review 2026-10-03,
+      // 2.3). A panel that never paints (opened hidden) starts it after 1.5 s.
+      const name = file.name;
+      void new Promise<void>(resolve => {
+        this._firstPaintWaiters.set(name, resolve);
+        setTimeout(resolve, 1500);
+      }).then(() => {
+        if (this._firstPaintWaiters.get(name)) this._firstPaintWaiters.delete(name);
+        if (this._documents.get(name) === pdfDoc) this._extractText(pdfDoc);
+      });
       if (parseOpts.stripImages) void this.toggleClean(file.name, true);
     } catch (err) {
       log.pdf.error('loadFile failed:', err instanceof Error ? err.message : JSON.stringify(err));
@@ -863,7 +883,9 @@ class PdfStore extends Emitter {
     // (March 2024). The reader-loop form works on every browser that
     // ships ReadableStream.
     try {
-      const NOTIFY_INTERVAL = 5; // update UI every N pages
+      // Progress notifies re-render every subscriber; at most four a second.
+      const NOTIFY_MIN_MS = 250;
+      let lastNotify = performance.now();
       for (let i = 1; i <= pdfDoc.pageCount; i++) {
         if (!this._documents.has(pdfDoc.fileName)) return; // closed
         // A reparse swaps `pdfDoc.doc` and destroys the old proxy two
@@ -920,7 +942,8 @@ class PdfStore extends Emitter {
           });
         }
         pdfDoc.textPages.push(items);
-        if (i % NOTIFY_INTERVAL === 0) this.notify(); // progress update
+        const now = performance.now();
+        if (now - lastNotify >= NOTIFY_MIN_MS) { lastNotify = now; this.notify(); } // progress update
       }
     } catch (err) {
       const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);

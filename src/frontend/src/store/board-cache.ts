@@ -19,6 +19,19 @@ const PDF_TEXT_STORE = 'pdf-text';
 const PDF_BYTES_STORE = 'pdf-bytes';
 const MAX_BOARD_ENTRIES = 20;
 const MAX_PDF_TEXT_ENTRIES = 30;
+
+type PdfTextPage = { str: string; transform: number[]; width: number; height: number }[];
+/** Pages stringified / parsed between yields to the event loop. */
+const TEXT_SLICE_PAGES = 8;
+const yieldToEventLoop = () => new Promise<void>(r => setTimeout(r, 0));
+async function parsePagesSliced(pagesJson: string[]): Promise<PdfTextPage[]> {
+  const out: PdfTextPage[] = [];
+  for (let i = 0; i < pagesJson.length; i++) {
+    out.push(JSON.parse(pagesJson[i]) as PdfTextPage);
+    if (i % TEXT_SLICE_PAGES === TEXT_SLICE_PAGES - 1) await yieldToEventLoop();
+  }
+  return out;
+}
 const MAX_PDF_BYTES_ENTRIES = 6;
 const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 
@@ -489,6 +502,15 @@ class BoardCache {
   }
 
   // ── PDF text cache ─────────────────────────────────────────────────
+  //
+  // Each page is stored as its own JSON string (`pagesJson`), built and
+  // parsed a few pages at a time with a yield in between. The record used to
+  // hold the page arrays themselves, and IndexedDB's structured clone of ~9 MB
+  // of small objects is one synchronous task: 85 ms at 1x, 357 ms at 4x CPU,
+  // landing a few seconds after open while the user zooms (PDF performance
+  // review 2026-10-03, 2.4). A clone of 100 strings is a memcpy. Records in
+  // the old shape (`textPages`) are still read.
+
 
   async getPdfText(fileName: string, fileSize: number, lastModified: number): Promise<{ str: string; transform: number[]; width: number; height: number }[][] | null> {
     try {
@@ -498,8 +520,10 @@ class BoardCache {
         const tx = db.transaction(PDF_TEXT_STORE, 'readonly');
         const req = tx.objectStore(PDF_TEXT_STORE).get(key);
         req.onsuccess = () => {
-          const result = req.result as { key: string; textPages: { str: string; transform: number[]; width: number; height: number }[][] } | undefined;
-          resolve(result?.textPages ?? null);
+          const result = req.result as { key: string; textPages?: PdfTextPage[]; pagesJson?: string[] } | undefined;
+          if (!result) { resolve(null); return; }
+          if (result.pagesJson) { resolve(parsePagesSliced(result.pagesJson)); return; }
+          resolve(result.textPages ?? null);
         };
         req.onerror = () => reject(req.error);
       });
@@ -508,11 +532,16 @@ class BoardCache {
 
   async putPdfText(fileName: string, fileSize: number, lastModified: number, textPages: { str: string; transform: number[]; width: number; height: number }[][]): Promise<void> {
     try {
+      const pagesJson: string[] = [];
+      for (let i = 0; i < textPages.length; i++) {
+        pagesJson.push(JSON.stringify(textPages[i]));
+        if (i % TEXT_SLICE_PAGES === TEXT_SLICE_PAGES - 1) await yieldToEventLoop();
+      }
       const db = await this.openDB();
       const key = makeCacheKey(fileName, fileSize, lastModified);
       return new Promise((resolve, reject) => {
         const tx = db.transaction(PDF_TEXT_STORE, 'readwrite');
-        const req = tx.objectStore(PDF_TEXT_STORE).put({ key, textPages, timestamp: Date.now() });
+        const req = tx.objectStore(PDF_TEXT_STORE).put({ key, pagesJson, timestamp: Date.now() });
         req.onsuccess = () => {
           this.evictOldest(PDF_TEXT_STORE, MAX_PDF_TEXT_ENTRIES);
           resolve();

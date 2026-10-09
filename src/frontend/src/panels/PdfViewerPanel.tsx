@@ -1510,6 +1510,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     if (!ctx) return;
     ctx.drawImage(entry.bitmap, 0, 0);
     mainContentRef.current = { el: canvas, file: pdfFileName, page, clean: cleanMode, rot: rotationRef.current, cssW: entry.cssW, width: entry.width };
+    pdfStore.markFirstPaint(pdfFileName);
 
     hlSizeRef.current = { w: entry.width, h: entry.height };
     highlight.style.width = `${entry.cssW * zCommit}px`;
@@ -1704,6 +1705,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const ctx = canvas.getContext('2d');
       if (ctx) ctx.drawImage(sourceCanvas, 0, 0);
       mainContentRef.current = { el: canvas, file: pdfFileName, page: currentPage, clean: cleanMode, rot: rotationRef.current, cssW, width: viewport.width };
+      pdfStore.markFirstPaint(pdfFileName);
 
       // Create bitmap AFTER the visible blit for cache storage only.
       // sourceCanvas might get stale pdf.js draws during this await — that's
@@ -2182,6 +2184,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
               }
             }
           }
+          pdfStore.markFirstPaint(pdfFileName);
           // Main canvas visibility is controlled by React via tiledMode state
           // Clean up transition backdrop canvases (adjacent canvases kept during page switch)
           wrapper.querySelectorAll('[data-transition-backdrop]').forEach(c => c.remove());
