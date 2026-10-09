@@ -354,9 +354,12 @@ export interface RenderSettings {
   pdfPruneInvisible: boolean;
 
   /** PDF render mode.
-   *  - 'auto' (default): tile above 1.05× zoom, full-page below — crisp at deep zoom.
-   *  - 'standard': always full-page, never tile. Smoother gesture feel; pixels go soft
-   *    past the browser canvas-max dimension (~5–6× on A4). Firefox-style.
+   *  - 'auto': tile above 1.05× zoom, full-page below — crisp at deep zoom.
+   *  - 'standard' (default since 1b50386, 2026-05-27): always full-page, never
+   *    tile. Smoother gesture feel; pixels go soft past the browser canvas-max
+   *    dimension (~5–6× on A4). Firefox-style. Do not flip the default back to
+   *    'auto' before the tile overdraw is fixed — see
+   *    docs/specs/2026-10-03-pdf-performance-review.md, 3.3.
    *  - 'always-tile': tile at every zoom. Mostly a debugging escape hatch. */
   pdfRenderMode: 'auto' | 'standard' | 'always-tile';
 
@@ -732,6 +735,9 @@ export const DEFAULTS: RenderSettings = {
     'www.xinxunwei.com',
     'notebookschematics.com',
     'notebook-schematics.com',
+    // www.indiafix.in — one 39 pt run per page in the NR2201ZE deliveries
+    // (PDF performance review 2026-10-03).
+    'indiafix',
   ],
   pdfWatermarkFilterEnabled: true,
   pdfStripWatermarkImages: false,
@@ -1575,6 +1581,7 @@ function loadFromStorage(): RenderSettings {
       const PRIOR_DEFAULTS: readonly (readonly string[])[] = [
         ['www.chinafix.com', 'NotebookSchematics.com'],
         ['Vinafix', 'www.chinafix.com', 'notebookschematics.com', 'notebook-schematics.com'],
+        ['Vinafix', 'www.chinafix.com', 'www.xinxunwei.com', 'notebookschematics.com', 'notebook-schematics.com'],
       ];
       const _wmMatchesPrior = Array.isArray(_wmF) && PRIOR_DEFAULTS.some(
         d => _wmF.length === d.length && _wmF.every((v, i) => v === d[i])

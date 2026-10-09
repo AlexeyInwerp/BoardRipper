@@ -29,8 +29,12 @@ the render path without breaking it.
 
 ## Two render paths, one router
 
-`renderActive()` in `PdfViewerPanel.tsx` routes every render request based on
-`zoomRef.current`:
+`renderActive()` in `PdfViewerPanel.tsx` routes every render request through
+`shouldUseTiles()`, which reads `renderSettings.pdfRenderMode`. **The shipped
+default is `'standard'`: the full-page path at every zoom, tiles never.** The
+zoom-based routing below applies only in `'auto'` (and `'always-tile'` tiles
+at every zoom). Measured trade-offs of the two: `docs/specs/2026-10-03-pdf-performance-review.md`
+§3.3. In `'auto'`, routing is by `zoomRef.current`:
 
 - **zoom ≤ 1.05 — full-page path** (`renderPage`): renders the whole current
   page to a pooled offscreen canvas, produces an `ImageBitmap`, caches it in
