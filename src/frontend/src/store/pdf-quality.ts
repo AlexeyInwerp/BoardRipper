@@ -56,14 +56,16 @@ export interface PdfQualityConfig {
 }
 
 const QUALITY_CONFIGS: Record<PdfRenderQuality, PdfQualityConfig> = {
-  max:    { maxMainTier: 16, maxAdjTier: 6, neighbourFarTier: 4, neighbourNearMargin: 1,    adjSettleMs: 100, cacheMaxEntries: 24, cacheMaxPixels: 200_000_000, maxCanvasDim: 16384 },
-  high:   { maxMainTier: 10, maxAdjTier: 4, neighbourFarTier: 2, neighbourNearMargin: 0.5,  adjSettleMs: 150, cacheMaxEntries: 16, cacheMaxPixels: 120_000_000, maxCanvasDim: 8192  },
-  // The canvas cap is what decides whether text is readable once zoomed in:
-  // the whole page is one canvas in the default (full-page) mode. At 2048 px
-  // 'low' was a smear past ~2× (reported 2026-10-10), so no preset goes below
-  // 4096 — the same ceiling WebKit imposes anyway (probeMaxCanvasDim). The
-  // cheaper presets save on neighbours, cache and tier steps instead.
-  medium: { maxMainTier: 6,  maxAdjTier: 3, neighbourFarTier: 1.5, neighbourNearMargin: 0.25, adjSettleMs: 200, cacheMaxEntries: 10, cacheMaxPixels: 60_000_000,  maxCanvasDim: 6144  },
+  max:    { maxMainTier: 16, maxAdjTier: 6, neighbourFarTier: 4, neighbourNearMargin: 1,    adjSettleMs: 100, cacheMaxEntries: 24, cacheMaxPixels: 160_000_000, maxCanvasDim: 8192 },
+  high:   { maxMainTier: 10, maxAdjTier: 4, neighbourFarTier: 2, neighbourNearMargin: 0.5,  adjSettleMs: 150, cacheMaxEntries: 16, cacheMaxPixels: 100_000_000, maxCanvasDim: 6144  },
+  // maxCanvasDim caps the *moving* picture only — the full-page canvas that
+  // pans and pinches. Once the view settles, PdfViewerPanel renders the
+  // visible area at the exact zoom on top (renderDetail), on every preset, so
+  // text is sharp at any zoom however small this is. Before that existed the
+  // cap was also the sharpness: Fastest at 2048 px was unreadable past 2×, and
+  // Quality at 16384 px held ~700 MB per canvas until Chrome ran out of GPU
+  // memory and drew the page black (2026-10-10).
+  medium: { maxMainTier: 6,  maxAdjTier: 3, neighbourFarTier: 1.5, neighbourNearMargin: 0.25, adjSettleMs: 200, cacheMaxEntries: 10, cacheMaxPixels: 60_000_000,  maxCanvasDim: 4096  },
   low:    { maxMainTier: 5,  maxAdjTier: 2, neighbourFarTier: 1, neighbourNearMargin: 0,    adjSettleMs: 300, cacheMaxEntries: 6,  cacheMaxPixels: 40_000_000,  maxCanvasDim: 4096  },
 };
 
@@ -122,9 +124,9 @@ export function getPdfQualityConfig(q: PdfRenderQuality): PdfQualityConfig {
 export function pdfQualityDescription(q: PdfRenderQuality): string {
   const c = QUALITY_CONFIGS[q];
   switch (q) {
-    case 'max':    return `Sharp up to ${c.maxMainTier}× zoom, neighbouring pages kept sharp. Most memory; a desktop with a good GPU.`;
-    case 'high':   return `Sharp up to ${c.maxMainTier}× zoom; a neighbouring page sharpens as it comes into view. For most laptops.`;
-    case 'medium': return `Sharp up to ${c.maxMainTier}× zoom; neighbouring pages are lighter. For tablets and integrated GPUs.`;
-    case 'low':    return `Sharp up to ${c.maxMainTier}× zoom; least memory and battery. For older machines.`;
+    case 'max':    return `Sharpest while moving (page up to ${c.maxCanvasDim} px) and neighbouring pages kept sharp. Most memory. Every preset is sharp once the view stops.`;
+    case 'high':   return `Sharp while moving up to about ${Math.round(c.maxCanvasDim / 2000)}× zoom; a neighbouring page sharpens as it comes into view. Sharp at any zoom once the view stops.`;
+    case 'medium': return `Lighter while moving; neighbouring pages lighter. Sharp at any zoom once the view stops. For tablets and integrated GPUs.`;
+    case 'low':    return `Lightest while moving; least memory and battery. Sharp at any zoom once the view stops.`;
   }
 }

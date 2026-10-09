@@ -9926,3 +9926,11 @@ body {
   font-size: 11px;
   pointer-events: none;
 }
+
+/* Settled detail render (PdfViewerPanel.renderDetail): the visible area at the
+   exact zoom, over the full-page canvas, under the search highlight. */
+.pdf-detail {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+}

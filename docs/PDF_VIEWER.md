@@ -51,6 +51,20 @@ The 1.05 threshold has hysteresis built in: we don't switch paths on tiny
 sub-percent zoom changes. At the boundary, `clearTileDom()` and the main-canvas
 visibility toggle (`tiledMode` state) handle the handoff.
 
+## Settled detail render (2026-10-10)
+
+In the full-page path the page canvas is the picture you move: its size is
+capped by the quality preset (`maxCanvasDim`), which keeps pan and pinch cheap.
+Once the view has been still for 150 ms, `renderDetail` renders the visible
+area plus a quarter of the view on each side at the exact zoom × DPR into one
+`.pdf-detail` canvas over the page — the same design as pdf.js's
+`PDFPageDetailView`. It is skipped when the page canvas is already sharp
+enough, kept while a pan stays inside it, rescaled with the other wrapper
+children, and dropped on page change, rotation, reparse, filter or quality
+change, resize and in tiled mode. Cost: one operator walk per settle and about
+one screen of canvas memory at any zoom — replacing page canvases that reached
+16384 px (~700 MB) and turned black in Chrome.
+
 ## The tier pipeline
 
 Every render goes through four transforms before calling `page.render()`:

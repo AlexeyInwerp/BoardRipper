@@ -701,6 +701,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     for (const entry of adjCanvasMapRef.current.values()) apply(entry.canvas.style);
     if (canvasRef.current) apply(canvasRef.current.style);
     if (highlightRef.current) apply(highlightRef.current.style);
+    if (detailRef.current.canvas) apply(detailRef.current.canvas.style);
   }, []);
   const viewportHeightRef = useRef(0);
   const renderTierRef = useRef(1);
@@ -888,7 +889,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       // (React state won't commit until next render cycle)
       qcfgRef.current = cfg;
       setPageCacheLimits(cfg.cacheMaxEntries, cfg.cacheMaxPixels);
-      invalidatePageCache(pdfFileName);
+      invalidatePageCache(pdfFileName); clearDetail();
       setTileCacheLimit(Math.round(cfg.cacheMaxPixels * TILE_CACHE_BUDGET_FRACTION));
       invalidateTileCache(pdfFileName);
       _lastCommittedTier = 1; // reset hysteresis
@@ -913,7 +914,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   useEffect(() => {
     if (lastParseGenRef.current === parseGen) return;
     lastParseGenRef.current = parseGen;
-    invalidatePageCache(pdfFileName);
+    invalidatePageCache(pdfFileName); clearDetail();
     invalidateTileCache(pdfFileName);
     renderPageRef.current();
   }, [parseGen, pdfFileName]);
@@ -936,7 +937,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       // operator list. Flush it explicitly so the worker re-parses with the
       // new filter. Then drop our bitmap caches and trigger a fresh render.
       pdfStore.flushOperatorListCache(pdfFileName);
-      invalidatePageCache(pdfFileName);
+      invalidatePageCache(pdfFileName); clearDetail();
       invalidateTileCache(pdfFileName);
       renderPageRef.current();
     });
@@ -1037,6 +1038,37 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     }, 150);
   }, [neighbourTierFor, pdfFileName]);
   useEffect(() => () => { if (neighbourCheckTimerRef.current) clearTimeout(neighbourCheckTimerRef.current); }, []);
+
+  // ---- Settled detail render (2026-10-10) ----------------------------------
+  // The full-page canvas is the *moving* picture: its size is the preset's
+  // (maxCanvasDim), which is what keeps pan and pinch cheap — and what made
+  // deep zoom soft on the cheap presets, and on the expensive ones cost
+  // ~700 MB per canvas until Chrome ran out of GPU memory and drew black
+  // (820-02020.pdf at >500 % on 'max'). Once the view settles, a canvas the
+  // size of the visible area plus a margin is rendered at the exact zoom and
+  // laid over the page — pdf.js's own PDFPageDetailView design. One op-walk
+  // per settle, memory ~ one screen at any zoom, sharp on every preset.
+  const detailRef = useRef<{
+    canvas: HTMLCanvasElement | null; task: { cancel: () => void } | null; gen: number;
+    rect: { x: number; y: number; w: number; h: number } | null; zoom: number; page: number;
+  }>({ canvas: null, task: null, gen: 0, rect: null, zoom: 0, page: 0 });
+  const detailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const renderDetailRef = useRef<() => void>(() => {});
+  /** Drop the detail canvas (page change, rotation, reparse, filter, resize). */
+  const clearDetail = useCallback(() => {
+    const d = detailRef.current;
+    d.gen++;
+    d.task?.cancel();
+    d.task = null;
+    d.rect = null;
+    if (d.canvas) { detachCanvas(d.canvas); d.canvas = null; }
+  }, []);
+  /** Render the detail once motion has stopped for a moment. */
+  const scheduleDetail = useCallback(() => {
+    if (detailTimerRef.current) clearTimeout(detailTimerRef.current);
+    detailTimerRef.current = setTimeout(() => { detailTimerRef.current = null; renderDetailRef.current(); }, 150);
+  }, []);
+  useEffect(() => () => { if (detailTimerRef.current) clearTimeout(detailTimerRef.current); }, []);
 
   /** Clamp pan so the page stays within view boundaries.
    *
@@ -1212,7 +1244,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     }
     if (shouldUseTilesRef.current()) scheduleTierRenderRef.current();
     scheduleNeighbourCheck();
-  }, [clampPan, mirrorWidth, scheduleNeighbourCheck]);
+    scheduleDetail();
+  }, [clampPan, mirrorWidth, scheduleNeighbourCheck, scheduleDetail]);
 
   /** Schedule a re-render at exact zoom resolution.
    *  Adaptive throttle: renders at a rate the system can sustain (based on EMA of
@@ -1286,7 +1319,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       detachCanvas(canvas);
     }
     tileContainerRef.current.clear();
-  }, []);
+    clearDetail();
+  }, [clearDetail]);
 
   const prevPageRef = useRef(currentPage);
   useEffect(() => {
@@ -1297,6 +1331,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     // so scrolling a long PDF doesn't accumulate hundreds of parsed pages.
     // Debounced, so it only fires once navigation settles (never mid-scroll).
     pdfStore.scheduleIdleCleanup(pdfFileName);
+    clearDetail();   // it shows the page we just left
     if (skipResetRef.current) {
       // Page boundary crossing during pan/zoom — keep tiles, skip reset
       skipResetRef.current = false;
@@ -1308,7 +1343,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     panRef.current = { x: 0, y: 0 };
     renderTierRef.current = 1;
     syncTransform();
-  }, [currentPage, syncTransform, clearTileDom]);
+  }, [currentPage, syncTransform, clearTileDom, clearDetail]);
 
   // Rotation change — every cached bitmap/tile is now wrong-orientation. Drop
   // them all for this doc, tear down adjacent + tile DOM, re-fit (the rotated
@@ -1320,7 +1355,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     prevRotationRef.current = rotation;
     clearTileDom();
     invalidateTileCache(pdfFileName);
-    invalidatePageCache(pdfFileName);
+    invalidatePageCache(pdfFileName); clearDetail();
     for (const entry of adjCanvasMapRef.current.values()) detachCanvas(entry.canvas);
     adjCanvasMapRef.current.clear();
     zoomRef.current = 1;
@@ -1328,7 +1363,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     renderTierRef.current = 1;
     syncTransform();
     renderPageRef.current();
-  }, [rotation, pdfFileName, syncTransform, clearTileDom]);
+  }, [rotation, pdfFileName, syncTransform, clearTileDom, clearDetail]);
 
   // Re-apply the wrapper transform when the layout flips (single↔continuous can
   // leave pan straddling a boundary) or the mirror toggles (the flip lives in
@@ -1347,9 +1382,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       // Also release the full-page / preview ImageBitmap caches for this doc,
       // not just the tile cache — otherwise closed docs leak their decoded
       // page bitmaps for the app's lifetime.
-      invalidatePageCache(pdfFileName);
+      invalidatePageCache(pdfFileName); clearDetail();
     };
-  }, [pdfFileName, clearTileDom]);
+  }, [pdfFileName, clearTileDom, clearDetail]);
 
   const renderIdRef = useRef(0);
   const prefetchIdRef = useRef(0);
@@ -1451,6 +1486,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     ctx.drawImage(entry.bitmap, 0, 0);
     mainContentRef.current = { el: canvas, file: pdfFileName, page, clean: cleanMode, rot: rotationRef.current, cssW: entry.cssW, width: entry.width };
     pdfStore.markFirstPaint(pdfFileName);
+    scheduleDetail();
 
     hlSizeRef.current = { w: entry.width, h: entry.height };
     highlight.style.width = `${entry.cssW * zCommit}px`;
@@ -1469,7 +1505,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
     drawHighlightsRef.current();
     setRenderEpoch(e => e + 1);
-  }, [rescaleWrapperChildren, mirrorWidth, pdfFileName, cleanMode]);
+  }, [rescaleWrapperChildren, mirrorWidth, pdfFileName, cleanMode, scheduleDetail]);
 
 
   const renderPage = useCallback(async () => {
@@ -1648,6 +1684,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       if (ctx) ctx.drawImage(sourceCanvas, 0, 0);
       mainContentRef.current = { el: canvas, file: pdfFileName, page: currentPage, clean: cleanMode, rot: rotationRef.current, cssW, width: viewport.width };
       pdfStore.markFirstPaint(pdfFileName);
+      scheduleDetail();
 
       // Create bitmap AFTER the visible blit for cache storage only.
       // sourceCanvas might get stale pdf.js draws during this await — that's
@@ -1777,7 +1814,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       pdfStore.endLoad(pdfFileName);
       setError(String(err));
     }
-  }, [pdfFileName, isLoaded, currentPage, cleanMode, pageCount, renderPageToBitmap, blitToCanvas, rescaleWrapperChildren, mirrorWidth]);
+  }, [pdfFileName, isLoaded, currentPage, cleanMode, pageCount, renderPageToBitmap, blitToCanvas, rescaleWrapperChildren, mirrorWidth, scheduleDetail]);
 
   // --- Tiled viewport rendering (zoom > 1) ---
   const renderTiledPage = useCallback(async () => {
@@ -2164,6 +2201,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const renderActive = useCallback(() => {
     if (shouldUseTilesRef.current()) {
       setTiledMode(true);
+      clearDetail();
       renderTiledPage();
     } else {
       setTiledMode(false);
@@ -2174,7 +2212,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         });
       }
     }
-  }, [renderPage, renderTiledPage, clearTileDom]);
+  }, [renderPage, renderTiledPage, clearTileDom, clearDetail]);
 
   const drawHighlights = useCallback(() => {
     if (!highlightRef.current || !isLoaded) return;
@@ -2260,6 +2298,84 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
   const renderPageRef = useRef(renderActive);
   renderPageRef.current = renderActive;
+
+  renderDetailRef.current = async () => {
+    const d = detailRef.current;
+    const container = containerRef.current, main = canvasRef.current, wrapper = wrapperRef.current;
+    if (!isLoaded || !container || !main || !wrapper) return;
+    if (shouldUseTilesRef.current()) { clearDetail(); return; }
+    const cssW = container.clientWidth;
+    const cssH = pageCssHRef.current;
+    if (!cssW || !cssH || main.width <= 1) return;
+    const zoom = zoomRef.current;
+    const dpr = window.devicePixelRatio || 1;
+    const need = zoom * dpr;                       // device px per page CSS px
+    // The full-page canvas is already sharp enough here: nothing to add.
+    if (main.width / cssW >= need * 0.98) { clearDetail(); return; }
+    // The visible part of the page, in page CSS px at zoom 1.
+    const vx = -panRef.current.x / zoom, vy = -panRef.current.y / zoom;
+    const vw = container.clientWidth / zoom, vh = container.clientHeight / zoom;
+    const r = d.rect;
+    if (r && d.canvas && d.zoom === zoom && d.page === currentPage &&
+        vx >= r.x - 0.5 && vy >= r.y - 0.5 && vx + vw <= r.x + r.w + 0.5 && vy + vh <= r.y + r.h + 0.5) return;
+    // A quarter of the view each side, so a short pan needs no new render;
+    // never past 8192 device px a side.
+    let m = 0.25;
+    while (m > 0 && Math.max(vw, vh) * (1 + 2 * m) * need > 8192) m -= 0.05;
+    const x0 = Math.max(0, vx - vw * m), y0 = Math.max(0, vy - vh * m);
+    const x1 = Math.min(cssW, vx + vw * (1 + m)), y1 = Math.min(cssH, vy + vh * (1 + m));
+    if (x1 <= x0 || y1 <= y0) { clearDetail(); return; }   // looking past the page
+    const pxW = Math.ceil((x1 - x0) * need), pxH = Math.ceil((y1 - y0) * need);
+    if (pxW > 8192 || pxH > 8192) return;
+
+    const gen = ++d.gen;
+    d.task?.cancel();
+    const pageNum = currentPage;
+    let page;
+    try { page = await pdfStore.getPageFor(pdfFileName, pageNum); } catch { return; }
+    if (gen !== d.gen) return;
+    const rot = page.rotate + rotationRef.current;
+    const baseScale = cssW / page.getViewport({ scale: 1, rotation: rot }).width;
+    const viewport = page.getViewport({ scale: baseScale * need, rotation: rot, offsetX: -x0 * need, offsetY: -y0 * need });
+    const off = acquireCanvas(pxW, pxH);
+    const offCtx = off.getContext('2d', { alpha: false });
+    if (!offCtx) { releaseCanvas(off); return; }
+    const task = page.render({
+      canvas: off, canvasContext: offCtx, viewport, intent: 'display',
+      ...wmFilterOptions(getActiveWatermarkFilter(renderSettingsStore.globalSettings)),
+    });
+    d.task = { cancel: () => task.cancel() };
+    try { await task.promise; } catch { off.width = 1; off.height = 1; return; }
+    if (gen !== d.gen || pdfStore.getDocCurrentPage(pdfFileName) !== pageNum) { off.width = 1; off.height = 1; return; }
+    d.task = null;
+    let src = off;
+    if (cleanMode) {
+      const tmp = acquireCanvas(pxW, pxH);
+      const tctx = tmp.getContext('2d', { alpha: false });
+      if (tctx) { tctx.filter = `contrast(${cleanContrastRef.current})`; tctx.drawImage(off, 0, 0); off.width = 1; off.height = 1; src = tmp; }
+    }
+    let c = d.canvas;
+    if (!c) {
+      c = document.createElement('canvas');
+      c.className = 'pdf-detail';
+      // After the highlight canvas in the DOM (z-index keeps the highlight on
+      // top): the main canvas stays the one right before the highlight, which
+      // is how tests and tools find it.
+      (highlightRef.current ?? main).after(c);
+      d.canvas = c;
+    }
+    if (c.width !== pxW || c.height !== pxH) { c.width = pxW; c.height = pxH; }
+    c.getContext('2d')?.drawImage(src, 0, 0);
+    src.width = 1; src.height = 1;   // a pdf.js target is never pooled
+    const z = committedZoomRef.current;
+    c.style.left = `${x0 * z}px`;
+    c.style.top = `${y0 * z}px`;
+    c.style.width = `${(x1 - x0) * z}px`;
+    c.style.height = `${(y1 - y0) * z}px`;
+    d.rect = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+    d.zoom = zoom;
+    d.page = pageNum;
+  };
   const drawHighlightsRef = useRef(drawHighlights);
   drawHighlightsRef.current = drawHighlights;
 
@@ -2659,7 +2775,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       // from both caches here. Re-clamp pan/zoom against the new bounds so the
       // page doesn't sit off-screen until the next user input.
       invalidateTileCache(pdfFileName);
-      invalidatePageCache(pdfFileName);
+      invalidatePageCache(pdfFileName); clearDetail();
       renderPageRef.current();
       syncTransform();
     });
@@ -2667,7 +2783,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     return () => observer.disconnect();
     // isLoaded: the panel can mount before its document (it is opened first
     // to show the load state) and the container exists only once it is loaded.
-  }, [pdfFileName, syncTransform, isLoaded]);
+  }, [pdfFileName, syncTransform, isLoaded, clearDetail]);
 
   // Reload PDF with fontExtraProperties when glyph debug is first activated
   useEffect(() => {
