@@ -373,6 +373,36 @@ function getPageCache(key: string): CachedRender | undefined {
   return entry;
 }
 
+/** Nominal page-cache key → the key its bitmap is stored under. Past the
+ *  canvas clamp (`maxCanvasDim`) every tier produces the same pixels — at DPR 2
+ *  on the `high` preset, tiers 4 to 10 are one 8192-px bitmap — so a bitmap is
+ *  stored once under its *effective* tier and every nominal tier that clamps to
+ *  it points here. Keyed by the nominal tier, each half-tier zoom step was a
+ *  fresh 63 MP render of identical output (review 2026-10-03, 3.2). */
+const _tierAlias = new Map<string, string>();
+
+/** The tier a render actually has once the canvas clamp has been applied. */
+function effectiveTier(hiresScale: number, baseScale: number, dpr: number): number {
+  return Math.round((hiresScale / (baseScale * dpr)) * 1000) / 1000;
+}
+
+function getPageCacheAliased(key: string): CachedRender | undefined {
+  const hit = getPageCache(key);
+  if (hit) return hit;
+  const alias = _tierAlias.get(key);
+  return alias ? getPageCache(alias) : undefined;
+}
+
+/** Neighbour-page renders in flight, by page-cache key. The adjacent-page
+ *  effect and the idle prefetch ask for the same neighbours; without this the
+ *  same page was rendered twice at once. */
+const _neighbourInflight = new Map<string, Promise<CachedRender>>();
+
+/** A neighbour page that is not on screen is only ever seen at a page edge, as
+ *  a page flips in: it renders at most at this tier. The main page and an
+ *  on-screen neighbour keep the full tier. */
+const NEIGHBOUR_OFFSCREEN_TIER = 2;
+
 /** Find the best (highest-tier) cached render for a page, regardless of tier. */
 function getBestPageCache(file: string, page: number, clean: boolean): CachedRender | undefined {
   let best: { key: string; entry: CachedRender; tier: number } | undefined;
@@ -431,6 +461,7 @@ function getPreviewCache(key: string): CachedRender | undefined {
 /** Invalidate all cache entries for a given file (e.g. on clean mode toggle) */
 export function invalidatePageCache(file?: string): void {
   if (!file) {
+    _tierAlias.clear();
     for (const e of _pageCache.values()) e.bitmap.close();
     _pageCache.clear();
     _pageCacheTotalPixels = 0;
@@ -438,6 +469,7 @@ export function invalidatePageCache(file?: string): void {
     _previewCache.clear();
     return;
   }
+  for (const k of [..._tierAlias.keys()]) if (k.startsWith(file + ':')) _tierAlias.delete(k);
   for (const [k, v] of _pageCache) {
     if (k.startsWith(file + ':')) {
       _pageCacheTotalPixels -= v.width * v.height;
@@ -1379,6 +1411,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
   const renderIdRef = useRef(0);
   const prefetchIdRef = useRef(0);
+  /** The full-page render in flight: its effective cache key and the token a
+   *  later identical request adopts (see renderPage). */
+  const mainRenderInflightRef = useRef<{ key: string; cssW: number; token: { id: number } } | null>(null);
 
   /** Render a single page to an ImageBitmap (shared by main render + prefetch) */
   const renderPageToBitmap = useCallback(async (
@@ -1494,10 +1529,16 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const renderPage = useCallback(async () => {
     if (!isLoaded) return;
 
-    renderTaskRef.current?.cancel();
     setError(null);
 
     const renderId = ++renderIdRef.current;
+    // A render whose clamped size turns out to equal the one already in flight
+    // adopts it (token.id moves to the newer call) instead of cancelling and
+    // restarting identical work — the 8192-px render was started five times
+    // and cancelled before it ever finished once. So staleness is read off the
+    // token, and the in-flight task is cancelled only once we know it differs.
+    const token = { id: renderId };
+    const isStale = () => renderIdRef.current !== token.id;
     // forceFullTier (set by the crisp-settle timer) lifts the preset tier cap
     // for exactly one render so the final settled frame is at full zoom
     // resolution. Consume it right after the tier is computed so interactive
@@ -1517,8 +1558,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const cacheKey = pageCacheKey(pdfFileName, currentPage, resTier, cleanMode);
 
       // Fast path: cache hit — instant blit, no pdf.js render
-      const cached = getPageCache(cacheKey);
+      const cached = getPageCacheAliased(cacheKey);
       if (cached && cached.cssW === containerWidth) {
+        renderTaskRef.current?.cancel();
+        mainRenderInflightRef.current = null;
         blitToCanvas(cached, currentPage);
         const tHit = performance.now() - t0;
         // Cache hits are near-instant — feed EMA so adaptive zoom stays aggressive
@@ -1550,7 +1593,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       }
 
       const page = await pdfStore.getPageFor(pdfFileName, currentPage);
-      if (renderIdRef.current !== renderId) return;
+      if (isStale()) return;
       const tPage = performance.now();
 
       const rot = page.rotate + rotationRef.current;
@@ -1572,6 +1615,26 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const cssW = containerWidth;
       const cssH = unscaledViewport.height * baseScale;
 
+      // Past the clamp, this tier's pixels may already exist under another.
+      const effKey = pageCacheKey(pdfFileName, currentPage, effectiveTier(hiresScale, baseScale, dpr), cleanMode);
+      _tierAlias.set(cacheKey, effKey);
+      const effHit = getPageCache(effKey);
+      if (effHit && effHit.cssW === containerWidth) {
+        renderTaskRef.current?.cancel();
+        mainRenderInflightRef.current = null;
+        blitToCanvas(effHit, currentPage);
+        log.perf.log(`cache-hit (clamped) ${cacheKey} → ${effKey}`);
+        return;
+      }
+      const inflight = mainRenderInflightRef.current;
+      if (inflight && inflight.key === effKey && inflight.cssW === containerWidth) {
+        inflight.token.id = renderId;           // same pixels already on the way
+        log.perf.log(`render adopted ${cacheKey} → ${effKey}`);
+        return;
+      }
+      renderTaskRef.current?.cancel();
+      mainRenderInflightRef.current = { key: effKey, cssW: containerWidth, token };
+
       // Render to pooled offscreen buffer
       const offscreen = acquireCanvas(viewport.width, viewport.height);
       const offCtx = offscreen.getContext('2d', { alpha: false });
@@ -1583,9 +1646,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         ...wmFilterOptions(getActiveWatermarkFilter(renderSettingsStore.globalSettings)),
       });
       renderTaskRef.current = { cancel: () => task.cancel() };
-      await task.promise;
+      try {
+        await task.promise;
+      } finally {
+        if (mainRenderInflightRef.current?.token === token) mainRenderInflightRef.current = null;
+      }
 
-      if (renderIdRef.current !== renderId) {
+      if (isStale()) {
         // Stale render — abandon canvas (don't pool, pdf.js may still draw to it)
         offscreen.width = 1; offscreen.height = 1;
         return;
@@ -1606,7 +1673,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         }
       }
 
-      if (renderIdRef.current !== renderId) { releaseCanvas(sourceCanvas); return; }
+      if (isStale()) { releaseCanvas(sourceCanvas); return; }
 
       // Blit to visible canvas SYNCHRONOUSLY from sourceCanvas — no async step
       // between render completion and visible blit. This prevents any race with
@@ -1636,7 +1703,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       try { bitmap = await createImageBitmap(sourceCanvas); } catch { /* skip */ }
       // Don't pool sourceCanvas — abandon to GC (pdf.js worker may still reference it)
       sourceCanvas.width = 1; sourceCanvas.height = 1;
-      if (renderIdRef.current !== renderId) { bitmap?.close(); return; }
+      if (isStale()) { bitmap?.close(); return; }
       const tCopy = performance.now();
 
       scaleRef.current = baseScale;
@@ -1658,7 +1725,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
       // Cache the pre-created bitmap for instant reuse
       if (bitmap) {
-        putPageCache(cacheKey, {
+        putPageCache(effKey, {
           bitmap, width: viewport.width, height: viewport.height,
           cssW, cssH, baseScale, hiresScale, vpHeight: unscaledViewport.height,
           vpTransform: unscaledViewport.transform,
@@ -1693,7 +1760,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       // compete with preview/adjacent renders for CPU/GPU. requestIdleCallback
       // fires when the browser is idle (after paint, before next frame deadline).
       const pfId = ++prefetchIdRef.current;
-      const adjPfTier = quantiseTier(Math.min(resTier, qcfgRef.current.maxAdjTier));
+      // Neighbours are prefetched at the tier the adjacent effect will ask for
+      // while they are off screen, so the two land on one cache key.
+      const adjPfTier = quantiseTier(Math.min(resTier, qcfgRef.current.maxAdjTier, NEIGHBOUR_OFFSCREEN_TIER));
       const idlePrefetch = () => {
         if (prefetchIdRef.current !== pfId) return; // stale
 
@@ -1725,14 +1794,17 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
               .catch(() => {});
           }
           const pfKey = pageCacheKey(pdfFileName, pNum, adjPfTier, cleanMode);
-          if (!getPageCache(pfKey)) {
-            renderPageToBitmap(pNum, containerWidth, adjPfTier, cleanMode)
+          if (!getPageCache(pfKey) && !_neighbourInflight.has(pfKey)) {
+            const p = renderPageToBitmap(pNum, containerWidth, adjPfTier, cleanMode)
               .then(result => {
-                if (prefetchIdRef.current !== pfId) { result.bitmap.close(); return; }
+                if (prefetchIdRef.current !== pfId) { result.bitmap.close(); throw new DOMException('stale', 'AbortError'); }
                 putPageCache(pfKey, result);
                 log.perf.log(`prefetched page ${pNum} tier=${adjPfTier}`);
+                return result;
               })
-              .catch(() => {});
+              .finally(() => { if (_neighbourInflight.get(pfKey) === p) _neighbourInflight.delete(pfKey); });
+            _neighbourInflight.set(pfKey, p);
+            p.catch(() => {});
           }
         }
       };
@@ -2253,15 +2325,28 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const containerWidth = container.clientWidth;
     if (containerWidth === 0) return;
 
-    // Adjacent pages render at main tier, capped by quality config.
+    // Adjacent pages render at main tier, capped by quality config — and, when
+    // not on screen, at NEIGHBOUR_OFFSCREEN_TIER (see tierFor below).
     // The debounce (adjDebounceRef) prevents mid-zoom cascade.
-    const tier = quantiseTier(Math.min(renderTierRef.current, qcfgRef.current.maxAdjTier));
+    const onScreenTier = quantiseTier(Math.min(renderTierRef.current, qcfgRef.current.maxAdjTier));
+    const offScreenTier = quantiseTier(Math.min(onScreenTier, NEIGHBOUR_OFFSCREEN_TIER));
 
-    // How many pages fit in the viewport at current zoom? Render enough to cover.
+    // How many pages fit in the viewport at current zoom? Render enough to
+    // cover. Once one page fills the viewport, ±1 is all a scroll or a page
+    // flip can reach before the next settle re-runs this — ±2 there was two
+    // more full-page renders nobody could see (review 2026-10-03, 3.1).
     const zoom = zoomRef.current;
     const containerH = container.clientHeight;
-    const pagesInView = Math.ceil(containerH / (cssH * zoom));
-    const adjCount = Math.max(1, Math.ceil(pagesInView / 2) + 1);
+    const pageH = cssH * zoom;
+    const pagesInView = Math.ceil(containerH / pageH);
+    const adjCount = pageH >= containerH ? 1 : Math.max(1, Math.ceil(pagesInView / 2) + 1);
+    // A neighbour's rect in container coordinates: the wrapper is translated
+    // by the pan and the current page starts at 0.
+    const panY = panRef.current.y;
+    const tierFor = (offset: number) => {
+      const top = panY + offset * pageH;
+      return top < containerH && top + pageH > 0 ? onScreenTier : offScreenTier;
+    };
 
     const ac = new AbortController();
     const adjMap = adjCanvasMapRef.current;
@@ -2288,19 +2373,29 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       }
     }
 
-    const blitAdjacentPage = async (pageNum: number, canvas: HTMLCanvasElement, yOffset: number) => {
+    /** False when nothing was drawn (aborted, or the render failed) — the
+     *  caller then forgets the tier so the next run tries again. */
+    const blitAdjacentPage = async (pageNum: number, canvas: HTMLCanvasElement, yOffset: number, tier: number): Promise<boolean> => {
       const cacheKey = pageCacheKey(pdfFileName, pageNum, tier, cleanMode);
       let entry = getPageCache(cacheKey);
 
       if (!entry) {
         try {
-          const result = await renderPageToBitmap(pageNum, containerWidth, tier, cleanMode, ac.signal);
-          if (ac.signal.aborted) { result.bitmap.close(); return; }
-          putPageCache(cacheKey, result);
-          entry = result;
-        } catch { return; }
+          // The idle prefetch may already be rendering this one.
+          const shared = _neighbourInflight.get(cacheKey);
+          if (shared) {
+            entry = await shared;
+          } else {
+            const p = renderPageToBitmap(pageNum, containerWidth, tier, cleanMode, ac.signal)
+              .then(result => { putPageCache(cacheKey, result); return result; })
+              .finally(() => { if (_neighbourInflight.get(cacheKey) === p) _neighbourInflight.delete(cacheKey); });
+            _neighbourInflight.set(cacheKey, p);
+            entry = await p;
+          }
+          if (ac.signal.aborted) return false;
+        } catch { return false; }
       }
-      if (ac.signal.aborted || !entry) return;
+      if (ac.signal.aborted || !entry) return false;
 
       // CSS sizes use committedZoom so adjacent pages stay in lockstep with
       // the main page's wrapper-children sizing — see applyTransform docstring.
@@ -2321,6 +2416,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       if (!canvas.parentElement) {
         wrapper.insertBefore(canvas, wrapper.firstChild);
       }
+      return true;
     };
 
     // Sort wanted pages by distance from current page (center-out priority)
@@ -2332,6 +2428,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         if (ac.signal.aborted) break;
         const offset = pageNum - currentPage;
         const yOffset = offset * cssH;
+        const tier = tierFor(offset);
         let existing = adjMap.get(pageNum);
 
         if (existing && existing.tier === tier) {
@@ -2361,7 +2458,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           adjMap.set(pageNum, existing);
         }
         existing.tier = tier;
-        await blitAdjacentPage(pageNum, existing.canvas, yOffset);
+        if (!(await blitAdjacentPage(pageNum, existing.canvas, yOffset, tier))) existing.tier = 0;
       }
     })();
 
