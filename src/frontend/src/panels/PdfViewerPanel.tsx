@@ -719,6 +719,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const canvasRef = useRef<HTMLCanvasElement>(null);
   /** What the main canvas holds right now, so a stand-in is only drawn when it
    *  is sharper (see renderPage). */
+  /** Backing size the highlight canvas should have. It is only given that
+   *  size while it has matches to draw (drawHighlights); hidden, it is 1×1 —
+   *  a page-sized highlight canvas was reallocated on every settle with no
+   *  search active (review 2026-10-03, 3.4). */
+  const hlSizeRef = useRef({ w: 0, h: 0 });
   const mainContentRef = useRef<{ el: HTMLCanvasElement; file: string; page: number; clean: boolean; rot: number; cssW: number; width: number } | null>(null);
   /** The bitmap each tile canvas was last drawn from (see renderTiledPage). */
   const tileBitmapRef = useRef(new WeakMap<HTMLCanvasElement, ImageBitmap>());
@@ -900,7 +905,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   // Pan/zoom live in refs for 60fps DOM updates; React state only for toolbar display
   const zoomRef = useRef(1);
   const panRef = useRef({ x: 0, y: 0 });
-  const [zoomDisplay, setZoomDisplay] = useState(1);
+  /** The toolbar's zoom readout, written straight to the DOM: as React state
+   *  it re-rendered this whole panel on 169 of 170 pinch frames
+   *  (review 2026-10-03, 1.1). */
+  const zoomInfoRef = useRef<HTMLSpanElement>(null);
   const [tiledMode, setTiledMode] = useState(false);
   const zoomDisplayRafRef = useRef(0);
   const isDraggingRef = useRef(false);
@@ -1266,7 +1274,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     if (!zoomDisplayRafRef.current) {
       zoomDisplayRafRef.current = requestAnimationFrame(() => {
         zoomDisplayRafRef.current = 0;
-        setZoomDisplay(zoomRef.current);
+        if (zoomInfoRef.current) zoomInfoRef.current.textContent = `${Math.round(zoomRef.current * 100)}%`;
       });
     }
     if (shouldUseTilesRef.current()) scheduleTierRenderRef.current();
@@ -1503,10 +1511,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     ctx.drawImage(entry.bitmap, 0, 0);
     mainContentRef.current = { el: canvas, file: pdfFileName, page, clean: cleanMode, rot: rotationRef.current, cssW: entry.cssW, width: entry.width };
 
-    if (highlight.width !== entry.width || highlight.height !== entry.height) {
-      highlight.width = entry.width;
-      highlight.height = entry.height;
-    }
+    hlSizeRef.current = { w: entry.width, h: entry.height };
     highlight.style.width = `${entry.cssW * zCommit}px`;
     highlight.style.height = `${entry.cssH * zCommit}px`;
 
@@ -1688,8 +1693,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const ratioFP = zCommitFP / committedZoomRef.current;
       rescaleWrapperChildren(ratioFP);
       committedZoomRef.current = zCommitFP;
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
+      // Only a size change needs a reallocation; the page bitmap is opaque and
+      // covers the canvas, so drawing over the old content replaces all of it.
+      if (canvas.width !== viewport.width || canvas.height !== viewport.height) {
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+      }
       canvas.style.width = `${cssW * zCommitFP}px`;
       canvas.style.height = `${cssH * zCommitFP}px`;
       const ctx = canvas.getContext('2d');
@@ -1712,8 +1721,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       viewportTransformRef.current = unscaledViewport.transform;
       pageCssHRef.current = cssH;
 
-      highlight.width = viewport.width;
-      highlight.height = viewport.height;
+      hlSizeRef.current = { w: viewport.width, h: viewport.height };
       highlight.style.width = `${cssW * zCommitFP}px`;
       highlight.style.height = `${cssH * zCommitFP}px`;
       if (wrapperRef.current) {
@@ -1906,11 +1914,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           ? Math.min(qcfgRef.current.maxCanvasDim, Math.floor(Math.sqrt(qcfgRef.current.cacheMaxPixels)))
           : qcfgRef.current.maxCanvasDim;
         const hlScale = clampFullPageScale(unscaledVp.width, unscaledVp.height, renderScale, hlMaxDim);
-        highlight.width = Math.ceil(unscaledVp.width * hlScale);
-        highlight.height = Math.ceil(unscaledVp.height * hlScale);
+        hlSizeRef.current = { w: Math.ceil(unscaledVp.width * hlScale), h: Math.ceil(unscaledVp.height * hlScale) };
         highlight.style.width = `${cssW * zCommit}px`;
         highlight.style.height = `${cssH * zCommit}px`;
-        highlight.style.display = '';
         // Tiles use renderScale for coords; highlight may be at lower
         // (clamped) scale on Safari. Store for drawHighlights to use.
         hiresScaleRef.current = hlScale;
@@ -2230,10 +2236,16 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     // Hide highlight canvas entirely when no matches — avoids compositing an empty layer
     if (pageMatches.length === 0 && matches.length === 0) {
       highlight.style.display = 'none';
+      if (highlight.width > 1) { highlight.width = 1; highlight.height = 1; }
       lastHighlightZoomRef.current = '';
       return;
     }
     if (highlight.style.display === 'none') highlight.style.display = '';
+    const want = hlSizeRef.current;
+    if (want.w > 0 && (highlight.width !== want.w || highlight.height !== want.h)) {
+      highlight.width = want.w;
+      highlight.height = want.h;
+    }
 
     const scale = hiresScaleRef.current;
 
@@ -2891,7 +2903,6 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       // Always treat those as zoom — pinch is a fundamental gesture that should
       // never be remapped by scroll binding settings.
       const isTrackpadPinch = e.ctrlKey && !e.metaKey && !e.shiftKey;
-      if (isTrackpadPinch) log.ui.log('pdf wheel pinch (ctrlKey)', { deltaY: e.deltaY });
 
       // Resolve effective action: trackpad pinch → always zoom, otherwise use bindings.
       // No `wheelDetection` safety net here — on PDF, classic mouse-wheel scrolling
@@ -4128,7 +4139,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             title="Fit to page width (Space)"
           >
             <IconArrowAutofitWidth size={14} />
-            <span className="pdf-zoom-info">{Math.round(zoomDisplay * 100)}%</span>
+            <span className="pdf-zoom-info" ref={zoomInfoRef} translate="no">{`${Math.round(zoomRef.current * 100)}%`}</span>
           </button>
         </div>
       </div>

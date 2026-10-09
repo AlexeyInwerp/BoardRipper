@@ -963,6 +963,9 @@ class PdfStore extends Emitter {
   async getPageFor(fileName: string, pageNum: number): Promise<PDFPageProxy> {
     const d = this._documents.get(fileName);
     if (!d) throw new Error(`PDF not loaded: ${fileName}`);
+    let used = this._pagesUsed.get(fileName);
+    if (!used) { used = new Set(); this._pagesUsed.set(fileName, used); }
+    used.add(pageNum);
     return this._effectiveDoc(d).getPage(pageNum);
   }
 
@@ -1012,12 +1015,12 @@ class PdfStore extends Emitter {
    * memoises a `PDFPageProxy` (operator list, decoded images, font resources)
    * for every page visited via `getPage`, and never trims it while the doc
    * stays open — so scrolling a long schematic accumulates hundreds of parsed
-   * pages' worth of heap. After navigation settles we call `doc.cleanup(true)`
-   * (keep fonts — expensive to re-fetch, watermark-independent), which drops
-   * the operator lists / image resources for all pages. The visible page
-   * re-parses its (cheap) operator list on the next render that misses the
-   * ImageBitmap cache; nothing else is affected. Reuses the same call as
-   * flushOperatorListCache but debounced per file so it never fires mid-render.
+   * pages' worth of heap. After navigation settles, pages more than
+   * CLEANUP_KEEP_RADIUS from the current one drop their operator lists and
+   * image resources (`PDFPageProxy.cleanup()`); the pages being read keep
+   * theirs. Above CLEANUP_DOC_WIDE_PAGES parsed pages it falls back to the
+   * document-wide `doc.cleanup(true)` (keep fonts). Debounced per file so it
+   * never fires mid-gesture.
    */
   scheduleIdleCleanup(fileName: string, delayMs = 4000): void {
     const existing = this._cleanupTimers.get(fileName);
@@ -1026,10 +1029,39 @@ class PdfStore extends Emitter {
       this._cleanupTimers.delete(fileName);
       const d = this._documents.get(fileName);
       if (!d) return;
-      d.doc?.cleanup(true).catch(() => { /* in-flight render — retry next idle */ });
-      d.strippedDoc?.cleanup(true).catch(() => { /* same */ });
+      const used = this._pagesUsed.get(fileName);
+      // Memory pressure only: past this many parsed pages, the document-wide
+      // cleanup (fonts and all) is worth a re-parse of what is on screen.
+      if (used && used.size > PdfStore.CLEANUP_DOC_WIDE_PAGES) {
+        used.clear();
+        d.doc?.cleanup(true).catch(() => { /* in-flight render — retry next idle */ });
+        d.strippedDoc?.cleanup(true).catch(() => { /* same */ });
+        return;
+      }
+      // Otherwise drop only pages away from the one being read. The
+      // document-wide cleanup also threw away the current page, its
+      // neighbours and the worker's fonts, so the first zoom after four
+      // seconds of reading re-parsed five pages (review 2026-10-03, 2.2).
+      // PDFPageProxy.cleanup() is per page and sends the worker nothing; it
+      // refuses (returns false) while that page is rendering, so the page
+      // stays listed and is tried again next idle.
+      if (!used) return;
+      for (const n of [...used]) {
+        if (Math.abs(n - d.currentPage) <= PdfStore.CLEANUP_KEEP_RADIUS) continue;
+        const docs = [d.doc, d.strippedDoc].filter(Boolean) as PDFDocumentProxy[];
+        Promise.all(docs.map(doc => doc.getPage(n).then(p => p.cleanup())))
+          .then(done => { if (done.every(Boolean)) used.delete(n); })
+          .catch(() => { /* page gone with a reparse — nothing to free */ });
+      }
     }, delayMs));
   }
+
+  /** Pages within this distance of the current one keep their parsed state. */
+  private static readonly CLEANUP_KEEP_RADIUS = 3;
+  /** Parsed pages above which the idle cleanup frees the whole document. */
+  private static readonly CLEANUP_DOC_WIDE_PAGES = 40;
+  /** Pages of each document handed out by getPageFor since the last cleanup. */
+  private _pagesUsed = new Map<string, Set<number>>();
 
   /** Per-file queue for the operations that swap pdf.js proxies (toggleClean,
    *  reparse): two running at once on one document raced — each read the
@@ -2056,6 +2088,7 @@ class PdfStore extends Emitter {
       d.doc.destroy();
       d.strippedDoc?.destroy();
       this._documents.delete(d.fileName);
+      this._pagesUsed.delete(d.fileName);
     }
     this._activeFileName = null;
     this.notify();
@@ -2126,6 +2159,7 @@ class PdfStore extends Emitter {
     if (!d) return;
     const t = this._cleanupTimers.get(fileName);
     if (t) { clearTimeout(t); this._cleanupTimers.delete(fileName); }
+    this._pagesUsed.delete(fileName);
     d.doc.destroy();
     d.strippedDoc?.destroy();
     this._documents.delete(fileName);
