@@ -954,17 +954,48 @@ export function detectGhostComponents(parts: Part[]): GhostComponent[] {
  *   S3. Containment count — the part's bounding box contains the
  *       origins of at least `minContains` other parts on the same side.
  *       Catches frames generically when neither S1 nor S2 fires.
+ *       **Not** for a part that carries signal: a CPU, PCH or socket has
+ *       decoupling caps inside its outline just like a shield frame does,
+ *       and a part flagged here loses its pads and every pin label. A part
+ *       whose pins reach two or more distinct signal nets (not ground, not
+ *       NC/unconnected) is electrical. Measured on the 350-file XZZ corpus
+ *       plus the Allegro/EAGLE samples: of 353 flagged parts, 51 had no
+ *       signal net (the shields) and 298 had two or more — U1000/U1800 on
+ *       156 of 349 XZZ files, JCPU1, DIMM sockets, SIM connectors.
  *
- * Mutates `parts[i].mechanical`; never sets it to false (leaves prior
- * value alone so user overrides survive).
+ * Recomputes `parts[i].mechanical` from scratch: nothing else writes it
+ * (the right-click "send to back" is a separate part override), and a
+ * cached board still carries whatever an older rule decided.
  */
 const MECHANICAL_KEYWORDS = [
   'SHIELD', 'SHIELDING', 'HEATSINK', 'HEAT SINK', 'HEAT-SINK',
   'FRAME', 'CAN CLIP', 'EMI', 'BRACKET',
 ];
 
+/** A net that says something about the circuit — not ground, not a
+ *  no-connect, not an exporter's placeholder for an unrouted pin. */
+function isSignalNet(net: string | undefined): boolean {
+  if (!net) return false;
+  const u = net.toUpperCase();
+  if (u === '(NULL)' || u === 'NC' || u.startsWith('NC_') || u.includes('GND')) return false;
+  if (u.startsWith('UNCONNECTED') || u.startsWith('N$') || /^NET\d+$/.test(u)) return false;
+  return true;
+}
+
+/** Two or more distinct signal nets on the part's pins. */
+function carriesSignal(p: Part): boolean {
+  let first: string | undefined;
+  for (const pin of p.pins) {
+    if (!isSignalNet(pin.net)) continue;
+    if (first === undefined) first = pin.net;
+    else if (pin.net !== first) return true;
+  }
+  return false;
+}
+
 export function flagMechanicalParts(parts: Part[], minContains = 5): void {
   let s1 = 0, s2 = 0, s3 = 0;
+  for (const p of parts) p.mechanical = undefined;
 
   // S1 — keyword match on PART description (meta.value).
   for (const p of parts) {
@@ -1019,6 +1050,7 @@ export function flagMechanicalParts(parts: Part[], minContains = 5): void {
   for (let i = 0; i < parts.length; i++) {
     const p = parts[i];
     if (p.mechanical) continue; // already flagged by S1/S2 — skip the work
+    if (carriesSignal(p)) continue; // a BGA with caps under it, not a frame
     const { minX, minY, maxX, maxY } = p.bounds;
     const w = maxX - minX, h = maxY - minY;
     if (w <= 0 || h <= 0) continue;
