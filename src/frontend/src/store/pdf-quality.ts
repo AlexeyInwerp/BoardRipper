@@ -58,8 +58,13 @@ export interface PdfQualityConfig {
 const QUALITY_CONFIGS: Record<PdfRenderQuality, PdfQualityConfig> = {
   max:    { maxMainTier: 16, maxAdjTier: 6, neighbourFarTier: 4, neighbourNearMargin: 1,    adjSettleMs: 100, cacheMaxEntries: 24, cacheMaxPixels: 200_000_000, maxCanvasDim: 16384 },
   high:   { maxMainTier: 10, maxAdjTier: 4, neighbourFarTier: 2, neighbourNearMargin: 0.5,  adjSettleMs: 150, cacheMaxEntries: 16, cacheMaxPixels: 120_000_000, maxCanvasDim: 8192  },
-  medium: { maxMainTier: 6,  maxAdjTier: 3, neighbourFarTier: 1.5, neighbourNearMargin: 0.25, adjSettleMs: 200, cacheMaxEntries: 10, cacheMaxPixels: 60_000_000,  maxCanvasDim: 4096  },
-  low:    { maxMainTier: 4,  maxAdjTier: 2, neighbourFarTier: 1, neighbourNearMargin: 0,    adjSettleMs: 300, cacheMaxEntries: 6,  cacheMaxPixels: 30_000_000,  maxCanvasDim: 2048  },
+  // The canvas cap is what decides whether text is readable once zoomed in:
+  // the whole page is one canvas in the default (full-page) mode. At 2048 px
+  // 'low' was a smear past ~2× (reported 2026-10-10), so no preset goes below
+  // 4096 — the same ceiling WebKit imposes anyway (probeMaxCanvasDim). The
+  // cheaper presets save on neighbours, cache and tier steps instead.
+  medium: { maxMainTier: 6,  maxAdjTier: 3, neighbourFarTier: 1.5, neighbourNearMargin: 0.25, adjSettleMs: 200, cacheMaxEntries: 10, cacheMaxPixels: 60_000_000,  maxCanvasDim: 6144  },
+  low:    { maxMainTier: 5,  maxAdjTier: 2, neighbourFarTier: 1, neighbourNearMargin: 0,    adjSettleMs: 300, cacheMaxEntries: 6,  cacheMaxPixels: 40_000_000,  maxCanvasDim: 4096  },
 };
 
 export const PDF_QUALITY_KEY = 'boardripper-pdf-render-quality';
