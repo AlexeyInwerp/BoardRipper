@@ -1,5 +1,56 @@
 # BoardRipper changelog
 
+## v0.49.0 — 2026-10-10
+
+### Added
+
+- **PDFs are sharp at any zoom, on every quality preset.** While you pan or
+  zoom, the page is drawn at the preset's size; a moment after you stop, the
+  part on screen is drawn again at the exact zoom. Fastest is now as sharp as
+  Quality once the view settles — it was unreadable past 2×.
+- **Opening a PDF shows what is happening.** The tab opens at once and says
+  whether the file is downloading, being read, opened or drawn; a file that
+  cannot be opened says why. The banner over the board area covers PDFs too,
+  and text indexing shows as "Indexing text 23 %".
+- **PDF quality on the start page**, beside Board quality, with the same four
+  names: Quality, Balanced, Fast, Fastest.
+- **A Board quality preset** — Quality, Balanced, Fast, Fastest — on the start
+  page. Fast and Fastest trade resolution, frame rate and trace corners for
+  speed on tablets.
+- **Settings ▸ Rendering**, a tab of its own for board and PDF quality, the
+  board text renderer and diagnostics. It was System ▸ Performance & Debug.
+  Smooth wheel zoom and two-finger rotation moved to Input ▸ Navigation.
+- **Reset all local settings** in Settings ▸ System ▸ Troubleshooting, for a
+  stored setting that left the board blank. Recent files, favourites, history,
+  the session and PDF bookmarks are kept.
+
+### Changed
+
+- **PDF zoom is much faster.** On a large schematic at tablet speed, an
+  eight-step zoom settles in about 3 s instead of 6, and the page freezes for
+  well under a second instead of three. Neighbouring pages are drawn only as
+  sharp as they need to be, the same pixels are no longer rendered twice, and
+  the pages you are reading stay ready instead of being re-read after four
+  seconds.
+- **Dense boards draw faster.** Traces and pads are now skipped when they are
+  off screen, and empty part containers cost nothing.
+- **The app no longer re-renders everything on each board change** — a tap,
+  a selection or a rotation was redrawing every panel.
+- Two-finger rotation now unlocks at 24°.
+
+### Fixed
+
+- **A PDF zoomed past 500 % in Chrome turned black.** The Quality preset drew
+  the page into a canvas of about 700 MB next to a neighbour of the same size,
+  more than Chrome's graphics memory. Canvas memory now stays near one screen.
+- **Connection lines stay visible while you pinch** instead of vanishing until
+  the fingers stop.
+- **CPUs, sockets and connectors** are no longer drawn as mechanical parts with
+  no pin numbers or net names.
+- **No freeze when PDF text indexing finishes**, and a repeat open shows its
+  first page about 300 ms sooner.
+- The NR2201ZE family's `indiafix` watermark is filtered by default.
+
 ## v0.48.0 — 2026-10-05
 
 ### Added
