@@ -8,10 +8,10 @@ import type { PdfIndexFailedEntry } from '../pdf/pdf-index-client';
 import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
 import { ensurePdfPanel, ensureBoardPanel } from '../store/dockview-api';
-import { loadLibraryBoard, openFolderFileFromCache } from '../store/file-actions';
+import { beginPdfOpen, loadLibraryBoard, openFolderFileFromCache } from '../store/file-actions';
 import { loadBoardWithAscSiblings } from '../store/asc-open';
 import { lookupBoard } from '../store/apple-boards';
-import { IconStack2, IconHistory, IconFolder, IconHash, IconPin, IconPinFilled, IconSettings, IconChevronsUp, IconChevronDown, IconDatabase, IconDeviceDesktop, IconCheck, IconFileText } from '@tabler/icons-react';
+import { IconStack2, IconHistory, IconFolder, IconHash, IconPin, IconPinFilled, IconSettings, IconChevronsUp, IconChevronDown, IconDatabase, IconDeviceDesktop, IconCheck, IconFileText, IconExternalLink, IconDownload, IconFolderOpen, IconPencil } from '@tabler/icons-react';
 import { log } from '../store/log-store';
 import { fetchWithCloudRetry, readCloudError, formatCloudErrorToast } from '../store/fetch-with-cloud-retry';
 import { ObdSection } from '../components/ObdSection';
@@ -20,7 +20,7 @@ import { FolderLibraryChip, FolderLibraryEmptyState } from '../components/Folder
 
 /** Persisted tree expansion state — survives tab switches and page reloads.
  *  Closing a parent keeps children's keys in the Set so re-opening restores them. */
-function usePersistedExpanded(storageKey: string, defaultKeys: string[] = []): [Set<string>, (key: string) => void, () => void] {
+function usePersistedExpanded(storageKey: string, defaultKeys: string[] = []): [Set<string>, (key: string) => void, () => void, (keys: string[]) => void] {
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     try {
       const raw = localStorage.getItem(storageKey);
@@ -45,7 +45,18 @@ function usePersistedExpanded(storageKey: string, defaultKeys: string[] = []): [
     try { localStorage.setItem(storageKey, '[]'); } catch { /* ignore */ }
   }, [storageKey]);
 
-  return [expanded, toggle, collapseAll];
+  /** Opens every key in `keys` (a path's ancestors), leaving the rest as is. */
+  const expandPaths = useCallback((keys: string[]) => {
+    setExpanded(prev => {
+      if (keys.every(k => prev.has(k))) return prev;
+      const next = new Set(prev);
+      for (const k of keys) next.add(k);
+      try { localStorage.setItem(storageKey, JSON.stringify([...next])); } catch { /* ignore */ }
+      return next;
+    });
+  }, [storageKey]);
+
+  return [expanded, toggle, collapseAll, expandPaths];
 }
 
 /** Returns `value` after `delayMs` ms of stillness — empty values short-circuit
@@ -490,11 +501,14 @@ export function LibraryPanel() {
   const handleOpenFile = useCallback(async (file: DatabankFile, pageNum?: number) => {
     databankStore.selectFile(file.id);
     databankStore.addToHistory(file);
+    let pdfFailed: ((err: unknown) => void) | null = null;
     try {
       // A board or PDF that is already cached opens without the folder —
       // which is the difference between "pick the folder again" once per
       // session and once per file.
       if (await openFolderFileFromCache(file)) return;
+      // A PDF's panel and load state start before the download.
+      if (file.file_type === 'pdf') pdfFailed = beginPdfOpen(file.filename, { downloading: true });
       const fileObj = await databankStore.fetchFileBuffer(file);
       if (file.file_type === 'board') {
         // Split .asc deliveries open as one board — see loadLibraryBoard.
@@ -509,11 +523,17 @@ export function LibraryPanel() {
               try {
                 const pdfFile = databankStore.fileById(binding.pdf_file_id);
                 if (!pdfFile) continue;
-                const pdfObj = await databankStore.fetchFileBuffer(pdfFile);
-                boardStore.addPdf(pdfObj);
-                boardStore.addPdfBinding(boardStore.activeTabId!, pdfObj.name);
-                await pdfStore.loadFile(pdfObj, pdfFile.id);
-                ensurePdfPanel(pdfObj.name);
+                const failed = beginPdfOpen(pdfFile.filename, { panel: false, downloading: true });
+                try {
+                  const pdfObj = await databankStore.fetchFileBuffer(pdfFile);
+                  boardStore.addPdf(pdfObj);
+                  boardStore.addPdfBinding(boardStore.activeTabId!, pdfObj.name);
+                  await pdfStore.loadFile(pdfObj, pdfFile.id);
+                  ensurePdfPanel(pdfObj.name);
+                } catch (err) {
+                  failed(err);
+                  throw err;
+                }
               } catch (err) {
                 log.ui.error('Failed to load bound PDF:', err);
               }
@@ -582,6 +602,7 @@ export function LibraryPanel() {
       }
     } catch (err) {
       log.ui.error('Failed to open file:', err);
+      pdfFailed?.(err);
       // A local-folder library whose index outlived its file access fails
       // here and nowhere else — the Debug panel is not where the user is
       // looking, so say it where they clicked.
@@ -1728,11 +1749,12 @@ function RevealButton({ path }: { path: string }) {
   const label = useRevealLabel();
   return (
     <button
-      className="library-detail-open library-detail-download"
+      className="library-detail-icon"
       onClick={() => { void window.electronAPI?.showItemInFolder(path); }}
-      title="Show file in the OS file browser"
+      title={label}
+      aria-label={label}
     >
-      {label}
+      <IconFolderOpen size={15} />
     </button>
   );
 }
@@ -1767,6 +1789,8 @@ function FileDetailPath({ path }: { path: string }) {
   );
 }
 
+const DETAIL_OPEN_KEY = 'boardripper-library-detail-open';
+
 function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBinding, onDeleteBinding }: {
   detail: FileDetail;
   files: DatabankFile[];
@@ -1795,66 +1819,98 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBindin
     [files, isBoard, boundIds],
   );
 
+  // The full info is a spoiler; open or closed is remembered across files.
+  const [detailsOpen, setDetailsOpen] = useState(() => {
+    try { return localStorage.getItem(DETAIL_OPEN_KEY) === '1'; } catch { return false; }
+  });
+  const toggleDetails = () => setDetailsOpen(v => {
+    try { localStorage.setItem(DETAIL_OPEN_KEY, v ? '0' : '1'); } catch { /* ignore */ }
+    return !v;
+  });
+
+  const resolved = detail.board_number ? lookupBoard(detail.board_number) : undefined;
+  // One line, always visible: what the file is, at a glance.
+  const summary = [
+    resolved ? `${resolved.a_number} ${resolved.model}` : (detail.model || detail.board_number || ''),
+    isBoard && detail.part_count != null ? `${detail.part_count} parts` : '',
+    formatSize(detail.size),
+  ].filter(Boolean).join(' · ');
+  const facts: Array<[string, React.ReactNode]> = [];
+  if (detail.board_number) facts.push(['Board', <span translate="no">{detail.board_number}</span>]);
+  if (resolved) facts.push(['Device', <span><span className="library-detail-model-resolved">{`${resolved.a_number} ${resolved.model}`}</span>{resolved.info ? <span className="library-detail-model-info">{` · ${resolved.info}`}</span> : null}</span>]);
+  if (detail.model) facts.push(['Model', <span>{detail.model}</span>]);
+  if (detail.manufacturer) facts.push(['Maker', <span>{detail.manufacturer}</span>]);
+  if (detail.board_color) facts.push(['Colour', <span>{detail.board_color}</span>]);
+  if (detail.part_count != null || detail.net_count != null) {
+    facts.push(['Contents', <span>{[
+      detail.part_count != null ? `${detail.part_count} parts` : '',
+      detail.net_count != null ? `${detail.net_count} nets` : '',
+    ].filter(Boolean).join(' · ')}</span>]);
+  }
+  facts.push(['Size', <span>{formatSize(detail.size)}</span>]);
+
   return (
-    <div className="library-detail">
-      <div className="library-detail-header">
-        <span className="library-detail-filename">{detail.filename}</span>
-        <button
-          className="library-detail-edit"
-          onClick={() => setShowEditModal(true)}
-          title="Edit metadata"
-        >
-          Edit
-        </button>
-        <button
-          className="library-detail-open"
-          onClick={() => onOpen(detail)}
-          title="Open in viewer"
-        >
-          Open
-        </button>
-        {isElectron() ? (
-          <RevealButton path={detail.path} />
-        ) : (
-          <a
-            className="library-detail-open library-detail-download"
-            href={`/api/files/path/${detail.path.split('/').map(encodeURIComponent).join('/')}?download=1`}
-            download={detail.filename}
-            title="Download file"
-          >
-            Download
-          </a>
-        )}
-      </div>
-
-      {detail.has_preview && (
-        <div className="library-detail-preview">
-          <img src={databankStore.previewUrl(detail)!} alt="" />
+    <div className="library-detail library-scroll" data-testid="library-detail">
+      {/* Sticky: name, one-line summary and the two everyday actions stay put
+          while the rest scrolls. Everything else is behind "Details". */}
+      <div className="library-detail-head">
+        <div className="library-detail-title">
+          <span className={`library-file-icon ${isBoard ? 'library-icon-board' : 'library-icon-pdf'}`}>{isBoard ? 'B' : 'P'}</span>
+          <span className="library-detail-filename" title={detail.filename} translate="no">{detail.filename}</span>
+          <div className="library-detail-icons">
+            <button className="library-detail-icon primary" data-testid="library-detail-open" onClick={() => onOpen(detail)} title="Open in viewer" aria-label="Open in viewer">
+              <IconExternalLink size={15} />
+            </button>
+            {isElectron() ? (
+              <RevealButton path={detail.path} />
+            ) : (
+              <a
+                className="library-detail-icon"
+                data-testid="library-detail-download"
+                href={`/api/files/path/${detail.path.split('/').map(encodeURIComponent).join('/')}?download=1`}
+                download={detail.filename}
+                title="Download"
+                aria-label="Download"
+              >
+                <IconDownload size={15} />
+              </a>
+            )}
+          </div>
         </div>
-      )}
-
-      <div className="library-detail-meta">
-        {detail.board_number && <span>Board: {detail.board_number}</span>}
-        {(() => {
-          const resolved = detail.board_number ? lookupBoard(detail.board_number) : undefined;
-          if (!resolved) return null;
-          return <>
-            <span className="library-detail-model-resolved">{resolved.a_number} {resolved.model}</span>
-            <span className="library-detail-model-info" title={resolved.info}>{resolved.info}</span>
-          </>;
-        })()}
-        {detail.manufacturer && <span>Mfr: {detail.manufacturer}</span>}
-        {detail.board_color && <span>Color: {detail.board_color}</span>}
-        {detail.model && <span>Model: {detail.model}</span>}
-        {detail.part_count != null && <span>{detail.part_count} parts</span>}
-        {detail.net_count != null && <span>{detail.net_count} nets</span>}
-        <span>{formatSize(detail.size)}</span>
+        <div className="library-detail-summary">{summary}</div>
       </div>
-      <FileDetailPath path={detail.path} />
 
-      {detail.file_type === 'pdf' && (
-        <div className="library-detail-donor-row">
-          <DonorToggle fileId={detail.id} />
+      <button
+        type="button"
+        className="library-detail-more"
+        data-testid="library-detail-more"
+        onClick={toggleDetails}
+        aria-expanded={detailsOpen}
+      >
+        <IconChevronDown size={12} className={`library-statsbar-caret ${detailsOpen ? 'open' : ''}`} />
+        <span>Details</span>
+      </button>
+
+      {detailsOpen && (
+        <div className="library-detail-full" data-testid="library-detail-full">
+          {detail.has_preview && (
+            <div className="library-detail-preview">
+              <img src={databankStore.previewUrl(detail)!} alt="" />
+            </div>
+          )}
+          <dl className="library-detail-facts">
+            {facts.map(([k, v]) => [
+              <dt key={`k-${k}`}>{k}</dt>,
+              <dd key={`v-${k}`}>{v}</dd>,
+            ])}
+          </dl>
+          <FileDetailPath path={detail.path} />
+          <div className="library-detail-actions">
+            <button className="library-detail-edit" onClick={() => setShowEditModal(true)} title="Edit metadata">
+              <IconPencil size={12} /><span>Edit metadata</span>
+            </button>
+            {detail.file_type === 'pdf' && <DonorToggle fileId={detail.id} />}
+          </div>
         </div>
       )}
 
@@ -2616,6 +2672,7 @@ function MetadataView({ groups, unrecognizedTree, selectedFileId, filterFile, se
                 expanded={expanded}
                 selectedFileId={selectedFileId}
                 filterFile={filterFile}
+                filtering={searchFilter.trim() !== ''}
                 onToggleExpand={toggle}
                 onSelectFile={onSelectFile}
                 onOpenFile={onOpenFile}
@@ -2765,17 +2822,116 @@ function resolveNodeFiles(node: FolderNode): DatabankFile[] {
   return out;
 }
 
-/** Recursively remove folders whose filtered file lists and all descendant
- *  folder file lists are empty. Used when a filter is active so empty
- *  directories disappear from the tree. */
+/** Recursively remove folders with no hit in them or below them. Used when a
+ *  filter is active so empty directories disappear from the tree.
+ *
+ *  A folder that holds a hit keeps ALL its files, not only the hits: a board
+ *  that matched usually sits next to its schematic, datasheets and photos,
+ *  whose names say nothing the search could match. FolderNodeView shows them
+ *  as the hit's neighbours, behind a toggle when there are many. */
 function pruneEmptyFolders(node: FolderNode, filter: (f: DatabankFile) => boolean): FolderNode | null {
-  const files = resolveNodeFiles(node).filter(filter);
+  const all = resolveNodeFiles(node);
+  const hasHit = all.some(filter);
   const children = (node.children ?? [])
     .map(c => pruneEmptyFolders(c, filter))
     .filter((c): c is FolderNode => c !== null);
-  if (files.length === 0 && children.length === 0) return null;
+  if (!hasHit && children.length === 0) return null;
   // Strip file_ids — pruning has materialized files into the `files` field.
-  return { ...node, files, file_ids: undefined, children };
+  return { ...node, files: hasHit ? all : [], file_ids: undefined, children };
+}
+
+interface LibraryHit { file: DatabankFile; folder: string; ancestors: string[] }
+
+/** Every hit in a pruned tree, with the folder keys that have to be open for
+ *  the tree to show it. Tree order (folder by folder), so the list reads like
+ *  the tree it jumps into. */
+function collectHits(root: FolderNode, filter: (f: DatabankFile) => boolean): LibraryHit[] {
+  const out: LibraryHit[] = [];
+  const walk = (n: FolderNode, chain: string[]) => {
+    const here = [...chain, n.path];
+    for (const c of n.children ?? []) walk(c, here);
+    for (const f of resolveNodeFiles(n)) if (filter(f)) out.push({ file: f, folder: n.path, ancestors: here });
+  };
+  walk(root, []);
+  return out;
+}
+
+const HIT_LIST_CAP = 100;
+
+/** "Found N files" above the tree while a search is active. A click opens the
+ *  branch the file lives in, selects it and scrolls it into view; a double
+ *  click opens it — the same as a row in the tree. */
+function LibraryHitList({ hits, selectedFileId, onReveal, onOpen }: {
+  hits: LibraryHit[];
+  selectedFileId: number | null;
+  onReveal: (h: LibraryHit) => void;
+  onOpen: (f: DatabankFile) => void;
+}) {
+  const [open, setOpen] = useState(true);
+  const [showAll, setShowAll] = useState(false);
+  // Fade the bottom edge only while there is more to scroll to.
+  const [moreBelow, setMoreBelow] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
+  const measure = useCallback(() => {
+    const el = listRef.current;
+    setMoreBelow(!!el && el.scrollHeight - el.scrollTop - el.clientHeight > 2);
+  }, []);
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    // The observer reports once on observe(), which is the first measure.
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [measure, open, showAll, hits.length]);
+  if (hits.length === 0) return null;
+  const shown = showAll ? hits : hits.slice(0, HIT_LIST_CAP);
+  return (
+    <div className={`library-hits ${open ? 'open' : 'closed'}`} data-testid="library-hits">
+      <button
+        type="button"
+        className="library-hits-head"
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        title={open ? 'Hide the list' : 'Show the list'}
+      >
+        <IconChevronDown size={13} className={`library-statsbar-caret ${open ? 'open' : ''}`} />
+        <span className="library-hits-count">{`${hits.length} file${hits.length === 1 ? '' : 's'} found`}</span>
+        <span className="library-hits-hint">{open ? 'hide' : 'show'}</span>
+      </button>
+      {open && (
+        <div
+          ref={listRef}
+          className={`library-hits-list library-scroll ${moreBelow ? 'more-below' : ''}`}
+          onScroll={measure}
+        >
+          {shown.map(h => (
+            <div
+              key={h.file.id}
+              className={`library-hit ${h.file.id === selectedFileId ? 'selected' : ''}`}
+              data-testid="library-hit"
+              onClick={() => onReveal(h)}
+              onDoubleClick={() => onOpen(h.file)}
+              title={`${h.file.path}\nClick to show it in the tree, double-click to open`}
+            >
+              <span className={`library-file-icon ${h.file.file_type === 'board' ? 'library-icon-board' : 'library-icon-pdf'}`}>
+                {h.file.file_type === 'board' ? 'B' : 'P'}
+              </span>
+              <span className="library-hit-text">
+                <span className="library-hit-name" translate="no">{h.file.filename}</span>
+                <span className="library-hit-folder" translate="no">{h.folder || '/'}</span>
+              </span>
+            </div>
+          ))}
+          {!showAll && hits.length > HIT_LIST_CAP && (
+            <button type="button" className="library-hits-more" onClick={() => setShowAll(true)}>
+              {`Show all ${hits.length}`}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function FolderView({ tree, treeLoading, selectedFileId, filterFile, searchFilter, onSelectFile, onOpenFile, onIndexFolder, registerCollapseAll }: {
@@ -2791,7 +2947,9 @@ function FolderView({ tree, treeLoading, selectedFileId, filterFile, searchFilte
   onIndexFolder?: (folderPath: string) => void;
   registerCollapseAll?: (fn: (() => void) | null, hasExpanded: boolean) => void;
 }) {
-  const [expanded, toggle, collapseAll] = usePersistedExpanded('boardripper-tree-folders', ['']);
+  const [expanded, toggle, collapseAll, expandPaths] = usePersistedExpanded('boardripper-tree-folders', ['']);
+  const treeRef = useRef<HTMLDivElement>(null);
+  const pendingRevealRef = useRef<number | null>(null);
   useEffect(() => {
     registerCollapseAll?.(collapseAll, expanded.size > 0);
     return () => registerCollapseAll?.(null, false);
@@ -2799,10 +2957,31 @@ function FolderView({ tree, treeLoading, selectedFileId, filterFile, searchFilte
 
   // Only prune when the user is actively filtering — otherwise let empty
   // directories stay visible (browsing a fresh library should show structure).
+  const filtering = searchFilter.trim() !== '';
   const visibleTree = useMemo(
-    () => (searchFilter.trim() && tree ? pruneEmptyFolders(tree, filterFile) : tree),
-    [searchFilter, tree, filterFile],
+    () => (filtering && tree ? pruneEmptyFolders(tree, filterFile) : tree),
+    [filtering, tree, filterFile],
   );
+  const hits = useMemo(
+    () => (filtering && visibleTree ? collectHits(visibleTree, filterFile) : []),
+    [filtering, visibleTree, filterFile],
+  );
+
+  const reveal = useCallback((h: LibraryHit) => {
+    expandPaths(h.ancestors);
+    onSelectFile(h.file);
+    pendingRevealRef.current = h.file.id;
+  }, [expandPaths, onSelectFile]);
+
+  // After the branch has rendered open, bring the row into view.
+  useEffect(() => {
+    const id = pendingRevealRef.current;
+    if (id == null) return;
+    const el = treeRef.current?.querySelector<HTMLElement>(`[data-file-id="${id}"]`);
+    if (!el) return;
+    pendingRevealRef.current = null;
+    el.scrollIntoView({ block: 'center' });
+  });
 
   // First-paint loading: render the same bar+text strip the library load uses,
   // with an indeterminate fill (no progress signal — fetchTree is one HTTP
@@ -2829,13 +3008,17 @@ function FolderView({ tree, treeLoading, selectedFileId, filterFile, searchFilte
   }
 
   return (
-    <div className="library-tree">
+    <div className="library-tree" ref={treeRef}>
+      {filtering && (
+        <LibraryHitList hits={hits} selectedFileId={selectedFileId} onReveal={reveal} onOpen={onOpenFile} />
+      )}
       <FolderNodeView
         node={visibleTree}
         depth={0}
         expanded={expanded}
         selectedFileId={selectedFileId}
         filterFile={filterFile}
+        filtering={filtering}
         onIndexFolder={onIndexFolder}
         onToggleExpand={toggle}
         onSelectFile={onSelectFile}
@@ -2845,12 +3028,15 @@ function FolderView({ tree, treeLoading, selectedFileId, filterFile, searchFilte
   );
 }
 
-function FolderNodeView({ node, depth, expanded, selectedFileId, filterFile, onToggleExpand, onSelectFile, onOpenFile, onIndexFolder }: {
+function FolderNodeView({ node, depth, expanded, selectedFileId, filterFile, filtering = false, onToggleExpand, onSelectFile, onOpenFile, onIndexFolder }: {
   node: FolderNode;
   depth: number;
   expanded: Set<string>;
   selectedFileId: number | null;
   filterFile: (f: DatabankFile) => boolean;
+  /** A search is active: files that matched are listed first, the rest of the
+   *  folder after them (muted, behind a toggle past NEIGHBOUR_LIMIT). */
+  filtering?: boolean;
   onToggleExpand: (path: string) => void;
   onSelectFile: (f: DatabankFile) => void;
   onOpenFile: (f: DatabankFile) => void;
@@ -2861,6 +3047,11 @@ function FolderNodeView({ node, depth, expanded, selectedFileId, filterFile, onT
   const hasChildren = (node.children && node.children.length > 0) || nodeFiles.length > 0;
 
   const filteredFiles = nodeFiles.filter(filterFile);
+  // While searching, the rest of a hit's folder: likely its schematic and
+  // documents. Collapsed when there are more than a handful.
+  const neighbours = filtering && filteredFiles.length > 0 ? nodeFiles.filter(f => !filterFile(f)) : [];
+  const [showNeighbours, setShowNeighbours] = useState(false);
+  const neighboursOpen = neighbours.length <= NEIGHBOUR_LIMIT || showNeighbours;
 
   // Skip the idx button on the synthetic root node (node.path === '') — the
   // existing global "index all PDFs" toolbar button already covers that, and
@@ -2898,6 +3089,7 @@ function FolderNodeView({ node, depth, expanded, selectedFileId, filterFile, onT
               expanded={expanded}
               selectedFileId={selectedFileId}
               filterFile={filterFile}
+              filtering={filtering}
               onToggleExpand={onToggleExpand}
               onSelectFile={onSelectFile}
               onOpenFile={onOpenFile}
@@ -2911,6 +3103,34 @@ function FolderNodeView({ node, depth, expanded, selectedFileId, filterFile, onT
               selected={f.id === selectedFileId}
               indent={depth + 1}
               showPreview={f.file_type === 'pdf'}
+              hit={filtering}
+              onSelect={onSelectFile}
+              onOpen={onOpenFile}
+            />
+          ))}
+          {neighbours.length > NEIGHBOUR_LIMIT && (
+            <button
+              type="button"
+              className={`library-neighbours-toggle ${showNeighbours ? 'open' : ''}`}
+              data-testid="library-neighbours-toggle"
+              style={{ marginLeft: (depth + 1) * 16 + 20 }}
+              onClick={() => setShowNeighbours(v => !v)}
+              aria-expanded={showNeighbours}
+            >
+              <IconChevronDown size={12} className={`library-statsbar-caret ${showNeighbours ? 'open' : ''}`} />
+              <span>{showNeighbours
+                ? `Hide the other ${neighbours.length} files in this folder`
+                : `${neighbours.length} more file${neighbours.length === 1 ? '' : 's'} in this folder`}</span>
+            </button>
+          )}
+          {neighboursOpen && neighbours.map(f => (
+            <FileRow
+              key={f.id}
+              file={f}
+              selected={f.id === selectedFileId}
+              indent={depth + 1}
+              showPreview={f.file_type === 'pdf'}
+              neighbour
               onSelect={onSelectFile}
               onOpen={onOpenFile}
             />
@@ -2923,11 +3143,17 @@ function FolderNodeView({ node, depth, expanded, selectedFileId, filterFile, onT
 
 // --- File Row ---
 
-function FileRow({ file, selected, indent, showPreview, copyCount = 0, copyPaths, onSelect, onOpen }: {
+const NEIGHBOUR_LIMIT = 5;
+
+function FileRow({ file, selected, indent, showPreview, hit = false, neighbour = false, copyCount = 0, copyPaths, onSelect, onOpen }: {
   file: DatabankFile;
   selected: boolean;
   indent: number;
   showPreview?: boolean;
+  /** Matched the active search. */
+  hit?: boolean;
+  /** In the folder of a hit but did not match it (shown muted). */
+  neighbour?: boolean;
   /** When > 0, this row stands in for a byte-identical content group and the
    *  badge reports how many redundant copies were collapsed away. */
   copyCount?: number;
@@ -2942,7 +3168,9 @@ function FileRow({ file, selected, indent, showPreview, copyCount = 0, copyPaths
 
   return (
     <div
-      className={`library-file-row ${selected ? 'selected' : ''}`}
+      className={`library-file-row ${selected ? 'selected' : ''} ${hit ? 'hit' : ''} ${neighbour ? 'neighbour' : ''}`}
+      data-file-id={file.id}
+      data-testid={neighbour ? 'library-neighbour' : undefined}
       style={{ paddingLeft: indent * 16 + 20 }}
       onClick={() => onSelect ? onSelect(file) : onOpen(file)}
       onDoubleClick={() => onOpen(file)}

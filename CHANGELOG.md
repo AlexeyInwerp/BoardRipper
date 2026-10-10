@@ -1,5 +1,268 @@
 # BoardRipper changelog
 
+## v0.49.0 — 2026-10-10
+
+### Added
+
+- **PDFs are sharp at any zoom, on every quality preset.** While you pan or
+  zoom, the page is drawn at the preset's size; a moment after you stop, the
+  part on screen is drawn again at the exact zoom. Fastest is now as sharp as
+  Quality once the view settles — it was unreadable past 2×.
+- **Opening a PDF shows what is happening.** The tab opens at once and says
+  whether the file is downloading, being read, opened or drawn; a file that
+  cannot be opened says why. The banner over the board area covers PDFs too,
+  and text indexing shows as "Indexing text 23 %".
+- **PDF quality on the start page**, beside Board quality, with the same four
+  names: Quality, Balanced, Fast, Fastest.
+- **A Board quality preset** — Quality, Balanced, Fast, Fastest — on the start
+  page. Fast and Fastest trade resolution, frame rate and trace corners for
+  speed on tablets.
+- **Settings ▸ Rendering**, a tab of its own for board and PDF quality, the
+  board text renderer and diagnostics. It was System ▸ Performance & Debug.
+  Smooth wheel zoom and two-finger rotation moved to Input ▸ Navigation.
+- **Reset all local settings** in Settings ▸ System ▸ Troubleshooting, for a
+  stored setting that left the board blank. Recent files, favourites, history,
+  the session and PDF bookmarks are kept.
+
+### Changed
+
+- **PDF zoom is much faster.** On a large schematic at tablet speed, an
+  eight-step zoom settles in about 3 s instead of 6, and the page freezes for
+  well under a second instead of three. Neighbouring pages are drawn only as
+  sharp as they need to be, the same pixels are no longer rendered twice, and
+  the pages you are reading stay ready instead of being re-read after four
+  seconds.
+- **Dense boards draw faster.** Traces and pads are now skipped when they are
+  off screen, and empty part containers cost nothing.
+- **The app no longer re-renders everything on each board change** — a tap,
+  a selection or a rotation was redrawing every panel.
+- Two-finger rotation now unlocks at 24°.
+
+### Fixed
+
+- **A PDF zoomed past 500 % in Chrome turned black.** The Quality preset drew
+  the page into a canvas of about 700 MB next to a neighbour of the same size,
+  more than Chrome's graphics memory. Canvas memory now stays near one screen.
+- **Connection lines stay visible while you pinch** instead of vanishing until
+  the fingers stop.
+- **CPUs, sockets and connectors** are no longer drawn as mechanical parts with
+  no pin numbers or net names.
+- **No freeze when PDF text indexing finishes**, and a repeat open shows its
+  first page about 300 ms sooner.
+- The NR2201ZE family's `indiafix` watermark is filtered by default.
+
+## v0.48.0 — 2026-10-05
+
+### Added
+
+- **Board notes.** A new tab with a book icon in the board sidebar shows
+  what the board file knows beyond its geometry. Today that is XZZ's
+  "Common problems" boards: the repair table drawn on the board
+  (symptom, fault point, fix) and the net glossary — what each net does,
+  filterable, with the highlighted net's description at the top. Part and
+  net names in it are clickable. The tab appears only on boards that carry
+  notes, and it is plain text, so the browser's *Translate page* can
+  translate the Chinese.
+- **XZZ test points.** Test points stored outside any part are now drawn,
+  selectable and part of their net — on the iPad Air 3 boards a net that
+  showed only a BGA ball now shows its probe point too. Records that only
+  repeat an existing pin are left out.
+- **Library search.** While you search the Folders view, a list of the
+  files found sits above the tree; a click opens the branch, selects the
+  file and scrolls to it. A folder with a hit also shows its other files
+  (the schematic next to a board, say), dimmed, behind a toggle when there
+  are more than five.
+
+### Changed
+
+- **The file pane under the Library** is tidier: open and download are
+  icon buttons beside the name, one line says what the file is, and the
+  rest (facts, path, *Edit metadata*, *Mark as donor*) is behind
+  *Details*. OpenBoardData takes two lines. The pane scrolls under a fixed
+  header and takes at most 45 % of the Library.
+- **Space to flip:** holding it past half a second (was 0.35 s) peeks.
+
+### Fixed
+
+- **XZZ diode readings:** BGA balls get their readings (iPhone 14 `U1000`:
+  none before, over a thousand now), files carrying both reading formats
+  keep both, and renamed parts keep theirs. Across the local test library
+  the number of readings roughly doubled.
+- **XZZ Chinese text:** part values, names and labels written in GB2312
+  read correctly instead of being dropped; `Ω` values show.
+- **"Translate page" crashed BoardRipper** — a panel when picking a pin,
+  the whole window when switching board tabs. Fixed throughout, with a
+  recovery page for any crash outside the panels.
+- **Rotating a board froze it for a second or two** on dense boards: a
+  90° turn rebuilt the whole scene. It now only moves the labels that
+  depend on the turn.
+- **A quick Space tap peeked back** the first time after a board opened,
+  because the flip's own work made the press look long.
+- **A partial answer from the server** could blank the window (home page
+  statistics) or fail the library load (donor list).
+
+## v0.47.0 — 2026-10-04
+
+### Added
+
+- **Slide mode.** A new ribbon button marks up the board view and saves it
+  as a PNG — for a repair ticket, a message to a colleague, a lesson. Draw
+  arrows, boxes, freehand with a pen, and text in five colours and three
+  weights; everything stays pinned to the parts while you pan, zoom or
+  rotate. Every selected part gets a large label with its name, and
+  ⌘+click (Ctrl+click on Windows, or the *Several parts* toggle on a
+  tablet) labels several at once; under the label of the part you picked
+  last are two boxes to note an Ω and a diode reading, which print on the
+  label. The PNG carries the board file name and the date in a header, the
+  labels, your annotations and the minimap. Copy puts the same picture on
+  the clipboard. A guide card explains the tool in hand; Esc leaves, and
+  the annotations come back when you return.
+- **Minimap.** Zoomed in past twice the fit view, a pan of more than an
+  eighth of the screen fades in a small map of the whole board at the top
+  with a box for what you are looking at — click or drag on it to move.
+  It leaves when panning stops, stays up in slide mode, and the ribbon
+  button turns it off.
+- **PDF filters in one menu.** The wand on the PDF toolbar opens a menu
+  with the watermark text filter and its terms, *Strip small watermark
+  images* (which had no control before) and *Skip invisible content*.
+  The two parse-time options show a *Reload & re-parse* row when an open
+  PDF was opened under other values; page, search and extracted text
+  survive the reload.
+- **Touch: a right click on glass.** Hold a finger on a part and tap with
+  a second one to open its menu. Any touch outside closes it.
+
+### Changed
+
+- **PDFs render faster where it hurt most.** Some PDFs end every page with
+  a page-sized invisible overlay that pdf.js still decoded, rasterised and
+  composited on every render — 100–190 ms per render on an iPad. It is
+  dropped before it reaches the renderer; the picture is pixel-identical.
+
+### Fixed
+
+- **No more blurry blink after a zoom.** When a zoom settled where sharp
+  pixels already existed, the viewer put the blurry preview on top of
+  them for a moment, and in Safari a cleared tile could reach the screen
+  for a frame. Both causes are gone.
+- **Scrolling over a board next to a PDF works again.** With the PDF the
+  active panel, a wheel over the board took the zoom and drew nothing. A
+  regression from July.
+- **An old tab after a server update** said nothing and failed to open
+  boards; it now says the server was updated and offers a reload.
+- **Small net names on the iPad** stopped showing when zooming in; they
+  are back.
+- **Strip small watermark images** applied to the first pages only after
+  a zoom change; a failed strip left a permanent "reload needed"; a term
+  typed in the filter menu and clicked away from was lost.
+
+## v0.46.0 — 2026-09-29
+
+### Added
+
+- **Back and Forward, like Preview.** ⌘[ goes back to where you were and
+  ⌘] forward again (Ctrl+[ / Ctrl+] on Windows and Linux) — across boards
+  and PDFs alike. A visit is a part or pin you clicked, a PDF lookup in
+  either direction, or a search and the result you picked from it. The
+  view comes back exactly as you left it, not re-fitted. Going back and
+  then somewhere new deletes nothing: the path you left is still there.
+  The board ribbon has ‹ › buttons for touch screens; hold one for a list
+  of where it leads.
+- **A History tab** in the sidebar lists every visit, newest first, grouped
+  by file. Click a row to go there. Filter by kind — clicks, PDF lookups,
+  searches, viewpoints — and by boards, PDFs or just the board in front of
+  you. A row for a file you closed reopens it from the library. The
+  history survives a reload.
+- **Viewpoints (off by default).** Switch the Viewpoints filter on and the
+  places you looked at with nothing selected are kept too: a region of the
+  board, a PDF page, another board tab. Only a place you stayed on for two
+  seconds counts, so paging through a document leaves one row.
+- **Search history.** The PDF find field and the board search field show
+  your recent searches when you click into them; typing narrows the list,
+  ↑↓ and Enter pick one.
+
+### Fixed
+
+- **A single search hit is found again.** With only one hit, pressing
+  Enter or ⌘F after panning away did not bring it back, and a drag that
+  was still gliding pulled every jump off its target.
+
+## v0.45.0 — 2026-09-28
+
+### Added
+
+- **Two-finger rotation.** On a touch screen, turning two fingers turns the
+  board about the point between them, live. Rotation starts locked: a turn
+  under 12° does nothing (every pinch turns a little), a turn past it
+  unlocks — a toast says so — and the board turns on from there. The angle
+  is kept when the fingers lift, snapped to the nearest right angle when
+  within 10°; the rotate buttons step to the next right angle from any
+  angle. A double-tap with two fingers locks rotation again and squares the
+  board. Settings ▸ Performance & Debug ▸ Two-finger rotation turns it off,
+  and the unlock angle and the snap window are sliders there (a snap window
+  of 0 never snaps). In Butterfly the whole spread turns as one picture.
+
+## v0.44.0 — 2026-09-28
+
+### Added
+
+- **Shift+Scroll is the browser's horizontal scroll again (#40).** Every
+  browser turns Shift+wheel into a horizontal scroll before the page sees
+  it, and both viewers took it for zoom. The three scroll slots — plain,
+  Shift, ⌘ — are now independent, for the board and the PDF alike, in
+  Settings ▸ Input and on the start page. A fresh install gets Shift = Pan,
+  ⌘ = Zoom; an existing install keeps the layout it had, and the start page
+  offers the one-click switch.
+- **Butterfly works on layered boards.** KiCad, Allegro, Altium and EAGLE
+  boards showed the button and it did nothing. Traces, vias and copper
+  pours are hidden while Butterfly is on — they belong to the board as a
+  whole, not to a side — and a toast says so.
+- **A board loading in the background says so.** Opening a second board
+  freezes the page while its scene is built — a second or more on a
+  tablet, during which a finger on the glass gets no answer at all. A
+  "Loading …" banner now sits at the top of the board area from the moment
+  the file is opened until the new board is on screen, and it is painted
+  before the freeze begins.
+- **Edge smoothing has a switch.** Settings ▸ Performance & Debug ▸ Edge
+  smoothing (MSAA), on by default. Off saves GPU work on a machine that
+  cannot afford it, at the price of jagged thin lines.
+- **A legacy web build for older iPads.** iPadOS 15.4–16.3 gets its own
+  build at ripperdoc.de/boardripper/legacy-web, and a supported-devices
+  page lists browsers, iPads and iPhones by model. A browser below the
+  floor now sees a message with the minimum versions instead of a blank
+  page.
+
+### Fixed
+
+- **Allegro v15: real pin numbers, no invented parts.** A third 15.5.x
+  sub-variant (Jasper_Kronos) drove a rewrite of the pad walk. Pads come
+  from the pad ring with the pin numbers the file carries — the old walk
+  invented 1..n in file order, which swapped pins 1↔3 on every SOT-23 and
+  1↔2 on every diode — and drawing symbols no longer become empty parts
+  that blew up the board bounds. Against Allegro's own v17 re-save of the
+  same board: 7982 of 7982 pins, 7910 nets agree, none disagree.
+- **PDF fonts, CJK maps and image decoders are actually shipped.** The
+  URLs pdf.js was given for its character maps, standard fonts and wasm
+  decoders pointed at nothing in every build; only the dev server worked.
+  PDFs with non-embedded fonts or JPEG 2000 / JBIG2 images render now.
+- **Tapping a part right after flicking the board selects it.** With inertia
+  on, a tap while the board was still gliding stopped the glide but selected
+  nothing, which read as "sometimes a tap can't select a component". A tap
+  during the glide now selects the part under it.
+- **The touch context menu opens on the iPad.** Press and hold a part. iOS
+  used to answer the same hold with its own callout and cancel the touch.
+  The first board opened on a touch screen says so once.
+- **Lines on a tablet are smooth again.** The touch performance profile
+  turned off edge smoothing for the board, which left every thin line —
+  the board outline first of all — jagged and at an uneven width. Edge
+  smoothing stays on; the profile keeps its 60 FPS cap and 1.5× render
+  resolution ceiling.
+- **The Silkscreen toggle works while Butterfly is on.** Butterfly moves the
+  bottom silkscreen out of the shared silkscreen layer to mirror it with the
+  bottom half, and the toggle stopped reaching it there — the silk came on
+  with Butterfly and could not be turned off.
+- **The "gpu idle" readout is gone from the debug HUD.** The value it read
+  is cleared every frame, so it never showed anything.
+
 ## v0.43.4 — 2026-09-23
 
 ### Fixed

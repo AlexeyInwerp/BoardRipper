@@ -138,7 +138,7 @@ export function NoteBody({ body, board }: { body: string; board: BoardData | nul
   return <>{parts}</>;
 }
 
-function NetChip({ netName }: { netName: string }) {
+export function NetChip({ netName }: { netName: string }) {
   return (
     <button
       data-testid="obd-ref-net"
@@ -167,7 +167,7 @@ function NetChip({ netName }: { netName: string }) {
   );
 }
 
-function PartChip({
+export function PartChip({
   partName,
   pinId,
   partIdx,

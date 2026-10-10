@@ -1,9 +1,11 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import {
   IconPin, IconPinFilled, IconChevronRight, IconChevronDown,
-  IconInfoCircle, IconStack2, IconEye, IconSearch, IconVersions, IconChecklist,
+  IconInfoCircle, IconStack2, IconEye, IconSearch, IconVersions, IconChecklist, IconBook2,
 } from '@tabler/icons-react';
+import { IconHistory } from '@tabler/icons-react';
 import { useBoardStore } from '../hooks/useBoardStore';
+import { useNavHistory } from '../hooks/useNavHistory';
 import { useWorklist } from '../hooks/useWorklist';
 import { boardStore, ghostPairSig, bomClusterSig } from '../store/board-store';
 import { worklistStore } from '../store/worklist-store';
@@ -15,11 +17,13 @@ import { obdBoardNumberFor } from '../store/obd-store';
 import { boardHasDiodeData, diodeMode, cycleDiodeMode, diodeModeTitle } from '../store/diode-readings';
 import { ComponentInfoBody } from './ComponentInfoBody';
 import { WorklistPanel } from '../panels/WorklistPanel';
+import { BoardNotesTab } from './BoardNotesTab';
+import { boardKnowledge } from '../store/board-knowledge';
 import { bomReasonLabel, type BoardData, type Part } from '../parsers';
 import { pinDisplayId } from '../parsers/types';
 import { setActiveSearchInput, getActiveSearchInput } from './BoardSidebar.utils';
 
-type SidebarTab = 'layers' | 'info' | 'search' | 'revisions' | 'worklist';
+type SidebarTab = 'layers' | 'info' | 'search' | 'revisions' | 'worklist' | 'notes';
 
 const EMPTY_GHOST_SWAPS: ReadonlySet<string> = new Set();
 const EMPTY_BOM_SELECTIONS: ReadonlyMap<string, string> = new Map();
@@ -80,6 +84,9 @@ export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied }: Boa
   const hasGhosts = (board?.ghosts?.length ?? 0) > 0;
   const hasBomClusters = (board?.bomClusters?.length ?? 0) > 0;
   const showRevisionsTab = hasRevisions || hasGhosts || hasBomClusters;
+  // Notes appears only when a knowledge source has something for this board
+  // (today: an XZZ file's repair tables, notes or net glossary).
+  const showNotesTab = boardKnowledge(board).count > 0;
   // LayersTab hosts ALL visibility toggles (Traces, Vias, Silkscreen, Pads,
   // etc.) and not just the per-layer rows. Previously the entire tab was
   // hidden when layerStates was empty (single-layer XZZ / BRD), leaving
@@ -125,11 +132,11 @@ export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied }: Boa
   useEffect(() => {
     // Layers/View tab is always available now; only fall back from
     // Revisions when that tab goes away.
-    if (activeTab === 'revisions' && !showRevisionsTab) {
+    if ((activeTab === 'revisions' && !showRevisionsTab) || (activeTab === 'notes' && !showNotesTab)) {
       const frame = requestAnimationFrame(() => setActiveTab('info'));
       return () => cancelAnimationFrame(frame);
     }
-  }, [activeTab, showRevisionsTab, hasLayers]);
+  }, [activeTab, showRevisionsTab, showNotesTab, hasLayers]);
 
   // Drag-to-resize for the right-anchored overlay sidebar: dragging the left
   // handle leftward widens it. Width persists to localStorage. Mirrors the
@@ -226,6 +233,18 @@ export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied }: Boa
               {(hasGhosts || hasBomClusters) && <span className="tab-badge">!</span>}
             </button>
           )}
+          {showNotesTab && (
+            <button
+              className={`library-tab icon-tab ${activeTab === 'notes' ? 'active' : ''}`}
+              data-board-tab="notes"
+              onClick={() => pickTab('notes')}
+              aria-label="Notes"
+              data-title="Board notes"
+            >
+              <IconBook2 size={16} />
+              {activeTab === 'notes' && <span className="icon-tab-caption">Notes</span>}
+            </button>
+          )}
           <button
             className={`library-tab icon-tab ${activeTab === 'worklist' ? 'active' : ''}`}
             data-board-tab="worklist"
@@ -244,6 +263,7 @@ export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied }: Boa
         {activeTab === 'search' && <SearchTab tabId={tabId} />}
         {activeTab === 'revisions' && showRevisionsTab && <RevisionsTab tabId={tabId} />}
         {activeTab === 'worklist' && <WorklistPanel />}
+        {activeTab === 'notes' && showNotesTab && <NotesTab tabId={tabId} />}
       </div>
     </div>
   );
@@ -599,6 +619,11 @@ function LayersTab({ tabId }: { tabId: number }) {
         </div>
       </div>
 
+      {tab?.butterfly && layerStates.length > 0 && (
+        <div className="layer-list-hint" data-testid="layers-butterfly-hint">
+          Copper layers are hidden while Butterfly is on
+        </div>
+      )}
       {layerStates.length > 1 && (
         <div className="layer-list-hint">
           Click a layer to bump it on top · pin one to keep it there
@@ -654,6 +679,13 @@ function LayersTab({ tabId }: { tabId: number }) {
       </div>
     </div>
   );
+}
+
+function NotesTab({ tabId }: { tabId: number }) {
+  const { tabs } = useBoardStore();
+  const tab = tabs.find(t => t.id === tabId);
+  if (!tab?.board) return <div className="panel-empty">No board loaded</div>;
+  return <BoardNotesTab board={tab.board} highlightedNet={tab.selection?.highlightedNet ?? null} />;
 }
 
 function InfoTab({ tabId }: { tabId: number }) {
@@ -1096,10 +1128,25 @@ function SearchTab({ tabId }: { tabId: number }) {
   const shownParts = matchedParts.length > RESULT_CAP ? matchedParts.slice(0, RESULT_CAP) : matchedParts;
   const shownNets = matchedNets.length > RESULT_CAP ? matchedNets.slice(0, RESULT_CAP) : matchedNets;
 
-  // Autocomplete suggestions (max 8)
+  // Autocomplete suggestions (max 8). With the field empty, the last eight
+  // queries typed here come up instead — Preview's magnifier menu.
+  const { listed: navListed } = useNavHistory();
   const suggestions = useMemo(() => {
-    if (!ql) return [];
-    const items: { label: string; type: 'component' | 'net' }[] = [];
+    if (!ql) {
+      const seen = new Set<string>();
+      const recents: { label: string; type: 'component' | 'net' | 'recent' }[] = [];
+      for (const e of navListed) {
+        const q = e.query;
+        if (!q || (q.surface !== 'board' && q.surface !== 'global')) continue;
+        const key = q.text.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        recents.push({ label: q.text, type: 'recent' });
+        if (recents.length >= 8) break;
+      }
+      return recents;
+    }
+    const items: { label: string; type: 'component' | 'net' | 'recent' }[] = [];
     for (const name of allParts) {
       if (name.toLowerCase().includes(ql)) items.push({ label: name, type: 'component' });
       if (items.length >= 8) return items;
@@ -1109,7 +1156,7 @@ function SearchTab({ tabId }: { tabId: number }) {
       if (items.length >= 8) return items;
     }
     return items;
-  }, [ql, allParts, allNets]);
+  }, [ql, allParts, allNets, navListed]);
 
   // Sync toolbar search with local query
   const onQueryChange = useCallback((value: string) => {
@@ -1143,7 +1190,7 @@ function SearchTab({ tabId }: { tabId: number }) {
           placeholder="Search components or nets..."
           value={query}
           onChange={(e) => { onQueryChange(e.target.value); setShowSuggestions(true); }}
-          onFocus={() => { if (query) setShowSuggestions(true); }}
+          onFocus={() => setShowSuggestions(true)}
         />
         {query && (
           <button className="search-tab-clear" onClick={() => { onQueryChange(''); setShowSuggestions(false); }} title="Clear">×</button>
@@ -1151,11 +1198,11 @@ function SearchTab({ tabId }: { tabId: number }) {
         {showSuggestions && suggestions.length > 0 && (
           <div className="search-tab-suggestions" ref={suggestionsRef}>
             {suggestions.map((s, i) => (
-              <div key={i} className="search-tab-suggestion" onClick={() => {
+              <div key={i} className={`search-tab-suggestion${s.type === 'recent' ? ' recent' : ''}`} data-testid={s.type === 'recent' ? 'search-recent' : undefined} onClick={() => {
                 onQueryChange(s.label);
                 setShowSuggestions(false);
               }}>
-                <span className={`suggestion-type suggestion-type-${s.type}`}>{s.type === 'component' ? 'C' : 'N'}</span>
+                <span className={`suggestion-type suggestion-type-${s.type}`}>{s.type === 'recent' ? <IconHistory size={11} stroke={2} /> : s.type === 'component' ? 'C' : 'N'}</span>
                 <span className="suggestion-label">{s.label}</span>
               </div>
             ))}

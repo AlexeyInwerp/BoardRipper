@@ -1,8 +1,20 @@
 diff --git a/node_modules/pdfjs-dist/build/pdf.mjs b/node_modules/pdfjs-dist/build/pdf.mjs
-index bd28128..f379689 100644
+index bd28128..9023351 100644
 --- a/node_modules/pdfjs-dist/build/pdf.mjs
 +++ b/node_modules/pdfjs-dist/build/pdf.mjs
-@@ -14864,10 +14864,16 @@ class PDFPageProxy {
+@@ -14514,7 +14514,10 @@ function getDocument(src = {}) {
+       cMapUrl,
+       iccUrl,
+       standardFontDataUrl,
+-      wasmUrl
++      wasmUrl,
++      // BoardRipper: invisible-content elimination in the worker (default
++      // on). See src/frontend/patches/README.md.
++      brPruneInvisible: src.brPruneInvisible !== false
+     }
+   };
+   const transportParams = {
+@@ -14864,10 +14867,16 @@ class PDFPageProxy {
      printAnnotationStorage = null,
      isEditing = false,
      recordOperations = false,
@@ -20,7 +32,7 @@ index bd28128..f379689 100644
      const {
        renderingIntent,
        cacheKey
-@@ -15109,7 +15115,9 @@ class PDFPageProxy {
+@@ -15109,7 +15118,9 @@ class PDFPageProxy {
      renderingIntent,
      cacheKey,
      annotationStorageSerializable,
@@ -31,7 +43,7 @@ index bd28128..f379689 100644
    }) {
      const {
        map,
-@@ -15121,7 +15129,9 @@ class PDFPageProxy {
+@@ -15121,7 +15132,9 @@ class PDFPageProxy {
        intent: renderingIntent,
        cacheKey,
        annotationStorage: map,
@@ -43,7 +55,7 @@ index bd28128..f379689 100644
      const reader = readableStream.getReader();
      const intentState = this._intentStates.get(cacheKey);
 diff --git a/node_modules/pdfjs-dist/build/pdf.worker.mjs b/node_modules/pdfjs-dist/build/pdf.worker.mjs
-index cdac8ab..2679cd9 100644
+index cdac8ab..fac3469 100644
 --- a/node_modules/pdfjs-dist/build/pdf.worker.mjs
 +++ b/node_modules/pdfjs-dist/build/pdf.worker.mjs
 @@ -1,3 +1,46 @@
@@ -122,7 +134,253 @@ index cdac8ab..2679cd9 100644
  /******/ // The require scope
  /******/ var __webpack_require__ = {};
  /******/ 
-@@ -35476,8 +35541,17 @@ class PartialEvaluator {
+@@ -34417,6 +34482,144 @@ class TimeSlotManager {
+     this.checked = 0;
+   }
+ }
++// BoardRipper: invisible-content elimination. Some PDFs (notably Chrome /
++// Skia prints of web schematic viewers) end every page with a full-page
++// isolated transparency group filled by a tiling pattern whose only tile is
++// an image with an all-zero soft mask: it draws nothing, yet pdf.js decodes
++// the image, rasterises the pattern tile and allocates a page-sized scratch
++// canvas for the group on every render and every tile. Three parse-time
++// rules remove such content before it enters the operator list:
++//  (1) an image whose /SMask is entirely zero is not painted;
++//  (2) a fill/stroke whose paint is invisible (a tiling pattern whose cell
++//      paints nothing, or ca/CA = 0) becomes `endPath` (clips survive);
++//  (3) a form XObject / transparency group left with no painting operator
++//      is dropped together with its begin/end ops.
++// Controlled by getDocument({ brPruneInvisible }) (default on). See
++// src/frontend/patches/README.md.
++const BR_INVISIBLE_SAFE_OPS = new Set([OPS.dependency, OPS.setLineWidth, OPS.setLineCap, OPS.setLineJoin, OPS.setMiterLimit, OPS.setDash, OPS.setRenderingIntent, OPS.setFlatness, OPS.setGState, OPS.save, OPS.restore, OPS.transform, OPS.clip, OPS.eoClip, OPS.beginText, OPS.endText, OPS.setCharSpacing, OPS.setWordSpacing, OPS.setHScale, OPS.setLeading, OPS.setFont, OPS.setTextRenderingMode, OPS.setTextRise, OPS.moveText, OPS.setLeadingMoveText, OPS.setTextMatrix, OPS.nextLine, OPS.setCharWidth, OPS.setCharWidthAndBounds, OPS.setStrokeColorSpace, OPS.setFillColorSpace, OPS.setStrokeColor, OPS.setStrokeColorN, OPS.setFillColor, OPS.setFillColorN, OPS.setStrokeGray, OPS.setFillGray, OPS.setStrokeRGBColor, OPS.setFillRGBColor, OPS.setStrokeCMYKColor, OPS.setFillCMYKColor, OPS.setStrokeTransparent, OPS.setFillTransparent, OPS.markPoint, OPS.markPointProps, OPS.beginMarkedContent, OPS.beginMarkedContentProps, OPS.endMarkedContent, OPS.beginCompat, OPS.endCompat, OPS.paintFormXObjectBegin, OPS.paintFormXObjectEnd, OPS.beginGroup, OPS.endGroup]);
++const BR_FILL_COLOR_OPS = new Set([OPS.setFillGray, OPS.setFillRGBColor, OPS.setFillCMYKColor, OPS.setFillColor, OPS.setFillColorN, OPS.setFillColorSpace]);
++const BR_STROKE_COLOR_OPS = new Set([OPS.setStrokeGray, OPS.setStrokeRGBColor, OPS.setStrokeCMYKColor, OPS.setStrokeColor, OPS.setStrokeColorN, OPS.setStrokeColorSpace]);
++const BR_PLAIN_FILTERS = new Set(["FlateDecode", "Fl", "LZWDecode", "LZW", "RunLengthDecode", "RL", "ASCII85Decode", "A85", "ASCIIHexDecode", "AHx"]);
++const brStats = {
++  images: 0,
++  paths: 0,
++  forms: 0
++};
++globalThis.__brPruneStats = brStats;
++function brRangeIsInvisible(fnArray, argsArray, start, end) {
++  for (let i = start; i < end; i++) {
++    const fn = fnArray[i];
++    if (fn === OPS.constructPath) {
++      if (argsArray[i]?.[0] === OPS.endPath) {
++        continue;
++      }
++      return false;
++    }
++    if (fn === OPS.showText) {
++      const glyphs = argsArray[i]?.[0];
++      if (Array.isArray(glyphs) && glyphs.length === 0) {
++        continue;
++      }
++      return false;
++    }
++    if (!BR_INVISIBLE_SAFE_OPS.has(fn)) {
++      return false;
++    }
++  }
++  return true;
++}
++function brVisiblePaintOp(fn, state) {
++  const fillInv = state._brFillPatInv === true || state._brFillAlpha0 === true;
++  const strokeInv = state._brStrokePatInv === true || state._brStrokeAlpha0 === true;
++  if (!fillInv && !strokeInv) {
++    return fn;
++  }
++  let out = fn;
++  switch (fn) {
++    case OPS.fill:
++    case OPS.eoFill:
++      out = fillInv ? OPS.endPath : fn;
++      break;
++    case OPS.stroke:
++    case OPS.closeStroke:
++      out = strokeInv ? OPS.endPath : fn;
++      break;
++    case OPS.fillStroke:
++    case OPS.closeFillStroke:
++      out = fillInv && strokeInv ? OPS.endPath : fillInv ? OPS.stroke : strokeInv ? OPS.fill : fn;
++      break;
++    case OPS.eoFillStroke:
++    case OPS.closeEOFillStroke:
++      out = fillInv && strokeInv ? OPS.endPath : fillInv ? OPS.stroke : strokeInv ? OPS.eoFill : fn;
++      break;
++  }
++  if (out !== fn) {
++    brStats.paths++;
++  }
++  return out;
++}
++function brTrackAlpha(state, gStateObj) {
++  for (const [key, value] of gStateObj) {
++    if (key === "ca") {
++      state._brFillAlpha0 = value === 0;
++    } else if (key === "CA") {
++      state._brStrokeAlpha0 = value === 0;
++    }
++  }
++}
++function brImageIsFullyTransparent(xref, dict, imageRef) {
++  const cache = xref._brTransparentImages ||= new Map();
++  if (imageRef && cache.has(imageRef)) {
++    return cache.get(imageRef);
++  }
++  let result = false;
++  let smask = null;
++  try {
++    smask = dict.get("SMask");
++    const sd = smask instanceof BaseStream ? smask.dict : null;
++    if (sd) {
++      const decode = sd.getArray("Decode");
++      const decodeOk = !decode || Array.isArray(decode) && decode[0] === 0 && decode[1] === 1;
++      let filters = sd.get("Filter", "F");
++      filters = filters === undefined ? [] : Array.isArray(filters) ? filters : [filters];
++      const filtersOk = filters.every(f => f instanceof Name && BR_PLAIN_FILTERS.has(f.name));
++      const w = sd.get("Width", "W"),
++        h = sd.get("Height", "H");
++      if (decodeOk && filtersOk && typeof w === "number" && typeof h === "number" && w * h <= 64e6) {
++        smask.reset();
++        let total = 0,
++          nonZero = false;
++        for (;;) {
++          const chunk = smask.getBytes(65536);
++          if (!chunk || chunk.length === 0) {
++            break;
++          }
++          for (let k = 0, kk = chunk.length; k < kk; k++) {
++            if (chunk[k] !== 0) {
++              nonZero = true;
++              break;
++            }
++          }
++          total += chunk.length;
++          if (nonZero) {
++            break;
++          }
++        }
++        result = !nonZero && total > 0;
++      }
++    }
++  } catch {
++    result = false;
++  } finally {
++    try {
++      smask?.reset?.();
++    } catch {}
++  }
++  if (imageRef) {
++    cache.set(imageRef, result);
++  }
++  return result;
++}
+ class PartialEvaluator {
+   constructor({
+     xref,
+@@ -34605,6 +34808,17 @@ class PartialEvaluator {
+     const {
+       dict
+     } = xobj;
++    // BoardRipper: invisible-content elimination (rule 3) — remember where
++    // this form starts so it can be dropped if it paints nothing. Never for
++    // a soft mask: an empty mask is not the same as no mask.
++    const brPrune = !smask && this.options.brPruneInvisible !== false;
++    let brStart = -1,
++      brTotal = -1;
++    if (brPrune) {
++      operatorList.optimizer.flush();
++      brStart = operatorList.length;
++      brTotal = operatorList._totalLength;
++    }
+     const matrix = lookupMatrix(dict.getArray("Matrix"), null);
+     const bbox = lookupNormalRect(dict.getArray("BBox"), null);
+     let optionalContent, groupOptions;
+@@ -34659,6 +34873,25 @@ class PartialEvaluator {
+     if (optionalContent !== undefined) {
+       operatorList.addOp(OPS.endMarkedContent, []);
+     }
++    if (brPrune && operatorList._totalLength === brTotal) {
++      operatorList.optimizer.flush();
++      const end = operatorList.length;
++      if (end > brStart && brRangeIsInvisible(operatorList.fnArray, operatorList.argsArray, brStart, end)) {
++        for (let i = brStart; i < end; i++) {
++          if (operatorList.fnArray[i] === OPS.dependency) {
++            operatorList.dependencies.delete(operatorList.argsArray[i][0]);
++          }
++        }
++        operatorList.fnArray.length = brStart;
++        operatorList.argsArray.length = brStart;
++        operatorList.weight = Math.max(0, operatorList.weight - (end - brStart));
++        operatorList.optimizer.reset();
++        if ("lastProcessed" in operatorList.optimizer) {
++          operatorList.optimizer.lastProcessed = brStart;
++        }
++        brStats.forms++;
++      }
++    }
+   }
+   _sendImgData(objId, imgData, cacheGlobally = false) {
+     const transfers = imgData ? [imgData.bitmap || imgData.data.buffer] : null;
+@@ -34764,6 +34997,13 @@ class PartialEvaluator {
+       }
+       return;
+     }
++    // BoardRipper: invisible-content elimination (rule 1) — an image whose
++    // soft mask is entirely zero paints nothing; skip it before it is
++    // decoded, sent to the main thread or added as a dependency.
++    if (this.options.brPruneInvisible !== false && dict.has("SMask") && brImageIsFullyTransparent(this.xref, dict, imageRef)) {
++      brStats.images++;
++      return;
++    }
+     const SMALL_IMAGE_DIMENSIONS = 200;
+     const hasMask = dict.has("SMask") || dict.has("Mask");
+     if (isInline && w + h < SMALL_IMAGE_DIMENSIONS && !hasMask) {
+@@ -34937,6 +35177,7 @@ class PartialEvaluator {
+   }
+   handleTilingType(fn, color, resources, pattern, patternDict, operatorList, task, localTilingPatternCache) {
+     const tilingOpList = new OperatorList();
++    const brSelf = this;
+     const patternResources = Dict.merge({
+       xref: this.xref,
+       dictArray: [patternDict.get("Resources"), resources]
+@@ -34949,12 +35190,17 @@ class PartialEvaluator {
+     }).then(function () {
+       const operatorListIR = tilingOpList.getIR();
+       const tilingPatternIR = getTilingPatternIR(operatorListIR, patternDict, color);
++      // BoardRipper: invisible-content elimination (rule 2) — a pattern
++      // whose cell paints nothing makes every fill with it invisible.
++      const brInvisible = brSelf.options.brPruneInvisible !== false && brRangeIsInvisible(tilingOpList.fnArray, tilingOpList.argsArray, 0, tilingOpList.length);
++      brSelf._brLastPatInv = brInvisible;
+       operatorList.addDependencies(tilingOpList.dependencies);
+       operatorList.addOp(fn, tilingPatternIR);
+       if (patternDict.objId) {
+         localTilingPatternCache.set(null, patternDict.objId, {
+           operatorListIR,
+-          dict: patternDict
++          dict: patternDict,
++          brInvisible
+         });
+       }
+     }).catch(reason => {
+@@ -35085,6 +35331,7 @@ class PartialEvaluator {
+     }
+     await promise;
+     if (gStateObj.length > 0) {
++      brTrackAlpha(stateManager.state, gStateObj);
+       operatorList.addOp(OPS.setGState, [gStateObj]);
+     }
+     if (isSimpleGState) {
+@@ -35353,6 +35600,7 @@ class PartialEvaluator {
+           const color = cs.base ? cs.base.getRgbHex(args, 0) : null;
+           const tilingPatternIR = getTilingPatternIR(localTilingPattern.operatorListIR, localTilingPattern.dict, color);
+           operatorList.addOp(fn, tilingPatternIR);
++          this._brLastPatInv = localTilingPattern.brInvisible === true;
+           return undefined;
+         } catch {}
+       }
+@@ -35476,8 +35724,17 @@ class PartialEvaluator {
      operatorList,
      initialState = null,
      fallbackFontDict = null,
@@ -141,7 +399,68 @@ index cdac8ab..2679cd9 100644
      if (stream.isAsync) {
        const bytes = await stream.asyncGetBytes();
        if (bytes) {
-@@ -35969,6 +36043,65 @@ class PartialEvaluator {
+@@ -35535,6 +35792,14 @@ class PartialEvaluator {
+         }
+         let args = operation.args;
+         let fn = operation.fn;
++        // BoardRipper: invisible-content elimination — any new fill/stroke
++        // colour replaces an invisible pattern paint (re-set below when the
++        // new colour is itself an invisible pattern).
++        if (BR_FILL_COLOR_OPS.has(fn)) {
++          stateManager.state._brFillPatInv = false;
++        } else if (BR_STROKE_COLOR_OPS.has(fn)) {
++          stateManager.state._brStrokePatInv = false;
++        }
+         switch (fn | 0) {
+           case OPS.paintXObject:
+             isValidName = args[0] instanceof Name;
+@@ -35753,7 +36018,12 @@ class PartialEvaluator {
+               break;
+             }
+             if (cs.name === "Pattern") {
+-              next(self.handleColorN(operatorList, OPS.setFillColorN, args, cs, patterns, resources, task, localColorSpaceCache, localTilingPatternCache, localShadingPatternCache));
++              const brState = stateManager.state;
++              self._brLastPatInv = false;
++              next(Promise.resolve(self.handleColorN(operatorList, OPS.setFillColorN, args, cs, patterns, resources, task, localColorSpaceCache, localTilingPatternCache, localShadingPatternCache)).then(function () {
++                brState._brFillPatInv = self._brLastPatInv === true;
++                self._brLastPatInv = false;
++              }));
+               return;
+             }
+             args = [cs.getRgbHex(args, 0)];
+@@ -35772,7 +36042,12 @@ class PartialEvaluator {
+               break;
+             }
+             if (cs.name === "Pattern") {
+-              next(self.handleColorN(operatorList, OPS.setStrokeColorN, args, cs, patterns, resources, task, localColorSpaceCache, localTilingPatternCache, localShadingPatternCache));
++              const brState = stateManager.state;
++              self._brLastPatInv = false;
++              next(Promise.resolve(self.handleColorN(operatorList, OPS.setStrokeColorN, args, cs, patterns, resources, task, localColorSpaceCache, localTilingPatternCache, localShadingPatternCache)).then(function () {
++                brState._brStrokePatInv = self._brLastPatInv === true;
++                self._brLastPatInv = false;
++              }));
+               return;
+             }
+             args = [cs.getRgbHex(args, 0)];
+@@ -35818,6 +36093,7 @@ class PartialEvaluator {
+               const localGStateObj = localGStateCache.getByName(name);
+               if (localGStateObj) {
+                 if (localGStateObj.length > 0) {
++                  brTrackAlpha(stateManager.state, localGStateObj);
+                   operatorList.addOp(OPS.setGState, [localGStateObj]);
+                 }
+                 args = null;
+@@ -35913,6 +36189,9 @@ class PartialEvaluator {
+               if (fn === OPS.closeStroke || fn === OPS.closeFillStroke || fn === OPS.closeEOFillStroke) {
+                 pathBuffer.push(DrawOPS.closePath);
+               }
++              if (self.options.brPruneInvisible !== false) {
++                fn = brVisiblePaintOp(fn, stateManager.state);
++              }
+               if (pathBuffer.length === 0) {
+                 operatorList.addOp(OPS.constructPath, [fn, [null], null]);
+               } else {
+@@ -35969,6 +36248,65 @@ class PartialEvaluator {
                }
              }
          }
@@ -207,7 +526,7 @@ index cdac8ab..2679cd9 100644
          operatorList.addOp(fn, args);
        }
        if (stop) {
-@@ -58735,7 +58868,9 @@ class Page {
+@@ -58735,7 +59073,9 @@ class Page {
      cacheKey,
      pageIndex = this.pageIndex,
      annotationStorage = null,
@@ -218,7 +537,7 @@ index cdac8ab..2679cd9 100644
    }) {
      const contentStreamPromise = this.getContentStream();
      const resourcesPromise = this.loadResources(RESOURCES_KEYS_OPERATOR_LIST);
-@@ -58793,7 +58928,9 @@ class Page {
+@@ -58793,7 +59133,9 @@ class Page {
          stream: contentStream,
          task,
          resources,
@@ -229,7 +548,7 @@ index cdac8ab..2679cd9 100644
        });
        return opList;
      });
-@@ -62955,7 +63092,9 @@ class WorkerMessageHandler {
+@@ -62955,7 +63297,9 @@ class WorkerMessageHandler {
            cacheKey: data.cacheKey,
            annotationStorage: data.annotationStorage,
            modifiedIds: data.modifiedIds,

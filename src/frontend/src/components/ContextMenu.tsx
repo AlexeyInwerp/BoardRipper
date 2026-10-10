@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useSyncExternalStore, useState } from 'react';
+import { addWatermarkTerm } from '../store/pdf-filter-actions';
 import { IconCopy, IconWorld, IconPin, IconPinFilled, IconShieldPlus } from '@tabler/icons-react';
 import { contextMenuStore } from '../store/context-menu-store';
 import type { ContextMenuState } from '../store/context-menu-store';
@@ -139,11 +140,24 @@ export function ContextMenu() {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') contextMenuStore.hide();
     };
+    // A touch anywhere outside closes it too. iOS Safari dispatches no
+    // `click` for a tap on a non-interactive area, and a pan or pinch on the
+    // board produces none anywhere, so on a tablet the click listener alone
+    // left the menu open over the board (2026-10-02). Capture phase, so it
+    // closes before the board starts its own gesture. Mouse and pen keep the
+    // click behaviour they had.
+    const handlePointerDown = (e: PointerEvent) => {
+      if (e.pointerType !== 'touch') return;
+      if (menuRef.current && menuRef.current.contains(e.target as Node)) return;
+      contextMenuStore.hide();
+    };
     document.addEventListener('click', handleClick);
     document.addEventListener('keydown', handleKey);
+    document.addEventListener('pointerdown', handlePointerDown, true);
     return () => {
       document.removeEventListener('click', handleClick);
       document.removeEventListener('keydown', handleKey);
+      document.removeEventListener('pointerdown', handlePointerDown, true);
     };
   }, [state.visible]);
 
@@ -315,19 +329,12 @@ export function ContextMenu() {
     const term = state.query.trim();
     contextMenuStore.hide();
     if (!term) return;
-    const current = renderSettingsStore.globalSnapshot();
-    const existing = current.pdfWatermarkFilter ?? [];
-    if (existing.some(t => t === term)) {
+    // Shared with the PDF filter menu: also switches the filter on and pushes
+    // the list to the backend indexer.
+    if (!addWatermarkTerm(term)) {
       boardStore.addToast(`"${term}" is already a watermark term`, 'info');
       return;
     }
-    // Adding a term implies the user wants it filtered now — auto-enable
-    // the filter if the wand was previously toggled off.
-    renderSettingsStore.applyGlobal({
-      ...current,
-      pdfWatermarkFilter: [...existing, term],
-      pdfWatermarkFilterEnabled: true,
-    });
     boardStore.addToast(`Added "${term}" to watermark filter — reparsing`, 'info');
   };
 

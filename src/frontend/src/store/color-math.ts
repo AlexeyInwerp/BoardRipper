@@ -196,9 +196,9 @@ export function derivedUiTokens(p: UiPalette): Record<string, string> {
     '--border-a55':      alphaHex(p.border, 0.55),
     '--border-a65':      alphaHex(p.border, 0.65),
   };
-  for (const n of [5, 6, 8, 10, 14, 16, 18, 28, 30, 40, 50]) t[`--accent-a${n}`] = alphaHex(p.accent, n / 100);
+  for (const n of [5, 6, 8, 10, 14, 16, 18, 28, 30, 40, 45, 50]) t[`--accent-a${n}`] = alphaHex(p.accent, n / 100);
   for (const n of [35, 40, 45, 50]) t[`--accent-border-${n}`] = mixHex(p.accent, p.border, n / 100);
-  for (const n of [4, 10, 20, 30]) t[`--accent-bg2-${n}`] = mixHex(p.accent, p.bgSecondary, n / 100);
+  for (const n of [4, 8, 10, 20, 30]) t[`--accent-bg2-${n}`] = mixHex(p.accent, p.bgSecondary, n / 100);
   for (const n of [12, 20]) t[`--accent-bg3-${n}`] = mixHex(p.accent, p.bgTertiary, n / 100);
   return t;
 }

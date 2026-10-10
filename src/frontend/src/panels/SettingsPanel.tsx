@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useMemo, useEffect, useSyncExternalStore, createContext, useContext } from 'react';
 import { pillVars } from '../store/color-math';
-import { IconPalette, IconLayoutBoardSplit, IconKeyboard, IconBooks, IconSettings, IconPlug, IconClick } from '@tabler/icons-react';
+import { setWatermarkTerms } from '../store/pdf-filter-actions';
+import { IconPalette, IconLayoutBoardSplit, IconKeyboard, IconBooks, IconSettings, IconPlug, IconClick, IconGauge } from '@tabler/icons-react';
 import { themeStore, THEMES, ACCENT_PRESETS, getUiPalette } from '../store/themes';
 import { isHdrCapable, onHdrCapabilityChange } from '../renderer/hdr-selection-outline';
 import { resizeModeStore } from '../store/resize-mode-store';
@@ -18,18 +19,26 @@ import {
 } from './settings/SettingsSearch';
 import type { RenderSettings, PartType, PadShape, BodyShape, PinGroup, PinGroupRule } from '../store/render-settings';
 import { SettingsMockup } from './SettingsMockup';
+import { QualityPresetCard } from '../components/QualityPresetCard';
+import { resetLocalSettings } from '../store/reset-local-settings';
 import { InterfaceScaleSlider } from '../components/InterfaceScaleSlider';
 import { SidebarNavSwitch } from '../components/SidebarNavSwitch';
 import type { MockupSectionId } from './SettingsMockup';
 import { shortcuts, formatShortcut, CATEGORY_LABELS, CATEGORY_ORDER } from '../store/keyboard-shortcuts';
-import { useBoardStore } from '../hooks/useBoardStore';
 import { boardStore } from '../store/board-store';
 import { startMcpBridge, stopMcpBridge, getMcpClientIdentity, setMcpClientLabel } from '../store/mcp-bridge';
 import { copyText } from '../clipboard';
 import { useDatabank } from '../hooks/useDatabank';
 import { databankStore } from '../store/databank-store';
-import { SCROLL_BINDINGS_KEY, SCROLL_ACTIONS, DEFAULT_SCROLL_BINDINGS, loadScrollBindings, PDF_QUALITY_KEY, PDF_RENDER_QUALITY_OPTIONS, loadPdfQuality, getPdfQualityConfig, PDF_INERTIA_KEY, loadPdfInertia } from './PdfViewerPanel';
-import type { ScrollAction, ScrollBindings, PdfRenderQuality } from './PdfViewerPanel';
+import { PDF_INERTIA_KEY, loadPdfInertia } from './PdfViewerPanel';
+import { PDF_QUALITY_LABELS, PDF_RENDER_QUALITY_OPTIONS, getPdfQualityConfig, pdfQualityDescription, setPdfQuality } from '../store/pdf-quality';
+import { usePdfQuality } from '../components/PdfQualityCard';
+import {
+  ACTION_COLOR, ACTION_LABEL, SLOT_LABEL, SHIFT_SCROLL_NOTE, SCROLL_ACTIONS, SCROLL_SLOTS, SCROLL_BINDINGS_EVENT,
+  DEFAULT_SCROLL_BINDINGS, DEFAULT_BOARD_SCROLL_BINDINGS, BOARD_SCROLL_ACTIONS, isMacPlatform,
+  loadScrollBindings, saveScrollBindings, sameScrollBindings, nextAction, boardScrollBindings, boardScrollSettings,
+  type ScrollAction, type ScrollBindings, type ScrollSlot, type BoardScrollSettings,
+} from '../store/scroll-bindings';
 import { ensureDatabaseEditorPanel } from '../store/dockview-api';
 import { useObdForBoard } from '../store/obd-store';
 import { LibrarySyncSection, SoftwareUpdateSection } from './LibrarySyncSection';
@@ -42,6 +51,9 @@ import { pdfIndexClient } from '../pdf/pdf-index-client';
 import { fmtIndexEta } from './LibraryPanel';
 import { isElectron, hasBackend } from '../store/databank-store';
 import { isLiteBuild } from '../store/build-mode';
+
+const subscribeBoardName = (cb: () => void) => boardStore.subscribe(cb);
+const getBoardFileName = () => boardStore.fileName;
 
 /** Silently disable the SettingsMockup render preview without removing
  *  it from the tree. Flip to true to bring the preview back in one line. */
@@ -68,14 +80,15 @@ function useOverride(field: keyof RenderSettings) {
 
 type SectionId = MockupSectionId | 'zoomLod' | 'netLines' | 'navigation' | 'performance' | 'shortcuts' | 'partTypeOverrides' | 'server' | 'dbinfo' | 'pdf' | 'boardOverlay';
 
-export type SettingsTabId = 'theme' | 'board' | 'input' | 'library' | 'system' | 'integrations';
+export type SettingsTabId = 'theme' | 'board' | 'rendering' | 'input' | 'library' | 'system' | 'integrations';
 
-const TAB_ORDER: SettingsTabId[] = (['theme', 'board', 'input', 'library', 'system', 'integrations'] as SettingsTabId[])
+const TAB_ORDER: SettingsTabId[] = (['theme', 'board', 'rendering', 'input', 'library', 'system', 'integrations'] as SettingsTabId[])
   .filter(t => !(isLiteBuild() && (t === 'library' || t === 'integrations')));
 
 const TAB_ICONS: Record<SettingsTabId, typeof IconPalette> = {
   theme:        IconPalette,
   board:        IconLayoutBoardSplit,
+  rendering:    IconGauge,
   input:        IconKeyboard,
   library:      IconBooks,
   system:       IconSettings,
@@ -85,6 +98,7 @@ const TAB_ICONS: Record<SettingsTabId, typeof IconPalette> = {
 const TAB_LABELS: Record<SettingsTabId, string> = {
   theme:        'Theme',
   board:        'Board',
+  rendering:    'Rendering',
   input:        'Input',
   library:      'Library',
   system:       'System',
@@ -106,8 +120,11 @@ export const SECTION_TO_TAB: Record<SectionId, SettingsTabId> = {
   zoomLod:    'input',
   navigation: 'input',
   shortcuts:  'input',
+  // Rendering tab (2026-10-10): board and PDF quality, text renderer,
+  // diagnostics — it was two levels down as System ▸ Performance & Debug.
+  // The section id stays `performance` for deep links and saved open state.
+  performance: 'rendering',
   // System tab
-  performance: 'system',
   pdf:         'system',
   // Library folder + auto-scan + scan/index controls live on the Library tab.
   // The internal section id is still `server` for localStorage continuity
@@ -139,7 +156,9 @@ function loadOpenSections(tab: SettingsTabId): Set<SectionId> {
   // First visit to the Library tab: the everyday section (Scanning & Indexing)
   // starts open instead of a wall of collapsed headers.
   const fallback = (): Set<SectionId> =>
-    tab === 'library' ? new Set<SectionId>(['server']) : new Set();
+    tab === 'library' ? new Set<SectionId>(['server'])
+      : tab === 'rendering' ? new Set<SectionId>(['performance'])   // its only section
+      : new Set();
   try {
     const raw = localStorage.getItem(openSectionsKey(tab));
     if (!raw) return fallback();
@@ -1283,148 +1302,92 @@ function LibrarySettingsSection() {
   );
 }
 
-// ---- PDF Scroll Bindings Editor (drag-and-drop) ----
+// ---- Scroll bindings editor (click a pill to cycle its action) ----
+//
+// One editor for both surfaces. Slots are independent — two of them may hold
+// the same action — so this is a per-slot picker, not the old drag-to-swap
+// permutation (which is what forced Shift+Scroll onto zoom whenever bare
+// scroll panned, issue #40). Mirrored on the home dashboard in
+// components/home/HomeBackdrop.tsx; labels and colours come from
+// store/scroll-bindings.ts so the two cannot drift.
 
-// PDF scroll bindings editor. Mirrored on the home dashboard in
-// components/home/HomeBackdrop.tsx (PdfScrollBindings). Keep labels
-// and colors identical across both surfaces.
-const MODIFIER_KEYS: (keyof ScrollBindings)[] = ['bare', 'shift', 'meta'];
-const MODIFIER_LABELS: Record<keyof ScrollBindings, React.ReactNode> = {
-  bare: 'Scroll',
-  shift: <>Shift + Scroll<br/>Ctrl + Scroll (fast)</>,
-  meta: navigator.platform?.includes('Mac') ? '⌘ + Scroll' : 'Ctrl + Scroll',
-};
-const ACTION_LABELS: Record<ScrollAction, string> = { zoom: 'Zoom', pan: 'Pan', switch: 'Page' };
-const ACTION_COLORS: Record<ScrollAction, string> = { zoom: '#00d4ff', pan: '#ffd93d', switch: '#ff6b9d' };
-
-function ScrollBindingsEditor() {
-  const [bindings, setBindings] = useState<ScrollBindings>(loadScrollBindings);
-  const [dragging, setDragging] = useState<ScrollAction | null>(null);
-  const [dragOver, setDragOver] = useState<keyof ScrollBindings | null>(null);
-
-  // Re-sync when any other surface (HomeBackdrop, WelcomeSetup, DebugPanel,
-  // PDF toolbar swap) changes the bindings while this editor is mounted —
-  // otherwise the pills show stale state and a drag persists wrong swaps.
-  useEffect(() => {
-    const onChange = () => setBindings(loadScrollBindings());
-    window.addEventListener('pdf-scroll-bindings-changed', onChange);
-    return () => window.removeEventListener('pdf-scroll-bindings-changed', onChange);
-  }, []);
-
-  const save = useCallback((next: ScrollBindings) => {
-    setBindings(next);
-    try { localStorage.setItem(SCROLL_BINDINGS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
-    // Notify any open PDF panels (they read from localStorage on next wheel event via ref)
-    window.dispatchEvent(new CustomEvent('pdf-scroll-bindings-changed', { detail: next }));
-  }, []);
-
-  const handleDragStart = useCallback((e: React.DragEvent, action: ScrollAction) => {
-    setDragging(action);
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', action);
-  }, []);
-
-  const handleDragOver = useCallback((e: React.DragEvent, slot: keyof ScrollBindings) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    setDragOver(slot);
-  }, []);
-
-  const handleDrop = useCallback((e: React.DragEvent, targetSlot: keyof ScrollBindings) => {
-    e.preventDefault();
-    setDragOver(null);
-    setDragging(null);
-    const action = e.dataTransfer.getData('text/plain') as ScrollAction;
-    if (!SCROLL_ACTIONS.includes(action)) return;
-
-    // Find which slot currently holds this action and swap
-    const sourceSlot = MODIFIER_KEYS.find(k => bindings[k] === action);
-    if (!sourceSlot || sourceSlot === targetSlot) return;
-
-    const next = { ...bindings };
-    // Swap: source gets target's current action, target gets dragged action
-    next[sourceSlot] = bindings[targetSlot];
-    next[targetSlot] = action;
-    save(next);
-  }, [bindings, save]);
-
-  const handleDragEnd = useCallback(() => {
-    setDragging(null);
-    setDragOver(null);
-  }, []);
-
-  const handleReset = useCallback(() => {
-    save(DEFAULT_SCROLL_BINDINGS);
-  }, [save]);
-
+function SlotBindingsEditor<A extends ScrollAction>({ surface, slots, actions, value, onChange, onReset }: {
+  surface: 'board' | 'pdf';
+  slots: readonly ScrollSlot[];
+  actions: readonly A[];
+  value: Record<ScrollSlot, A>;
+  onChange: (slot: ScrollSlot, action: A) => void;
+  /** Present while the layout differs from the default. */
+  onReset?: () => void;
+}) {
   return (
-    <div className="scroll-bindings-editor">
+    <div className="scroll-bindings-editor" data-testid={`scroll-bindings-${surface}`}>
       <div className="scroll-bindings-grid">
-        {MODIFIER_KEYS.map(slot => {
-          const action = bindings[slot];
-          const isOver = dragOver === slot;
+        {slots.map(slot => {
+          const action = value[slot];
           return (
-            <div
-              key={slot}
-              className={`scroll-binding-slot${isOver ? ' drag-over' : ''}`}
-              onDragOver={e => handleDragOver(e, slot)}
-              onDragLeave={() => setDragOver(null)}
-              onDrop={e => handleDrop(e, slot)}
-            >
-              <span className="scroll-binding-modifier">{MODIFIER_LABELS[slot]}</span>
-              <span
-                className={`scroll-binding-pill${dragging === action ? ' dragging' : ''}`}
-                style={pillVars(ACTION_COLORS[action], getUiPalette()) as React.CSSProperties}
-                draggable
-                onDragStart={e => handleDragStart(e, action)}
-                onDragEnd={handleDragEnd}
+            <div key={slot} className="scroll-binding-slot">
+              <span className="scroll-binding-modifier">{SLOT_LABEL[slot]}</span>
+              <button
+                type="button"
+                className="scroll-binding-pill"
+                style={pillVars(ACTION_COLOR[action], getUiPalette()) as React.CSSProperties}
+                data-testid={`scroll-slot-${surface}-${slot}`}
+                data-action={action}
+                title={`${SLOT_LABEL[slot]}: ${ACTION_LABEL[action]} — click to change`}
+                onClick={() => onChange(slot, nextAction(actions, action))}
               >
-                {ACTION_LABELS[action]}
-              </span>
+                {ACTION_LABEL[action]}
+              </button>
             </div>
           );
         })}
       </div>
-      {(bindings.bare !== DEFAULT_SCROLL_BINDINGS.bare
-        || bindings.shift !== DEFAULT_SCROLL_BINDINGS.shift
-        || bindings.meta !== DEFAULT_SCROLL_BINDINGS.meta) && (
-        <button className="scroll-bindings-reset" onClick={handleReset}>Reset to default</button>
+      {value.shift !== 'pan' && (
+        <p className="settings-hint scroll-bindings-note" data-testid={`scroll-note-${surface}`}>{SHIFT_SCROLL_NOTE}</p>
+      )}
+      {onReset && (
+        <button className="scroll-bindings-reset" onClick={onReset}>Reset to default</button>
       )}
     </div>
   );
 }
 
-// ---- PDF render quality selector ----
+function ScrollBindingsEditor() {
+  const [bindings, setBindings] = useState<ScrollBindings>(loadScrollBindings);
 
-const QUALITY_LABELS: Record<PdfRenderQuality, string> = {
-  max: 'Max',
-  high: 'High',
-  medium: 'Medium',
-  low: 'Low',
-};
-
-// Derived from QUALITY_CONFIGS so the copy can't drift from the real caps.
-function qualityDescription(q: PdfRenderQuality): string {
-  const t = getPdfQualityConfig(q).maxMainTier;
-  switch (q) {
-    case 'max':    return `Pixel-perfect up to ${t}× zoom. High GPU usage. Desktop with dedicated GPU.`;
-    case 'high':   return `Crisp text up to ${t}× zoom. Good for modern laptops.`;
-    case 'medium': return `Softens above ${t}× zoom. Smooth on integrated GPUs and tablets.`;
-    case 'low':    return `Softens above ${t}× zoom. Best for older machines or battery saving.`;
-  }
-}
-
-function PdfQualitySelector() {
-  const [quality, setQuality] = useState<PdfRenderQuality>(loadPdfQuality);
-
-  const handleChange = useCallback((next: PdfRenderQuality) => {
-    setQuality(next);
-    try { localStorage.setItem(PDF_QUALITY_KEY, next); } catch { /* ignore */ }
-    window.dispatchEvent(new CustomEvent('pdf-quality-changed', { detail: next }));
+  // Re-sync when any other surface (HomeBackdrop, WelcomeSetup, DebugPanel,
+  // PDF toolbar swap) changes the bindings while this editor is mounted.
+  useEffect(() => {
+    const onChange = () => setBindings(loadScrollBindings());
+    window.addEventListener(SCROLL_BINDINGS_EVENT, onChange);
+    return () => window.removeEventListener(SCROLL_BINDINGS_EVENT, onChange);
   }, []);
 
-  const cfg = getPdfQualityConfig(quality);
+  const save = useCallback((next: ScrollBindings) => {
+    setBindings(next);
+    saveScrollBindings(next);
+  }, []);
 
+  const isDefault = sameScrollBindings(bindings, DEFAULT_SCROLL_BINDINGS);
+  return (
+    <SlotBindingsEditor
+      surface="pdf"
+      slots={SCROLL_SLOTS}
+      actions={SCROLL_ACTIONS}
+      value={bindings}
+      onChange={(slot, action) => save({ ...bindings, [slot]: action })}
+      onReset={isDefault ? undefined : () => save(DEFAULT_SCROLL_BINDINGS)}
+    />
+  );
+}
+
+// ---- PDF render quality selector ----
+// The same four presets as the start page's PDF card (store/pdf-quality.ts).
+
+function PdfQualitySelector() {
+  const quality = usePdfQuality();
+  const cfg = getPdfQualityConfig(quality);
   return (
     <div className="pdf-quality-selector">
       <div className="settings-btn-group">
@@ -1432,16 +1395,17 @@ function PdfQualitySelector() {
           <button
             key={q}
             className={`settings-btn-option${quality === q ? ' active' : ''}`}
-            onClick={() => handleChange(q)}
-            title={qualityDescription(q)}
+            onClick={() => setPdfQuality(q)}
+            title={pdfQualityDescription(q)}
+            data-testid={`settings-pdf-quality-${q}`}
           >
-            {QUALITY_LABELS[q]}
+            {PDF_QUALITY_LABELS[q]}
           </button>
         ))}
       </div>
-      <p className="settings-hint">{qualityDescription(quality)}</p>
-      <div className="pdf-quality-details">
-        <span>Main tier: {cfg.maxMainTier}× | Adj tier: {cfg.maxAdjTier}× | Cache: {cfg.cacheMaxEntries} pages / {Math.round(cfg.cacheMaxPixels / 1_000_000)}MP</span>
+      <p className="settings-hint">{pdfQualityDescription(quality)}</p>
+      <div className="pdf-quality-details" translate="no">
+        <span>{`Page up to ${cfg.maxMainTier}× · neighbours ${cfg.maxAdjTier}× near, ${cfg.neighbourFarTier}× far · cache ${cfg.cacheMaxEntries} pages / ${Math.round(cfg.cacheMaxPixels / 1_000_000)} MP`}</span>
       </div>
     </div>
   );
@@ -1500,18 +1464,6 @@ function parseWatermarkFilter(raw: string): string[] {
   return raw.split(/[\n,]/).map(t => t.trim()).filter(t => t.length > 0);
 }
 
-/** Push the current watermark term list to the backend config endpoint.
- *  No-op in Electron mode (no backend available). Fire-and-forget — errors
- *  are silently dropped (the backend key is advisory for the pdfium indexer). */
-function pushWatermarkTermsToBackend(terms: string[]): void {
-  if (!hasBackend()) return;
-  void fetch('/api/config', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ key: 'pdf_watermark_terms', value: JSON.stringify(terms) }),
-  }).catch(() => { /* best-effort */ });
-}
-
 function PdfWatermarkFilterEditor() {
   const storedTerms = renderSettingsStore.globalSettings.pdfWatermarkFilter;
   const [value, setValue] = useState(() => formatWatermarkFilter(storedTerms));
@@ -1528,14 +1480,11 @@ function PdfWatermarkFilterEditor() {
     pendingTerms.some((t, i) => t !== storedTerms[i]);
 
   const commit = useCallback(() => {
-    const current = renderSettingsStore.globalSnapshot();
     const next = parseWatermarkFilter(value);
-    renderSettingsStore.applyGlobal({ ...current, pdfWatermarkFilter: next });
+    // Also pushes the list to the backend so the pdfium indexer uses it.
+    setWatermarkTerms(next);
     // Normalise the textarea to the canonical form so the dirty flag clears.
     setValue(formatWatermarkFilter(next));
-
-    // Push to backend so the pdfium indexer uses the same terms.
-    pushWatermarkTermsToBackend(next);
 
     // Detect whether the committed terms changed vs the last commit.
     const prev = committedRef.current;
@@ -1633,86 +1582,29 @@ function PdfWatermarkFilterEditor() {
   );
 }
 
-// ---- Board scroll bindings editor (drag-and-drop pills) ----
+// ---- Board scroll bindings editor ----
 //
-// ⚠ Keep labels / colors / actions in sync with the home dashboard
-//   editors in src/frontend/src/components/home/HomeBackdrop.tsx
-//   (PillSwap + DragBindings + ScrollBindings + PdfScrollBindings).
-//   Both surfaces render the same state and must show identical pills.
+// The board's slots live in three render-settings keys (twoFingerPan is the
+// bare slot). The ⌘ slot is shown on macOS only: elsewhere `metaKey` is the
+// Windows key, and Ctrl is the pinch/fast-zoom path that cannot be
+// reassigned.
 
-type BoardScrollAction = 'zoom' | 'pan';
-const BOARD_ACTIONS: BoardScrollAction[] = ['zoom', 'pan'];
-const BOARD_ACTION_LABELS: Record<BoardScrollAction, string> = { zoom: 'Zoom', pan: 'Pan' };
-const BOARD_ACTION_COLORS: Record<BoardScrollAction, string> = { zoom: '#00d4ff', pan: '#ffd93d' };
+const BOARD_SLOTS: readonly ScrollSlot[] = isMacPlatform ? ['bare', 'shift', 'meta'] : ['bare', 'shift'];
 
-const BOARD_MODIFIER_KEYS = ['bare', 'shift'] as const;
-type BoardModifier = typeof BOARD_MODIFIER_KEYS[number];
-const BOARD_MODIFIER_LABELS: Record<BoardModifier, React.ReactNode> = {
-  bare: 'Scroll',
-  shift: <>Shift + Scroll<br/>Ctrl + Scroll (fast)</>,
-};
-
-function BoardScrollBindingsEditor({ twoFingerPan, onUpdate }: { twoFingerPan: boolean; onUpdate: DraftUpdater }) {
-  // Derive bindings from twoFingerPan: bare=pan when twoFingerPan, else bare=zoom.
-  // Memoized on the primitive `twoFingerPan` so handleDrop's useCallback below
-  // (which closes over `bindings`) keeps a stable identity across renders.
-  const bindings = useMemo<Record<BoardModifier, BoardScrollAction>>(() => ({
-    bare: twoFingerPan ? 'pan' : 'zoom',
-    shift: twoFingerPan ? 'zoom' : 'pan',
-  }), [twoFingerPan]);
-
-  const [dragging, setDragging] = useState<BoardScrollAction | null>(null);
-  const [dragOver, setDragOver] = useState<BoardModifier | null>(null);
-
-  const handleDragStart = useCallback((e: React.DragEvent, action: BoardScrollAction) => {
-    setDragging(action);
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', action);
-  }, []);
-
-  const handleDragOver = useCallback((e: React.DragEvent, slot: BoardModifier) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    setDragOver(slot);
-  }, []);
-
-  const handleDrop = useCallback((e: React.DragEvent, targetSlot: BoardModifier) => {
-    e.preventDefault();
-    setDragOver(null);
-    setDragging(null);
-    const action = e.dataTransfer.getData('text/plain') as BoardScrollAction;
-    if (!BOARD_ACTIONS.includes(action)) return;
-    const sourceSlot = BOARD_MODIFIER_KEYS.find(k => bindings[k] === action);
-    if (!sourceSlot || sourceSlot === targetSlot) return;
-    // Swapping bare and shift means toggling twoFingerPan
-    onUpdate({ twoFingerPan: targetSlot === 'bare' && action === 'pan' });
-  }, [bindings, onUpdate]);
-
-  const handleDragEnd = useCallback(() => { setDragging(null); setDragOver(null); }, []);
-
+function BoardScrollBindingsEditor({ draft, onUpdate }: { draft: BoardScrollSettings; onUpdate: DraftUpdater }) {
+  const bindings = boardScrollBindings(draft);
+  const isDefault = bindings.bare === DEFAULT_BOARD_SCROLL_BINDINGS.bare
+    && bindings.shift === DEFAULT_BOARD_SCROLL_BINDINGS.shift
+    && bindings.meta === DEFAULT_BOARD_SCROLL_BINDINGS.meta;
   return (
-    <div className="scroll-bindings-editor">
-      <div className="scroll-bindings-grid">
-        {BOARD_MODIFIER_KEYS.map(slot => {
-          const action = bindings[slot];
-          const isOver = dragOver === slot;
-          return (
-            <div key={slot} className={`scroll-binding-slot${isOver ? ' drag-over' : ''}`}
-              onDragOver={e => handleDragOver(e, slot)}
-              onDragLeave={() => setDragOver(null)}
-              onDrop={e => handleDrop(e, slot)}>
-              <span className="scroll-binding-modifier">{BOARD_MODIFIER_LABELS[slot]}</span>
-              <span
-                className={`scroll-binding-pill${dragging === action ? ' dragging' : ''}`}
-                style={pillVars(BOARD_ACTION_COLORS[action], getUiPalette()) as React.CSSProperties}
-                draggable onDragStart={e => handleDragStart(e, action)} onDragEnd={handleDragEnd}>
-                {BOARD_ACTION_LABELS[action]}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
+    <SlotBindingsEditor
+      surface="board"
+      slots={BOARD_SLOTS}
+      actions={BOARD_SCROLL_ACTIONS}
+      value={bindings}
+      onChange={(slot, action) => onUpdate(boardScrollSettings({ ...bindings, [slot]: action }))}
+      onReset={isDefault ? undefined : () => onUpdate(boardScrollSettings(DEFAULT_BOARD_SCROLL_BINDINGS))}
+    />
   );
 }
 
@@ -1779,9 +1671,9 @@ function BoardDragBindingsEditor({ dragToZoom, onUpdate }: { dragToZoom: boolean
               <span className="scroll-binding-modifier">{BOARD_DRAG_MODIFIER_LABELS[slot]}</span>
               <span
                 className={`scroll-binding-pill${dragging === action ? ' dragging' : ''}`}
-                style={pillVars(BOARD_ACTION_COLORS[action as BoardScrollAction], getUiPalette()) as React.CSSProperties}
+                style={pillVars(ACTION_COLOR[action], getUiPalette()) as React.CSSProperties}
                 draggable onDragStart={e => handleDragStart(e, action)} onDragEnd={handleDragEnd}>
-                {BOARD_ACTION_LABELS[action as BoardScrollAction]}
+                {ACTION_LABEL[action]}
               </span>
             </div>
           );
@@ -1860,8 +1752,41 @@ function CacheControlBar({ hasBoard }: { hasBoard: boolean }) {
   );
 }
 
+/**
+ * Wipes every preference this browser stored and reloads — the way back from
+ * a setting that broke the board, without clearing site data by hand. Two
+ * clicks: the first arms it, the second (within 5 s) runs it.
+ */
+function LocalSettingsResetBar() {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 5000);
+    return () => clearTimeout(t);
+  }, [armed]);
+  return (
+    <div className="settings-cache-bar" role="group" aria-label="Local settings">
+      <div className="settings-cache-bar-title">Local settings</div>
+      <div className="settings-cache-hint">
+        Every setting this browser saved — view, theme, layout, panels — back to its default, then the page reloads.
+        Recent files, favourites, history, worklists, bookmarks and cached boards are kept.
+      </div>
+      <div className="settings-cache-bar-buttons">
+        <button
+          className={`settings-cache-btn${armed ? ' settings-cache-btn-danger' : ''}`}
+          data-testid="reset-local-settings"
+          onClick={() => { if (armed) resetLocalSettings(); else setArmed(true); }}
+        >
+          {armed ? 'Click again to reset and reload' : 'Reset all local settings'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function SettingsPanel() {
-  const { fileName: activeFileName } = useBoardStore();
+  // The active file name only, not the whole board snapshot.
+  const activeFileName = useSyncExternalStore(subscribeBoardName, getBoardFileName);
   const hasBoard = !!activeFileName;
 
   // Mode: global settings vs per-board overrides
@@ -2235,8 +2160,8 @@ export function SettingsPanel() {
           </button>
         </div>
         <div className="settings-subsection-label">Scroll wheel behavior</div>
-        <p className="settings-hint">Drag pills between slots to reassign scroll actions.</p>
-        <BoardScrollBindingsEditor twoFingerPan={draft.twoFingerPan} onUpdate={updateGlobal} />
+        <p className="settings-hint">Click a pill to change what that scroll does. Pinch and Ctrl+Scroll always zoom, dragging always pans.</p>
+        <BoardScrollBindingsEditor draft={draft} onUpdate={updateGlobal} />
         <Toggle
           label="Mouse wheel detection"
           value={draft.wheelDetection}
@@ -2313,6 +2238,15 @@ export function SettingsPanel() {
             onChange={(e) => updateGlobal({ disableInertia: !e.target.checked })} />
         </div>
 
+        <div className="settings-subsection-label">Zoom and rotation</div>
+        <Toggle label="Smooth wheel zoom" value={draft.smoothZoom} field="smoothZoom" onUpdate={updateGlobal}
+          title="Animated cursor-anchored zoom" />
+        <Toggle label="Two-finger rotation" value={draft.twoFingerRotate} field="twoFingerRotate" onUpdate={updateGlobal}
+          title="On a touch screen, turning two fingers turns the board about the point between them. Starts locked: a turn past the unlock angle unlocks it, a two-finger double-tap locks it again and squares the board. The angle is kept when the fingers lift, snapped to the nearest right angle when within the snap window. Off: two fingers only zoom and pan." />
+        <Slider label="Rotation unlock angle" value={draft.rotateUnlockDeg} min={4} max={45} step={1} field="rotateUnlockDeg" onUpdate={updateGlobal} unit="°"
+          title="While rotation is locked, two fingers must turn this far before it unlocks. Every pinch turns a little; too low and zooming starts rotating, too high and unlocking takes a deliberate twist. Default 24°." />
+        <Slider label="Rotation snap window" value={draft.rotateSnapDeg} min={0} max={45} step={1} field="rotateSnapDeg" onUpdate={updateGlobal} unit="°"
+          title="When the fingers lift within this many degrees of 0°, 90°, 180° or 270°, the board snaps to that right angle. 0 never snaps. Default 10°." />
         <div className="settings-subsection-label">Click</div>
         <Slider label="Pin Click Radius" value={draft.clickThreshold} min={5} max={100} step={5} field="clickThreshold" onUpdate={updateGlobal}
           title="Maximum distance (screen pixels) from a pin center that counts as a click on that pin. Larger = easier to click small or densely packed pins" />
@@ -2444,22 +2378,42 @@ export function SettingsPanel() {
       )}
 
       {activeTab === SECTION_TO_TAB.performance && (
-      <CollapsibleSection id="performance" title="Performance & Debug" isOpen={openSections.has('performance')}
+      <CollapsibleSection id="performance" title="Rendering" isOpen={openSections.has('performance')}
         onToggle={toggleSection} sectionRef={performanceRef} isFocused={focusedSection === 'performance'}>
+        <div className="settings-subsection-label">Board</div>
+        <div className="settings-quality-preset"><QualityPresetCard /></div>
+        <details className="settings-fine-tune" data-testid="settings-board-fine-tune">
+          <summary>Fine-tune — the settings the preset sets</summary>
+          <Toggle label="Cap to 60 FPS" value={draft.cap60Fps} field="cap60Fps" onUpdate={updateGlobal}
+          title="Limit the renderer to 60 frames per second. Disable to let the ticker run at the display refresh rate (120/144/240 Hz) — smoother but more CPU/GPU work" />
+          <Toggle label="Touch device performance mode" value={draft.touchPerformanceMode} field="touchPerformanceMode" onUpdate={updateGlobal}
+          title="On a tablet (finger as the primary pointer): cap the board to 60 FPS instead of the panel's 120 and cap the render resolution at 1.5×. Edge smoothing stays on. Board text keeps full resolution. No effect on a mouse or trackpad machine. Takes effect when a board panel is next opened." />
+          <Slider label="Render resolution limit" value={draft.boardResolutionCap} min={0} max={2} step={0.25} field="boardResolutionCap" onUpdate={updateGlobal} unit="×"
+          title="Ceiling on the board's render resolution in device pixels per CSS pixel. 0 = no limit of its own (a tablet still gets the touch profile's 1.5×). 1 draws 44 % of the pixels 1.5 does. Board text is unaffected." />
+          <Toggle label="Edge smoothing (MSAA)" value={draft.boardAntialiasing} field="boardAntialiasing" onUpdate={updateGlobal}
+          title="Multisampled rendering for the board. Keep it on: thin lines such as the board outline are thinner than a pixel when zoomed out and break into jaggies without it. Turning it off saves GPU work on a machine that cannot afford it. Takes effect when a board panel is next opened." />
+          <Toggle label="Simple trace corners" value={draft.traceCorners === 'simple'} field="traceCorners"
+          onUpdate={(p) => { const v: unknown = p.traceCorners; updateGlobal({ traceCorners: (v === true || v === 'simple') ? 'simple' : 'round' }); }}
+          title="Bevelled bends and square ends instead of rounded ones: about half the trace geometry. Invisible when zoomed out; corners look square deep in." />
+        </details>
+        <div className="settings-subsection-label">PDF</div>
+        <PdfQualitySelector />
+        <details className="settings-fine-tune" data-testid="settings-pdf-render-mode">
+          <summary>Render mode</summary>
+          <PdfRenderModeSelector />
+        </details>
+        <div className="settings-subsection-label">Board text</div>
+        <Toggle label="Board text on an overlay (recommended)" value={draft.textFastMode} field="textFastMode" onUpdate={updateGlobal}
+          title="Draw board text on a 2D overlay instead of as in-scene text objects — much faster on dense boards, and the default since 2026-07. Off falls back to the legacy in-scene text." />
+        {!draft.textFastMode && <>
+          <Slider label="Label Atlas Resolution" value={draft.labelAtlasResolution} min={4} max={24} step={1} field="labelAtlasResolution" onUpdate={updateGlobal}
+          title="Pixel multiplier for the BitmapFont atlases used by pin/net/part labels. Higher = sharper labels at deep zoom; texture memory grows ~quadratically. Default 8. Triggers a scene rebuild." />
+          <Toggle label="Hide Text During Zoom" value={draft.hideTextDuringZoom} field="hideTextDuringZoom" onUpdate={updateGlobal}
+          title="Temporarily hide all text labels while zooming or panning for smoother performance. Labels reappear when interaction stops" />
+        </>}
+        <div className="settings-subsection-label">Diagnostics</div>
         <Toggle label="Show Perf Overlay" value={draft.showPerfOverlay} field="showPerfOverlay" onUpdate={updateGlobal}
           title="Show per-phase frame-time stats (frame / lod / sel / net / gpu) on each board panel. Same toggle as the small 'i' button at the bottom-left of a panel" />
-        <Toggle label="Text fast mode (experimental)" value={draft.textFastMode} field="textFastMode" onUpdate={updateGlobal}
-          title="Draw board text on a 2D overlay instead of in-scene text objects — faster on dense boards. Experimental: report rendering glitches." />
-        <Toggle label="Smooth wheel zoom" value={draft.smoothZoom} field="smoothZoom" onUpdate={updateGlobal}
-          title="Animated cursor-anchored zoom" />
-        <Toggle label="Cap to 60 FPS" value={draft.cap60Fps} field="cap60Fps" onUpdate={updateGlobal}
-          title="Limit the renderer to 60 frames per second. Disable to let the ticker run at the display refresh rate (120/144/240 Hz) — smoother but more CPU/GPU work" />
-        <Toggle label="Touch device performance mode" value={draft.touchPerformanceMode} field="touchPerformanceMode" onUpdate={updateGlobal}
-          title="On a tablet (finger as the primary pointer): cap the board to 60 FPS instead of the panel's 120, turn off edge smoothing, and cap the render resolution at 1.5×. Board text keeps full resolution. No effect on a mouse or trackpad machine. Takes effect when a board panel is next opened." />
-        <Slider label="Label Atlas Resolution" value={draft.labelAtlasResolution} min={4} max={24} step={1} field="labelAtlasResolution" onUpdate={updateGlobal}
-          title="Pixel multiplier for the BitmapFont atlases used by pin/net/part labels. Higher = sharper labels at deep zoom; texture memory grows ~quadratically. Default 8. Triggers a scene rebuild." />
-        <Toggle label="Hide Text During Zoom" value={draft.hideTextDuringZoom} field="hideTextDuringZoom" onUpdate={updateGlobal}
-          title="Temporarily hide all text labels while zooming or panning for smoother performance. Labels reappear when interaction stops" />
         <Toggle label="[Debug] Pad Vertex Crosshairs" value={draft.showPadVertices} field="showPadVertices" onUpdate={updateGlobal}
           title="Draw magenta crosshair markers at each pin's exact coordinate from the board file. Useful for verifying parser accuracy" />
         <Toggle label="[Debug] Outline Vertex Numbers" value={draft.showVertexNumbers} field="showVertexNumbers" onUpdate={updateGlobal}
@@ -2470,10 +2424,7 @@ export function SettingsPanel() {
       {activeTab === SECTION_TO_TAB.pdf && (
       <CollapsibleSection id="pdf" title="PDF Viewer" isOpen={openSections.has('pdf')}
         onToggle={toggleSection} sectionRef={pdfRef} isFocused={focusedSection === 'pdf'}>
-        <div className="settings-subsection-label">Render quality</div>
-        <PdfQualitySelector />
-        <div className="settings-subsection-label">Render mode</div>
-        <PdfRenderModeSelector />
+        <p className="settings-hint">Quality and render mode are under Settings ▸ Rendering.</p>
         <div className="settings-subsection-label">Watermark filter</div>
         <PdfWatermarkFilterEditor />
         <div className="settings-subsection-label">Navigation</div>
@@ -2490,7 +2441,7 @@ export function SettingsPanel() {
           ))}
         </div>
         <div className="settings-subsection-label">Scroll wheel behavior</div>
-        <p className="settings-hint">Drag pills between slots to reassign scroll actions.</p>
+        <p className="settings-hint">Click a pill to change what that scroll does. Pinch always zooms, dragging always pans; Page flips one page per notch.</p>
         <ScrollBindingsEditor />
       </CollapsibleSection>
       )}
@@ -2503,6 +2454,7 @@ export function SettingsPanel() {
           <StandaloneCollapsibleSection title="Troubleshooting" defaultOpen={false}
             storageKey="troubleshooting" searchSectionId="troubleshooting">
             <CacheControlBar hasBoard={hasBoard} />
+            <LocalSettingsResetBar />
           </StandaloneCollapsibleSection>
         </>
       )}

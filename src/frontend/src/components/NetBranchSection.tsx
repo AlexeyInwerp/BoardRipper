@@ -213,11 +213,11 @@ function BranchItem({
         >
           {isExpanded ? <IconChevronDown size={16} /> : <IconChevronRight size={16} />}
         </button>
-        <span className="net-branch-refdes">{part.name}</span>
+        <span className="net-branch-refdes" translate="no">{part.name}</span>
         <span className={`badge badge-${part.side}`}>{part.side}</span>
         <span className="net-branch-pins">
-          pin{netPinIndices.length === 1 ? '' : 's'}{' '}
-          <span className="net-branch-pin-ids">{netPinLabel}</span>
+          <span>{netPinIndices.length === 1 ? 'pin ' : 'pins '}</span>
+          <span className="net-branch-pin-ids" translate="no">{netPinLabel}</span>
         </span>
       </div>
       {isExpanded && (

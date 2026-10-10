@@ -299,7 +299,7 @@ function WorklistFinder({ current, onCreated }: {
         />
       </div>
       <div className="wl-results" data-testid="worklist-results">
-        {hits.length === 0 && <div className="wl-nohit">No worklist matches “{q.trim()}”.</div>}
+        {hits.length === 0 && <div className="wl-nohit">{`No worklist matches “${q.trim()}”.`}</div>}
         {hits.map(h => (
           <button
             key={h.id}
@@ -317,7 +317,7 @@ function WorklistFinder({ current, onCreated }: {
       <div className="wl-acts">
         <button type="button" className="wl-act" data-testid="worklist-new" onClick={create}>
           <IconPlus size={13} stroke={1.9} />
-          {q.trim() ? <>New worklist “{q.trim()}”</> : 'New worklist'}
+          <span>{q.trim() ? `New worklist “${q.trim()}”` : 'New worklist'}</span>
         </button>
         <button type="button" className="wl-act" data-testid="worklist-paste"
           onClick={() => { void importFromClipboard(); close(); }}>
@@ -676,7 +676,7 @@ function WorklistRow({ kind, worklistId, partEntry, netEntry, selected, onSelect
           <FlagIcon size={14} stroke={2} />
         </button>
         <span className="wl-ref">
-          {name}
+          <span translate="no">{name}</span>
           {unresolved && <span className="missing">(missing)</span>}
         </span>
         <button

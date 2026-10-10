@@ -16,10 +16,12 @@
  *    multiplicative with the others.
  *
  * `touchPerformanceMode` (Settings ▸ Performance & Debug, on by default) trades
- * the three of them back: 60 fps, no MSAA, and a 1.5× render resolution ceiling
- * for the WebGL board. Board *text* is unaffected — the Canvas2D label overlay
- * keeps its own full device pixel ratio — so the visible cost is slightly
- * softer copper and silk, not blurry labels.
+ * two of them back: 60 fps and a 1.5× render resolution ceiling for the WebGL
+ * board. MSAA stays on — see `boardAntialias` for why the third trade was a
+ * mistake; it has its own switch (`boardAntialiasing`) for anyone who wants
+ * to trade it anyway. Board *text* is unaffected — the Canvas2D label overlay keeps its
+ * own full device pixel ratio — so the visible cost is slightly softer copper
+ * and silk, not blurry labels.
  */
 
 /** True for a phone or tablet — not for a laptop with a touchscreen bolted on,
@@ -52,20 +54,29 @@ export function isTouchPrimary(): boolean {
  *  cuts the fragment count by 44 % against the panel's native 2×. */
 export const TOUCH_MAX_PIXEL_RATIO = 1.5;
 
-/** Resolution to hand `Application.init({ resolution })`. */
-export function boardPixelRatio(touchPerfMode: boolean): number {
-  const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
-  if (touchPerfMode && isTouchPrimary()) return Math.min(dpr, TOUCH_MAX_PIXEL_RATIO);
-  return dpr;
+/** Resolution to hand `Application.init({ resolution })`. `cap` is the
+ *  user's own ceiling (`boardResolutionCap`, set by the quality preset);
+ *  0 = none. It applies on every device, the touch ceiling only on a tablet. */
+export function boardPixelRatio(touchPerfMode: boolean, cap = 0): number {
+  let r = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+  if (touchPerfMode && isTouchPrimary()) r = Math.min(r, TOUCH_MAX_PIXEL_RATIO);
+  if (cap > 0) r = Math.min(r, cap);
+  return r;
 }
 
-/** Whether to ask for a multisampled default framebuffer. MSAA on a tile GPU
- *  is paid in tile-memory bandwidth on every resolve, which is exactly the
- *  budget a 22 Mpx 120 Hz tablet has none of — and at DPR ≥ 1.5 the
- *  supersampling from the device pixel ratio already hides most of what MSAA
- *  would smooth. */
-export function boardAntialias(touchPerfMode: boolean): boolean {
-  return !(touchPerfMode && isTouchPrimary());
+/** Whether to ask for a multisampled default framebuffer. Always — the touch
+ *  profile used to turn it off, on the theory that MSAA on a tile GPU is paid
+ *  in bandwidth on every resolve and that a 1.5× pixel ratio hides most of
+ *  what it smooths. Both halves were wrong (2026-09-28, iPad): a tile-based
+ *  deferred GPU resolves multisampling *inside* tile memory, which is exactly
+ *  why Apple documents MSAA as cheap on its GPUs; and the board's thin
+ *  strokes — the 3-mil outline is sub-pixel at any overview zoom — need the
+ *  coverage sampling, not the resolution: without it they draw as broken
+ *  1-px jaggies at every zoom, and a 1.5→2 CSS upscale on top makes their
+ *  width uneven. The profile keeps the two costs that are real on an A12Z,
+ *  the 120 Hz refresh and the fragment count. */
+export function boardAntialias(_touchPerfMode: boolean, enabled = true): boolean {
+  return enabled;
 }
 
 /** Ticker cap in fps (PixiJS reads 0 as uncapped). A 120 Hz ProMotion panel

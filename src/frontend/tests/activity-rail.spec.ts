@@ -204,7 +204,7 @@ test.describe('activity rail', () => {
     // Settings strip.
     await page.click(`${RAIL} ${tab('settings')}`);
     const sTabs = page.locator('.sidebar [data-settings-tab]');
-    await expect(sTabs).toHaveCount(6);
+    await expect(sTabs).toHaveCount(7);
     const before = await sTabs.evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().x)));
     await page.locator('.sidebar [data-settings-tab="input"]').click();
     const after = await sTabs.evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().x)));
@@ -357,6 +357,8 @@ test.describe('activity rail', () => {
   test('keyboard: arrows move focus along the rail, Enter activates', async ({ page }) => {
     await gotoApp(page);
     await page.focus(`${RAIL} ${tab('library')}`);
+    await page.keyboard.press('ArrowDown');
+    await expect(page.locator(`${RAIL} ${tab('history')}`)).toBeFocused();
     await page.keyboard.press('ArrowDown');
     await expect(page.locator(`${RAIL} ${tab('tools')}`)).toBeFocused();
     await page.keyboard.press('End');

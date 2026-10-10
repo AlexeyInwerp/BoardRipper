@@ -54,6 +54,7 @@ export interface PdfDocSnapshot {
   searchQuery: string;
   matches: PdfTextMatch[];
   activeMatchIndex: number;
+  matchNavSeq: number;
   matchGroupCount: number;
   activeGroupIndex: number;
   isMultiTerm: boolean;
@@ -64,6 +65,7 @@ export interface PdfDocSnapshot {
   textExtractProgress: number;
   bookmarks: PdfBookmark[];
   cleanMode: boolean;
+  parseGen: number;
   searchSource: 'user' | 'lookup' | null;
   lookupHint: string | null;
   crossProbeHint: string | null;
@@ -99,6 +101,7 @@ function getDocSnapshot(fileName: string): PdfDocSnapshot {
     searchQuery: pdfStore.getDocSearchQuery(fileName),
     matches: pdfStore.getDocMatches(fileName),
     activeMatchIndex: pdfStore.getDocActiveMatchIndex(fileName),
+    matchNavSeq: pdfStore.getDocMatchNavSeq(fileName),
     matchGroupCount: pdfStore.getDocMatchGroups(fileName).length,
     activeGroupIndex: pdfStore.getDocActiveGroupIndex(fileName),
     isMultiTerm: pdfStore.isDocMultiTerm(fileName),
@@ -109,6 +112,7 @@ function getDocSnapshot(fileName: string): PdfDocSnapshot {
     textExtractProgress: pdfStore.getDocTextExtractProgress(fileName),
     bookmarks: pdfStore.getDocBookmarks(fileName),
     cleanMode: pdfStore.isDocClean(fileName),
+    parseGen: pdfStore.getDocParseGen(fileName),
     searchSource: pdfStore.getDocSearchSource(fileName),
     lookupHint: pdfStore.getDocLookupHint(fileName),
     crossProbeHint: pdfStore.getDocCrossProbeHint(fileName),

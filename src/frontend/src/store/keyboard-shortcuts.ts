@@ -44,6 +44,11 @@ export interface Shortcut {
    *  Shift+Backquote, `°` on DE is also Shift+Backquote — both should
    *  toggle the library). */
   ignoreShift?: boolean;
+  /** Accept the event whether or not Alt/Option is held. For bindings on a
+   *  character that some layouts can only type *with* Option — `[` and `]`
+   *  are ⌥5 / ⌥6 on a German Mac — so ⌘⌥5 there is the same Back as ⌘[ on a
+   *  US layout, exactly as Preview accepts it. */
+  ignoreAlt?: boolean;
   /** Render this entry in cheat sheets but DON'T run it through the matcher —
    *  for behaviours handled by ad-hoc code paths (Tab jump, arrow match-nav)
    *  that previously appeared in no shortcut list at all. */
@@ -155,6 +160,24 @@ export const shortcuts: Shortcut[] = [
   },
 
   // --- Navigation ---
+  {
+    id: 'historyBack',
+    label: 'Back',
+    category: 'navigation',
+    key: '[',
+    mod: true,
+    ignoreAlt: true,
+    description: 'Go back through the places you visited — parts, PDF lookups, searches (Preview’s Go ▸ Back)',
+  },
+  {
+    id: 'historyForward',
+    label: 'Forward',
+    category: 'navigation',
+    key: ']',
+    mod: true,
+    ignoreAlt: true,
+    description: 'Go forward again through the navigation history',
+  },
   {
     id: 'pageDown',
     label: 'PDF Next Page',
@@ -380,7 +403,7 @@ export function matchesShortcut(e: KeyboardEvent, s: Shortcut): boolean {
   const modKey = isMac ? e.metaKey : e.ctrlKey;
 
   // Check primary binding
-  if (matchesBinding(e, s.key, s.code, s.mod ? modKey : undefined, s.alt ? e.altKey : undefined, s.shift ? e.shiftKey : undefined, s.mod, s.alt, s.shift, s.ignoreShift)) {
+  if (matchesBinding(e, s.key, s.code, s.mod ? modKey : undefined, s.alt ? e.altKey : undefined, s.shift ? e.shiftKey : undefined, s.mod, s.alt, s.shift, s.ignoreShift, s.ignoreAlt)) {
     return true;
   }
 
@@ -406,6 +429,7 @@ function matchesBinding(
   requireAlt?: boolean,
   requireShift?: boolean,
   ignoreShift?: boolean,
+  ignoreAlt?: boolean,
 ): boolean {
   // Key match: when `code` is set, match KeyboardEvent.code (layout-independent)
   // and ignore `key` entirely. Otherwise match e.key case-insensitively.
@@ -422,7 +446,7 @@ function matchesBinding(
   if (requireMod && !modKey) return false;
   if (!requireMod && modKey) return false;
   if (requireAlt && !e.altKey) return false;
-  if (!requireAlt && e.altKey) return false;
+  if (!requireAlt && e.altKey && !ignoreAlt) return false;
   if (requireShift && !e.shiftKey) return false;
   if (!requireShift && e.shiftKey && !ignoreShift) return false;
 

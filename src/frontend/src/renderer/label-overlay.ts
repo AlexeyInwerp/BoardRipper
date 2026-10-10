@@ -217,6 +217,9 @@ export class LabelOverlay {
 
   setCssTransform(t: string): void { this.canvas.style.transform = t; }
 
+  /** The backing canvas — read by BoardRenderer.captureView for PNG export. */
+  get element(): HTMLCanvasElement { return this.canvas; }
+
   draw(model: LabelModel, view: OverlayViewState, th: OverlayThresholds): void {
     const t0 = performance.now();
     this.setCssTransform('');

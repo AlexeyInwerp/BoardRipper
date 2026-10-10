@@ -8,6 +8,7 @@ import {
 } from './overlay-layout';
 import { setSlotVisible, moveSlot, moveSlotBefore, removeSlot, isSeparatorId, type OverlaySlotId } from './overlay-layout';
 import { naturalCompare } from '../components/overlay/natural-sort';
+import { isBoardScrollAction, LEGACY_SCROLL_BINDINGS, SCROLL_BINDINGS_KEY, type BoardScrollAction } from './scroll-bindings';
 
 /** Pad shape override — applies to pin pads within a part type */
 export type PadShape = 'natural' | 'round' | 'square';
@@ -254,12 +255,34 @@ export interface RenderSettings {
   cap60Fps: boolean;
 
   /** Spend less GPU on the board **when the primary pointer is a finger** —
-   *  60 fps instead of the panel's 120, no MSAA, and a 1.5× ceiling on the
-   *  render resolution. No effect whatsoever on a mouse/trackpad machine, so
-   *  it is safe to leave on. Board text is untouched: the Canvas2D label
-   *  overlay keeps the full device pixel ratio. See `device-profile.ts` for
-   *  why all three costs matter together on a tile-based tablet GPU. */
+   *  60 fps instead of the panel's 120 and a 1.5× ceiling on the render
+   *  resolution (edge smoothing stays on — thin lines need it more than they
+   *  need pixels). No effect whatsoever on a mouse/trackpad machine, so it is
+   *  safe to leave on. Board text is untouched: the Canvas2D label overlay
+   *  keeps the full device pixel ratio. See `device-profile.ts`. */
   touchPerformanceMode: boolean;
+
+  /** Multisampled (MSAA) framebuffer for the WebGL board. On by default —
+   *  thin strokes such as the 3-mil board outline are sub-pixel at any
+   *  overview zoom and draw as broken jaggies without it. Off is a pure
+   *  performance escape hatch for a GPU that cannot afford the resolve.
+   *  Read once at `Application.init`; takes effect when a board panel is
+   *  next opened. */
+  boardAntialiasing: boolean;
+
+  /** Ceiling on the WebGL board's render resolution, in device pixels per
+   *  CSS pixel; 0 = no ceiling of its own (the touch profile's 1.5 still
+   *  applies on a tablet). The fragment count goes with its square: 1 draws
+   *  44 % of what 1.5 does. Board text is unaffected — the label overlay has
+   *  its own pixel ratio. Read at `Application.init`; takes effect when a
+   *  board panel is next opened. Set by the quality preset. */
+  boardResolutionCap: number;
+
+  /** How trace bends and ends are stroked. `round` fans a semicircle at
+   *  every bend and end; `simple` bevels the bends and squares the ends,
+   *  about a fifth of the geometry — invisible at overview zoom, square
+   *  corners deep in. Set by the quality preset. */
+  traceCorners: 'round' | 'simple';
 
   /** Show the per-phase frame-time overlay on the board canvas. Same toggle
    *  as the small "i" button at the bottom-left of each board panel. */
@@ -318,10 +341,25 @@ export interface RenderSettings {
    *  survives across reload, settings edits, and "off then on" cycles. */
   pdfWatermarkFilterEnabled: boolean;
 
+  /** Strip small images that look like watermarks (≤ 50 px) from a PDF
+   *  before parsing ("clean mode"). Builds a second parsed copy of the
+   *  document, so it applies when the PDF is (re)loaded — the filter menu
+   *  offers a reload when an open PDF was parsed under another value. */
+  pdfStripWatermarkImages: boolean;
+
+  /** Drop content that cannot be seen (fully transparent images, fills in
+   *  an invisible pattern or at zero opacity, groups left with nothing that
+   *  paints) in the pdf.js worker — see patches/README.md. Pixel-identical,
+   *  so this is an escape hatch, not a look. Applies on (re)load. */
+  pdfPruneInvisible: boolean;
+
   /** PDF render mode.
-   *  - 'auto' (default): tile above 1.05× zoom, full-page below — crisp at deep zoom.
-   *  - 'standard': always full-page, never tile. Smoother gesture feel; pixels go soft
-   *    past the browser canvas-max dimension (~5–6× on A4). Firefox-style.
+   *  - 'auto': tile above 1.05× zoom, full-page below — crisp at deep zoom.
+   *  - 'standard' (default since 1b50386, 2026-05-27): always full-page, never
+   *    tile. Smoother gesture feel; pixels go soft past the browser canvas-max
+   *    dimension (~5–6× on A4). Firefox-style. Do not flip the default back to
+   *    'auto' before the tile overdraw is fixed — see
+   *    docs/specs/2026-10-03-pdf-performance-review.md, 3.3.
    *  - 'always-tile': tile at every zoom. Mostly a debugging escape hatch. */
   pdfRenderMode: 'auto' | 'standard' | 'always-tile';
 
@@ -359,8 +397,30 @@ export interface RenderSettings {
   /** Animated exponential wheel zoom (cursor-anchored tween). Off = legacy
    *  instant/pixi-viewport zoom. */
   smoothZoom: boolean;
-  /** Require two fingers for panning (one finger does nothing); useful for trackpad users */
+  /** Bare scroll pans the board (true) or zooms it (false). The bare slot of
+   *  the board's scroll bindings; `wheelShiftAction` / `wheelMetaAction` are
+   *  the other two (store/scroll-bindings.ts). */
   twoFingerPan: boolean;
+  /** Two-finger rotation on a touch screen: turning the fingers turns the
+   *  board, live, about the point between them, and the angle is committed
+   *  when the fingers lift — snapped to the nearest 90° when within
+   *  `ROTATE_SNAP_DEG`, otherwise kept as is ("unlocked"). A dead zone keeps
+   *  an ordinary pinch-zoom from wobbling. Off = pinch only. */
+  twoFingerRotate: boolean;
+  /** While rotation is locked, the fingers must turn this many degrees
+   *  before it unlocks (every pinch turns a little). */
+  rotateUnlockDeg: number;
+  /** A committed angle within this many degrees of 0/90/180/270 snaps to
+   *  it; 0 never snaps. */
+  rotateSnapDeg: number;
+  /** What Shift + Scroll does on the board. Default 'pan': every browser
+   *  turns Shift+wheel into a horizontal `deltaX`, so a pan here follows the
+   *  OS's own horizontal-scroll gesture — binding it to zoom takes that
+   *  gesture away (issue #40). */
+  wheelShiftAction: BoardScrollAction;
+  /** What ⌘ + Scroll does on the board (macOS; the key is `metaKey`, Ctrl
+   *  stays the pinch/fast-zoom path). Default 'zoom', Preview's convention. */
+  wheelMetaAction: BoardScrollAction;
   /**
    * When scroll is configured to pan, override classic mouse-wheel events
    * (sustained-burst timing) to zoom instead — avoids jerky
@@ -421,6 +481,9 @@ export interface RenderSettings {
   /** Floating position, px from the board panel's top-left corner. */
   overlayFloatX: number;
   overlayFloatY: number;
+  /** Board minimap: fades in at the top centre while the user keeps panning
+   *  (third gesture in a row) and out once panning stops. Ribbon slot `minimap`. */
+  minimapOnPan: boolean;
   /** Auto-enable selection-dim while a search-driven selection (focusPart /
    *  focusNet) is active, even if the user's showNetDim toggle is off. */
   searchAutoDim: boolean;
@@ -651,6 +714,9 @@ export const DEFAULTS: RenderSettings = {
   labelAtlasResolution: 8,
   cap60Fps: false,
   touchPerformanceMode: true,
+  boardAntialiasing: true,
+  boardResolutionCap: 0,
+  traceCorners: 'round',
   showPerfOverlay: false,
 
   circleLabelMinScreenPx: 8,
@@ -669,8 +735,13 @@ export const DEFAULTS: RenderSettings = {
     'www.xinxunwei.com',
     'notebookschematics.com',
     'notebook-schematics.com',
+    // www.indiafix.in — one 39 pt run per page in the NR2201ZE deliveries
+    // (PDF performance review 2026-10-03).
+    'indiafix',
   ],
   pdfWatermarkFilterEnabled: true,
+  pdfStripWatermarkImages: false,
+  pdfPruneInvisible: true,
 
   pdfRenderMode: 'standard',
   pdfEnableBoundaries: true,
@@ -689,6 +760,11 @@ export const DEFAULTS: RenderSettings = {
   wheelSmooth: 5,
   smoothZoom: true,
   twoFingerPan: true,
+  twoFingerRotate: true,
+  rotateUnlockDeg: 24,   // was 12 — zooming pinches unlocked too easily (iPad, 2026-10-07)
+  rotateSnapDeg: 10,
+  wheelShiftAction: 'pan',
+  wheelMetaAction: 'zoom',
   wheelDetection: false,
   dragToZoom: false,
 
@@ -721,6 +797,7 @@ export const DEFAULTS: RenderSettings = {
   overlayOrientation: 'horizontal',
   overlayFloatX: 8,
   overlayFloatY: 6,
+  minimapOnPan: true,
   searchAutoDim: true,
   autoMarkMechanical: true,
 };
@@ -1321,6 +1398,17 @@ const TEXT_FAST_GRADUATED_KEY = 'boardripper-textfastmode-graduated-v1';
  *  stored settings override DEFAULTS, so a changed default alone never reaches
  *  an existing install. Only a value still at the old default is touched. */
 const PIN_LABEL_FLOOR_BUMPED_KEY = 'boardripper-pinlabel-floor-8';
+/** One-time: the scroll slots became independent and the defaults moved
+ *  Shift+Scroll to Pan (issue #40). An install that already has settings
+ *  keeps the layout it had — Shift = the opposite of bare on the board, the
+ *  legacy {pan, zoom, switch} on the PDF — written out explicitly so the new
+ *  defaults never change a gesture under an existing user. A fresh install
+ *  sets the marker and gets the new defaults. */
+const SCROLL_SLOTS_V2_KEY = 'boardripper-scroll-slots-v2';
+/** One-time bump of an untouched `rotateUnlockDeg` 12 → 24 (2026-10-07):
+ *  same reason as the pin-label floor — a changed default alone never
+ *  reaches an install that has stored settings. */
+const ROTATE_UNLOCK_BUMPED_KEY = 'boardripper-rotate-unlock-24';
 let pendingTextFastGraduationNotice = false;
 /** True exactly once, on the first boot where the graduation migration ran
  *  against a pre-existing installation — drives the one-time "text rendering
@@ -1392,6 +1480,13 @@ function loadFromStorage(): RenderSettings {
         }
       } catch { /* ignore quota/private-mode errors */ }
       try {
+        if (!localStorage.getItem(ROTATE_UNLOCK_BUMPED_KEY)) {
+          localStorage.setItem(ROTATE_UNLOCK_BUMPED_KEY, '1');
+          if (parsed.rotateUnlockDeg === 12) {
+            parsed.rotateUnlockDeg = DEFAULTS.rotateUnlockDeg;
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+          }
+        }
         if (!localStorage.getItem(PIN_LABEL_FLOOR_BUMPED_KEY)) {
           localStorage.setItem(PIN_LABEL_FLOOR_BUMPED_KEY, '1');
           if (parsed.circleLabelMinScreenPx === 3) {
@@ -1486,6 +1581,7 @@ function loadFromStorage(): RenderSettings {
       const PRIOR_DEFAULTS: readonly (readonly string[])[] = [
         ['www.chinafix.com', 'NotebookSchematics.com'],
         ['Vinafix', 'www.chinafix.com', 'notebookschematics.com', 'notebook-schematics.com'],
+        ['Vinafix', 'www.chinafix.com', 'www.xinxunwei.com', 'notebookschematics.com', 'notebook-schematics.com'],
       ];
       const _wmMatchesPrior = Array.isArray(_wmF) && PRIOR_DEFAULTS.some(
         d => _wmF.length === d.length && _wmF.every((v, i) => v === d[i])
@@ -1552,8 +1648,29 @@ function loadFromStorage(): RenderSettings {
       // Clamp keyboard navigation settings to valid ranges
       result.keyboardPanFraction = Math.min(0.30, Math.max(0.02, result.keyboardPanFraction));
       result.keyboardZoomDelta = Math.min(400, Math.max(50, result.keyboardZoomDelta));
+
+      // Scroll slots v2 (see SCROLL_SLOTS_V2_KEY). Existing install, first
+      // boot on this code: reproduce the old behaviour explicitly.
+      try {
+        if (!localStorage.getItem(SCROLL_SLOTS_V2_KEY)) {
+          if (!isBoardScrollAction(parsed.wheelShiftAction)) {
+            parsed.wheelShiftAction = parsed.twoFingerPan === false ? 'pan' : 'zoom';
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+          }
+          if (!localStorage.getItem(SCROLL_BINDINGS_KEY)) {
+            localStorage.setItem(SCROLL_BINDINGS_KEY, JSON.stringify(LEGACY_SCROLL_BINDINGS));
+          }
+          localStorage.setItem(SCROLL_SLOTS_V2_KEY, '1');
+        }
+      } catch { /* ignore quota/private-mode errors */ }
+      result.wheelShiftAction = isBoardScrollAction(parsed.wheelShiftAction) ? parsed.wheelShiftAction : DEFAULTS.wheelShiftAction;
+      result.wheelMetaAction = isBoardScrollAction(parsed.wheelMetaAction) ? parsed.wheelMetaAction : DEFAULTS.wheelMetaAction;
       return result;
     }
+    // Fresh install: the new scroll defaults apply, and must keep applying
+    // once settings get written — mark now so the branch above never
+    // mistakes this install for a legacy one.
+    try { localStorage.setItem(SCROLL_SLOTS_V2_KEY, '1'); } catch { /* ignore */ }
   } catch { /* ignore corrupt data */ }
   return structuredClone(DEFAULTS);
 }
@@ -1760,6 +1877,14 @@ class RenderSettingsStore extends Emitter {
   setOverlayOrientation(o: 'horizontal' | 'vertical') {
     if (this._global.overlayOrientation === o) return;
     this._global = { ...this._global, overlayOrientation: o };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  setMinimapOnPan(v: boolean) {
+    if (this._global.minimapOnPan === v) return;
+    this._global = { ...this._global, minimapOnPan: v };
     saveToStorage(this._global);
     this.recomputeEffective();
     this.notify();

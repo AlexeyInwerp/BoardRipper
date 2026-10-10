@@ -47,6 +47,9 @@ interface StoreSnapshot {
   pdfFileNames: string[];
   toasts: Toast[];
   searchSelectionActive: boolean;
+  /** Boards being parsed or having their scene built right now — see
+   *  BackgroundLoadBanner. */
+  backgroundLoads: { count: number; names: string[] };
 }
 
 export const useBoardStore = createStoreHook<StoreSnapshot>(boardStore, () => ({
@@ -92,4 +95,5 @@ export const useBoardStore = createStoreHook<StoreSnapshot>(boardStore, () => ({
   pdfFileNames: boardStore.pdfFileNames,
   toasts: boardStore.toasts,
   searchSelectionActive: boardStore.searchSelectionActive,
+  backgroundLoads: boardStore.backgroundLoads,
 }));

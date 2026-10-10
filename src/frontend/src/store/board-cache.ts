@@ -19,6 +19,19 @@ const PDF_TEXT_STORE = 'pdf-text';
 const PDF_BYTES_STORE = 'pdf-bytes';
 const MAX_BOARD_ENTRIES = 20;
 const MAX_PDF_TEXT_ENTRIES = 30;
+
+type PdfTextPage = { str: string; transform: number[]; width: number; height: number }[];
+/** Pages stringified / parsed between yields to the event loop. */
+const TEXT_SLICE_PAGES = 8;
+const yieldToEventLoop = () => new Promise<void>(r => setTimeout(r, 0));
+async function parsePagesSliced(pagesJson: string[]): Promise<PdfTextPage[]> {
+  const out: PdfTextPage[] = [];
+  for (let i = 0; i < pagesJson.length; i++) {
+    out.push(JSON.parse(pagesJson[i]) as PdfTextPage);
+    if (i % TEXT_SLICE_PAGES === TEXT_SLICE_PAGES - 1) await yieldToEventLoop();
+  }
+  return out;
+}
 const MAX_PDF_BYTES_ENTRIES = 6;
 const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 
@@ -102,7 +115,31 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 //     them sat one name out of step); copper pours, which were not read at all;
 //     and components recovered from dangling routing, which add parts that
 //     simply are not present in an older cached BoardData.
-const PARSER_VERSION = 93;
+// 94: XZZ test pads read their net index at its structural offset instead of
+//     the last 4 bytes, which was 0 on every pad with a trailing reading
+//     section — the whole of some files' test pads had no net.
+// 95: XZZ legacy diode records accept BGA pad names (`N485(D9)`), not only
+//     numeric pins — a third to three quarters of a Diode-value file's
+//     readings were being dropped.
+// 96: XZZ tails carrying both diode encodings read both, and the JSON is found
+//     by its banner and bounded by the next section — legacy readings, JSON
+//     past 4 KB, and JSON followed by another section were each being lost.
+// 97: XZZ names, labels and board text decode GB2312 (with a plausibility
+//     check on strings valid as both), instead of lenient UTF-8 — Chinese and
+//     GB2312 `Ω` part values were garbled and then discarded.
+// 98: XZZ top-level 0x06 TEXT blocks are now read and the repair tables that
+//     "common problems" boards draw as loose text are reconstructed into
+//     BoardData.annotations. A cached board from v97 simply has no annotations.
+// 99: XZZ `===信号` net glossary read into BoardData.netDescriptions.
+// 100: cache keeps XZZ annotations + netDescriptions. XZZ diode join also tries a renamed part's original name (legacy
+//     records are keyed by it); purely numeric net aliases are not applied.
+// 101: XZZ top-level test points (0x09) become single-pin parts named TP<n>,
+//     so they draw, select and join their net; legacy-folded boards now
+//     mirror them onto the bottom side.
+// 102: XZZ test points that copy a part pin (same net or no net, inside its
+//     pad) are not emitted; test points read their own reading and are judged
+//     for placeholder pad geometry separately from part pins.
+const PARSER_VERSION = 102;
 
 interface CachedBoard {
   key: string;
@@ -155,6 +192,10 @@ interface SerializedBoardData {
   /** XZZ diode-value channel descriptor — added in PARSER_VERSION 74. Gates the
    *  on-pin diode overlay's UI; pin-level readings live inside `parts`. */
   diodeReference?: DiodeReferenceChannel;
+  /** XZZ repair tables + notes (PARSER_VERSION 98) and the `===信号` net
+   *  glossary (99). Without these a cached board opened without them. */
+  annotations?: BoardData['annotations'];
+  netDescriptions?: Array<[string, string]>;
 }
 
 interface SerializedRevision {
@@ -214,6 +255,8 @@ function serialize(board: BoardData): SerializedBoardData {
     flipAxis: board.flipAxis,
     primarySide: board.primarySide,
     diodeReference: board.diodeReference,
+    annotations: board.annotations,
+    netDescriptions: board.netDescriptions ? Array.from(board.netDescriptions.entries()) : undefined,
   };
 }
 
@@ -261,6 +304,8 @@ function deserialize(data: SerializedBoardData): BoardData | null {
       flipAxis: data.flipAxis,
       primarySide: data.primarySide,
       diodeReference: data.diodeReference,
+      annotations: data.annotations,
+      netDescriptions: data.netDescriptions ? new Map(data.netDescriptions) : undefined,
     };
   } catch {
     return null;
@@ -457,6 +502,15 @@ class BoardCache {
   }
 
   // ── PDF text cache ─────────────────────────────────────────────────
+  //
+  // Each page is stored as its own JSON string (`pagesJson`), built and
+  // parsed a few pages at a time with a yield in between. The record used to
+  // hold the page arrays themselves, and IndexedDB's structured clone of ~9 MB
+  // of small objects is one synchronous task: 85 ms at 1x, 357 ms at 4x CPU,
+  // landing a few seconds after open while the user zooms (PDF performance
+  // review 2026-10-03, 2.4). A clone of 100 strings is a memcpy. Records in
+  // the old shape (`textPages`) are still read.
+
 
   async getPdfText(fileName: string, fileSize: number, lastModified: number): Promise<{ str: string; transform: number[]; width: number; height: number }[][] | null> {
     try {
@@ -466,8 +520,10 @@ class BoardCache {
         const tx = db.transaction(PDF_TEXT_STORE, 'readonly');
         const req = tx.objectStore(PDF_TEXT_STORE).get(key);
         req.onsuccess = () => {
-          const result = req.result as { key: string; textPages: { str: string; transform: number[]; width: number; height: number }[][] } | undefined;
-          resolve(result?.textPages ?? null);
+          const result = req.result as { key: string; textPages?: PdfTextPage[]; pagesJson?: string[] } | undefined;
+          if (!result) { resolve(null); return; }
+          if (result.pagesJson) { resolve(parsePagesSliced(result.pagesJson)); return; }
+          resolve(result.textPages ?? null);
         };
         req.onerror = () => reject(req.error);
       });
@@ -476,11 +532,16 @@ class BoardCache {
 
   async putPdfText(fileName: string, fileSize: number, lastModified: number, textPages: { str: string; transform: number[]; width: number; height: number }[][]): Promise<void> {
     try {
+      const pagesJson: string[] = [];
+      for (let i = 0; i < textPages.length; i++) {
+        pagesJson.push(JSON.stringify(textPages[i]));
+        if (i % TEXT_SLICE_PAGES === TEXT_SLICE_PAGES - 1) await yieldToEventLoop();
+      }
       const db = await this.openDB();
       const key = makeCacheKey(fileName, fileSize, lastModified);
       return new Promise((resolve, reject) => {
         const tx = db.transaction(PDF_TEXT_STORE, 'readwrite');
-        const req = tx.objectStore(PDF_TEXT_STORE).put({ key, textPages, timestamp: Date.now() });
+        const req = tx.objectStore(PDF_TEXT_STORE).put({ key, pagesJson, timestamp: Date.now() });
         req.onsuccess = () => {
           this.evictOldest(PDF_TEXT_STORE, MAX_PDF_TEXT_ENTRIES);
           resolve();

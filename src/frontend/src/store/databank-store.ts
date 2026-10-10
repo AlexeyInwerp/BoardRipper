@@ -623,7 +623,9 @@ class DatabankStore extends Emitter {
 
   async refreshDonors(): Promise<void> {
     const list = await this.apiFetch<DonorEntry[]>('/api/databank/donors');
-    this._donorIds = new Set((list ?? []).map(d => d.file_id));
+    // Anything but an array (a proxy's error page, an older backend) is "no donors",
+    // not a failed library load.
+    this._donorIds = new Set((Array.isArray(list) ? list : []).map(d => d.file_id));
     this.notify();
   }
 

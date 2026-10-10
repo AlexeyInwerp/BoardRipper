@@ -152,7 +152,7 @@ export const SETTINGS_INDEX: IndexEntry[] = [
   // Navigation
   S('input', 'navigation', 'Navigation', ['scroll', 'pan', 'zoom', 'wheel', 'drag', 'pinch']),
   S('input', 'navigation', 'Interactive gesture setup', ['welcome', 'wizard', 'first run', 'gesture', 're-run setup']),
-  S('input', 'navigation', 'Scroll wheel behavior', ['scroll', 'wheel', 'pan', 'zoom', 'bindings', 'shift', 'ctrl', 'cmd']),
+  S('input', 'navigation', 'Scroll wheel behavior', ['scroll', 'wheel', 'pan', 'zoom', 'bindings', 'shift', 'ctrl', 'cmd', 'horizontal', 'macos']),
   S('input', 'navigation', 'Trackpad/Mouse drag behavior', ['drag', 'left drag', 'pan', 'zoom', 'shift drag']),
   S('input', 'navigation', 'Keyboard pan / zoom', ['wsad', 'arrow keys', 'keyboard']),
   F('input', 'navigation', 'wheelDetection', 'Mouse wheel detection', 'When scroll is set to pan, classic mouse-wheel events override to zoom instead — avoids jerky pan with a physical scroll wheel. Trackpads and fine-grained wheels are unaffected.'),
@@ -176,7 +176,13 @@ export const SETTINGS_INDEX: IndexEntry[] = [
   F('system', 'performance', 'textFastMode', 'Text fast mode (experimental)', 'Draw board text on a 2D overlay instead of in-scene text objects — faster on dense boards. Experimental: report rendering glitches.'),
   F('system', 'performance', 'smoothZoom', 'Smooth wheel zoom', 'Animated cursor-anchored zoom'),
   F('system', 'performance', 'cap60Fps', 'Cap to 60 FPS', 'Limit the renderer to 60 frames per second. Disable to let the ticker run at the display refresh rate (120/144/240 Hz) — smoother but more CPU/GPU work'),
-  F('system', 'performance', 'touchPerformanceMode', 'Touch device performance mode', 'On a tablet: 60 FPS cap, no edge smoothing, 1.5× render resolution ceiling for the board. Board text keeps full resolution. No effect on a mouse or trackpad machine'),
+  F('system', 'performance', 'boardAntialiasing', 'Edge smoothing (MSAA)', 'Multisampled rendering for the board. Keep it on; thin lines break into jaggies without it. Off saves GPU work. Takes effect when a board panel is next opened'),
+  F('system', 'performance', 'twoFingerRotate', 'Two-finger rotation', 'On a touch screen, turning two fingers turns the board about the point between them. Starts locked: a turn past 24° unlocks, a two-finger double-tap locks again. Angle kept on lift, snapped to a right angle within 10°'),
+  F('system', 'performance', 'rotateUnlockDeg', 'Rotation unlock angle', 'While two-finger rotation is locked, the fingers must turn this far before it unlocks. Default 24°'),
+  F('system', 'performance', 'rotateSnapDeg', 'Rotation snap window', 'A two-finger rotation ending within this many degrees of 0/90/180/270 snaps to that right angle; 0 never snaps. Default 10°'),
+  F('system', 'performance', 'boardResolutionCap', 'Render resolution limit', 'Ceiling on the board render resolution; 0 = none. Lower is faster on an older tablet or laptop. Set by the Board quality preset', ['quality', 'preset', 'ipad', 'slow', 'fps']),
+  F('system', 'performance', 'traceCorners', 'Simple trace corners', 'Bevelled bends and square ends instead of rounded ones: about half the trace geometry. Set by the Board quality preset', ['quality', 'preset', 'traces']),
+  F('system', 'performance', 'touchPerformanceMode', 'Touch device performance mode', 'On a tablet: 60 FPS cap and a 1.5× render resolution ceiling for the board; edge smoothing stays on. Board text keeps full resolution. No effect on a mouse or trackpad machine'),
   F('system', 'performance', 'labelAtlasResolution', 'Label Atlas Resolution', 'Pixel multiplier for the BitmapFont atlases used by pin/net/part labels. Higher = sharper labels at deep zoom; texture memory grows ~quadratically. Default 8. Triggers a scene rebuild.'),
   F('system', 'performance', 'hideTextDuringZoom', 'Hide Text During Zoom', 'Temporarily hide all text labels while zooming or panning for smoother performance. Labels reappear when interaction stops'),
   F('system', 'performance', 'showPadVertices', '[Debug] Pad Vertex Crosshairs', 'Draw magenta crosshair markers at each pin\'s exact coordinate from the board file. Useful for verifying parser accuracy'),
@@ -223,7 +229,7 @@ export const SETTINGS_INDEX: IndexEntry[] = [
   S('system', 'updates', 'Drop-to-update recovery', ['update bundle', 'offline update', 'brupdate', 'drag and drop update']),
 
   // Troubleshooting (standalone collapsible — cache/render resets)
-  S('system', 'troubleshooting', 'Troubleshooting', ['cache', 'reset caches', 'restart render', 'reset pdf caches', 'clear cache', 'indexeddb']),
+  S('system', 'troubleshooting', 'Troubleshooting', ['cache', 'reset caches', 'restart render', 'reset pdf caches', 'clear cache', 'indexeddb', 'reset settings', 'reset all', 'local settings', 'defaults', 'factory reset', 'clear settings', 'localstorage']),
 
   // OpenBoardData (standalone collapsible)
   S('library', 'obd', 'OpenBoardData', ['obd', 'diagnostic', 'voltage', 'diode', 'resistance', 'measurements']),

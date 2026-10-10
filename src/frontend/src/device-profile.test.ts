@@ -41,11 +41,21 @@ describe('device profile', () => {
     expect(boardMaxFps(false, true)).toBe(0);
   });
 
-  it('trades all three costs on a tablet', () => {
+  it('trades refresh rate and resolution on a tablet — never edge smoothing', () => {
     pretend('coarse', 2);
     expect(boardPixelRatio(true)).toBe(1.5);
-    expect(boardAntialias(true)).toBe(false);
+    // Thin strokes need coverage sampling, not pixels: without MSAA the
+    // sub-pixel board outline draws as broken jaggies (iPad, 2026-09-28).
+    expect(boardAntialias(true)).toBe(true);
     expect(boardMaxFps(false, true)).toBe(60);
+  });
+
+  it('edge smoothing has its own switch, independent of the device', () => {
+    pretend('fine', 2);
+    expect(boardAntialias(false, false)).toBe(false);
+    pretend('coarse', 2);
+    expect(boardAntialias(true, false)).toBe(false);
+    expect(boardAntialias(true, true)).toBe(true);
   });
 
   it('leaves a tablet alone when the user turns the mode off', () => {
@@ -63,5 +73,15 @@ describe('device profile', () => {
   it('keeps the explicit 60 FPS cap winning everywhere', () => {
     pretend('fine', 2);
     expect(boardMaxFps(true, false)).toBe(60);
+  });
+
+  it('applies the user\'s resolution cap on every device, below the touch ceiling', () => {
+    pretend('fine', 2);
+    expect(boardPixelRatio(true, 1)).toBe(1);
+    expect(boardPixelRatio(true, 0)).toBe(2);
+    pretend('coarse', 2);
+    expect(boardPixelRatio(true, 1)).toBe(1);
+    expect(boardPixelRatio(true, 1.75)).toBe(1.5);
+    expect(boardPixelRatio(false, 1.75)).toBe(1.75);
   });
 });

@@ -100,12 +100,14 @@
   --accent-a28: rgba(74, 158, 255, 0.28);
   --accent-a30: rgba(74, 158, 255, 0.3);
   --accent-a40: rgba(74, 158, 255, 0.4);
+  --accent-a45: rgba(74, 158, 255, 0.45);
   --accent-a50: rgba(74, 158, 255, 0.5);
   --accent-border-35: #2b4873;
   --accent-border-40: #2d4f7e;
   --accent-border-45: #305589;
   --accent-border-50: #325c94;
   --accent-bg2-4: #111521;
+  --accent-bg2-8: #141a2a;
   --accent-bg2-10: #151d2f;
   --accent-bg2-20: #1b2c46;
   --accent-bg2-30: #213a5d;
@@ -386,6 +388,10 @@ body {
   cursor: pointer;
 }
 .overlay-seg-btn + .overlay-seg-btn { border-left: 1px solid rgba(255,255,255,0.1); }
+/* History ‹ › — two chevrons, no words, so the segment is narrow. */
+.overlay-history-btn { min-width: 26px; padding: 0 5px; }
+.overlay-history-btn:disabled { opacity: 0.3; cursor: default; }
+.overlay-history-btn:disabled:hover { background: transparent; color: var(--text-secondary); }
 .overlay-seg-btn:hover { color: var(--text-primary); background: rgba(255,255,255,0.08); }
 .overlay-seg-btn.active { background: var(--accent); color: var(--accent-fg); }
 .overlay-seg-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
@@ -2128,6 +2134,15 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.4px;
 }
+.settings-cache-hint {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+.settings-cache-btn.settings-cache-btn-danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
 .settings-cache-bar-buttons {
   display: flex;
   gap: 4px;
@@ -3091,10 +3106,6 @@ body {
   background: var(--bg-secondary);
   transition: border-color 0.15s, background 0.15s;
 }
-.scroll-binding-slot.drag-over {
-  border-color: var(--accent);
-  background: var(--accent-bg2-10);
-}
 .scroll-binding-modifier {
   font-size: 0.82em;
   color: var(--text-secondary);
@@ -3108,7 +3119,8 @@ body {
   border-radius: 12px;
   font-size: 0.82em;
   font-weight: 600;
-  cursor: grab;
+  font-family: inherit;
+  cursor: pointer;
   user-select: none;
   background: var(--pill-bg-20);
   color: var(--pill-color);
@@ -3118,10 +3130,19 @@ body {
 .scroll-binding-pill:hover {
   transform: scale(1.05);
 }
-.scroll-binding-pill:active,
-.scroll-binding-pill.dragging {
+.scroll-binding-pill:active {
   opacity: 0.5;
-  cursor: grabbing;
+}
+/* Shown while Shift + Scroll is bound to anything but Pan (issue #40): the
+ * browser turns Shift+wheel into its horizontal scroll, and this is the one
+ * place a user can learn that the app has taken that gesture over. */
+.scroll-bindings-note {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-left: 2px solid var(--accent);
+  background: var(--accent-a8);
+  color: var(--text);
+  opacity: 1;
 }
 .scroll-bindings-reset {
   margin-top: 8px;
@@ -3190,6 +3211,12 @@ body {
   width: 100%;
   height: 100%;
   touch-action: none;
+  /* A long-press on the canvas is the touch context menu. Without these,
+   * iOS answers the same hold with its own callout / selection and cancels
+   * the pointer under it, so the menu never opens on an iPad. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .board-loading-overlay {
@@ -4422,6 +4449,7 @@ body {
 
 /* PDF Viewer */
 .pdf-viewer {
+  position: relative;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -5890,54 +5918,87 @@ body {
 /* --- Library Detail Pane --- */
 
 .library-detail {
-  border-top: 1px solid var(--border);
-  padding: 8px;
-  flex-shrink: 0;
-  max-height: 200px;
+  /* At most 45 % of the Library, shrinking first when the status bar grows;
+     the rest scrolls with the thin Library scrollbar under a sticky head. */
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 45%;
   overflow-y: auto;
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+  padding: 0 10px 6px;
   font-size: 12px;
 }
 
-.library-detail-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 4px;
+.library-detail-head {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--bg-secondary);
+  padding: 6px 0 2px;
 }
+.library-detail-title { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
+.library-detail-title .library-file-icon { margin-top: 1px; flex-shrink: 0; }
 
 .library-detail-filename {
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   flex: 1;
+  font-weight: 600;
+  line-height: 1.3;
   min-width: 0;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
-
-.library-detail-open {
-  background: var(--accent);
-  color: var(--accent-fg);
-  border: none;
-  border-radius: 3px;
-  padding: 2px 8px;
-  cursor: pointer;
-  font-size: 11px;
-  flex-shrink: 0;
-  margin-left: 8px;
-}
-
-.library-detail-open:hover {
-  background: var(--accent-hover);
-}
-
-.library-detail-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.library-detail-summary {
+  margin: 1px 0 0 22px;
   color: var(--text-secondary);
   font-size: 11px;
-  margin-bottom: 6px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+
+/* Icon actions beside the name: open (filled) and download / show. */
+.library-detail-icons { display: flex; gap: 4px; flex-shrink: 0; }
+.library-detail-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 22px; padding: 0;
+  background: transparent; color: var(--text-secondary);
+  border: 1px solid var(--border); border-radius: 4px; cursor: pointer;
+}
+.library-detail-icon:hover { color: var(--text-primary); background: var(--surface-hover); border-color: var(--text-secondary); }
+.library-detail-icon.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.library-detail-icon.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+/* "Details" spoiler. */
+.library-detail-more {
+  display: flex; align-items: center; gap: 4px;
+  margin: 0; padding: 1px 0;
+  background: none; border: 0; cursor: pointer;
+  color: var(--text-secondary); font-size: 11px;
+}
+.library-detail-more:hover { color: var(--text-primary); }
+.library-detail-full { padding: 2px 0 2px 2px; }
+.library-detail-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.library-donor-toggle-btn {
+  background: transparent; color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 2px 10px; font-size: 11px; line-height: 16px; cursor: pointer;
+}
+.library-donor-toggle-btn:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--text-secondary); }
+.library-donor-toggle-btn.is-donor { border-color: var(--accent); color: var(--accent-text); }
+.library-donor-toggle-btn.is-indexing { opacity: 0.75; }
+.library-donor-toggle-btn:disabled { opacity: 0.6; cursor: default; }
+
+/* Facts as a two-column list: label, value. */
+.library-detail-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 10px;
+  row-gap: 2px;
+  margin: 3px 0;
+  font-size: 11px;
+}
+.library-detail-facts dt { color: var(--text-secondary); }
+.library-detail-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; color: var(--text-primary); }
 
 /* Second line under the meta row showing the file's library-relative
    path. Single-line middle-truncated by default; click to expand the
@@ -5986,14 +6047,15 @@ body {
 
 .library-detail-bindings {
   border-top: 1px solid var(--border);
-  padding-top: 4px;
+  margin-top: 3px;
+  padding-top: 3px;
 }
 
 .library-detail-bindings-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 4px;
+  margin-bottom: 1px;
   color: var(--text-secondary);
   font-size: 11px;
 }
@@ -6468,19 +6530,17 @@ body {
 }
 
 .library-detail-edit {
+  display: inline-flex; align-items: center; gap: 4px;
   background: transparent;
   border: 1px solid var(--border);
   color: var(--text-secondary);
-  padding: 2px 6px;
-  border-radius: 3px;
+  padding: 2px 10px;
+  border-radius: 4px;
   cursor: pointer;
   font-size: 11px;
+  line-height: 16px;
 }
-
-.library-detail-edit:hover {
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-}
+.library-detail-edit:hover { background: var(--surface-hover); color: var(--text-primary); }
 
 /* Metadata Edit Modal */
 .library-modal-backdrop {
@@ -7512,8 +7572,7 @@ body {
 }
 
 /* Slot cell: split into a muted modifier and a colored action half.
- * The action half is the draggable element; the whole cell is the drop
- * target (border-color flips to --accent when something hovers). */
+ * The action half is a button — a click cycles the slot's action. */
 .home-bindings-cell {
   display: inline-flex;
   align-items: stretch;
@@ -7522,10 +7581,6 @@ body {
   border-radius: 4px;
   overflow: hidden;
   transition: border-color 0.12s, background 0.12s, transform 0.08s;
-}
-.home-bindings-cell.over {
-  border-color: var(--accent);
-  background: var(--accent-bg2-10);
 }
 .home-bindings-cell-mod {
   display: inline-flex;
@@ -7548,7 +7603,9 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.07em;
   font-size: 0.7rem;
-  cursor: grab;
+  font-family: inherit;
+  border: none;
+  cursor: pointer;
   user-select: none;
   border-left: 1px solid var(--pill-border-30);
   position: relative;
@@ -7570,10 +7627,8 @@ body {
   background: var(--pill-bg2-22);
   box-shadow: 0 0 14px -4px var(--pill-a70);
 }
-.home-bindings-cell-action.dragging {
-  opacity: 0.35;
-  cursor: grabbing;
-  box-shadow: none;
+.home-bindings-cell-action:active {
+  opacity: 0.6;
 }
 
 .home-bindings-reset {
@@ -7598,6 +7653,37 @@ body {
   color: var(--accent-text);
   border-color: var(--accent);
   background: var(--accent-a8);
+}
+
+/* Shift + Scroll not on Pan (issue #40): the one place a user who kept the
+ * old layout learns what it costs, with the fix beside it. */
+.home-bindings-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--text-primary);
+  background: var(--accent-bg2-8);
+  border-top: 1px solid var(--border-a55);
+  border-left: 2px solid var(--accent);
+}
+.home-bindings-note-btn {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 3px 10px;
+  font-size: 0.7rem;
+  font-family: inherit;
+  font-weight: 600;
+  color: var(--accent-text);
+  background: transparent;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.home-bindings-note-btn:hover {
+  background: var(--accent-a14);
 }
 
 .home-bindings-foot {
@@ -7634,6 +7720,25 @@ body {
     letter-spacing: 0.05em;
   }
 }
+/* Board quality preset card — same shell as the Interface scale and HDR
+   cards beside it; four equal buttons, the matching preset lit. */
+.home-quality-buttons { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.home-quality-btn {
+  padding: 5px 4px;
+  font-size: 0.82rem;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.home-quality-btn:hover { border-color: var(--accent); }
+.home-quality-btn.active {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+
 /* HDR selection outline card — shares the .ui-scale-full shell with the
    Interface scale card directly above it (both live in .home-ui-scale-row).
    Always rendered; the readout carries the detection result. One row: the
@@ -8208,6 +8313,10 @@ body {
   flex-wrap: wrap;
   row-gap: 2px;
 }
+/* Seven tabs since Rendering (2026-10-10): narrower cells and padding so the
+   strip still fits one row at the default sidebar width. */
+.settings-tabs-row { padding: 0 4px; }
+.settings-tabs-row .icon-tab { width: 38px; }
 /* ── Icon tab cell — the one tab design for panel-internal strips (Library,
    Settings). Fixed width and height with the icon pinned at a fixed spot, so
    switching tabs never moves an icon. The caption (open tab only) and any
@@ -9329,6 +9438,17 @@ body {
 .resize-mode-banner-done:focus-visible { outline: 2px solid var(--bg-primary); outline-offset: 2px; }
 @media (max-width: 700px) { .resize-mode-banner-text { display: none; } }
 
+/* Boards loading in the background. Sits at the top of the dock area (App
+ * level, so it survives a tab switch) and is in view while the main thread
+ * mounts and builds another tab's scene — the moment touch input stops
+ * answering. Not interactive: it explains the wait, it does not add to it. */
+.background-load-banner { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 31; display: flex; align-items: center; gap: 10px; padding: 7px 14px; border-radius: 999px; background: var(--accent); color: var(--bg-primary); font-size: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.35); white-space: nowrap; max-width: calc(100% - 40px); pointer-events: none; }
+.background-load-banner-text { overflow: hidden; text-overflow: ellipsis; }
+.background-load-banner-hint { opacity: .75; }
+.background-load-spinner { flex: 0 0 auto; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--bg-primary); border-top-color: transparent; animation: background-load-spin 0.8s linear infinite; }
+@keyframes background-load-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .background-load-spinner { animation: none; } }
+
 /* ── Local-folder library (lite / offline builds) ────────────────────────
    The chip sits between the file list and the status bar; the empty state
    replaces the list until a folder has been handed over. */
@@ -9401,3 +9521,464 @@ body {
   align-items: center;
   gap: 6px;
 }
+
+/* ---- History panel (rail destination, 2026-09-29) ------------------------- */
+.hist-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.hist-strip { flex: none; border-bottom: 1px solid var(--border); }
+.hist-layers { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 8px 4px; }
+.hist-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px 3px 6px;
+  border: 1px solid var(--border); border-radius: 999px; background: transparent;
+  color: var(--text-secondary); font: inherit; font-size: 11px; cursor: pointer; line-height: 1.2;
+}
+.hist-chip:hover { background: var(--surface-hover); color: var(--text-primary); }
+.hist-chip.on { color: var(--accent-text); background: var(--surface-hover); border-color: var(--accent-a45); }
+.hist-chip-n { font-family: ui-monospace, monospace; font-size: 10px; opacity: 0.7; font-variant-numeric: tabular-nums; }
+.hist-scope-row { display: flex; flex-wrap: wrap; gap: 6px 10px; padding: 2px 8px 8px; }
+.hist-scope { display: flex; gap: 0; }
+.hist-scope-btn svg { vertical-align: -1px; margin-right: 2px; }
+.hist-scope-btn {
+  font: inherit; font-size: 11px; padding: 2px 9px; border: 1px solid var(--border); background: transparent;
+  color: var(--text-secondary); cursor: pointer;
+}
+.hist-scope-btn:first-child { border-radius: 4px 0 0 4px; }
+.hist-scope-btn:last-child { border-radius: 0 4px 4px 0; border-left: none; }
+.hist-scope-btn.on { color: var(--text-primary); background: var(--surface-hover); }
+.hist-scope-btn:disabled { opacity: 0.4; cursor: default; }
+.hist-list { flex: 1; min-height: 0; overflow-y: auto; }
+.hist-group {
+  display: flex; align-items: center; gap: 5px; padding: 8px 10px 3px;
+  font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary);
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.hist-row {
+  display: flex; align-items: center; gap: 8px; padding: 5px 10px; cursor: pointer;
+  border-bottom: 1px solid var(--border-a65);
+}
+.hist-row:hover { background: rgba(255,255,255,0.03); }
+.hist-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.hist-row.current { background: var(--surface-hover); box-shadow: inset 2px 0 0 var(--accent); cursor: default; }
+.hist-row.forward { opacity: 0.6; }
+.hist-row.closed { opacity: 0.4; cursor: default; }
+.hist-glyph { flex: none; width: 18px; display: inline-flex; justify-content: center; color: var(--text-secondary); }
+.hist-row.current .hist-glyph { color: var(--accent-text); }
+.hist-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.hist-label { font-family: ui-monospace, monospace; font-size: 12px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-sub { font-size: 10px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-time { flex: none; font-size: 10px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.hist-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; padding: 28px 16px; color: var(--text-secondary); }
+.hist-empty small { font-size: 11px; opacity: 0.8; line-height: 1.4; }
+.hist-foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-secondary); }
+.hist-foot-n { flex: 1; }
+.hist-foot-btn { font: inherit; font-size: 11px; padding: 2px 9px; border-radius: 4px; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text-secondary); }
+.hist-foot-btn:hover { color: var(--text-primary); background: var(--surface-hover); }
+/* Recent queries under an empty search field (Preview's magnifier menu). */
+.search-tab-suggestion.recent .suggestion-type { background: transparent; color: var(--text-secondary); }
+
+/* Recent queries under the PDF find field (fed by the navigation history). */
+.pdf-search-recents {
+  position: absolute; top: 100%; left: 0; min-width: 100%; margin-top: 2px; z-index: 30;
+  background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 4px;
+  padding: 3px 0; box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+}
+.pdf-search-recent {
+  display: flex; align-items: center; gap: 6px; padding: 4px 8px; font-size: 11px;
+  color: var(--text-primary); cursor: pointer; white-space: nowrap;
+}
+.pdf-search-recent svg { color: var(--text-secondary); flex: none; }
+.pdf-search-recent.hi, .pdf-search-recent:hover { background: var(--surface-hover); }
+
+/* No double-tap page zoom on the interface around the board (2026-10-02).
+ * Opening a board from the Library is a double-tap, and Chrome and Safari
+ * zoomed the whole page on it. `manipulation` drops only double-tap zoom and
+ * keeps scroll, tap and pinch. It is deliberately NOT set on html/body: the
+ * first cut put `pan-x pan-y` on the root, which is an ancestor of the board
+ * and changed what WebKit delivers to the board's own gestures on the iPad
+ * — small net names stopped showing when zooming in on :1234. The board and
+ * PDF surfaces keep their own touch-action: none, untouched. */
+.sidebar, .activity-rail, .toolbar, .statusbar,
+.dv-tabs-and-actions-container, .context-menu, .quick-menu {
+  touch-action: manipulation;
+}
+
+/* ── Board minimap (BoardMinimap.tsx) ───────────────────────────────────
+   Top centre, under the ribbon row. Fades in while panning (or stays in
+   slide mode) and never catches a pointer while faded out. */
+.board-minimap {
+  position: absolute;
+  top: 44px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-4px);
+  z-index: 9;
+  padding: 0;
+  background: var(--chip-bg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s ease, transform 0.35s ease;
+  cursor: crosshair;
+  overflow: hidden;
+}
+.board-minimap.visible {
+  opacity: 1;
+  transform: translateX(-50%);
+  pointer-events: auto;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.board-minimap canvas { display: block; }
+@media (prefers-reduced-motion: reduce) {
+  .board-minimap, .board-minimap.visible { transition: none; }
+}
+
+/* ── Slide mode (components/slide/SlideLayer.tsx) ───────────────────────
+   The drawing sheet shares the board canvas's counter-zoom, so its px are
+   the renderer's px; it never takes pointer events (the panel root's
+   capture listener decides who gets a press). */
+.slide-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  zoom: calc(1 / var(--ui-scale, 1));
+  pointer-events: none;
+  z-index: 4;
+}
+.slide-layer-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.slide-text-editor {
+  position: absolute;
+  pointer-events: auto;
+  min-width: 120px;
+  margin: 0;
+  padding: 0;
+  border: 1px dashed rgba(255, 255, 255, 0.7);
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.35);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-weight: 600;
+  line-height: 1.25;
+  resize: none;
+  outline: none;
+  field-sizing: content;
+}
+.slide-toolbar {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  max-width: calc(100% - 24px);
+  overflow-x: auto;
+  background: var(--chip-bg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+.slide-toolbar .board-netlines-toggle { flex: none; }
+.slide-toolbar .board-netlines-toggle:disabled { opacity: 0.35; cursor: default; }
+.slide-toolbar .slide-wide { width: auto; padding: 0 7px; gap: 4px; font-size: 12px; }
+.slide-toolbar-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 3px;
+  background: rgba(255, 255, 255, 0.12);
+  flex: none;
+}
+.slide-swatch {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4) inset;
+  cursor: pointer;
+  padding: 0;
+}
+.slide-swatch.active { border-color: var(--text-primary, #fff); }
+.slide-weight-dot { display: block; border-radius: 50%; background: currentColor; }
+/* Ω / diode inputs under each selected part's caption (slide mode). In the
+   slide layer's renderer-px space, so placed by the same layout as the pill. */
+.slide-readings {
+  position: absolute;
+  pointer-events: auto;
+  display: flex;
+  gap: 4px;
+  height: 26px;
+}
+.slide-readings label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 4px;
+  background: rgba(16, 18, 22, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 5px;
+  color: #ffd60a;
+  font: 600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.slide-readings label:focus-within { border-color: var(--accent); }
+.slide-readings input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  font-weight: 500;
+}
+.slide-readings input::placeholder { color: rgba(255, 255, 255, 0.35); }
+/* Slide-mode guide: lower-left of the board, above the toolbar's row. */
+.slide-guide {
+  position: absolute;
+  left: 12px;
+  bottom: 60px;
+  z-index: 11;
+  width: 270px;
+  max-width: calc(100% - 24px);
+  padding: 10px 26px 8px 12px;
+  background: var(--chip-bg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.slide-guide-title { color: var(--text-primary); font-weight: 600; margin-bottom: 4px; }
+.slide-guide p { margin: 0 0 5px; }
+.slide-guide p:last-child { margin-bottom: 0; }
+.slide-guide-keys { opacity: 0.75; }
+.slide-guide-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.slide-guide-close:hover { background: rgba(255, 255, 255, 0.08); color: var(--text-primary); }
+
+/* ── Board sidebar ▸ Notes (BoardNotesTab.tsx) ───────────────────────────
+   Board knowledge from every source; today an XZZ file's repair tables,
+   loose notes and net glossary. Theme tokens only. */
+.bn { padding: 8px 10px 16px; font-size: 11px; line-height: 1.45; color: var(--text-primary); }
+.bn-source + .bn-source { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border); }
+.bn-source-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary); margin-bottom: 6px; }
+.bn-net-card { border: 1px solid var(--accent); border-radius: 4px; padding: 6px 8px; margin-bottom: 10px; background: var(--bg-secondary); }
+.bn-net-card-name { margin-bottom: 3px; }
+.bn-net-card-text { color: var(--text-primary); }
+.bn-table { width: 100%; border-collapse: collapse; table-layout: fixed; margin-bottom: 10px; }
+.bn-table caption { caption-side: top; text-align: left; font-weight: 600; padding: 2px 0 4px; }
+.bn-table th, .bn-table td { border: 1px solid var(--border); padding: 3px 5px; vertical-align: top; overflow-wrap: anywhere; }
+.bn-table th { background: var(--bg-tertiary); text-align: left; font-weight: 600; }
+.bn-block { margin-top: 8px; }
+.bn-block > summary { cursor: pointer; color: var(--text-secondary); padding: 2px 0; }
+.bn-block > summary:hover { color: var(--text-primary); }
+.bn-notes { margin: 4px 0; padding-left: 16px; }
+.bn-notes li { margin-bottom: 2px; }
+.bn-filter { width: 100%; box-sizing: border-box; margin: 6px 0; padding: 4px 6px; font-size: 11px; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 3px; }
+.bn-glossary-row { padding: 4px 2px; border-bottom: 1px solid var(--border); }
+.bn-glossary-net { overflow-wrap: anywhere; }
+.bn-glossary-text { padding-left: 2px; color: var(--text-primary); }
+.bn-offboard { font-family: monospace; font-size: 10px; color: var(--text-secondary); }
+.bn-empty { color: var(--text-secondary); padding: 6px 2px; }
+
+/* Whole-app fallback (RootErrorBoundary.tsx): fills the window, same look as a panel's. */
+.root-error-boundary { position: fixed; inset: 0; background: var(--bg-primary); }
+
+/* Library search: "N files found" above the folder tree. Sticky, so it stays
+   reachable while the tree scrolls under it; at most a third of the
+   Library's own height (container units on .library-content, the window
+   height as the fallback), with its own scroll beyond that. */
+.library-content { container-type: size; }
+.library-hits {
+  position: sticky; top: 0; z-index: 2;
+  margin: 2px 6px 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 10px -6px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+.library-hits-head {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 5px 8px; background: none; border: 0; cursor: pointer;
+  color: var(--text-primary); font-size: 11px; font-weight: 600; text-align: left;
+}
+.library-hits.open .library-hits-head { border-bottom: 1px solid var(--border); }
+.library-hits-head:hover { background: var(--surface-hover); }
+.library-hits-count { flex: 1; min-width: 0; }
+.library-hits-hint { color: var(--text-secondary); font-weight: 400; font-size: 10px; opacity: 0; transition: opacity 0.12s; }
+.library-hits-head:hover .library-hits-hint, .library-hits.closed .library-hits-hint { opacity: 1; }
+.library-hits-list {
+  max-height: 33vh;
+  max-height: calc(33cqh - 28px);
+  overflow-y: auto;
+  padding: 3px 0;
+}
+/* A fade at the bottom edge while more lies below. */
+.library-hits-list.more-below {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent);
+}
+.library-hit { display: flex; align-items: center; gap: 6px; padding: 3px 8px; cursor: pointer; font-size: 12px; min-width: 0; border-left: 2px solid transparent; }
+.library-hit-text { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.25; }
+.library-hit:hover { background: var(--surface-hover); }
+.library-hit.selected { background: var(--surface-active, var(--bg-tertiary)); border-left-color: var(--accent); }
+.library-hit-name { color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The folder under the name; ellipsis at the START so the nearest folder,
+   the one that tells files apart, stays readable. */
+.library-hit-folder { color: var(--text-secondary); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+.library-hits-more { display: block; margin: 4px 8px 2px; padding: 2px 8px; font-size: 11px; background: none; border: 1px solid var(--border); border-radius: 10px; color: var(--text-secondary); cursor: pointer; }
+.library-hits-more:hover { color: var(--text-primary); border-color: var(--text-secondary); }
+
+/* Thin, theme-coloured scrollbars in the Library (the found list and the
+   tree), instead of the system's wide grey bar. */
+.library-scroll, .library-content { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.library-scroll::-webkit-scrollbar, .library-content::-webkit-scrollbar { width: 8px; }
+.library-scroll::-webkit-scrollbar-track, .library-content::-webkit-scrollbar-track { background: transparent; }
+.library-scroll::-webkit-scrollbar-thumb, .library-content::-webkit-scrollbar-thumb {
+  background: var(--border); border-radius: 4px; border: 2px solid transparent; background-clip: padding-box;
+}
+.library-scroll::-webkit-scrollbar-thumb:hover, .library-content::-webkit-scrollbar-thumb:hover { background-color: var(--text-secondary); }
+
+/* Files next to a hit that did not match the search themselves. */
+.library-file-row.neighbour { opacity: 0.62; }
+.library-file-row.neighbour:hover, .library-file-row.neighbour.selected { opacity: 1; }
+.library-neighbours-toggle {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-top: 1px; margin-bottom: 2px; padding: 1px 8px 1px 5px;
+  background: none; border: 1px dashed var(--border); border-radius: 10px;
+  color: var(--text-secondary); font-size: 10.5px; text-align: left; cursor: pointer;
+}
+.library-neighbours-toggle:hover { color: var(--text-primary); border-color: var(--text-secondary); }
+.library-neighbours-toggle.open { border-style: solid; }
+
+/* A block of its own in the file-detail pane (OpenBoardData). */
+.library-detail-section { border-top: 1px solid var(--border); margin-top: 3px; padding-top: 3px; }
+
+/* OpenBoardData in the file-detail pane: two lines (ObdSection.tsx). */
+.obd-card { font-size: 11px; }
+.obd-card-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.obd-card-label { font-weight: 600; color: var(--text-primary); }
+.obd-card-variant { display: inline-flex; align-items: center; gap: 3px; }
+.obd-card-chip {
+  padding: 0 7px; line-height: 16px; border-radius: 9px; font-size: 10.5px; cursor: pointer;
+  border: 1px solid var(--border); background: transparent; color: var(--text-primary);
+}
+.obd-card-chip.fetched { border-color: var(--green, #3a5); color: var(--green, #3a5); }
+.obd-card-chip:hover:not(:disabled) { background: var(--surface-hover); }
+.obd-card-chip:disabled { cursor: wait; opacity: 0.7; }
+.obd-card-upstream { color: var(--text-secondary); text-decoration: none; font-size: 11px; }
+.obd-card-upstream:hover { color: var(--text-primary); }
+.obd-card-stale { color: var(--warn, #c80); border: 1px solid currentColor; border-radius: 6px; padding: 0 4px; font-size: 10px; cursor: help; }
+.obd-card-counts { color: var(--text-secondary); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: help; }
+
+/* Inside the file-detail pane: group labels and rows tight, the pane is small. */
+.library-detail .library-binding-group-header { padding: 2px 0 0; }
+.library-detail .library-binding-row { padding: 1px 4px; }
+.library-detail .library-history-divider { margin: 2px 0; }
+.library-detail .library-binding-empty { padding: 0 4px; }
+
+/* Board quality preset inside Settings ▸ Performance — the start page's card,
+   given a little room from the rows below. */
+.settings-quality-preset { margin: 2px 0 10px; }
+
+/* PDF load state (PdfViewerPanel, pdfStore.loads): the panel exists from the
+   moment an open starts and says which phase it is in. */
+.pdf-load-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: 80%;
+  text-align: center;
+}
+.pdf-load-title { color: var(--text-primary); font-weight: 600; overflow-wrap: anywhere; }
+.pdf-load-detail { color: var(--text-secondary); font-size: 0.9em; overflow-wrap: anywhere; }
+.pdf-load-spinner {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--border-color, rgba(255,255,255,0.15));
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: pdf-load-spin 0.8s linear infinite;
+  flex: none;
+}
+@keyframes pdf-load-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .pdf-load-spinner { animation-duration: 2.4s; } }
+.pdf-load-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--chip-bg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(4px);
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+.pdf-text-extract-chip {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 45;
+  padding: 3px 8px;
+  border-radius: 10px;
+  background: var(--chip-bg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+  font-size: 11px;
+  pointer-events: none;
+}
+
+/* Settled detail render (PdfViewerPanel.renderDetail): the visible area at the
+   exact zoom, over the full-page canvas, under the search highlight. */
+.pdf-detail {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* Settings ▸ Rendering: the knobs a preset sets, folded under it. */
+.settings-fine-tune { margin: 4px 0 10px; }
+.settings-fine-tune > summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 0.85em;
+  padding: 4px 0;
+  user-select: none;
+}
+.settings-fine-tune > summary:hover { color: var(--text-primary); }
+.settings-fine-tune[open] > summary { margin-bottom: 4px; }

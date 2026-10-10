@@ -29,8 +29,12 @@ the render path without breaking it.
 
 ## Two render paths, one router
 
-`renderActive()` in `PdfViewerPanel.tsx` routes every render request based on
-`zoomRef.current`:
+`renderActive()` in `PdfViewerPanel.tsx` routes every render request through
+`shouldUseTiles()`, which reads `renderSettings.pdfRenderMode`. **The shipped
+default is `'standard'`: the full-page path at every zoom, tiles never.** The
+zoom-based routing below applies only in `'auto'` (and `'always-tile'` tiles
+at every zoom). Measured trade-offs of the two: `docs/specs/2026-10-03-pdf-performance-review.md`
+§3.3. In `'auto'`, routing is by `zoomRef.current`:
 
 - **zoom ≤ 1.05 — full-page path** (`renderPage`): renders the whole current
   page to a pooled offscreen canvas, produces an `ImageBitmap`, caches it in
@@ -46,6 +50,20 @@ the render path without breaking it.
 The 1.05 threshold has hysteresis built in: we don't switch paths on tiny
 sub-percent zoom changes. At the boundary, `clearTileDom()` and the main-canvas
 visibility toggle (`tiledMode` state) handle the handoff.
+
+## Settled detail render (2026-10-10)
+
+In the full-page path the page canvas is the picture you move: its size is
+capped by the quality preset (`maxCanvasDim`), which keeps pan and pinch cheap.
+Once the view has been still for 150 ms, `renderDetail` renders the visible
+area plus a quarter of the view on each side at the exact zoom × DPR into one
+`.pdf-detail` canvas over the page — the same design as pdf.js's
+`PDFPageDetailView`. It is skipped when the page canvas is already sharp
+enough, kept while a pan stays inside it, rescaled with the other wrapper
+children, and dropped on page change, rotation, reparse, filter or quality
+change, resize and in tiled mode. Cost: one operator walk per settle and about
+one screen of canvas memory at any zoom — replacing page canvases that reached
+16384 px (~700 MB) and turned black in Chrome.
 
 ## The tier pipeline
 
@@ -110,6 +128,28 @@ Two caches, both module-level, both sized from the active quality preset:
 
 Both caches key on `cleanMode` because clean-mode renders apply a contrast
 filter and must not mix with normal renders.
+
+**One stand-in, and only an upgrade (2026-10-03).** While the exact tier
+renders, `renderPage` blits at most one stand-in — the sharper of
+`getBestPageCache` and the tier-1 preview — and only when it is wider than
+what the main canvas already holds for this page (`mainContentRef`: file,
+page, clean, rotation, cssW, backing width, and the canvas element itself).
+It used to blit the best copy and then the preview on top of it, so a settle
+at an uncached tier put the blurry preview over an already-sharp page. Safari
+saw it every time: it has no `requestIdleCallback`, so the idle prefetch runs
+on a 200 ms timer there and the preview is always cached.
+
+**A tile canvas that already shows its bitmap is only moved.** Assigning
+`canvas.width` clears the canvas even to the same value; every settle used to
+do that to every cached tile and redraw it, and Safari can composite the
+cleared tile for a frame with the blurrier layer beneath showing through.
+`tileBitmapRef` (a WeakMap canvas → bitmap) skips the clear+draw when the
+cache returns the same bitmap; an invalidated cache hands back a new bitmap,
+so a real change still redraws. Two exceptions keep it honest: a tile that
+was `display:none` is always redrawn (WebKit may drop the pixels of a canvas
+that is not on screen), and the map is reset on `visibilitychange` → visible,
+because a page that sat in the background may have had every canvas purged. E2E `tests/pdf-settle-no-blink.spec.ts`
+asserts both causes (the one-frame flash itself cannot be sampled).
 
 ## Tile cache (tile-manager.ts)
 

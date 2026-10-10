@@ -16,7 +16,7 @@
  * Refresh can only HMR a file whose only exports are React components.
  */
 
-import { IconBooks, IconCalculator, IconBug, IconSettings } from '@tabler/icons-react';
+import { IconBooks, IconHistory, IconCalculator, IconBug, IconSettings } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import { isLiteBuild } from '../store/build-mode';
 
@@ -34,7 +34,7 @@ export const MIN_WIDTH = 200;
 export const MAX_WIDTH_RATIO = 0.5; // never wider than half the screen
 
 export type SidebarSide = 'left' | 'right';
-export type SidebarTab = 'library' | 'tools' | 'settings' | 'debug';
+export type SidebarTab = 'library' | 'history' | 'tools' | 'settings' | 'debug';
 export type SidebarStage = 'open' | 'icons' | 'hidden';
 
 export interface SidebarTabDef {
@@ -51,6 +51,7 @@ export interface SidebarTabDef {
  *  (`store/folder-library.ts`), which fills the same panel. */
 export const TABS: readonly SidebarTabDef[] = [
   { id: 'library',  label: 'Library',  icon: IconBooks,      group: 'top' },
+  { id: 'history',  label: 'History',  icon: IconHistory,    group: 'top' },
   { id: 'tools',    label: 'Tools',    icon: IconCalculator, group: 'top' },
   { id: 'debug',    label: 'Debug',    icon: IconBug,        group: 'bottom' },
   { id: 'settings', label: 'Settings', icon: IconSettings,   group: 'bottom' },

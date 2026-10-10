@@ -15,6 +15,8 @@ import { fileViewPrefsStore } from './file-view-prefs-store';
 import { createLayerStates } from './layer-store';
 import type { LayerState } from './layer-store';
 import { deriveBoardView } from './derive-board-view';
+import { navHistoryStore } from './nav-history-store';
+import type { NavCause } from './nav-history';
 import type { FoldMode } from './derive-board-view';
 
 
@@ -176,6 +178,21 @@ export interface PreviewPulse {
   phase: 'burst' | 'beacon';
 }
 
+/**
+ * How a selection came about, for the navigation history
+ * (docs/specs/2026-09-29-navigation-history-design.md §5). Every selection
+ * mutator takes it as an optional trailing argument with a default per
+ * method — `selectPart`/`selectPin`/`highlightNet`/`promotePartOnNet` are a
+ * click, `focusPart`/`focusNet` a search result — and the few callers whose
+ * intent differs (a word clicked in the PDF, the MCP bridge) pass it.
+ */
+export interface NavOpts {
+  cause?: NavCause;
+  /** Label of the place a lookup started from (`820-02016.pdf · p.47`). */
+  from?: string;
+  via?: 'mcp' | 'worklist' | 'list';
+}
+
 export interface FocusRequest {
   /** Frame the whole derived board (fit-to-view) instead of zooming to `bounds`. */
   fit?: boolean;
@@ -266,6 +283,25 @@ function flipAxisForRotation(rotationDeg: number): 'x' | 'y' {
   const rot90 = Math.round(rotationDeg / 90) % 4;
   const axesSwapped = rot90 === 1 || rot90 === 3;
   return axesSwapped ? 'y' : 'x';
+}
+
+/** The next multiple of 90° clockwise (+1) or counter-clockwise (−1) of
+ *  `deg`; from a multiple itself, the one beyond it. */
+function nextRightAngle(deg: number, dir: 1 | -1): number {
+  const q = deg / 90;
+  const onStep = Math.abs(q - Math.round(q)) < 1e-6;
+  const next = onStep ? Math.round(q) + dir : (dir > 0 ? Math.ceil(q) : Math.floor(q));
+  return ((next * 90) % 360 + 360) % 360;
+}
+
+/** The buttons' hinge rule, applied only from a right angle: from a free
+ *  angle (left by the two-finger rotation) the button just turns the picture
+ *  to the next right angle, and the parity swap — a 180° change of the
+ *  bottom view — would be a jump, not a step. */
+function buttonFlipAxis(flipAxis: 'x' | 'y', oldRotationDeg: number, newRotationDeg: number): 'x' | 'y' {
+  const q = oldRotationDeg / 90;
+  if (Math.abs(q - Math.round(q)) > 1e-6) return flipAxis;
+  return rotateFlipAxis(flipAxis, oldRotationDeg, newRotationDeg);
 }
 
 /** When the rotation crosses an axes-swap boundary (90°↔0°, 270°↔180°, …),
@@ -580,6 +616,16 @@ async function mergeAscFiles(files: File[]): Promise<File | null> {
   return new File([bundled], name, { type: 'text/plain', lastModified });
 }
 
+/** True when the board carries anything drawn for the board as a whole rather
+ *  than for one side — the geometry Butterfly mode has to hide. */
+export function boardHasCopper(board: BoardData | null | undefined): boolean {
+  if (!board) return false;
+  return (board.traces?.length ?? 0) > 0 || (board.vias?.length ?? 0) > 0 || (board.surfaces?.length ?? 0) > 0;
+}
+
+export const BUTTERFLY_COPPER_HIDDEN_MESSAGE =
+  'Butterfly shows both sides flat, so traces, vias and copper layers are hidden while it is on.';
+
 class BoardStore extends Emitter {
   private _tabs: BoardTab[] = [];
   private _activeTabId: number | null = null;
@@ -594,6 +640,17 @@ class BoardStore extends Emitter {
   private _nextToastId = 1;
   /** Guard against concurrent loadFile calls for the same file */
   private _loading = new Set<string>();
+  /** Tabs whose board has arrived but whose scene is not on screen yet
+   *  (tabId → file name). Parsing runs in a worker and never blocks; what
+   *  follows — mounting the renderer and building the scene — runs on the
+   *  main thread and does, for as long as it takes, with no input answered.
+   *  Set before the panel is created, cleared by the renderer once the scene
+   *  is active (or when the tab is closed). Together with `_loading` this is
+   *  what BackgroundLoadBanner shows, so the pause reads as "loading" and
+   *  not as a hang. */
+  private _sceneBuilding = new Map<number, string>();
+  private _backgroundLoadsSnap: { count: number; names: string[] } = { count: 0, names: [] };
+  private _backgroundLoadsDirty = false;
   /** Original File objects for currently-open board tabs, keyed by fileName.
    *  Kept so "reparse current board" can re-read the raw bytes without
    *  re-prompting the user. Cleared when a tab closes. File references are
@@ -678,6 +735,39 @@ class BoardStore extends Emitter {
    *  genuinely need the full parts array (e.g. serialising the cache). */
   get rawBoard(): BoardData | null { return this.activeTab?.board ?? null; }
   get fileName(): string { return this.activeTab?.fileName ?? ''; }
+
+  /** Boards being parsed or having their scene built — a stable reference
+   *  while nothing changes (useSyncExternalStore). */
+  get backgroundLoads(): { count: number; names: string[] } {
+    if (this._backgroundLoadsDirty) {
+      const names = [...new Set([...this._loading, ...this._sceneBuilding.values()])];
+      this._backgroundLoadsSnap = { count: names.length, names };
+      this._backgroundLoadsDirty = false;
+    }
+    return this._backgroundLoadsSnap;
+  }
+
+  private setLoading(name: string, on: boolean) {
+    if (on) this._loading.add(name); else this._loading.delete(name);
+    this._backgroundLoadsDirty = true;
+    this.notify();
+  }
+
+  /** A tab's scene is about to be built on the main thread. Set here before
+   *  the panel exists and again by the renderer right before it blocks. */
+  markSceneBuilding(tabId: number, name: string) {
+    if (this._sceneBuilding.get(tabId) === name) return;
+    this._sceneBuilding.set(tabId, name);
+    this._backgroundLoadsDirty = true;
+    this.notify();
+  }
+
+  /** The scene is on screen (or the tab is gone). */
+  clearSceneBuilding(tabId: number) {
+    if (!this._sceneBuilding.delete(tabId)) return;
+    this._backgroundLoadsDirty = true;
+    this.notify();
+  }
   get selection(): SelectionState { return this.activeTab?.selection ?? emptySelection; }
   get showTop(): boolean { return this.activeTab?.showTop ?? true; }
   get showBottom(): boolean { return this.activeTab?.showBottom ?? true; }
@@ -953,7 +1043,7 @@ class BoardStore extends Emitter {
       tab.layerStates = createLayerStates(cached.layerNames, undefined, !cachedFmt?.hasLayers);
     }
     const vp = loadViewPrefs();
-    if (vp.defaultButterfly && !(cached.layerNames && cached.layerNames.length > 0)) {
+    if (vp.defaultButterfly) {
       tab.butterfly = true;
       tab.showTop = true;
       tab.showBottom = true;
@@ -986,7 +1076,7 @@ class BoardStore extends Emitter {
       loadProgressStore.dismiss();
       return;
     }
-    this._loading.add(file.name);
+    this.setLoading(file.name, true);
 
     try {
       const tab = this.makeTab(file.name);
@@ -1012,6 +1102,7 @@ class BoardStore extends Emitter {
           // is actually waiting on, especially on cold-cache opens of large
           // boards like NM-G611. Renderer calls finishIfMatching when done.
           loadProgressStore.setPhase('Building scene', 'Renderer mounting + buildBoardScene + first frame');
+          this.markSceneBuilding(id, file.name);
           this.onTabCreated?.(id, file.name);
           this.notify();
           return;
@@ -1092,7 +1183,7 @@ class BoardStore extends Emitter {
           tab.layerStates = createLayerStates(board.layerNames, undefined, !fmt?.hasLayers);
         }
         const vp = loadViewPrefs();
-        if (vp.defaultButterfly && !(board.layerNames && board.layerNames.length > 0)) {
+        if (vp.defaultButterfly) {
           tab.butterfly = true;
           tab.showTop = true;
           tab.showBottom = true;
@@ -1129,10 +1220,11 @@ class BoardStore extends Emitter {
       // Create panel AFTER board + rotation are ready so the renderer sees correct state.
       // Renderer closes the overlay once activateScene finishes — see above.
       loadProgressStore.setPhase('Building scene', 'Renderer mounting + buildBoardScene + first frame');
+      this.markSceneBuilding(id, file.name);
       this.onTabCreated?.(id, file.name);
       this.notify();
     } finally {
-      this._loading.delete(file.name);
+      this.setLoading(file.name, false);
     }
   }
 
@@ -1147,6 +1239,7 @@ class BoardStore extends Emitter {
     if (!cached) return false;
     const tab = this.makeTab(fileName);
     this.applyCachedBoard(tab, cached, fileName, fileSize, lastModified);
+    this.markSceneBuilding(tab.id, fileName);
     this.onTabCreated?.(tab.id, fileName);
     this.notify();
     return true;
@@ -1288,8 +1381,20 @@ class BoardStore extends Emitter {
   }
 
   switchTab(tabId: number) {
-    if (this._tabs.some(t => t.id === tabId) && this._activeTabId !== tabId) {
+    // A "scene building" mark describes the tab being brought to screen. A
+    // tab hidden before its scene was built is not blocking anyone; when it
+    // is shown again the renderer re-marks it right before it builds.
+    for (const id of [...this._sceneBuilding.keys()]) if (id !== tabId) this.clearSceneBuilding(id);
+    const tab = this._tabs.find(t => t.id === tabId);
+    if (tab && this._activeTabId !== tabId) {
       this._activeTabId = tabId;
+      // Navigation history: arriving on another board is a viewpoint (layer 4),
+      // committed only if the user stays on it.
+      navHistoryStore.recordViewpoint({
+        cause: 'view', label: tab.fileName,
+        place: { kind: 'board', tabId: tab.id, fileKey: tab.cacheKey, fileId: tab.fileId, fileName: tab.fileName,
+          side: tab.butterfly || (tab.showTop && tab.showBottom) ? 'both' : tab.showTop ? 'top' : 'bottom' },
+      });
       this.notify();
     }
   }
@@ -1297,6 +1402,7 @@ class BoardStore extends Emitter {
   closeTab(tabId: number) {
     const idx = this._tabs.findIndex(t => t.id === tabId);
     if (idx === -1) return;
+    this.clearSceneBuilding(tabId);
 
     // Unbind all PDFs
     const tab = this._tabs[idx];
@@ -1330,7 +1436,7 @@ class BoardStore extends Emitter {
     this.notify();
   }
 
-  selectPart(partIndex: number | null) {
+  selectPart(partIndex: number | null, nav?: NavOpts) {
     this._clearPreviewPulse();
     // Hierarchical net-lines (chain-adjacent): selecting a 2-pin component by
     // its body — which otherwise highlights no net — seeds the highlight from
@@ -1348,10 +1454,11 @@ class BoardStore extends Emitter {
       selection: { partIndex, pinIndex: null, highlightedNet, adjacentNets: this._resolveAdjacentNets(highlightedNet) },
       searchSelectionActive: false,
     });
+    if (partIndex !== null) this._recordNav(this.activeTab, nav?.cause ?? 'click', nav);
     this.notify();
   }
 
-  selectPin(partIndex: number, pinIndex: number) {
+  selectPin(partIndex: number, pinIndex: number, nav?: NavOpts) {
     this._clearPreviewPulse();
     const tab = this.activeTab;
     const part = tab?.board?.parts[partIndex];
@@ -1360,6 +1467,48 @@ class BoardStore extends Emitter {
       selection: { partIndex, pinIndex, highlightedNet: pin?.net || null, adjacentNets: this._resolveAdjacentNets(pin?.net || null) },
       searchSelectionActive: false,
     });
+    this._recordNav(tab, nav?.cause ?? 'click', nav);
+    this.notify();
+  }
+
+  /**
+   * Record the tab's current selection as a visit in the navigation history.
+   * A cleared selection is not a visit (clicking empty canvas is not a
+   * navigation; the departure rule still captures the camera). The place is
+   * named by refdes / pin number / net name, never by index — indices shift
+   * under fold-mode, revision and BOM changes.
+   */
+  private _recordNav(tab: BoardTab | null, cause: NavCause, nav?: NavOpts) {
+    if (!tab?.board) return;
+    const sel = tab.selection;
+    if (sel.partIndex == null && !sel.highlightedNet) return;
+    const part = sel.partIndex != null ? tab.board.parts[sel.partIndex] : undefined;
+    if (sel.partIndex != null && !part) return;   // a stale index names nothing
+    const pin = part && sel.pinIndex != null ? part.pins[sel.pinIndex] : undefined;
+    navHistoryStore.record({
+      cause,
+      place: {
+        kind: 'board',
+        tabId: tab.id,
+        fileKey: tab.cacheKey,
+        fileId: tab.fileId,
+        fileName: tab.fileName,
+        part: part?.name,
+        pin: pin ? (pin.number || pin.name || undefined) : undefined,
+        net: sel.highlightedNet ?? undefined,
+        side: tab.butterfly || (tab.showTop && tab.showBottom) ? 'both' : tab.showTop ? 'top' : 'bottom',
+      },
+      from: nav?.from,
+      via: nav?.via,
+    });
+  }
+
+  /** Restore-time side setter (navigation history). Leaves butterfly alone. */
+  setSideVisibility(tabId: number, showTop: boolean, showBottom: boolean) {
+    const tab = this._tabs.find(t => t.id === tabId);
+    if (!tab || tab.butterfly) return;
+    if (tab.showTop === showTop && tab.showBottom === showBottom) return;
+    Object.assign(tab, { showTop, showBottom });
     this.notify();
   }
 
@@ -1408,13 +1557,14 @@ class BoardStore extends Emitter {
     this.notify();
   }
 
-  highlightNet(netName: string | null) {
+  highlightNet(netName: string | null, nav?: NavOpts) {
     const tab = this.activeTab;
     if (!tab) return;
     this.updateActiveTab({
       selection: { ...tab.selection, highlightedNet: netName, adjacentNets: this._resolveAdjacentNets(netName) },
       searchSelectionActive: false,
     });
+    if (netName) this._recordNav(tab, nav?.cause ?? 'click', nav);
     this.notify();
   }
 
@@ -1458,11 +1608,18 @@ class BoardStore extends Emitter {
   toggleButterfly() {
     const tab = this.activeTab;
     if (!tab) return;
-    // Butterfly mode is not supported for multi-layer boards (stacked layers)
-    if (tab.board?.layerNames && tab.board.layerNames.length > 0) return;
     const newButterfly = !tab.butterfly;
     if (newButterfly) {
       this.updateActiveTab({ butterfly: true, showTop: true, showBottom: true });
+      // Butterfly lays the two sides out flat, so anything that belongs to
+      // the board as a whole rather than to one side — traces, vias, copper
+      // pours, and with them the layer stack — has no place to be drawn and
+      // is hidden by the renderer while the mode is on (every format, not
+      // only layered ones). Say so once, but only when there is copper to
+      // hide; a BVR board with no traces would get a toast about nothing.
+      if (boardHasCopper(tab.board)) {
+        this.addToast(BUTTERFLY_COPPER_HIDDEN_MESSAGE, 'info', undefined, 5000);
+      }
     } else {
       this.updateActiveTab({ butterfly: false, showTop: true, showBottom: false });
     }
@@ -1526,11 +1683,34 @@ class BoardStore extends Emitter {
     });
   }
 
+  /** Any angle, degrees, as displayed (positive = clockwise on screen). The
+   *  two-finger rotation commits here; the buttons stay on 90° steps.
+   *
+   *  `flipAxis` is deliberately left alone. The buttons' rule keeps the
+   *  bottom view's mirror hinge fixed on the *screen* by swapping which
+   *  board axis carries it at every parity change — and the two hinges
+   *  (`scale.y = -1` vs `scale.x = -1`) differ by exactly 180°, so applying
+   *  that rule to a free angle turned the bottom view over at the 45°/135°
+   *  boundary on release ("rotation lost, 180° flip", 2026-09-28). A screen
+   *  hinge is representable only at right angles; the fingers turn the
+   *  picture, so the hinge turns with the board. */
+  setRotation(deg: number) {
+    const tab = this.activeTab;
+    if (!tab) return;
+    const r = Math.round((((deg % 360) + 360) % 360) * 10) / 10 % 360;
+    if (r === tab.rotation) return;
+    this.updateActiveTab({ rotation: r });
+    this.saveFileViewPrefs(tab);
+    this.notify();
+  }
+
   rotateCW() {
     const tab = this.activeTab;
     if (!tab) return;
-    const newRotation = (tab.rotation + 90) % 360;
-    this.updateActiveTab({ rotation: newRotation, flipAxis: rotateFlipAxis(tab.flipAxis, tab.rotation, newRotation) });
+    // From a free angle (two-finger rotation) the button goes to the next
+    // 90° step in its direction, not to angle + 90.
+    const newRotation = nextRightAngle(tab.rotation, +1);
+    this.updateActiveTab({ rotation: newRotation, flipAxis: buttonFlipAxis(tab.flipAxis, tab.rotation, newRotation) });
     this.saveFileViewPrefs(tab);
     this.notify();
   }
@@ -1538,8 +1718,8 @@ class BoardStore extends Emitter {
   rotateCCW() {
     const tab = this.activeTab;
     if (!tab) return;
-    const newRotation = (tab.rotation + 270) % 360;
-    this.updateActiveTab({ rotation: newRotation, flipAxis: rotateFlipAxis(tab.flipAxis, tab.rotation, newRotation) });
+    const newRotation = nextRightAngle(tab.rotation, -1);
+    this.updateActiveTab({ rotation: newRotation, flipAxis: buttonFlipAxis(tab.flipAxis, tab.rotation, newRotation) });
     this.saveFileViewPrefs(tab);
     this.notify();
   }
@@ -2141,6 +2321,8 @@ class BoardStore extends Emitter {
   }
 
   setSearch(query: string) {
+    const tab = this.activeTab;
+    if (tab && tab.searchQuery !== query) navHistoryStore.recordQuery('board', query);
     this.updateActiveTab({ searchQuery: query });
     this.notify();
   }
@@ -2224,7 +2406,7 @@ class BoardStore extends Emitter {
    *
    * Returns true when the part was found.
    */
-  selectPinInTab(tabId: number, partName: string, pinIndex: number | null): boolean {
+  selectPinInTab(tabId: number, partName: string, pinIndex: number | null, opts: NavOpts & { focus?: boolean } = {}): boolean {
     const tab = this._tabs.find(t => t.id === tabId);
     if (!tab?.board) return false;
     const upper = partName.trim().toUpperCase();
@@ -2252,13 +2434,14 @@ class BoardStore extends Emitter {
     });
     if (tab.id === this._activeTabId) {
       this._clearPreviewPulse();
-      this._focusRequest = { partIndex: idx, bounds: part.bounds };
+      if (opts.focus !== false) this._focusRequest = { partIndex: idx, bounds: part.bounds };
     }
+    this._recordNav(tab, opts.cause ?? 'click', opts);
     this.notify();
     return true;
   }
 
-  focusPart(name: string) {
+  focusPart(name: string, nav?: NavOpts) {
     this._clearPreviewPulse();
     const tab = this.activeTab;
     if (!tab?.board) return;
@@ -2288,6 +2471,7 @@ class BoardStore extends Emitter {
       searchSelectionActive: true,
     });
     this._focusRequest = { partIndex: idx, bounds: part.bounds };
+    this._recordNav(tab, nav?.cause ?? 'search', nav);
     this.notify();
   }
 
@@ -2371,7 +2555,7 @@ class BoardStore extends Emitter {
    * Side-flip and camera behaviour are copied from `focusPart` so promoting
    * feels identical to any other navigation.
    */
-  promotePartOnNet(partIndex: number, pinIndex: number) {
+  promotePartOnNet(partIndex: number, pinIndex: number, nav?: NavOpts) {
     this._clearPreviewPulse();
     const tab = this.activeTab;
     const part = tab ? viewPart(tab, partIndex) : undefined;
@@ -2392,10 +2576,11 @@ class BoardStore extends Emitter {
       searchSelectionActive: true,
     });
     this._focusRequest = { partIndex, bounds: part.bounds };
+    this._recordNav(tab, nav?.cause ?? 'click', nav);
     this.notify();
   }
 
-  focusNet(name: string) {
+  focusNet(name: string, nav?: NavOpts) {
     const tab = this.activeTab;
     if (!tab?.board) return;
     // Case-insensitive net lookup — try exact match first, then scan
@@ -2430,6 +2615,7 @@ class BoardStore extends Emitter {
       searchSelectionActive: true,
     });
     this._focusRequest = { partIndex: null, bounds: { minX, minY, maxX, maxY } };
+    this._recordNav(tab, nav?.cause ?? 'search', nav);
     this.notify();
   }
 }

@@ -14,6 +14,7 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 import { IconSearch, IconCpu, IconHierarchy } from '@tabler/icons-react';
 import { boardStore } from '../../../store/board-store';
+import { navHistoryStore } from '../../../store/nav-history-store';
 import { renderSettingsStore } from '../../../store/render-settings';
 import { useBoardStore } from '../../../hooks/useBoardStore';
 import { useRenderSettings } from '../../../hooks/useRenderSettings';
@@ -91,18 +92,22 @@ export function FilterDropdown({ ctx, kind }: { ctx: SlotCtx; kind: Kind }) {
   const groups = buildGroups(query.toLowerCase().trim());
 
   const onSelect = (name: string) => {
+    // A pick from the ribbon finder is a search result, whatever the
+    // on-select mode does with the camera (navigation history, cause `search`).
+    const nav = { cause: 'search' as const };
+    navHistoryStore.record({ cause: 'search', place: null, query: { surface: kind === 'parts' ? 'ribbon-parts' : 'ribbon-nets', text: name } });
     if (kind === 'parts') {
       const mode = renderSettingsStore.settings.overlayPartsOnSelect;
-      if (mode === 'panZoomFit') { boardStore.focusPart(name); return; }
+      if (mode === 'panZoomFit') { boardStore.focusPart(name, nav); return; }
       const partIdx = board.parts.findIndex(p => p.name === name);
       if (partIdx < 0) return;
-      boardStore.selectPart(partIdx);
+      boardStore.selectPart(partIdx, nav);
       if (mode === 'panIfOffscreen') ctx.rendererRef.current?.panToPartIfOffscreen(partIdx);
       return;
     }
     const mode = renderSettingsStore.settings.overlayNetsOnSelect;
-    if (mode === 'panZoomFit') { boardStore.focusNet(name); return; }
-    boardStore.highlightNet(name);
+    if (mode === 'panZoomFit') { boardStore.focusNet(name, nav); return; }
+    boardStore.highlightNet(name, nav);
     if (mode === 'panIfOffscreen') ctx.rendererRef.current?.panToNetIfOffscreen(name);
   };
 

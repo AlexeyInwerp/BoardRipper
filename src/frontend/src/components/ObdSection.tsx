@@ -34,71 +34,44 @@ export function ObdSection({ boardNumber }: { boardNumber: string }) {
     .map(m => ({ match: m, data: obd.dataByBpath.get(m.bpath) }))
     .find(x => x.data) as { match: typeof obd.matches[0]; data: ObdData } | undefined;
 
+  const d = firstFetched?.data;
+  const counts = d
+    ? [
+        `${d.nets.length} net${d.nets.length === 1 ? '' : 's'}`,
+        `${d.components.length} component${d.components.length === 1 ? '' : 's'}`,
+        d.sections && d.sections.length > 0 ? `${d.sections.length} repair section${d.sections.length === 1 ? '' : 's'}` : '',
+      ].filter(Boolean).join(' · ')
+    : 'not fetched yet — click the board number';
+
+  // Two lines: what is there, and where to get it. The readings and notes
+  // themselves live in the board sidebar's Info tab.
   return (
-    <div className="library-detail-section" data-testid="obd-section">
-      <div className="library-detail-section-header">
-        <strong>OpenBoardData</strong>
-        {stale && (
-          <span
-            data-testid="obd-stale-warning"
-            style={{ marginLeft: 8, fontSize: 10, color: '#c80', padding: '0 4px', border: '1px solid #c80', borderRadius: 6 }}
-          >
-            index may be stale — re-sync in Settings
-          </span>
-        )}
-      </div>
-
-      {firstFetched?.data.header.comment && (
-        <div
-          style={{ fontSize: 11, color: '#aaa', fontStyle: 'italic', margin: '2px 0 4px' }}
-          data-testid="obd-header-comment"
-        >
-          {firstFetched.data.header.comment}
-        </div>
-      )}
-
-      {firstFetched && (
-        <div style={{ fontSize: 11, color: '#aaa', margin: '2px 0 6px' }} data-testid="obd-summary">
-          {firstFetched.data.nets.length} nets · {firstFetched.data.components.length} components
-          {firstFetched.data.sections && firstFetched.data.sections.length > 0
-            ? ` · ${firstFetched.data.sections.length} repair section${firstFetched.data.sections.length === 1 ? '' : 's'}`
-            : null}
-          {' — '}
-          full data is shown in the BoardViewer's <em>Info</em> sidebar; this card just lists what's available.
-        </div>
-      )}
-
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '4px 0 4px', alignItems: 'center' }}>
+    <div className="library-detail-section obd-card" data-testid="obd-section">
+      <div className="obd-card-line">
+        <span className="obd-card-label">OpenBoardData</span>
         {obd.matches.map(m => {
           const isFetched = m.fetched || obd.dataByBpath.has(m.bpath);
           const isFetching = obd.fetching.has(m.bpath);
           const leaf = m.bpath.slice(m.bpath.lastIndexOf('/') + 1);
           const upstreamUrl = `https://openboarddata.org/?a=showboardsolutions&bpath=${encodeURIComponent(m.bpath)}`;
           return (
-            <span key={m.bpath} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <span key={m.bpath} className="obd-card-variant">
               <button
                 data-testid={`obd-chip-${leaf}`}
                 data-fetched={isFetched ? 'true' : 'false'}
+                className={`obd-card-chip ${isFetched ? 'fetched' : ''}`}
                 onClick={() => obd.fetchBoard(m.bpath)}
                 disabled={isFetching}
-                style={{
-                  padding: '2px 8px',
-                  borderRadius: 12,
-                  border: '1px solid #888',
-                  background: isFetched ? '#3a5' : 'transparent',
-                  color: isFetched ? '#fff' : 'inherit',
-                  fontSize: 11,
-                  cursor: isFetching ? 'wait' : 'pointer',
-                }}
-                title={isFetched ? 'Click to update' : 'Click to fetch'}
+                title={isFetched ? 'Update from openboarddata.org' : 'Fetch from openboarddata.org'}
               >
-                {leaf} {isFetching ? '…' : isFetched ? '↻' : '↓'}
+                <span translate="no">{leaf}</span>
+                <span>{isFetching ? ' …' : isFetched ? ' ↻' : ' ↓'}</span>
               </button>
               <a
                 href={upstreamUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ fontSize: 10, color: '#888', textDecoration: 'none' }}
+                className="obd-card-upstream"
                 title={`Open ${m.bpath} on openboarddata.org`}
                 data-testid={`obd-upstream-${leaf}`}
               >
@@ -107,6 +80,18 @@ export function ObdSection({ boardNumber }: { boardNumber: string }) {
             </span>
           );
         })}
+        {stale && (
+          <span className="obd-card-stale" data-testid="obd-stale-warning" title="The OpenBoardData index is over 30 days old — re-sync it in Settings ▸ Library">
+            stale
+          </span>
+        )}
+      </div>
+      <div
+        className="obd-card-counts"
+        data-testid="obd-summary"
+        title={`${d?.header.comment ? `${d.header.comment}\n\n` : ''}Readings and repair notes are shown in the board's Info tab when it is open.`}
+      >
+        {counts}
       </div>
     </div>
   );

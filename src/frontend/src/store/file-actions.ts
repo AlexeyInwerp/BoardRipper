@@ -42,6 +42,28 @@ export async function openFolderFileFromCache(file: DatabankFile): Promise<boole
 }
 
 /**
+ * Start a PDF open's visible state: its panel (unless `panel: false`, for
+ * background auto-loads that must not take focus) and its load phase, so the
+ * user sees the file and what is happening from the click on — before the
+ * download, the read and the parse, which used to show nothing at all
+ * (PDF performance review 2026-10-03, section 4). A file already open shows
+ * no indicator. Returns a function that records a failure.
+ */
+export function beginPdfOpen(
+  name: string,
+  opts: { panel?: boolean; downloading?: boolean } = {},
+): (err: unknown) => void {
+  const already = pdfStore.hasDocument(name);
+  if (!already) pdfStore.setLoadPhase(name, opts.downloading ? 'downloading' : 'reading');
+  if (opts.panel !== false) ensurePdfPanel(name);
+  return (err: unknown) => {
+    if (!pdfStore.hasDocument(name)) {
+      pdfStore.setLoadPhase(name, 'failed', err instanceof Error ? err.message : String(err));
+    }
+  };
+}
+
+/**
  * Open one or more PDF files: register, auto-bind, load into pdf.js, create panels.
  * Shared by Toolbar, App (drag-drop), and LibraryPanel to avoid duplicated logic.
  *
@@ -72,13 +94,17 @@ export async function openPdfFiles(
     boardStore.addPdfBinding(activeTabId, lastFile.name);
   }
 
-  // Load each PDF and create its panel
+  // Panels first, so every file shows its load state from the start.
+  const fail = new Map(files.map(f => [f.name, beginPdfOpen(f.name)] as const));
+
+  // Load each PDF
   for (const file of files) {
     try {
       await pdfStore.loadFile(file as File);
       ensurePdfPanel(file.name);
     } catch (err) {
       log.ui.error(`Failed to load PDF ${file.name}:`, err);
+      fail.get(file.name)?.(err);
     }
   }
 
@@ -134,7 +160,15 @@ export async function openLibraryFileById(
   if (await openFolderFileFromCache(file)) {
     return { name: boardStore.activeTab?.fileName ?? file.filename, file_type: file.file_type };
   }
-  const fileObj = await databankStore.fetchFileBuffer(file);
+  // A library PDF's wait starts with the download: show it from there.
+  const pdfFailed = file.file_type === 'pdf' ? beginPdfOpen(file.filename, { downloading: true }) : null;
+  let fileObj: File;
+  try {
+    fileObj = await databankStore.fetchFileBuffer(file);
+  } catch (err) {
+    pdfFailed?.(err);
+    throw err;
+  }
 
   if (file.file_type === 'board') {
     await loadLibraryBoard(file, fileObj);
@@ -151,11 +185,17 @@ export async function openLibraryFileById(
           databankStore.fileById(binding.pdf_file_id) ??
           (await databankStore.fetchFileRows([binding.pdf_file_id]))[0];
         if (!pdfFile) continue;
-        const pdfObj = await databankStore.fetchFileBuffer(pdfFile);
-        boardStore.addPdf(pdfObj);
-        if (tabId != null) boardStore.addPdfBinding(tabId, pdfObj.name);
-        await pdfStore.loadFile(pdfObj, pdfFile.id);
-        ensurePdfPanel(pdfObj.name);
+        const failed = beginPdfOpen(pdfFile.filename, { panel: false, downloading: true });
+        try {
+          const pdfObj = await databankStore.fetchFileBuffer(pdfFile);
+          boardStore.addPdf(pdfObj);
+          if (tabId != null) boardStore.addPdfBinding(tabId, pdfObj.name);
+          await pdfStore.loadFile(pdfObj, pdfFile.id);
+          ensurePdfPanel(pdfObj.name);
+        } catch (err) {
+          failed(err);
+          throw err;
+        }
       } catch (err) {
         log.ui.error('open_file: failed to load bound PDF:', err);
       }

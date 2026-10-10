@@ -48,6 +48,12 @@ export interface LabelRecord {
    *  BitmapText path's placement pixel-for-pixel, including per-pin variants
    *  (BGA alternating, diode 0.5/1.1, 2-pin net anchorY parity). */
   anchorX: number; anchorY: number;
+  /** Staggered (BGA-alternating) pin numbers and net names: where the label
+   *  goes under each view rotation. Which board axis reads as a screen row
+   *  flips at 90°/270°, so the column parity, the offset axis and its sign all
+   *  change with the turn; `applyRotationLayout` rewrites x/y/anchorY from
+   *  this instead of rebuilding the whole scene. */
+  rot?: RotLayout;
   /** True when the BitmapText path would draw a translucent background plate
    *  behind this label (the net-label wrapper Graphics — 2-pin `twoPinNetLabelBg`
    *  or circle-net `pinNetLabelBg`). The overlay paints the equivalent backing
@@ -56,6 +62,34 @@ export interface LabelRecord {
 }
 
 export interface LabelModel { top: LabelRecord[]; bottom: LabelRecord[]; }
+
+/** Both placements of a staggered label, around the pin centre (cx, cy).
+ *  Unturned (0°/180°): y = cy + nUp, anchorY = nA.
+ *  Turned (90°/270°): x = cx + sUp · sign, anchorY = sA, with sign −1 at 90°
+ *  and +1 at 270° (board +X points down the screen at 90°, up at 270°). */
+export interface RotLayout { cx: number; cy: number; nUp: number; nA: number; sUp: number; sA: number }
+
+/** 0 = unturned, 1 = 90°, 3 = 270° (180° lays out like 0°). */
+export function rotLayoutKey(rotationDeg: number): 0 | 1 | 3 {
+  const q = ((Math.round(rotationDeg / 90) % 4) + 4) % 4;
+  return q === 1 ? 1 : q === 3 ? 3 : 0;
+}
+
+/** Moves every staggered label to its placement for `key`. Returns how many
+ *  records changed. */
+export function applyRotationLayout(m: LabelModel, key: 0 | 1 | 3): number {
+  let n = 0;
+  for (const list of [m.top, m.bottom]) {
+    for (const r of list) {
+      const l = r.rot;
+      if (!l) continue;
+      if (key === 0) { r.x = l.cx; r.y = l.cy + l.nUp; r.anchorY = l.nA; }
+      else { r.x = l.cx + l.sUp * (key === 1 ? -1 : 1); r.y = l.cy; r.anchorY = l.sA; }
+      n++;
+    }
+  }
+  return n;
+}
 
 /**
  * Route a label record into the model, or signal the caller to take the

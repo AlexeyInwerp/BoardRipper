@@ -59,8 +59,9 @@ describe.skipIf(!HAVE_CORPUS)('folder scan over the local corpus', () => {
     const elapsed = performance.now() - t0;
     expect(scan).not.toBeNull();
 
-    // Nothing in the corpus is anything but a board, so nothing may drop.
-    const boardish = offered.filter(f => /\.(brd|pcb|kicad_pcb|bvr|bv|bdv|asc|fz|cae|cad|tvw|pcbdoc)$/i.test(f.name));
+    // The corpus holds boards and, since samples/pdf (2026-10-03), schematic
+    // PDFs — both are library files, so nothing of either kind may drop.
+    const boardish = offered.filter(f => /\.(brd|pcb|kicad_pcb|bvr|bv|bdv|asc|fz|cae|cad|tvw|pcbdoc|pdf)$/i.test(f.name));
     expect(scan!.files.length).toBe(boardish.length);
     expect(new Set(scan!.files.map(f => f.id)).size).toBe(scan!.files.length);
 
@@ -72,7 +73,7 @@ describe.skipIf(!HAVE_CORPUS)('folder scan over the local corpus', () => {
       if (f.path.startsWith('allegroBRD/')) expect(fmtOf(f.path), f.path).toBe('ALLEGRO_BRD');
       if (f.extension === '.pcb') expect(fmtOf(f.path), f.path).toBe('XZZ');
       if (f.extension === '.kicad_pcb') expect(fmtOf(f.path), f.path).toBe('KICAD');
-      expect(f.format_id, `${f.path} was not recognised at all`).not.toBe('');
+      if (f.extension !== '.pdf') expect(f.format_id, `${f.path} was not recognised at all`).not.toBe('');
     }
 
     // Listing a folder must stay a listing — a scan that parsed boards would

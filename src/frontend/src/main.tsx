@@ -7,21 +7,29 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
 import App from './App';
+import { RootErrorBoundary } from './components/RootErrorBoundary';
+import { installTranslateGuard } from './dom-translate-guard';
 import { installBrowserZoomBlock } from './store/browser-zoom-block';
 import { startMcpBridgeIfEnabled } from './store/mcp-bridge';
 import { initSessionStore } from './store/session-store';
+import { installStaleBuildGuard } from './store/stale-build';
 
 // The boot gate in index.html has already written its message into #root when
 // this is set; mounting would paint the app over it and then fail somewhere
 // deeper. Nothing below this line runs on an unsupported browser.
 if (!window.__brUnsupported) {
+  // Before React mounts: the page translator must not be able to crash it (#36).
+  installTranslateGuard();
   installBrowserZoomBlock();
   startMcpBridgeIfEnabled();
   initSessionStore();
+  installStaleBuildGuard();
 
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <App />
+      <RootErrorBoundary>
+        <App />
+      </RootErrorBoundary>
     </StrictMode>
   );
 }

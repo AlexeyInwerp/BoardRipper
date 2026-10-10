@@ -25,8 +25,10 @@ import { looksLikeMouseWheel } from '../store/scroll-mode';
 import { contextMenuStore } from '../store/context-menu-store';
 import { resizeModeStore } from '../store/resize-mode-store';
 import { boardAntialias, boardMaxFps, boardPixelRatio } from '../device-profile';
+import { rotationLockStore } from '../store/rotation-lock-store';
 import { viewCommands, type PanDirection, type ZoomDirection } from '../store/view-commands';
 import { selectionSetStore } from '../store/selection-set-store';
+import { slideStore } from '../store/slide-store';
 import { partCompareStore } from '../store/part-compare-store';
 import type { PinDiffStatus } from '../store/part-compare';
 import { worklistStore, MARK_COLOR_HEX, MEAS_KINDS, type NetMeasurement } from '../store/worklist-store';
@@ -37,11 +39,33 @@ import { LabelOverlay } from './label-overlay';
 import { focusHaloGeometry } from './focus-halo';
 import { isOblongRoundPad, capsuleGrowForRadius, capsulePolygon } from './pad-capsule';
 import { HdrSelectionOutline, isHdrCapable, rungForIntensity, type ScreenPoint } from './hdr-selection-outline';
-import type { LabelModel } from './label-model';
+import { applyRotationLayout, rotLayoutKey, type LabelModel } from './label-model';
 import { compareStackHits, type StackHit } from './hit-test-ranking';
 import { buildTraceGrid, queryTraceGrid, type TraceGrid } from './trace-grid';
 import type { BorderBatch, PadGeometry } from './board-scene';
 import { registerRenderer, unregisterRenderer } from './renderer-registry';
+import { navHistoryStore, type BoardCameraProvider } from '../store/nav-history-store';
+import type { BoardCamera } from '../store/nav-history';
+
+/** The world rectangle a viewport pose shows on a `sw`×`sh` screen. */
+function viewRect(c: BoardCamera, sw: number, sh: number) {
+  const x0 = -c.x / c.scaleX, x1 = (sw - c.x) / c.scaleX;
+  const y0 = -c.y / c.scaleY, y1 = (sh - c.y) / c.scaleY;
+  return { minX: Math.min(x0, x1), maxX: Math.max(x0, x1), minY: Math.min(y0, y1), maxY: Math.max(y0, y1) };
+}
+
+/** Does pose `b` still show the view pose `a` showed? Zoom within 2× and at
+ *  least 30 % of the new view was inside the old one (design §3.5). */
+export function viewsOverlap(a: BoardCamera, b: BoardCamera, sw: number, sh: number): boolean {
+  if (!sw || !sh || !a.scaleX || !b.scaleX) return true;
+  const ratio = Math.abs(a.scaleX) / Math.abs(b.scaleX);
+  if (ratio > 2 || ratio < 0.5) return false;
+  const ra = viewRect(a, sw, sh), rb = viewRect(b, sw, sh);
+  const ix = Math.max(0, Math.min(ra.maxX, rb.maxX) - Math.max(ra.minX, rb.minX));
+  const iy = Math.max(0, Math.min(ra.maxY, rb.maxY) - Math.max(ra.minY, rb.minY));
+  const areaB = (rb.maxX - rb.minX) * (rb.maxY - rb.minY);
+  return areaB > 0 && (ix * iy) / areaB >= 0.3;
+}
 import { getFormat } from '../parsers/registry';
 import { log } from '../store/log-store';
 import { ensurePdfPanel } from '../store/dockview-api';
@@ -321,11 +345,20 @@ function rot90Parity(rotationDeg: number): number {
 }
 
 
+const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+
+/** What `BoardRenderer.onViewChange` listeners receive. */
+export interface ViewChange { userPan: boolean; dx: number; dy: number }
+
 export class BoardRenderer {
   /** Whether top layer should be visible (accounts for butterfly mode) */
   private get isTopVisible() { return boardStore.showTop || boardStore.butterfly; }
   /** Whether bottom layer should be visible (accounts for butterfly mode) */
   private get isBottomVisible() { return boardStore.showBottom || boardStore.butterfly; }
+  /** Butterfly hides everything that is not one side's own (traces, vias,
+   *  pours); see applyLayerVisibility. Read by every trace consumer so a
+   *  hidden trace can neither be hovered nor lit. */
+  private get copperHidden() { return boardStore.butterfly; }
   /** Per-name memo of "is this refdes's resolved part-type hidden?". Cleared
    *  whenever render settings change (the part-type list / hidden flags live
    *  there). Keyed by refdes so the prefix scan in resolvePartType runs once
@@ -434,6 +467,9 @@ export class BoardRenderer {
    *  handleClick (pixi-viewport's "clicked" event fires on pointerup but
    *  doesn't carry the down-time modifier reliably across browsers). */
   private lastPointerShift = false;
+  /** ⌘ (macOS) / Ctrl (elsewhere) held at pointerdown: slide mode's
+   *  add-to-selection modifier. Not Shift — that adds to the worklist. */
+  private lastPointerAddMod = false;
   /** Client (CSS) coords of the last primary pointerdown — used to place the
    *  Resize Mode popup at the real cursor (viewport.toScreen is in DPR-scaled
    *  device px, wrong for a position:fixed DOM popup). */
@@ -499,7 +535,64 @@ export class BoardRenderer {
   private pinch: {
     a: number; b: number; startDist: number; startScale: number;
     lastMidX: number; lastMidY: number;
+    /** Angle of the pair at seed time, and the rotation the roots already
+     *  carried then — so a re-seed (third finger, a replaced pointer) keeps
+     *  turning from where the picture is, not from zero. */
+    startAngle: number; rotBaseRad: number;
   } | null = null;
+  /** Two-finger rotation in progress, from either stream (pointer pair or
+   *  WebKit gesture). `appliedRad` is what the scene roots carry beyond the
+   *  store's rotation; it is committed to the store when the fingers lift
+   *  (`commitLiveRotation`). Mid-gesture the roots are turned directly, like
+   *  the pinch writes the viewport: a store commit per move would run the
+   *  whole onBoardUpdate — net-line re-projection, ghosts, a full
+   *  renderSelection — for every finger movement. */
+  private liveRotate: {
+    engaged: boolean; appliedRad: number; baseRad: number; midX: number; midY: number;
+    /** Which stream drives it, and the last raw angle that stream reported —
+     *  for the one summary line per gesture in the Debug log, which is how a
+     *  sign or ownership question gets settled on the device itself. */
+    stream: 'pointer' | 'gesture'; rawDeg: number;
+  } | null = null;
+  /** Locked (the starting state, `rotationLockStore`): the fingers must turn
+   *  `renderSettings.rotateUnlockDeg` before rotation unlocks — and then the
+   *  board turns on from where it is, no catch-up jump (`baseRad`).
+   *  Unlocked: this small dead zone, so a pinch-zoom's wobble does not
+   *  drift a free angle by a degree or two per pinch. */
+  private static readonly ROTATE_DEAD_ZONE_DEG = 2;
+  /** A two-finger double-tap toggles the lock: two taps of ≤ TAP_MS with the
+   *  fingers travelling no further than a tap may, within DOUBLE_MS. */
+  /** The right angle the Butterfly spread is laid out at; a free angle is
+   *  that layout turned rigidly by the residual (see applyFlips). Kept
+   *  across gesture commits so a turn never re-lays the halves out
+   *  mid-way — only a button rotation (right angle from a right angle) or
+   *  turning Butterfly on picks a new base. */
+  private butterflyBaseDeg: number | null = null;
+  private butterflyLastDeg = 0;
+  private static readonly TWO_FINGER_TAP_MS = 350;
+  private static readonly TWO_FINGER_DOUBLE_MS = 450;
+  private twoFingerDownAt = 0;
+  private twoFingerMaxTravel = 0;
+  private lastTwoFingerTapAt = 0;
+  /** Touch "right click" (2026-10-02): hold a finger on a part and tap a
+   *  second finger — the trackpad's two-finger click, done on glass. The long
+   *  press stays as the other way in; this one needs no waiting. A hold is a
+   *  first finger down at least HOLD_TAP_MIN_HOLD_MS before the second lands
+   *  (a two-finger tap lands both together and toggles the rotation lock —
+   *  that is how the two are told apart), the second finger is up within
+   *  TWO_FINGER_TAP_MS while the first stays down, and neither travels past a
+   *  tap. Any zoom the pinch path applied in between is undone. */
+  private static readonly HOLD_TAP_MIN_HOLD_MS = 200;
+  private holdDownAt = 0;
+  private holdTap: {
+    secondId: number; holdId: number; at: number; x: number; y: number;
+    cam: { x: number; y: number; sx: number; sy: number };
+  } | null = null;
+  private gestureHoldTap: {
+    at: number; x: number; y: number;
+    cam: { x: number; y: number; sx: number; sy: number };
+  } | null = null;
+  private touchDownPos = new Map<number, { x: number; y: number }>();
   /** True once two or more fingers have been down during the gesture in
    *  progress, and until the next gesture begins.
    *
@@ -518,6 +611,11 @@ export class BoardRenderer {
   private gestureWasCancelled = false;
   /** Pointer type of the gesture in progress, for the click/drag threshold. */
   private gestureIsTouch = false;
+  /** The gesture in progress began while the board was still gliding after
+   *  a flick. pixi-viewport then never emits `clicked` for it — a touch during
+   *  deceleration is "stop the glide" to it, by design — so if it ends as a
+   *  tap, the renderer has to raise the click itself. */
+  private tapDuringGlide = false;
   /** Bound capture-phase pointerup/pointercancel tracker. */
   private boundPointerRelease: ((e: PointerEvent) => void) | null = null;
   /** Bound capture-phase pointermove that drives the two-finger pinch. */
@@ -648,6 +746,13 @@ export class BoardRenderer {
    *  selection blink to decide how many full renders it may afford. */
   private lastRenderMs = 0;
   private perfDisplay = { lod: 0, selection: 0, netLines: 0, gpuRender: 0, frame: 0 };
+  /** Frames that actually drew, for the perf overlay's "what limits the
+   *  frame rate" line: JS time per drawn frame vs the interval between two
+   *  drawn frames. When the interval is much longer than the JS, the time
+   *  goes to the GPU or the compositor — something no JS timer can see, and
+   *  the question an iPad report needs answered first. */
+  private perfDrawn = { n: 0, js: 0, interval: 0, intervalN: 0, lastDrewAt: 0 };
+  private renderedThisTick = false;
   private perfThrottle = 0;
 
   // Elevated labels — persistent BitmapText + background Graphics for selected part/pin
@@ -686,7 +791,11 @@ export class BoardRenderer {
   // Hide-text-during-zoom: detect actual zooming via per-frame scale comparison
   private zoomSettleTimer: ReturnType<typeof setTimeout> | null = null;
   private textHiddenForZoom = false;
+  /** Net lines are drawn at a stale stroke width (or, mid-rotation, cleared)
+   *  until the zoom settles — see onZoomFrame. */
   private netLinesHiddenForZoom = false;
+  /** Viewport scale the net lines were last stroked at during a zoom. */
+  private netLinesStrokeScale = 0;
   private prevTickScale = -1;
   // Pulse animations (net lines + cross-side ghosts) freeze for a short window
   // after viewport motion so pan/zoom don't pay the per-frame Graphics rebuild.
@@ -724,6 +833,22 @@ export class BoardRenderer {
   private netLinePulsePhase = 0;
   // Pool index for reusing BitmapText children in netLabelLayer
   private netLabelPoolIdx = 0;
+
+  /** Navigation-history camera provider: the departure rule reads the pose
+   *  through `get`, a restore writes one through `set` (`animateToViewport`).
+   *  Registered wherever `registerRenderer` is, released wherever it is. */
+  private navCamera: BoardCameraProvider = {
+    get: () => ({ x: this.viewport.x, y: this.viewport.y, scaleX: this.viewport.scale.x, scaleY: this.viewport.scale.y }),
+    set: (cam) => this.animateToViewport(cam),
+  };
+
+  /** Navigation history, layer 4: a user move that has settled becomes a
+   *  viewpoint when it left the previous view; a smaller one only refreshes
+   *  the current entry's pose. `programmaticMove` marks a fit / restore so
+   *  the next transform change is not read as the user's. */
+  private viewSettleTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastViewSig = '';
+  private programmaticMove = false;
 
   // Animated zoom state
   private zoomAnim: {
@@ -781,6 +906,10 @@ export class BoardRenderer {
    *  pin labels were built for. Compared against the live rotation so a
    *  90°/270° change rebuilds the label stagger on the right axis. */
   private sceneRot90Parity = 0;
+  /** Which rotation layout each label model's staggered labels are in (see
+   *  `RotLayout`). A 90° turn moves those labels in place instead of
+   *  rebuilding the scene, which on a dense board froze the app for 1–2 s. */
+  private labelRotKeys = new WeakMap<LabelModel, 0 | 1 | 3>();
   /** Reference snapshot of `boardStore.partOverrides`. The store replaces the
    *  Map on every change, so an identity-equality compare in `onBoardUpdate`
    *  detects right-click hide/send-to-back actions without a deep diff. */
@@ -877,6 +1006,8 @@ export class BoardRenderer {
 
   /** The board tab ID this renderer is bound to (null = legacy single-renderer mode) */
   private tabId: number | null = null;
+  /** See the deferral at the top of onBoardUpdate. */
+  private sceneBuildDeferral: 'idle' | 'pending' | 'running' = 'idle';
 
   constructor(container: HTMLDivElement, tabId?: number) {
     this.containerEl = container;
@@ -914,13 +1045,16 @@ export class BoardRenderer {
       this.viewport.x += t.anchorScreenX - sp.x;
       this.viewport.y += t.anchorScreenY - sp.y;
       this.needsRender = true;
-      this.netLinesDirty = true;
+      // No netLinesDirty: a pan or zoom never moves the world-space segments (rotateLive marks them when it turns the board), and a dirty flag holds off the in-zoom re-stroke (onZoomFrame).
       this.viewport.emit('moved', { viewport: this.viewport, type: 'animate' });
       if (next === t.targetScale) this.zoomTween = null;
     }
 
     // Drive animated zoom
+    let animMoved = false;
+    let animDone = false;
     if (this.zoomAnim) {
+      animMoved = true;
       const a = this.zoomAnim;
       a.elapsed += ticker.deltaMS;
       const t = Math.min(a.elapsed / a.duration, 1);
@@ -938,7 +1072,35 @@ export class BoardRenderer {
       // zoom never changes their geometry. onZoomFrame hides them during the
       // anim and the settle timer redraws from the cached segments at the new
       // scale (renderNetLines re-derives the zoom-dependent draw params).
-      if (t >= 1) this.zoomAnim = null;
+      if (t >= 1) { this.zoomAnim = null; animDone = true; }
+    }
+
+    // Navigation history: classify every transform change as the user's or
+    // ours. Ours (animated jump, fit, restore) re-baselines; the user's
+    // starts the settle timer. Cheap: four numbers into a string per frame.
+    if (this.viewport) {
+      const vp = this.viewport;
+      const sig = `${vp.x.toFixed(1)},${vp.y.toFixed(1)},${vp.scale.x.toFixed(4)},${vp.scale.y.toFixed(4)}`;
+      if (sig !== this.lastViewSig) {
+        this.lastViewSig = sig;
+        // A user move at an unchanged scale is a pan — the minimap's trigger.
+        if (!animMoved && !this.programmaticMove && !this.zoomTween &&
+            Math.abs(vp.scale.x) === this.viewPoseScale) {
+          this.viewUserPanned = true;
+          this.viewPanDx += vp.x - this.viewPanX;
+          this.viewPanDy += vp.y - this.viewPanY;
+        }
+        this.viewPanX = vp.x;
+        this.viewPanY = vp.y;
+        this.viewPoseScale = Math.abs(vp.scale.x);
+        if (animMoved || this.programmaticMove) {
+          this.programmaticMove = false;
+          if (this.viewSettleTimer) { clearTimeout(this.viewSettleTimer); this.viewSettleTimer = null; }
+        } else {
+          this.scheduleViewSettle();
+        }
+      }
+      if (animDone) this.noteArrivalPose();
     }
 
     // Detect active zooming by comparing scale between frames
@@ -1014,6 +1176,7 @@ export class BoardRenderer {
         return;
       }
       this.lastRenderMs = performance.now() - renderStart;
+      this.renderedThisTick = true;
       if (perf) this.perfAccum.gpuRender += performance.now() - t0;
       // After rendering a freshly-activated scene, keep rendering for a few more
       // frames so the CullerPlugin re-culls with the now-updated world transforms
@@ -1093,9 +1256,21 @@ export class BoardRenderer {
     if (hdr && this.activeScene) this.syncHdrOverlay(hdr, this.activeScene);
 
     if (perf) {
-      this.perfAccum.frame += performance.now() - frameStart;
+      const now = performance.now();
+      this.perfAccum.frame += now - frameStart;
       this.perfSamples++;
+      if (this.renderedThisTick) {
+        const d = this.perfDrawn;
+        d.n++; d.js += now - frameStart;
+        // Only back-to-back draws measure the frame rate; a draw after an
+        // idle stretch would read as a long frame.
+        if (d.lastDrewAt && frameStart - d.lastDrewAt < 250) { d.interval += frameStart - d.lastDrewAt; d.intervalN++; }
+        d.lastDrewAt = frameStart;
+      }
     }
+    this.renderedThisTick = false;
+
+    this.emitViewChange();
 
     // HUD update (DOM only, no GPU cost) — throttle to ~4 updates/sec
     this.hudThrottle += ticker.deltaMS;
@@ -1143,6 +1318,11 @@ export class BoardRenderer {
     if (this.wheelIdleTimer) clearTimeout(this.wheelIdleTimer);
     this.wheelIdleTimer = setTimeout(() => {
       this.wheelIdleTimer = null;
+      // A zoom tween or glide still running is part of the gesture: let it land.
+      if (this.zoomTween || this.zoomAnim || (this.viewport?.plugins.get('decelerate') as { isActive?(): boolean } | null)?.isActive?.()) {
+        this.scheduleWheelIdlePause();
+        return;
+      }
       // Only auto-pause if this renderer's panel is NOT the active board tab
       if (boardStore.activeTabId !== this.tabId && this.app.ticker.started) {
         this.stopTicker();
@@ -1161,7 +1341,7 @@ export class BoardRenderer {
    */
   private teardownForReinit() {
     log.render.log('teardownForReinit', 'tab=' + this.tabId);
-    if (this.tabId !== null) unregisterRenderer(this.tabId);
+    if (this.tabId !== null) { unregisterRenderer(this.tabId); navHistoryStore.unregisterBoardCamera(this.tabId, this.navCamera); }
     if (this._rebuildTimer) { clearTimeout(this._rebuildTimer); this._rebuildTimer = null; }
     this.clickCycle = null;
     this.clearPendingCycleAdvance();
@@ -1234,6 +1414,9 @@ export class BoardRenderer {
       this.reinitApp();
       return;
     }
+    // init() failed (e.g. its WebGL chunk could not be fetched): there is no
+    // ticker to restart, and touching it would turn one error into another.
+    if (!this.initialized) return;
 
     const w = this.containerEl.clientWidth;
     const h = this.containerEl.clientHeight;
@@ -1429,14 +1612,14 @@ export class BoardRenderer {
         background: COLORS.background,
         width: this.containerEl.clientWidth || 1,
         height: this.containerEl.clientHeight || 1,
-        antialias: boardAntialias(renderSettingsStore.settings.touchPerformanceMode),
-        resolution: boardPixelRatio(renderSettingsStore.settings.touchPerformanceMode),
+        antialias: boardAntialias(renderSettingsStore.settings.touchPerformanceMode, renderSettingsStore.settings.boardAntialiasing),
+        resolution: boardPixelRatio(renderSettingsStore.settings.touchPerformanceMode, renderSettingsStore.settings.boardResolutionCap),
         autoDensity: true,
         powerPreference: 'high-performance',
         ...(RENDERER_PREFERENCE ? { preference: RENDERER_PREFERENCE } : {}),
       });
       log.render.log(`reinitApp: app.init succeeded tab=${this.tabId} size=${this.containerEl.clientWidth}x${this.containerEl.clientHeight}`);
-      if (this.tabId !== null) registerRenderer(this.tabId, this.app);
+      if (this.tabId !== null) { registerRenderer(this.tabId, this.app); navHistoryStore.registerBoardCamera(this.tabId, this.navCamera); }
     } catch (err) {
       log.render.error(`reinitApp: app.init FAILED tab=${this.tabId}:`, err);
       this.reinitializing = false;
@@ -1607,8 +1790,8 @@ export class BoardRenderer {
       background: COLORS.background,
       width: this.containerEl.clientWidth,
       height: this.containerEl.clientHeight,
-      antialias: boardAntialias(renderSettingsStore.settings.touchPerformanceMode),
-      resolution: boardPixelRatio(renderSettingsStore.settings.touchPerformanceMode),
+      antialias: boardAntialias(renderSettingsStore.settings.touchPerformanceMode, renderSettingsStore.settings.boardAntialiasing),
+      resolution: boardPixelRatio(renderSettingsStore.settings.touchPerformanceMode, renderSettingsStore.settings.boardResolutionCap),
       autoDensity: true,
       powerPreference: 'high-performance',
       ...(RENDERER_PREFERENCE ? { preference: RENDERER_PREFERENCE } : {}),
@@ -1623,7 +1806,7 @@ export class BoardRenderer {
       log.render.log(`init: aborted — renderer destroyed during app.init (tab=${this.tabId})`);
       return;
     }
-    if (this.tabId !== null) registerRenderer(this.tabId, this.app);
+    if (this.tabId !== null) { registerRenderer(this.tabId, this.app); navHistoryStore.registerBoardCamera(this.tabId, this.navCamera); }
     this.containerEl.appendChild(this.app.canvas as HTMLCanvasElement);
     this.initialized = true;
 
@@ -1768,8 +1951,25 @@ export class BoardRenderer {
         // pointerup would make every later tap look like a second finger.
         if (e.isPrimary) this.activeTouchIds.clear();
         this.activeTouchIds.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (e.isPrimary) this.touchDownPos.clear();
+        this.touchDownPos.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (e.isPrimary) { this.holdDownAt = performance.now(); this.holdTap = null; }
       }
       if (this.activeTouchIds.size > 1) {
+        if (this.activeTouchIds.size === 2) {
+          const now = performance.now();
+          this.twoFingerDownAt = now;
+          this.twoFingerMaxTravel = 0;
+          // A first finger already resting on the board: the second may be a
+          // tap that asks for the menu under the first.
+          const holdId = [...this.activeTouchIds.keys()].find(id => id !== e.pointerId);
+          const holdPos = holdId != null ? this.touchDownPos.get(holdId) : undefined;
+          this.holdTap = (holdId != null && holdPos && now - this.holdDownAt >= BoardRenderer.HOLD_TAP_MIN_HOLD_MS)
+            ? { secondId: e.pointerId, holdId, at: now, x: holdPos.x, y: holdPos.y, cam: this.camSnapshot() }
+            : null;
+        } else {
+          this.holdTap = null;   // a third finger: not a tap any more
+        }
         // Second finger of a pinch. The gesture is no longer a tap, and its
         // travel must keep being measured from where the FIRST finger landed
         // — re-anchoring here would reset the drag test mid-pinch and hand
@@ -1787,6 +1987,15 @@ export class BoardRenderer {
       this.gestureWasMultiTouch = false;
       this.gestureWasCancelled = false;
       this.gestureIsTouch = e.pointerType === 'touch';
+      // Read this here, in capture phase on the container: pixi's own
+      // pointerdown on the canvas runs after us and both stops the glide and
+      // decides, from the same `isActive()`, that no click may come of this
+      // touch. On a desktop nobody clicks mid-glide; on a tablet, flick then
+      // tap is the everyday way to select — measured with inertia on, a tap
+      // right after a pan selected nothing, and one 1.5 s later hit the
+      // wrong part because the board was still moving.
+      const decel = this.viewport.plugins.get('decelerate') as { isActive(): boolean } | null;
+      this.tapDuringGlide = this.gestureIsTouch && !!decel?.isActive();
       // pixi-viewport decides click-vs-drag on its own `threshold` (a plain
       // public field, default 5 px) and suppresses `clicked` past it — so the
       // renderer's matching tolerance in handleClick is never even consulted
@@ -1798,6 +2007,7 @@ export class BoardRenderer {
         ? BoardRenderer.TOUCH_CLICK_DRAG_TOLERANCE_PX
         : BoardRenderer.CLICK_DRAG_TOLERANCE_PX;
       this.lastPointerShift = e.shiftKey;
+      this.lastPointerAddMod = IS_MAC ? e.metaKey : e.ctrlKey;
       this.lastPointerClient = { x: e.clientX, y: e.clientY };
       this.pointerTravelPx = 0;
       // A new gesture starts clean. The drag-zoom latch is set from a
@@ -1822,10 +2032,62 @@ export class BoardRenderer {
       // Lifting one of three fingers leaves a pinch running on a different
       // pair; dropping to one ends it.
       if (this.pinch && (e.pointerId === this.pinch.a || e.pointerId === this.pinch.b)) {
+        if (this.activeTouchIds.size < 2) this.commitLiveRotation();
         this.seedPinch();
       }
       if (this.activeTouchIds.size === 0 && this.gestureOwner !== 'none') {
         this.endGestureOwnership?.();
+      }
+      // Hold + tap: the second finger came up quickly, the first is still down.
+      const ht = this.holdTap;
+      if (ht) {
+        this.holdTap = null;
+        const quick = performance.now() - ht.at <= BoardRenderer.TWO_FINGER_TAP_MS;
+        if (e.type === 'pointerup' && e.pointerId === ht.secondId && this.activeTouchIds.has(ht.holdId)
+            && this.activeTouchIds.size === 1 && quick
+            && this.twoFingerMaxTravel <= BoardRenderer.TOUCH_CLICK_DRAG_TOLERANCE_PX) {
+          log.ui.log('touch: hold + second-finger tap — opening the context menu (stream=pointer)');
+          this.twoFingerDownAt = 0;
+          this.lastTwoFingerTapAt = 0;
+          this.restoreCam(ht.cam);
+          this.openTouchMenu(ht.x, ht.y);
+        }
+      }
+      // A two-finger tap: both fingers down and up within TAP_MS, neither
+      // travelling further than a tap may, no rotation engaged. Two of them
+      // within DOUBLE_MS toggle the rotation lock.
+      if (this.activeTouchIds.size === 0 && this.gestureWasMultiTouch && e.type === 'pointerup'
+          && !this.gestureWasCancelled && this.twoFingerDownAt > 0) {
+        const now = performance.now();
+        const isTap = now - this.twoFingerDownAt <= BoardRenderer.TWO_FINGER_TAP_MS
+          && this.twoFingerMaxTravel <= BoardRenderer.TOUCH_CLICK_DRAG_TOLERANCE_PX;
+        this.twoFingerDownAt = 0;
+        if (isTap) {
+          if (now - this.lastTwoFingerTapAt <= BoardRenderer.TWO_FINGER_DOUBLE_MS) {
+            this.lastTwoFingerTapAt = 0;
+            if (renderSettingsStore.settings.twoFingerRotate) this.toggleRotationLock();
+          } else {
+            this.lastTwoFingerTapAt = now;
+          }
+        } else {
+          this.lastTwoFingerTapAt = 0;
+        }
+      }
+      // A tap that began mid-glide: pixi-viewport withheld `clicked`, so raise
+      // it here — with every guard handleClick would have applied, because
+      // handleClick applies them again anyway.
+      if (this.tapDuringGlide && e.type === 'pointerup' && this.activeTouchIds.size === 0) {
+        this.tapDuringGlide = false;
+        const isTap = !this.gestureWasMultiTouch && !this.gestureWasCancelled
+          && this.pointerTravelPx <= BoardRenderer.TOUCH_CLICK_DRAG_TOLERANCE_PX;
+        if (isTap && this.board) {
+          const rect = this.containerEl.getBoundingClientRect();
+          const world = this.viewport.toWorld(e.clientX - rect.left, e.clientY - rect.top);
+          log.ui.log('touch: tap during glide — raising the click pixi-viewport withheld');
+          this.handleClick(world);
+        }
+      } else if (this.activeTouchIds.size === 0) {
+        this.tapDuringGlide = false;
       }
     };
     window.addEventListener('pointerup', this.boundPointerRelease, { capture: true });
@@ -1869,7 +2131,7 @@ export class BoardRenderer {
     // swallowed: the first through the existing dragZoomConsumedClick latch,
     // the second by a one-shot capture-phase click listener.
     const LONG_PRESS_MS = 500;
-    const LONG_PRESS_SLOP_PX = 10;
+    const LONG_PRESS_SLOP_PX = BoardRenderer.TOUCH_CLICK_DRAG_TOLERANCE_PX;   // a hold may wander as far as a tap
     const cancelLongPress = () => {
       if (this.longPressTimer) { clearTimeout(this.longPressTimer); this.longPressTimer = null; }
       this.longPressStart = null;
@@ -1883,12 +2145,7 @@ export class BoardRenderer {
         this.longPressTimer = null;
         this.longPressStart = null;
         if (!start) return;
-        this.dragZoomConsumedClick = true;
-        const swallow = (ev: Event) => { ev.stopPropagation(); ev.preventDefault(); };
-        document.addEventListener('click', swallow, { capture: true, once: true });
-        // If no click ever arrives (some browsers), don't leave the trap armed.
-        setTimeout(() => document.removeEventListener('click', swallow, { capture: true }), 700);
-        this.handleRightClick({ clientX: start.x, clientY: start.y });
+        this.openTouchMenu(start.x, start.y);
       }, LONG_PRESS_MS);
     };
     this.boundLongPressMove = (e: PointerEvent) => {
@@ -2012,6 +2269,7 @@ export class BoardRenderer {
       if (this.gestureReleaseTimer) { clearTimeout(this.gestureReleaseTimer); this.gestureReleaseTimer = null; }
       if (this.gestureOwner !== 'gesture') return;
       this.gestureOwner = 'none';
+      this.commitLiveRotation();
       this.viewport.plugins.resume('drag');
       if (this.activeTouchIds.size >= 2) this.seedPinch();
     };
@@ -2034,7 +2292,25 @@ export class BoardRenderer {
       if (this.gestureReleaseTimer) clearTimeout(this.gestureReleaseTimer);
       this.gestureReleaseTimer = setTimeout(releaseGesture, 400);
     };
-    this.boundGestureEnd = () => releaseGesture();
+    this.boundGestureEnd = (ev: Event) => {
+      // Hold + tap through WebKit's stream: the engine may claim the gesture
+      // before the second finger's pointerdown is dispatched, so the pointer
+      // path above never sees a second finger. A gesture that began over a
+      // resting finger and ends quickly, barely scaled or turned, is the tap.
+      const gh = this.gestureHoldTap;
+      this.gestureHoldTap = null;
+      const g = ev as GestureEvent;
+      if (gh && performance.now() - gh.at <= BoardRenderer.TWO_FINGER_TAP_MS
+          && Math.abs((g.scale ?? 1) - 1) < 0.08 && Math.abs(g.rotation ?? 0) < 8
+          && this.activeTouchIds.size <= 1) {
+        releaseGesture();
+        log.ui.log('touch: hold + second-finger tap — opening the context menu (stream=gesture)');
+        this.restoreCam(gh.cam);
+        this.openTouchMenu(gh.x, gh.y);
+        return;
+      }
+      releaseGesture();
+    };
 
     this.boundGestureStart = (ev: Event) => {
       const e = ev as GestureEvent;
@@ -2054,8 +2330,17 @@ export class BoardRenderer {
       }
       ev.preventDefault();
       ev.stopPropagation();
+      {
+        const only = [...this.activeTouchIds.keys()][0];
+        const pos = only != null ? this.touchDownPos.get(only) : undefined;
+        this.gestureHoldTap = (pos && this.activeTouchIds.size === 1
+          && performance.now() - this.holdDownAt >= BoardRenderer.HOLD_TAP_MIN_HOLD_MS)
+          ? { at: performance.now(), x: pos.x, y: pos.y, cam: this.camSnapshot() }
+          : null;
+      }
       this.gestureOwner = 'gesture';
       this.pinch = null;
+      this.commitLiveRotation();   // a pointer-pair rotation this claim interrupts
       this.viewport.plugins.pause('drag');
       gestureStartScale = this.viewport.scale.x;
       const rect = this.containerEl.getBoundingClientRect();
@@ -2075,9 +2360,23 @@ export class BoardRenderer {
       this.viewport.x += anchor.x - gestureAnchor.x;
       this.viewport.y += anchor.y - gestureAnchor.y;
       gestureAnchor = anchor;
+      // GestureEvent.rotation is cumulative degrees since gesturestart,
+      // CLOCKWISE positive: Apple's own sample (Safari Web Content Guide,
+      // "Handling Events") applies `rotate(event.rotation + "deg")` and the
+      // element follows the fingers, and CSS rotate() is CW-positive. The
+      // first cut negated it on the strength of a doc sentence, and since
+      // which stream owns a pinch on iPadOS depends on whether the engine
+      // claims it before the second pointerdown arrives, the board turned
+      // the wrong way on exactly the gestures that came with movement
+      // (2026-09-28). The pointer path's screen angle is CW-positive too,
+      // so the two streams now agree; the per-gesture Debug line records
+      // raw vs applied in case a device disagrees.
+      if (typeof e.rotation === 'number' && Number.isFinite(e.rotation)) {
+        this.rotateLive(e.rotation * Math.PI / 180, anchor.x, anchor.y, 'gesture', e.rotation);
+      }
       this.viewport.emit('moved', { viewport: this.viewport, type: 'pinch' });
       this.needsRender = true;
-      this.netLinesDirty = true;
+      // No netLinesDirty: a pan or zoom never moves the world-space segments (rotateLive marks them when it turns the board), and a dirty flag holds off the in-zoom re-stroke (onZoomFrame).
     };
     this.containerEl.addEventListener('gesturestart', this.boundGestureStart, { passive: false });
     this.containerEl.addEventListener('gesturechange', this.boundGestureChange, { passive: false });
@@ -2220,7 +2519,6 @@ export class BoardRenderer {
 
     const zoom = Math.round(Math.abs(this.viewport.scale.x) * 100);
     const fps = Math.round(tickerFps);
-    const gpuText = this.needsRender ? '' : ' · gpu idle';
 
     let sceneText = '';
     const scene = this.activeScene;
@@ -2236,7 +2534,9 @@ export class BoardRenderer {
       sceneText = ` · ${labelCount} labels`;
     }
 
-    this.hudEl.textContent = `${zoom}% · ${fps} fps${sceneText}${gpuText}`;
+    // ("gpu idle" used to trail this; it read needsRender, which the dirty-flag
+    // loop clears every frame, so it never said anything a user could use.)
+    this.hudEl.textContent = `${zoom}% · ${fps} fps${sceneText}`;
   }
 
   /** Flush perf accumulators and update the perf overlay DOM */
@@ -2266,13 +2566,28 @@ export class BoardRenderer {
 
     const f = (ms: number) => ms < 0.01 ? '0' : ms.toFixed(2);
     const d = this.perfDisplay;
+    // What limits the frame rate while the board is moving.
+    const dr = this.perfDrawn;
+    let boundLine = '';
+    if (dr.intervalN >= 5) {
+      const js = dr.js / dr.n, iv = dr.interval / dr.intervalN;
+      const verdict = iv < 20 ? 'keeping up'
+        : js > iv * 0.6 ? 'CPU-bound (JS)'
+        : 'GPU/compositor-bound';
+      boundLine = `\nmoving: ${Math.round(1000 / iv)} fps · js ${js.toFixed(1)} of ${iv.toFixed(1)} ms → ${verdict}`;
+    }
+    this.perfDrawn = { n: 0, js: 0, interval: 0, intervalN: 0, lastDrewAt: dr.lastDrewAt };
+    const rr = this.app.renderer as unknown as { name?: string; resolution: number };
+    const s = renderSettingsStore.settings;
+    const setupLine = `\n${rr.name ?? '?'} · ${rr.resolution}× · ${s.boardAntialiasing ? 'MSAA' : 'no MSAA'} · ` +
+      `cap ${this.app.ticker.maxFPS || 'none'} · corners ${s.traceCorners}`;
     this.perfOverlayEl.textContent =
       `frame: ${f(d.frame)}ms` +
       ` | lod: ${f(d.lod)}ms` +
       ` | sel: ${f(d.selection)}ms` +
       ` | net: ${f(d.netLines)}ms` +
-      ` | gpu: ${f(d.gpuRender)}ms` +
-      labelLine;
+      ` | render (CPU): ${f(d.gpuRender)}ms` +
+      labelLine + boundLine + setupLine;
     this.perfOverlayEl.style.display = '';
   }
 
@@ -2422,9 +2737,23 @@ export class BoardRenderer {
    *  the per-side label-layer world transforms (so rotate/mirror/butterfly work
    *  for free — bottomLabelLayer.worldTransform includes the butterfly chain).
    *  Called from onTick AFTER app.render() so worldTransforms are current. */
+  /** Puts a label model's staggered labels in the layout for the current
+   *  rotation. Cheap when already there (one map lookup); also covers a
+   *  cached scene shown again after the rotation changed. */
+  private syncLabelRotation(model: LabelModel): void {
+    const want = rotLayoutKey(boardStore.rotation);
+    if (this.labelRotKeys.get(model) === want) return;
+    applyRotationLayout(model, want);
+    this.labelRotKeys.set(model, want);
+    this.overlayDirty = true;
+    this.overlayContentDirty = true;
+    this.needsRender = true;
+  }
+
   private syncLabelOverlay(overlay: LabelOverlay, scene: BoardScene): void {
     const s = renderSettingsStore.settings;
     const model = scene.labelModel!;
+    this.syncLabelRotation(model);
     const wtTop = scene.topLabelLayer.worldTransform;
     const wtBot = scene.bottomLabelLayer.worldTransform;
     const dm = boardStore.dimMode;
@@ -2483,17 +2812,35 @@ export class BoardRenderer {
         scene.bottomTwoPinNetLayer.visible = false;
       }
     }
-    // Hide net lines during active zoom instead of redrawing every frame.
-    // The geometry changes with viewport scale (line widths are scale-dependent),
-    // so deferring to the settle timer avoids expensive per-frame Graphics redraws.
-    if (!this.netLinesHiddenForZoom && this.netLineSegments.length > 0) {
+    // Net (connection) lines stay on screen while the zoom runs. They used to
+    // be cleared on the first zoom frame and redrawn only once the zoom had
+    // been still for 32 ms — invisible for a wheel notch, but a two-finger
+    // pinch changes the scale for as long as the fingers move, so on a
+    // tablet the lines were gone for the whole unzoom (field report
+    // 2026-10-07: "the connections overlay vanishes completely").
+    //
+    // The segments are world-space children of the viewport, so they stay in
+    // place by themselves; only the stroke width (screen px ÷ scale) goes
+    // stale. A lit net is a few dozen segments, so they are simply re-stroked
+    // at the new width each zoom frame; a big one only when the scale has
+    // moved 20 % since its last stroke. Never from here when the segments
+    // themselves are dirty (that recompute is the expensive part and waits
+    // for the settle), and not during a live two-finger rotation, which
+    // moves the roots the segments were projected through — then the lines
+    // are cleared as before, because a misplaced line is worse than none.
+    if (this.netLineSegments.length > 0) {
+      if (this.liveRotate?.engaged) {
+        if (!this.netLinesHiddenForZoom) { this.netLinesGfx.clear(); this.netLinesPulseGfx?.clear(); this.netLineBakeSig = ''; }
+      } else if (!this.netLinesDirty) {
+        const k = Math.abs(this.viewport.scale.x);
+        const ratio = this.netLinesStrokeScale > 0 ? k / this.netLinesStrokeScale : Infinity;
+        if (this.netLineSegments.length <= 300 || ratio > 1.2 || ratio < 1 / 1.2) {
+          this.renderNetLines();
+          this.netLinesStrokeScale = k;
+        }
+      }
+      // Stale until the settle redraw (also holds the pulse off meanwhile).
       this.netLinesHiddenForZoom = true;
-      // Net line geometry depends on viewport scale (line widths are 1/scale),
-      // so it must be cleared and redrawn at the new scale on settle.
-      // Ghost geometry uses world-space stroke widths and stays visually correct
-      // at any zoom — leave it drawn so the user sees a frozen ghost during zoom
-      // instead of a vanish/reappear flash.
-      this.netLinesGfx.clear();
       this.needsRender = true;
     }
     // Rescale elevated selection labels to maintain constant screen-pixel size
@@ -2624,7 +2971,14 @@ export class BoardRenderer {
 
   /** Apply per-layer trace, via, and component sub-layer visibility */
   private applyLayerVisibility(scene: BoardScene) {
-    const { layerStates, showTraces, showVias, showSilkscreen, showPads, showCopperDrops, showSurfaces, showComponents, showPins, showOutlines, showLabels, showTop, showBottom } = boardStore;
+    const { layerStates, showVias, showSilkscreen, showPads, showCopperDrops, showComponents, showPins, showOutlines, showLabels, showTop, showBottom } = boardStore;
+    // Butterfly draws the two sides flat and apart; traces, vias and pours
+    // belong to the board as a whole (inner layers to neither side), so they
+    // are hidden for as long as the mode is on. The user's own toggles are
+    // left alone and come back when Butterfly is turned off.
+    const copper = !this.copperHidden;
+    const showTraces = boardStore.showTraces && copper;
+    const showSurfaces = boardStore.showSurfaces && copper;
     // Trace layer master toggle
     if (scene.traceLayer) scene.traceLayer.visible = showTraces;
     // Per-layer trace containers. A *selected* layer is revealed transiently —
@@ -2667,11 +3021,16 @@ export class BoardRenderer {
       c.visible = showSurfaces && (stateVisible || i === selectedLayerIndex);
     }
     // Via overlay
-    if (scene.viaLayer) scene.viaLayer.visible = showVias;
-    // Silkscreen — master toggle, plus follow top/bottom side visibility
+    if (scene.viaLayer) scene.viaLayer.visible = showVias && copper;
+    // Silkscreen — master toggle, plus follow top/bottom side visibility. The
+    // master is applied to each side container as well, not only to the
+    // shared layer: in Butterfly the bottom silk is reparented out of that
+    // layer into butterflyRoot (setupButterfly), where the layer's own
+    // visibility no longer reaches it — which is how the toggle stopped
+    // hiding the bottom silk the moment Butterfly came on (2026-09-28).
     if (scene.silkscreenLayer)  scene.silkscreenLayer.visible  = showSilkscreen;
-    if (scene.silkscreenTop)    scene.silkscreenTop.visible    = showTop;
-    if (scene.silkscreenBottom) scene.silkscreenBottom.visible = showBottom;
+    if (scene.silkscreenTop)    scene.silkscreenTop.visible    = showSilkscreen && showTop;
+    if (scene.silkscreenBottom) scene.silkscreenBottom.visible = showSilkscreen && showBottom;
     // Copper pads — parented inside the side layers so each container is
     // gated by both the master `showPads` toggle and its own side toggle.
     if (scene.padsTop)          scene.padsTop.visible          = showPads && showTop;
@@ -2717,9 +3076,35 @@ export class BoardRenderer {
       const bw = board.bounds.maxX - board.bounds.minX;
       const bh = board.bounds.maxY - board.bounds.minY;
 
+      // The spread is laid out at a right angle — the mirror across the seam
+      // and the separation along a screen axis are only right there — and a
+      // free angle (two-finger rotation) shows that layout turned rigidly by
+      // the residual about the common centre, which is what the live gesture
+      // showed. The base survives gesture commits: re-choosing the nearest
+      // right angle at every commit swapped the separation axis and the
+      // hinge at 45°, and the halves jumped ("butterfly positioning broken
+      // on a rotated board", 2026-09-28). A right angle reached from a right
+      // angle is a button press and re-lays out as always.
+      const deg = boardStore.rotation;
+      const isRight = (d: number) => Math.abs(d / 90 - Math.round(d / 90)) < 1e-6;
+      if (this.butterflyBaseDeg === null || (isRight(deg) && isRight(this.butterflyLastDeg))) {
+        this.butterflyBaseDeg = ((Math.round(deg / 90) * 90) % 360 + 360) % 360;
+      }
+      this.butterflyLastDeg = deg;
+      const baseRot = this.butterflyBaseDeg * Math.PI / 180;
+      let residual = rotation - baseRot;
+      residual = Math.atan2(Math.sin(residual), Math.cos(residual));
+      const resCos = Math.cos(residual), resSin = Math.sin(residual);
+      // Everything that reads "are the axes swapped" follows the BASE here,
+      // not the nearest right angle: at 72° from base 0 the nearest is 90,
+      // and taking the swap from it flipped the bottom half's mirror onto
+      // the other axis — same positions, wrong hinge.
+      const baseSwapped = (this.butterflyBaseDeg / 90) % 2 === 1;
+      const bMirrorX = baseSwapped ? boardStore.mirrorY : boardStore.mirrorX;
+      const bMirrorY = baseSwapped ? boardStore.mirrorX : boardStore.mirrorY;
       // After rotation, compute visual extents to decide separation axis
-      const sinR = Math.abs(Math.sin(rotation));
-      const cosR = Math.abs(Math.cos(rotation));
+      const sinR = Math.abs(Math.sin(baseRot));
+      const cosR = Math.abs(Math.cos(baseRot));
       const visualW = bw * cosR + bh * sinR;
       const visualH = bw * sinR + bh * cosR;
 
@@ -2730,8 +3115,8 @@ export class BoardRenderer {
       const gap = sepDim * 0.05;
       const halfSep = sepDim / 2 + gap / 2;
 
-      const flipY = autoFlipY !== mirrorY;
-      const sx = mirrorX ? -1 : 1;
+      const flipY = autoFlipY !== bMirrorY;
+      const sx = bMirrorX ? -1 : 1;
       const topSy = flipY ? -1 : 1;
 
       // Butterfly bottom-half mirroring.
@@ -2757,7 +3142,7 @@ export class BoardRenderer {
         botScaleX = sx;
         botScaleY = -topSy;
       } else {
-        const mirrorBoardX = separateX !== axesSwapped;
+        const mirrorBoardX = separateX !== baseSwapped;
         botScaleX = mirrorBoardX ? -sx : sx;
         botScaleY = mirrorBoardX ? topSy : -topSy;
       }
@@ -2765,16 +3150,19 @@ export class BoardRenderer {
       const dx = separateX ? halfSep : 0;
       const dy = separateX ? 0 : halfSep;
 
-      // Top half: shifted left/up
+      // Top half: shifted left/up; bottom half: shifted right/down, mirrored
+      // along the fold axis. The shifts are the base layout's, turned by the
+      // residual; each root's own rotation is base + residual = rotation.
+      const rdx = dx * resCos - dy * resSin;
+      const rdy = dx * resSin + dy * resCos;
       scene.root.pivot.set(cx, cy);
-      scene.root.position.set(cx - dx, cy - dy);
+      scene.root.position.set(cx - rdx, cy - rdy);
       scene.root.rotation = rotation;
       scene.root.scale.set(sx, topSy);
 
-      // Bottom half: shifted right/down, mirrored along the fold axis
       const broot = scene.butterflyRoot!;
       broot.pivot.set(cx, cy);
-      broot.position.set(cx + dx, cy + dy);
+      broot.position.set(cx + rdx, cy + rdy);
       broot.rotation = rotation;
       broot.scale.set(botScaleX, botScaleY);
 
@@ -2796,6 +3184,7 @@ export class BoardRenderer {
     } else {
       // Normal mode
       this.teardownButterfly(scene);
+      this.butterflyBaseDeg = null;
 
       // When viewing bottom-only, auto-mirror to simulate physically flipping
       // the board over. flipAxis controls the hinge: 'x' flips around horizontal
@@ -2853,6 +3242,10 @@ export class BoardRenderer {
     // Move bottomLayer from root into butterfly root
     scene.root.removeChild(scene.bottomLayer);
     broot.addChild(scene.bottomLayer);
+    // The bottom silkscreen lives in the shared silkscreenLayer under root;
+    // left there it would be drawn un-mirrored beneath the top half. It rides
+    // with the bottom half and goes back in teardownButterfly.
+    if (scene.silkscreenBottom) broot.addChildAt(scene.silkscreenBottom, 0);
 
     scene.butterflyRoot = broot;
     scene.butterflyOutline = boutline;
@@ -2882,6 +3275,10 @@ export class BoardRenderer {
     // be the last child of scene.root so it renders above pins and borders.
     scene.butterflyRoot.removeChild(scene.bottomLayer);
     scene.root.addChild(scene.bottomLayer);
+    if (scene.silkscreenBottom && scene.silkscreenLayer) {
+      scene.butterflyRoot.removeChild(scene.silkscreenBottom);
+      scene.silkscreenLayer.addChildAt(scene.silkscreenBottom, 0);
+    }
     scene.root.addChild(this.netDimGfx);
     scene.root.addChild(this.crossSideGhostGfx);
     scene.root.addChild(this.crossSideGhostOutlineGfx);
@@ -2977,6 +3374,7 @@ export class BoardRenderer {
       // (0/180 ↔ 90/270) transposes the screen axes and needs a rebuild so the
       // pin-label stagger follows (see onBoardUpdate's rotated branch).
       this.sceneRot90Parity = rot90Parity(boardStore.rotation);
+      if (graph.labelModel) this.labelRotKeys.set(graph.labelModel, rotLayoutKey(boardStore.rotation));
       const elapsed = (performance.now() - t0).toFixed(0);
       log.render.log(`Scene built in ${elapsed}ms: ${board.parts.length} parts, ${graph.topLabels.length + graph.bottomLabels.length} labels`);
       // Surface the scene-build cost on the load-progress overlay when one
@@ -3062,6 +3460,7 @@ export class BoardRenderer {
 
   private restoreViewportState(board: BoardData) {
     const state = this.viewportStates.get(board);
+    this.programmaticMove = true;
     if (state) {
       this.viewport.scale.set(state.scaleX, state.scaleY);
       this.viewport.position.set(state.x, state.y);
@@ -3222,6 +3621,10 @@ export class BoardRenderer {
         loadProgressStore.finishIfMatching(activatingFile);
       });
     }
+    // The scene is on screen: take the "loading" banner down. The deferral in
+    // onBoardUpdate clears its own mark too; this covers every other way a
+    // new scene gets activated (rebuilds, the lost-scene recovery branch).
+    boardStore.clearSceneBuilding(this.tabId ?? -1);
   }
 
   private deactivateScene() {
@@ -3320,6 +3723,31 @@ export class BoardRenderer {
     if (this.tabId !== null && boardStore.activeTabId !== this.tabId) {
       log.render.log('onBoardUpdate SKIP: tab mismatch', 'mine=' + this.tabId, 'active=' + boardStore.activeTabId);
       return;
+    }
+    // A board with no scene yet is about to be built on the main thread —
+    // ~0.7 s of stalls on a 3369-part board here, seconds on a tablet, and no
+    // input is answered meanwhile. Say so BEFORE it starts: record the build
+    // in the store, give React a committed frame (rAF) that has been painted
+    // (setTimeout 0) so the banner is on screen, then run this same update.
+    // A notify that arrives while the frame is pending is folded into the
+    // deferred run, which reads the store fresh.
+    if (this.sceneBuildDeferral === 'pending') return;
+    if (this.sceneBuildDeferral === 'idle') {
+      const next = boardStore.board;
+      if (next && next !== this.board && !this.sceneCache.has(this.sceneCacheKey(next))) {
+        const tabId = this.tabId ?? -1;
+        this.sceneBuildDeferral = 'pending';
+        boardStore.markSceneBuilding(tabId, boardStore.fileName || next.format);
+        requestAnimationFrame(() => setTimeout(() => {
+          this.sceneBuildDeferral = 'running';
+          try { this.onBoardUpdate(); }
+          finally {
+            this.sceneBuildDeferral = 'idle';
+            boardStore.clearSceneBuilding(tabId);
+          }
+        }, 0));
+        return;
+      }
     }
     // The worklist Highlight toggle lives on boardStore; redrawMultiHighlight is
     // otherwise only reached via worklist / selection-set / viewport-move
@@ -3449,7 +3877,13 @@ export class BoardRenderer {
         // pin-number/net-name stagger was computed for the wrong axis (it is
         // baked into label positions at build time). Rebuild — debounced, so
         // spinning through rotations coalesces into one rebuild.
-        if (rotated && rot90Parity(newRotation) !== this.sceneRot90Parity) {
+        //
+        // Text fast mode (the default) needs no rebuild: the label records
+        // carry both layouts and are moved in place. Only the BitmapText path,
+        // whose labels are scene objects, still rebuilds.
+        if (rotated && this.textFastMode && this.activeScene.labelModel) {
+          this.syncLabelRotation(this.activeScene.labelModel);
+        } else if (rotated && rot90Parity(newRotation) !== this.sceneRot90Parity) {
           this.scheduleRebuild();
         }
 
@@ -3593,6 +4027,224 @@ export class BoardRenderer {
     } catch (err) {
       log.render.error('onBoardUpdate crashed:', err);
     }
+  }
+
+  // ---- DOM overlays that follow the view (minimap, slide annotations) ----
+
+  private viewListeners = new Set<(e: ViewChange) => void>();
+  private viewEmitSig = '';
+  private viewPoseScale = -1;
+  private viewUserPanned = false;
+  private viewPanX = 0;
+  private viewPanDx = 0;
+  private viewPanDy = 0;
+  private viewPanY = 0;
+
+  /** Called after any frame whose view (viewport pose, board transform or
+   *  panel size) changed. `userPan` is true when the change was the user
+   *  panning — not a zoom, not one of our animated jumps — and then `dx/dy`
+   *  is how far it panned (screen px) since the last call. */
+  onViewChange(fn: (e: ViewChange) => void): () => void {
+    this.viewListeners.add(fn);
+    return () => { this.viewListeners.delete(fn); };
+  }
+
+  private emitViewChange() {
+    const userPan = this.viewUserPanned;
+    const dx = this.viewPanDx, dy = this.viewPanDy;
+    this.viewUserPanned = false;
+    this.viewPanDx = 0;
+    this.viewPanDy = 0;
+    if (!this.viewListeners.size || !this.viewport || !this.activeScene) return;
+    const r = this.activeScene.root.localTransform;
+    const b = boardStore.butterfly && this.activeScene.butterflyRoot ? this.activeScene.butterflyRoot.localTransform : null;
+    const sig = `${this.lastViewSig}|${r.a},${r.b},${r.c},${r.d},${r.tx},${r.ty}|${b ? `${b.a},${b.b},${b.tx},${b.ty}` : '-'}|${this.containerEl.clientWidth}x${this.containerEl.clientHeight}`;
+    if (sig === this.viewEmitSig && !userPan) return;
+    this.viewEmitSig = sig;
+    for (const fn of this.viewListeners) fn({ userPan, dx, dy });
+  }
+
+  /** Everything the minimap draws, in viewport-world space: the transform of
+   *  each board root (top, and the mirrored half in Butterfly) and the
+   *  rectangle the screen currently shows. */
+  getViewModel(): {
+    board: BoardData;
+    roots: Array<{ m: [number, number, number, number, number, number]; side: 'top' | 'bottom' | 'all' }>;
+    view: { x: number; y: number; w: number; h: number };
+  } | null {
+    if (!this.viewport || !this.activeScene || !this.board) return null;
+    const mat = (c: Container): [number, number, number, number, number, number] => {
+      const t = c.localTransform;
+      return [t.a, t.b, t.c, t.d, t.tx, t.ty];
+    };
+    const roots: Array<{ m: [number, number, number, number, number, number]; side: 'top' | 'bottom' | 'all' }> = [];
+    const broot = boardStore.butterfly ? this.activeScene.butterflyRoot : null;
+    if (broot) {
+      roots.push({ m: mat(this.activeScene.root), side: 'top' });
+      roots.push({ m: mat(broot), side: 'bottom' });
+    } else {
+      roots.push({ m: mat(this.activeScene.root), side: 'all' });
+    }
+    const tl = this.viewport.toWorld(0, 0);
+    const br = this.viewport.toWorld(this.containerEl.clientWidth, this.containerEl.clientHeight);
+    return {
+      board: this.board, roots,
+      view: { x: Math.min(tl.x, br.x), y: Math.min(tl.y, br.y), w: Math.abs(br.x - tl.x), h: Math.abs(br.y - tl.y) },
+    };
+  }
+
+  /** Panel size in renderer px. */
+  viewSize(): { width: number; height: number } {
+    return { width: this.containerEl.clientWidth, height: this.containerEl.clientHeight };
+  }
+
+  /** Centre the screen on a viewport-world point (minimap click / drag). */
+  centerOnWorld(x: number, y: number) {
+    if (!this.viewport) return;
+    this.zoomTween = null;
+    this.zoomAnim = null;
+    this.viewport.moveCenter(x, y);
+    this.viewport.emit('moved', { viewport: this.viewport, type: 'drag' });
+    this.needsRender = true;
+  }
+
+  /** Screen box (renderer px) and name of a part, or null. In Butterfly a
+   *  part on the bottom side is measured through the mirrored half. */
+  partScreenBox(idx: number | null): { name: string; x: number; y: number; w: number; h: number } | null {
+    const part = idx !== null ? this.board?.parts[idx] : undefined;
+    if (!part || !this.activeScene) return null;
+    let root: Container = this.activeScene.root;
+    const broot = boardStore.butterfly ? this.activeScene.butterflyRoot : null;
+    if (broot && part.side !== 'both' && (part.side === 'bottom') !== (this.board!.primarySide === 'bottom')) root = broot;
+    // The body as drawn — part.bounds only spans the pin centres.
+    const rb = computePartRenderBounds(part, renderSettingsStore.settings);
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const [x, y] of [[rb.px, rb.py], [rb.px + rb.pw, rb.py], [rb.px + rb.pw, rb.py + rb.ph], [rb.px, rb.py + rb.ph]]) {
+      const p = root.toGlobal({ x, y });
+      minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+    }
+    return { name: part.name, x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  }
+
+  /** Panel px → board-local (top root) coordinates, and back. Annotations are
+   *  stored in board space so they stay on the parts while the view moves. */
+  screenToBoard(x: number, y: number): { x: number; y: number } | null {
+    if (!this.activeScene) return null;
+    const p = this.activeScene.root.toLocal({ x, y });
+    return { x: p.x, y: p.y };
+  }
+  boardToScreen(x: number, y: number): { x: number; y: number } | null {
+    if (!this.activeScene) return null;
+    const p = this.activeScene.root.toGlobal({ x, y });
+    return { x: p.x, y: p.y };
+  }
+
+  /** The current view as pixels: the WebGL frame plus the Canvas2D label
+   *  layer, at the canvas's own backing resolution. `drawExtras` paints on
+   *  top in CSS px (the context is pre-scaled). The WebGL buffer is read in
+   *  the same task as the render, so no preserveDrawingBuffer is needed. */
+  captureView(drawExtras?: (ctx: CanvasRenderingContext2D) => void): HTMLCanvasElement | null {
+    if (!this.app?.renderer || !this.activeScene) return null;
+    const src = this.app.canvas as HTMLCanvasElement;
+    const cssW = this.containerEl.clientWidth, cssH = this.containerEl.clientHeight;
+    const scale = Math.max(1, window.devicePixelRatio || 1, src.width / Math.max(1, cssW));
+    const out = document.createElement('canvas');
+    out.width = Math.round(cssW * scale);
+    out.height = Math.round(cssH * scale);
+    const ctx = out.getContext('2d');
+    if (!ctx) return null;
+    try { this.app.render(); } catch (err) { this.handleRenderCrash(err); return null; }
+    ctx.drawImage(src, 0, 0, out.width, out.height);
+    const overlay = this.ensureLabelOverlay();
+    if (overlay && this.activeScene.labelModel) {
+      this.syncLabelOverlay(overlay, this.activeScene);
+      this.overlayDrawnView = { x: this.viewport.x, y: this.viewport.y, scale: Math.abs(this.viewport.scale.x) };
+      ctx.drawImage(overlay.element, 0, 0, out.width, out.height);
+    }
+    if (drawExtras) {
+      ctx.save();
+      ctx.scale(out.width / cssW, out.height / cssH);
+      drawExtras(ctx);
+      ctx.restore();
+    }
+    return out;
+  }
+
+  private scheduleViewSettle() {
+    if (this.viewSettleTimer) clearTimeout(this.viewSettleTimer);
+    this.viewSettleTimer = setTimeout(() => { this.viewSettleTimer = null; this.settleViewpoint(); }, 600);
+  }
+
+  /** The cursor entry, if it is this tab's. */
+  private currentNavEntryHere() {
+    const cur = navHistoryStore.current;
+    return cur?.place?.kind === 'board' && cur.place.tabId === this.tabId ? cur : null;
+  }
+
+  /** An animated jump has landed: the entry it served now records the pose it
+   *  arrived at (its record-time camera was the pose *before* the jump). */
+  private noteArrivalPose() {
+    if (navHistoryStore.isRestoring || !this.currentNavEntryHere()) return;
+    navHistoryStore.touchCurrentCamera();
+  }
+
+  private settleViewpoint() {
+    if (navHistoryStore.isRestoring || this.destroyed || !this.board || this.tabId == null || !this.viewport) return;
+    const tab = boardStore.tabs.find(t => t.id === this.tabId);
+    if (!tab) return;
+    const cam = this.navCamera.get();
+    const cur = this.currentNavEntryHere();
+    const prev = cur?.place?.kind === 'board' ? cur.place.camera : undefined;
+    const sw = this.containerEl.clientWidth, sh = this.containerEl.clientHeight;
+    const left = !prev || !viewsOverlap(prev, cam, sw, sh);
+    if (!left || !navHistoryStore.layers.view) {
+      // A small move, or the layer is off: the departure rule — the current
+      // entry simply remembers where it was left.
+      if (cur) navHistoryStore.touchCurrentCamera();
+      return;
+    }
+    const near = this.findLargestPartNearCenter();
+    navHistoryStore.recordViewpoint({
+      cause: 'view',
+      label: `${near ? `near ${near.name}` : 'region'} · ${Math.abs(cam.scaleX).toFixed(1)}×`,
+      place: { kind: 'board', tabId: tab.id, fileKey: tab.cacheKey, fileId: tab.fileId, fileName: tab.fileName,
+        side: tab.butterfly || (tab.showTop && tab.showBottom) ? 'both' : tab.showTop ? 'top' : 'bottom', camera: cam },
+    });
+  }
+
+  /** The Fit button: a deliberate "go to the overview" is a viewpoint. */
+  noteFitViewpoint() {
+    if (!this.board || this.tabId == null || !this.viewport) return;
+    const tab = boardStore.tabs.find(t => t.id === this.tabId);
+    if (!tab) return;
+    navHistoryStore.record({
+      cause: 'view', label: 'Fit board',
+      place: { kind: 'board', tabId: tab.id, fileKey: tab.cacheKey, fileId: tab.fileId, fileName: tab.fileName,
+        side: tab.butterfly || (tab.showTop && tab.showBottom) ? 'both' : tab.showTop ? 'top' : 'bottom', camera: this.navCamera.get() },
+    });
+  }
+
+  /**
+   * Put the camera back exactly where a navigation-history entry recorded it
+   * (the same 400 ms ease as `zoomToBounds`, but an absolute pose — not a
+   * fit, which is what the user did *not* want when they pressed back).
+   */
+  animateToViewport(cam: BoardCamera) {
+    if (!this.viewport || this.destroyed) return;
+    if (!isFinite(cam.x) || !isFinite(cam.y) || !cam.scaleX || !cam.scaleY) return;
+    this.zoomAnim = {
+      fromX: this.viewport.position.x,
+      fromY: this.viewport.position.y,
+      fromScaleX: this.viewport.scale.x,
+      fromScaleY: this.viewport.scale.y,
+      toX: cam.x, toY: cam.y, toScaleX: cam.scaleX, toScaleY: cam.scaleY,
+      elapsed: 0,
+      duration: 400,
+    };
+    this.zoomTween = null;
+    this.needsRender = true;
+    if (!this.app.ticker.started) this.app.ticker.start();
   }
 
   private zoomToBounds(
@@ -3790,6 +4442,14 @@ export class BoardRenderer {
       // symbol placement), handling page navigation itself.
       log.render.log(`triggerFollowPdf: lookup="${part.name}" ctx=${lookupContext.length} pdf="${pdfName}" force=${force}`);
       pdfStore.lookupEntity(pdfName, part.name, lookupContext, 'lookup');
+      // Navigation history: a deliberate lookup (double-click) is a stop of
+      // its own; the passive follow only annotates the click that caused it.
+      const landed = pdfStore.navPlaceFor(pdfName);
+      if (force) {
+        navHistoryStore.record({ cause: 'lookup', place: landed, query: { surface: 'pdf', text: part.name }, from: part.name });
+      } else if (landed) {
+        navHistoryStore.noteFollow({ fileName: pdfName, page: landed.page, matchIndex: pdfStore.getDocActiveMatchIndex(pdfName) });
+      }
     } else {
       // User-typed search → navigate + selection rectangle + tooltip for double-click
       log.render.log(`triggerFollowPdf: navigate-only query="${navQuery}" pdf="${pdfName}" (user search preserved)`);
@@ -3869,13 +4529,20 @@ export class BoardRenderer {
   }
 
   /**
-   * Install a capture-phase wheel listener that intercepts Shift+Scroll before
-   * pixi-viewport sees it, implementing the scroll-binding swap shown in Settings.
+   * Install a capture-phase wheel listener that resolves the modifier slots
+   * of the board's scroll bindings before pixi-viewport sees the event.
    *
-   * pixi-viewport has no shift-key awareness — its Wheel plugin always zooms
-   * (using deltaY, which is 0 when shift is held) and its Drag plugin always
-   * pans.  This handler provides the missing modifier-key dispatch so the
-   * BoardScrollBindingsEditor UI actually works.
+   * pixi-viewport has no modifier awareness — its Wheel plugin always zooms
+   * (on deltaY, which is 0 for Shift+wheel because the browser has already
+   * turned that into a horizontal deltaX) and its Drag plugin always pans.
+   * The bare slot stays with pixi-viewport (drag `wheel:` / wheel `wheelZoom:`
+   * are configured from `twoFingerPan`); Shift and ⌘ are dispatched here from
+   * `wheelShiftAction` / `wheelMetaAction`. Ctrl is never touched: it is the
+   * synthesised trackpad pinch in Chrome/Firefox and the fast zoom on a mouse.
+   *
+   * A modifier pan consumes deltaX AND deltaY. That is what keeps the OS's
+   * horizontal-scroll gesture (Shift+wheel, or whatever a utility maps) intact
+   * — the axis was decided before the event reached us (issue #40).
    */
   private installShiftWheelHandler(): void {
     // Remove previous listener if viewport was recreated (e.g. context-loss reinit)
@@ -3883,36 +4550,42 @@ export class BoardRenderer {
       this.containerEl.removeEventListener('wheel', this.boundShiftWheel, true);
     }
     this.boundShiftWheel = (e: WheelEvent) => {
-      // Let Ctrl/Meta combos (trackpad pinch, browser zoom) pass through.
-      if (e.ctrlKey || e.metaKey) return;
+      // Wake a paused (inactive-panel) board first. The wake listener on the
+      // canvas never sees an event this handler consumes below, which since
+      // the smooth wheel zoom (2026-07-19) is every zoom-bound and modifier
+      // wheel: the board took the zoom and drew nothing (regression of #6).
+      this.boundWheelWake?.(e);
+      if (e.ctrlKey) return;
 
       const s = renderSettingsStore.settings;
-
-      // Safety net: classic mouse wheel in pan mode would pan jerkily. Route
-      // it to the same mouse-centered zoom path as Shift+scroll when the
-      // wheelDetection heuristic matches.
-      const safetyNetFires =
-        s.wheelDetection && s.twoFingerPan && !e.shiftKey && looksLikeMouseWheel(e);
-
-      if ((e.shiftKey && s.twoFingerPan) || safetyNetFires) {
-        const raw = e.deltaY || e.deltaX;
-        this.zoomAtScreen(e.offsetX, e.offsetY, raw, true);
-      } else if (e.shiftKey && !s.twoFingerPan) {
-        // Alternate mode: bare = zoom, shift+scroll = pan.
-        const dx = e.deltaX || e.deltaY;
-        this.viewport.x -= dx;
-      } else if (!e.shiftKey && !s.twoFingerPan && s.smoothZoom) {
+      let action: 'pan' | 'zoom';
+      if (e.metaKey) {
+        action = s.wheelMetaAction;
+      } else if (e.shiftKey) {
+        action = s.wheelShiftAction;
+      } else if (s.wheelDetection && s.twoFingerPan && looksLikeMouseWheel(e)) {
+        // Safety net: a classic mouse wheel in pan mode would pan jerkily —
+        // route it to the mouse-centred zoom path instead.
+        action = 'zoom';
+      } else if (!s.twoFingerPan && s.smoothZoom) {
         // Plain mouse-wheel zoom: intercept before pixi-viewport's frame-count
         // smoothing and run it through the exponential tween instead.
-        this.zoomAtScreen(e.offsetX, e.offsetY, e.deltaY, true, WHEEL_DIVISOR);
+        action = 'zoom';
       } else {
-        // No modifier and safety net did not fire — let pixi-viewport handle it.
+        // Bare scroll, no override — pixi-viewport's own plugins handle it.
         return;
+      }
+
+      if (action === 'zoom') {
+        this.zoomAtScreen(e.offsetX, e.offsetY, e.deltaY || e.deltaX, true, WHEEL_DIVISOR);
+      } else {
+        this.viewport.x -= e.deltaX;
+        this.viewport.y -= e.deltaY;
       }
 
       this.viewport.emit('moved', { viewport: this.viewport, type: 'wheel' });
       this.needsRender = true;
-      this.netLinesDirty = true;
+      // No netLinesDirty: a pan or zoom never moves the world-space segments (rotateLive marks them when it turns the board), and a dirty flag holds off the in-zoom re-stroke (onZoomFrame).
       e.preventDefault();
       e.stopPropagation();
     };
@@ -3959,7 +4632,116 @@ export class BoardRenderer {
       a, b, startDist: dist, startScale: Math.abs(this.viewport.scale.x),
       lastMidX: (pa.x + pb.x) / 2 - rect.left,
       lastMidY: (pa.y + pb.y) / 2 - rect.top,
+      startAngle: Math.atan2(pb.y - pa.y, pb.x - pa.x),
+      rotBaseRad: this.liveRotate?.appliedRad ?? 0,
     };
+  }
+
+  /** Turn the scene roots so they carry `targetRad` beyond the store's
+   *  rotation, about the world point under the screen midpoint. Rotating the
+   *  picture about P is position' = P + R(Δ)·(position − P), rotation' += Δ
+   *  — for both roots in Butterfly, each about the same P. Screen-space
+   *  finger angles are CW-positive in a y-down frame, and so is Pixi's
+   *  rotation, so the two agree with no sign change. */
+  private rotateLive(targetRad: number, midX: number, midY: number, stream: 'pointer' | 'gesture', rawDeg: number): void {
+    if (!renderSettingsStore.settings.twoFingerRotate) return;
+    const scene = this.activeScene;
+    if (!scene) return;
+    const lr = this.liveRotate ?? (this.liveRotate = { engaged: false, appliedRad: 0, baseRad: 0, midX, midY, stream, rawDeg });
+    lr.midX = midX;
+    lr.midY = midY;
+    lr.stream = stream;
+    lr.rawDeg = rawDeg;
+    if (!lr.engaged) {
+      const turnedDeg = Math.abs(targetRad) * 180 / Math.PI;
+      if (rotationLockStore.locked) {
+        if (turnedDeg < renderSettingsStore.settings.rotateUnlockDeg) return;
+        // Unlock, and turn on from here — the degrees already turned (rotateUnlockDeg) are the
+        // unlock gesture, not rotation the board should catch up on.
+        rotationLockStore.setLocked(false);
+        lr.baseRad = targetRad;
+        boardStore.addToast('Rotation unlocked — turn two fingers to rotate; double-tap with two fingers to lock again.', 'info');
+        log.ui.log('touch: rotation unlocked by a two-finger turn');
+      } else if (turnedDeg < BoardRenderer.ROTATE_DEAD_ZONE_DEG) {
+        return;
+      }
+      lr.engaged = true;
+    }
+    const step = (targetRad - lr.baseRad) - lr.appliedRad;
+    if (step === 0) return;
+    const P = this.viewport.toWorld(midX, midY);
+    const cos = Math.cos(step), sin = Math.sin(step);
+    for (const root of [scene.root, scene.butterflyRoot]) {
+      if (!root) continue;
+      const dx = root.position.x - P.x, dy = root.position.y - P.y;
+      root.position.set(P.x + dx * cos - dy * sin, P.y + dx * sin + dy * cos);
+      root.rotation += step;
+    }
+    lr.appliedRad = targetRad - lr.baseRad;
+    this.needsRender = true;
+    this.netLinesDirty = true;
+    this.overlayDirty = true;
+    this.overlayContentDirty = true;
+  }
+
+  /** Two-finger double-tap: lock ⇄ unlock. Locking squares the board — a
+   *  locked board sits at a right angle — about the screen centre, as the
+   *  buttons do. */
+  private toggleRotationLock(): void {
+    if (rotationLockStore.locked) {
+      rotationLockStore.setLocked(false);
+      boardStore.addToast('Rotation unlocked — turn two fingers to rotate; double-tap with two fingers to lock again.', 'info');
+      log.ui.log('touch: rotation unlocked by a two-finger double-tap');
+      return;
+    }
+    rotationLockStore.setLocked(true);
+    const nearest = (Math.round(boardStore.rotation / 90) * 90) % 360;
+    boardStore.setRotation(nearest);
+    boardStore.addToast(`Rotation locked at ${nearest}°.`, 'info');
+    log.ui.log(`touch: rotation locked by a two-finger double-tap, snapped to ${nearest}°`);
+  }
+
+  /** The fingers lifted: hand the angle to the store — snapped to a right
+   *  angle when close — and keep the point that was between the fingers
+   *  where it is. The store commit runs applyFlips, which rebuilds the root
+   *  transform about the board centre and re-centres the viewport about the
+   *  screen centre; the pan correction afterwards puts the finger point back,
+   *  so the snap too turns about the fingers, not about the screen. */
+  private commitLiveRotation(): void {
+    const lr = this.liveRotate;
+    this.liveRotate = null;
+    const scene = this.activeScene;
+    if (lr && !lr.engaged && Math.abs(lr.rawDeg) >= 1) {
+      log.ui.log(`touch: two-finger turn ended without rotating (stream=${lr.stream}, raw=${lr.rawDeg.toFixed(1)}°, ` +
+        `${rotationLockStore.locked ? 'locked' : 'under the dead zone'})`);
+    }
+    if (!lr || !lr.engaged || !scene) return;
+    const mid = { x: lr.midX, y: lr.midY };
+    const local = scene.root.toLocal(mid);
+    let deg = boardStore.rotation + lr.appliedRad * 180 / Math.PI;
+    deg = ((deg % 360) + 360) % 360;
+    const nearest = Math.round(deg / 90) * 90;
+    const off = ((deg - nearest) % 360 + 540) % 360 - 180;
+    // A committed angle within the snap window of a right angle squares up;
+    // a window of 0 never snaps.
+    const snapDeg = renderSettingsStore.settings.rotateSnapDeg;
+    const snapped = snapDeg > 0 && Math.abs(off) <= snapDeg;
+    if (snapped) deg = nearest % 360;
+    boardStore.setRotation(deg);
+    const now = scene.root.toGlobal(local);
+    this.viewport.x += mid.x - now.x;
+    this.viewport.y += mid.y - now.y;
+    this.viewport.emit('moved', { viewport: this.viewport, type: 'pinch' });
+    this.needsRender = true;
+    this.netLinesDirty = true;
+    this.overlayContentDirty = true;
+    // The one record of what a gesture was, readable off the device: the
+    // stream that owned it, the raw angle it reported (pointer: the pair's
+    // screen angle; gesture: GestureEvent.rotation as delivered) and what the
+    // board turned. Raw and applied disagreeing in sign is the sign bug.
+    log.ui.log(`touch: rotation committed at ${boardStore.rotation}° — stream=${lr.stream}, ` +
+      `raw=${lr.rawDeg.toFixed(1)}°, board turned ${(lr.appliedRad * 180 / Math.PI).toFixed(1)}° (CW+), ` +
+      `snap ${snapped ? 'yes' : 'no'}`);
   }
 
   /** Two-finger pinch: zoom and pan, owned here rather than by pixi-viewport.
@@ -3985,6 +4767,10 @@ export class BoardRenderer {
       if (!rec) return;
       rec.x = e.clientX;
       rec.y = e.clientY;
+      const down = this.touchDownPos.get(e.pointerId);
+      if (down) {
+        this.twoFingerMaxTravel = Math.max(this.twoFingerMaxTravel, Math.hypot(e.clientX - down.x, e.clientY - down.y));
+      }
       if (this.gestureOwner === 'gesture') return;   // WebKit owns this one
       const p = this.pinch;
       if (!p || (e.pointerId !== p.a && e.pointerId !== p.b)) return;
@@ -4013,10 +4799,16 @@ export class BoardRenderer {
       this.viewport.y += midY - p.lastMidY;
       p.lastMidX = midX;
       p.lastMidY = midY;
+      // Turning the pair turns the board (see rotateLive). The angle is the
+      // pair's own, wrapped to (−π, π] so a finger crossing the axis does not
+      // read as a full turn.
+      let dAng = Math.atan2(pb.y - pa.y, pb.x - pa.x) - p.startAngle;
+      dAng = Math.atan2(Math.sin(dAng), Math.cos(dAng));
+      this.rotateLive(p.rotBaseRad + dAng, midX, midY, 'pointer', dAng * 180 / Math.PI);
 
       this.viewport.emit('moved', { viewport: this.viewport, type: 'pinch' });
       this.needsRender = true;
-      this.netLinesDirty = true;
+      // No netLinesDirty: a pan or zoom never moves the world-space segments (rotateLive marks them when it turns the board), and a dirty flag holds off the in-zoom re-stroke (onZoomFrame).
     };
     this.containerEl.addEventListener('pointermove', this.boundTouchPinchMove, { capture: true });
   }
@@ -4176,6 +4968,16 @@ export class BoardRenderer {
       if (this.app?.ticker && this.app.ticker.maxFPS !== targetMax) {
         this.app.ticker.maxFPS = targetMax;
       }
+      // Live-sync the render resolution (quality preset / touch profile).
+      // PixiJS v8 resizes the backing store on assignment; MSAA, by
+      // contrast, is fixed at context creation and waits for the next panel.
+      const targetRes = boardPixelRatio(cur.touchPerformanceMode, cur.boardResolutionCap);
+      if (this.app?.renderer && this.app.renderer.resolution !== targetRes) {
+        this.app.renderer.resolution = targetRes;
+        this.overlayDirty = true;
+        this.overlayContentDirty = true;
+        this.needsRender = true;
+      }
 
       // Live-sync perf overlay — single source of truth lives in the setting,
       // both the canvas "i" button and the Settings checkbox flow through here.
@@ -4197,8 +4999,11 @@ export class BoardRenderer {
       // applyGlobal structuredClones the settings, so object/array fields get
       // fresh references each call — use JSON equality for deep comparison.
       const INTERACTION_ONLY = new Set<string>([
-        'twoFingerPan', 'wheelDetection', 'wheelSmooth', 'disableInertia', 'dragToZoom',
+        'twoFingerPan', 'wheelShiftAction', 'wheelMetaAction', 'wheelDetection', 'wheelSmooth', 'disableInertia', 'dragToZoom',
         'cap60Fps', 'showPerfOverlay', 'smoothZoom',
+        // Live-synced above (resolution) or read only at Application.init
+        // (MSAA): neither changes a single vertex of the scene.
+        'touchPerformanceMode', 'boardResolutionCap', 'boardAntialiasing',
         // Overlay-only: read at label-overlay draw time (OverlayThresholds), so
         // a change needs an overlay repaint, NOT a scene rebuild. Rebuilding on
         // this needlessly redraws all geometry (and can hit the vertex ceiling
@@ -4209,6 +5014,7 @@ export class BoardRenderer {
         // floating bar must not rebuild — every rebuild is a chance to leave a
         // destroyed Graphics in the tree (the `_gpuData of null` crash).
         'overlayLayout', 'overlayPosition', 'overlayOrientation', 'overlayFloatX', 'overlayFloatY',
+        'minimapOnPan',
       ]);
       if (prev) {
         let visualChanged = false;
@@ -5136,7 +5942,7 @@ export class BoardRenderer {
       }
 
       // ── Trace highlight (PRIMARY net only) ───────────────────────────
-      if (primaryNet && this.board.traces && this.board.traces.length > 0 && boardStore.showTraces) {
+      if (primaryNet && this.board.traces && this.board.traces.length > 0 && boardStore.showTraces && !this.copperHidden) {
         const netName = primaryNet;
         const { layerStates } = boardStore;
         const traceByColor = new Map<number, { sx: number; sy: number; ex: number; ey: number }[]>();
@@ -6276,7 +7082,7 @@ export class BoardRenderer {
 
   /** Find the trace segment closest to a world-space point, respecting layer visibility */
   private traceHitTest(world: Point): { traceIndex: number; net: string } | null {
-    if (!this.board?.traces || !boardStore.showTraces) return null;
+    if (!this.board?.traces || !boardStore.showTraces || this.copperHidden) return null;
 
     const { layerStates } = boardStore;
     const local = this.worldToScene(world, this.activeScene?.root);
@@ -6726,6 +7532,39 @@ export class BoardRenderer {
       this.handleResizeClick(world);
       return;
     }
+    // Slide mode: ⌘+click (Ctrl+click off macOS), or any tap with the
+    // toolbar's Several parts toggle on, adds a part to / removes it from the
+    // multi-selection, so a slide can caption several parts at once. Shift
+    // is left alone: Shift+click still adds to the worklist here too.
+    const addMod = this.lastPointerAddMod;
+    this.lastPointerAddMod = false;
+    if (slideStore.enabled && !this.lastPointerShift && (addMod || slideStore.multi)) {
+      this.lastPointerShift = false;
+      this.clickCycle = null;
+      this.clearPendingCycleAdvance();
+      const hit = this.hitTestStack(world)[0];
+      if (hit && this.tabId !== null) {
+        // The first add keeps the part already selected in the set too.
+        const primary = boardStore.selection.partIndex;
+        if (primary !== null && selectionSetStore.current.ordered.length === 0 && primary !== hit.partIndex) {
+          selectionSetStore.add(this.tabId, primary);
+        }
+        // A selected part that is not the one in focus gets the focus (its
+        // reading boxes) first; picking it again removes it. Without this a
+        // tablet, which has no plain-click alternative while the toggle is on,
+        // could never get back to an earlier part's readings.
+        const name = this.board?.parts[hit.partIndex]?.name ?? null;
+        if (selectionSetStore.has(hit.partIndex) && slideStore.focusPart !== name) {
+          slideStore.setFocusPart(name);
+          return;
+        }
+        selectionSetStore.toggle(this.tabId, hit.partIndex);
+        // The part just picked is the one whose readings get typed in next.
+        if (selectionSetStore.has(hit.partIndex)) slideStore.setFocusPart(name);
+        else if (slideStore.focusPart === name) slideStore.setFocusPart(null);
+      }
+      return;
+    }
     const shift = this.lastPointerShift;
     this.lastPointerShift = false;
 
@@ -7114,6 +7953,46 @@ export class BoardRenderer {
     if (part) this.triggerFollowPdf(part, true);
   }
 
+  /**
+   * Open the board menu from a touch gesture (long press, or hold + second
+   * finger tap). The finger still on the glass will come up later and produce
+   * (a) pixi-viewport's `clicked`, which would change the selection under the
+   * menu, and (b) the browser's compatibility `click`, which would land on
+   * the menu or close it — both are swallowed once.
+   */
+  private openTouchMenu(x: number, y: number) {
+    this.dragZoomConsumedClick = true;
+    // The trap lives exactly as long as the held finger: it is disarmed a
+    // moment after that finger's pointerup, whether or not a click came of
+    // it. A fixed 700 ms window from the open ate the user's first tap on a
+    // menu row whenever the browser sent no compatibility click for the
+    // release (a hold that moved, a long hold) — the row did nothing.
+    const swallow = (ev: Event) => { ev.stopPropagation(); ev.preventDefault(); disarm(); };
+    const onUp = () => { window.removeEventListener('pointerup', onUp, true); setTimeout(disarm, 80); };
+    const disarm = () => {
+      document.removeEventListener('click', swallow, { capture: true });
+      window.removeEventListener('pointerup', onUp, true);
+      clearTimeout(cap);
+    };
+    document.addEventListener('click', swallow, { capture: true });
+    window.addEventListener('pointerup', onUp, true);
+    const cap = setTimeout(disarm, 10_000);   // never leave it armed for good
+    this.handleRightClick({ clientX: x, clientY: y });
+  }
+
+  private camSnapshot() {
+    return { x: this.viewport.x, y: this.viewport.y, sx: this.viewport.scale.x, sy: this.viewport.scale.y };
+  }
+
+  /** Undo the few px of zoom a tapping second finger fed the pinch path. */
+  private restoreCam(c: { x: number; y: number; sx: number; sy: number }) {
+    this.viewport.scale.set(c.sx, c.sy);
+    this.viewport.position.set(c.x, c.y);
+    this.programmaticMove = true;
+    this.needsRender = true;
+    this.netLinesDirty = true;
+  }
+
   private handleRightClick(e: { clientX: number; clientY: number }) {
     if (!this.board) return;
     const rect = this.containerEl.getBoundingClientRect();
@@ -7148,6 +8027,7 @@ export class BoardRenderer {
   fitToBoard(board?: BoardData) {
     const b = board?.bounds ?? this.board?.bounds;
     if (!b) return;
+    this.programmaticMove = true;
     // Defense-in-depth against the same reinit race the ResizeObserver guards:
     // a pending-fit timer could fire during reinitApp() when app.renderer isn't
     // ready / viewport is stale. reinitApp sizes the fresh viewport itself.
@@ -7214,6 +8094,7 @@ export class BoardRenderer {
    * center. Scale is unchanged. Animated via the existing zoomAnim slot.
    */
   private panToBounds(bounds: { minX: number; minY: number; maxX: number; maxY: number }, root?: Container) {
+    this.programmaticMove = true;
     const sw = this.containerEl.clientWidth;
     const sh = this.containerEl.clientHeight;
     if (sw === 0 || sh === 0) return;
@@ -7309,7 +8190,7 @@ export class BoardRenderer {
     // destroy() is the full-teardown path (tab closed) and does NOT route
     // through teardownForReinit() — unregister here too, or a closed tab's
     // Application would stay referenced in renderer-registry.ts forever.
-    if (this.tabId !== null) unregisterRenderer(this.tabId);
+    if (this.tabId !== null) { unregisterRenderer(this.tabId); navHistoryStore.unregisterBoardCamera(this.tabId, this.navCamera); }
     if (this.selectionBlinkTimer) {
       clearTimeout(this.selectionBlinkTimer);
       this.selectionBlinkTimer = null;

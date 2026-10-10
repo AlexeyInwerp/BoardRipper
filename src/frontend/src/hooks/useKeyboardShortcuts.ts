@@ -10,6 +10,7 @@ import { focusBoardSearchInput } from '../components/BoardSidebar.utils';
 import { toggleLibrarySidebar } from '../components/Sidebar.utils';
 import { copyText } from '../clipboard';
 import { peekHintStore } from '../store/peek-hint-store';
+import { historyBack, historyForward } from '../store/nav-history-actions';
 
 /**
  * Global keyboard shortcut handler — attach once in App.
@@ -34,12 +35,16 @@ let _lastMouseY = 0;
  *     flipped, no hint); at or over = hold (revert to original + dismiss
  *     hint).
  *
- * 350 ms sits comfortably above a "gentle" tap (a slow, controlled press
- * can run 200–300 ms — the original 180 ms threshold was too tight). Still
- * well under the natural human "I'm holding this" reflex of ~500 ms.
- * Tune up if normal taps still register as peeks.
+ * 500 ms: a slow, controlled tap runs 200–300 ms, and 350 still caught some
+ * (2026-10-05, "peek interval should be a bit longer"); a deliberate hold is
+ * past it anyway.
+ *
+ * The press is timed with the EVENTS' own timestamps, never with the clock
+ * when the handlers run. The first flip after a board renders does heavy
+ * synchronous work, so the keyup sits in the queue behind it; timed at
+ * handler time, a quick tap measured as a long hold and peeked back.
  */
-const SPACE_HOLD_PEEK_MS = 350;
+const SPACE_HOLD_PEEK_MS = 500;
 /** How long the hint chip stays visible after it first appears. Auto-hides
  *  even if the user keeps holding Space, so a long peek doesn't leave a
  *  permanent label cluttering the canvas. */
@@ -94,10 +99,15 @@ export function useKeyboardShortcuts() {
       if (focusSearch && focusSearchMatch) {
         // Standard behavior: if the PDF search field is already focused with a
         // query, repeat Cmd+F steps to the next match (Shift reverses direction).
-        if (fileInputRefs.pdfSearch
-            && document.activeElement === fileInputRefs.pdfSearch
-            && fileInputRefs.pdfSearch.value.trim()) {
+        // Any focused PDF find field counts, not only the one registered in
+        // fileInputRefs (that ref follows Dockview's *active* panel, which a
+        // focused field in another panel need not be) — otherwise ⌘F fell
+        // through to the fresh-search path and reset the view.
+        const focused = document.activeElement as HTMLInputElement | null;
+        if (focused?.classList?.contains('pdf-search-input') && focused.value.trim()) {
           e.preventDefault();
+          const file = focused.dataset.pdfFile;
+          if (file) pdfStore.switchTo(file);
           if (e.shiftKey) pdfStore.prevMatch();
           else pdfStore.nextMatch();
           return;
@@ -180,6 +190,19 @@ export function useKeyboardShortcuts() {
           fileInputRefs.search.select();
           return;
         }
+      }
+
+      // ⌘[ / ⌘] — navigation history, Preview's Go ▸ Back / Forward. Handled
+      // before the input bailout: neither key edits text and Preview's Back
+      // works with the find field focused. preventDefault unconditionally —
+      // ⌘[ is the browser's own Back in Chrome and Safari on macOS, and in the
+      // hosted PWA that would leave the app even when there is nothing to go
+      // back to.
+      {
+        const hb = getShortcut('historyBack');
+        const hf = getShortcut('historyForward');
+        if (hb && matchesShortcut(e, hb)) { e.preventDefault(); historyBack(); return; }
+        if (hf && matchesShortcut(e, hf)) { e.preventDefault(); historyForward(); return; }
       }
 
       // Don't intercept when typing in inputs/textareas
@@ -284,11 +307,14 @@ export function useKeyboardShortcuts() {
             // on the press record so keyup/blur can cancel it cleanly.
             const press: SpaceFlipPress = {
               wasUiTopVisible: uiTopVisible,
-              pressedAt: performance.now(),
+              pressedAt: e.timeStamp,
               hintTimer: null,
               hintHideTimer: null,
             };
             press.hintTimer = setTimeout(() => {
+              // A timer can fire late, after the main thread was busy; only
+              // show the hint if the key is really still down by now.
+              if (_spaceFlipPress !== press) return;
               peekHintStore.show();
               press.hintHideTimer = setTimeout(() => {
                 peekHintStore.hide();
@@ -476,7 +502,9 @@ export function useKeyboardShortcuts() {
       if (press.hintTimer) clearTimeout(press.hintTimer);
       if (press.hintHideTimer) clearTimeout(press.hintHideTimer);
       peekHintStore.hide();
-      const heldMs = performance.now() - press.pressedAt;
+      // Event time, not handler time: a keyup that waited behind the flip's
+      // own work is still a tap.
+      const heldMs = e.timeStamp - press.pressedAt;
       if (heldMs < SPACE_HOLD_PEEK_MS) return; // tap: keep flipped state
       // Hold: restore the side that was visible before the press.
       if (press.wasUiTopVisible) boardStore.selectTop();

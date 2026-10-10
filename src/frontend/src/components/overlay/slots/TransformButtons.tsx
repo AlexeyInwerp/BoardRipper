@@ -13,8 +13,8 @@ import { QuickMenu } from '../../QuickMenu';
 import type { SlotCtx } from '../slot-ctx';
 
 export function ButterflyButton({ ctx }: { ctx: SlotCtx }) {
-  // Layered formats have no top/bottom pair to lay side by side.
-  if (ctx.thisTab.hasLayers) return null;
+  // Every format: on a layered board the renderer hides the copper while the
+  // two sides are laid out flat (the store says so in a toast).
   const on = ctx.thisTab.butterfly;
   return (
     <button
@@ -52,6 +52,16 @@ export function TracesButton({ ctx }: { ctx: SlotCtx }) {
   const t = ctx.thisTab;
   // Only formats that carry copper, and not layered ones (the Layers panel owns those).
   if (!t.hasTraces || t.hasLayers) return null;
+  // Butterfly hides the copper regardless of this toggle; show that instead
+  // of a lit button whose traces are not there.
+  if (t.butterfly) {
+    return (
+      <button type="button" className="board-netlines-toggle" data-testid="traces-btn" disabled
+        aria-pressed={false} title="PCB traces are hidden while Butterfly is on">
+        <IconRoute size={16} />
+      </button>
+    );
+  }
   return (
     <button
       type="button"

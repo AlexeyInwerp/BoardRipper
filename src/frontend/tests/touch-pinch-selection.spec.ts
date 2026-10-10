@@ -196,6 +196,88 @@ test.describe('touch input', () => {
     }
   });
 
+  /** Flick, then tap: the everyday way to select on a tablet. With inertia
+   *  on, pixi-viewport treats a touch during deceleration as "stop the glide"
+   *  and never emits `clicked` for it — measured: a tap right after a pan
+   *  selected nothing, and one 1.5 s later hit the wrong part, because the
+   *  board was still moving. The renderer now raises the click itself when
+   *  such a touch ends as a tap. */
+  test('a tap while the board is still gliding after a flick selects the part under it', async ({ page }) => {
+    const c = await load(page);
+    const cdp = await page.context().newCDPSession(page);
+    await page.evaluate(async () => {
+      const m = await import('/src/store/render-settings.ts');
+      const st = (m as { renderSettingsStore: { globalSnapshot(): object; applyGlobal(v: object): void } }).renderSettingsStore;
+      st.applyGlobal({ ...st.globalSnapshot(), disableInertia: false });
+    });
+    await page.waitForTimeout(300);
+    await page.evaluate((name) =>
+      (window as unknown as { __boardStore: { focusPart(n: string): void } }).__boardStore.focusPart(name), SUBJECT);
+    await page.waitForTimeout(1500);
+    await page.evaluate(() =>
+      (window as unknown as { __boardStore: { selectPart(i: number | null): void } }).__boardStore.selectPart(null));
+
+    // A short, quick pan that leaves the board gliding, then an immediate
+    // tap where the part is at that instant — read from the store rather than
+    // predicted, since it is still moving.
+    await touch(cdp, 'touchStart', [{ x: c.x - 150, y: c.y }]);
+    for (let i = 1; i <= 6; i++) {
+      await touch(cdp, 'touchMove', [{ x: c.x - 150 + i * 20, y: c.y }]);
+      await page.waitForTimeout(10);
+    }
+    await touch(cdp, 'touchEnd', []);
+    await page.waitForTimeout(60);
+    // The board is still moving, and the first tap will stop it (pixi's own
+    // pointerdown does that), so there is exactly one chance: tap ONCE, at
+    // where the part is at that instant. The viewport is reachable through
+    // the DEV registry and can say where a world point is on screen right now.
+    const canvas = (await page.locator('.board-panel-canvas canvas').first().boundingBox())!;
+    const subjectIndex = await page.evaluate((name) => {
+      const bd = (window as unknown as { __boardStore: { board: { parts: { name: string }[] } } }).__boardStore.board;
+      return bd.parts.findIndex(q => q.name === name);
+    }, SUBJECT);
+    // Pins are drawn inside the scene root, which carries the board's own
+    // transform (a Y flip and an offset here), so the conversion has to go
+    // through that container — `viewport.toScreen(pin world)` lands on the
+    // wrong spot. `toGlobal` on the root gives renderer screen px.
+    const partOnScreen = () => page.evaluate((idx) => {
+      type Node = { x: number; children: Node[]; toGlobal(p: { x: number; y: number }): { x: number; y: number } };
+      const refs = (window as unknown as { __brAppRefs?: { deref(): { stage: Node } | undefined }[] }).__brAppRefs ?? [];
+      const app = refs.map(r => r.deref()).find(Boolean);
+      const bd = (window as unknown as { __boardStore: { board: { parts: { pins: { position: { x: number; y: number } }[] }[] } } }).__boardStore.board;
+      const pins = bd.parts[idx].pins;
+      const cx = pins.reduce((a, q) => a + q.position.x, 0) / pins.length;
+      const cy = pins.reduce((a, q) => a + q.position.y, 0) / pins.length;
+      const vp = app!.stage.children[0];
+      const root = vp.children[0];
+      const g = root.toGlobal({ x: cx, y: cy });
+      return { x: g.x, y: g.y, vx: vp.x };
+    }, subjectIndex);
+
+    const a = await partOnScreen();
+    await page.waitForTimeout(40);
+    const b = await partOnScreen();
+    expect(Math.abs(b.vx - a.vx), 'the board should still be gliding when the tap lands').toBeGreaterThan(0.5);
+
+    await touch(cdp, 'touchStart', [{ x: canvas.x + b.x, y: canvas.y + b.y }]);
+    await touch(cdp, 'touchEnd', []);
+    await page.waitForTimeout(300);
+    expect(await selectedPart(page), 'a tap during the glide should select the part under it').toBe(subjectIndex);
+  });
+
+  /** The touch context menu is a long-press. It is the only way to reach the
+   *  menu on a tablet, so it gets its own test. */
+  test('a long-press opens the context menu', async ({ page }) => {
+    const c = await load(page);
+    const cdp = await page.context().newCDPSession(page);
+    await touch(cdp, 'touchStart', [c]);
+    await touch(cdp, 'touchMove', [{ x: c.x + 3, y: c.y + 2 }]);   // a finger never holds perfectly still
+    await page.waitForTimeout(700);
+    const open = await page.evaluate(() => !!document.querySelector('.context-menu, [data-testid="context-menu"]'));
+    await touch(cdp, 'touchEnd', []);
+    expect(open, 'the menu should be open after a 700 ms hold').toBe(true);
+  });
+
   test('a tap right after a pinch still selects — the guard does not stay armed', async ({ page }) => {
     const c = await load(page);
     const cdp = await page.context().newCDPSession(page);

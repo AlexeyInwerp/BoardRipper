@@ -574,6 +574,13 @@ func main() {
 		// Try to serve the file directly
 		path := filepath.Join(staticDir, r.URL.Path)
 		_, statErr := os.Stat(path)
+		if os.IsNotExist(statErr) && strings.HasPrefix(r.URL.Path, "/assets/") {
+			// A hashed build file that is not here belongs to another build
+			// (a tab opened before an update). index.html under a .js name
+			// only turns that into a MIME error; a 404 says what it is.
+			http.NotFound(w, r)
+			return
+		}
 		if os.IsNotExist(statErr) {
 			// SPA fallback: serve index.html for client-side routing
 			setNoCacheHeaders(w)

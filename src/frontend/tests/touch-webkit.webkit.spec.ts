@@ -54,14 +54,14 @@ async function openBoard(page: Page) {
  *  the dispatch exactly; it just is not the engine's own event object. */
 /** One synthetic gesture event at a client point. See trackpadPinch for why
  *  this is a MouseEvent carrying `scale` rather than a real GestureEvent. */
-async function gestureOn(page: Page, type: string, scale: number, at: { x: number; y: number }) {
-  await page.evaluate(({ type, scale, at }) => {
+async function gestureOn(page: Page, type: string, scale: number, at: { x: number; y: number }, rotation = 0) {
+  await page.evaluate(({ type, scale, at, rotation }) => {
     const el = document.querySelector('.board-panel-canvas')!;
     const e = new MouseEvent(type, { clientX: at.x, clientY: at.y, bubbles: true, cancelable: true });
     Object.defineProperty(e, 'scale', { value: scale });
-    Object.defineProperty(e, 'rotation', { value: 0 });
+    Object.defineProperty(e, 'rotation', { value: rotation });
     el.dispatchEvent(e);
-  }, { type, scale, at });
+  }, { type, scale, at, rotation });
 }
 
 async function trackpadPinch(page: Page, scale: number) {
@@ -171,5 +171,33 @@ test.describe('WebKit / iPadOS', () => {
     // silent renderer failure would otherwise show up as an unrelated test.
     await expect(page.locator('.board-panel-canvas canvas').first()).toBeVisible();
     expect(await zoomPct(page)).toBeGreaterThan(0);
+  });
+  test('a gesture that turns the fingers turns the board — GestureEvent.rotation is CW-positive, so +45 reads as 45° clockwise (33° after the 12° unlock)', async ({ page }) => {
+    await openBoard(page);
+    const r = (await page.locator('.board-panel-canvas').boundingBox())!;
+    const at = { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    // Reads the scene root through a DEV-only global: skipped against a
+    // production bundle (the :1234 pre-flight), like the pdf-touch cases.
+    const devHooks = await page.evaluate(() => '__boardRenderer' in (window as unknown as Record<string, unknown>));
+    test.skip(!devHooks, 'renderer is a DEV-only global');
+    const rootDeg = () => page.evaluate(() => {
+      const r = (window as unknown as { __boardRenderer?: { activeScene?: { root: { rotation: number } } } }).__boardRenderer;
+      return (r?.activeScene?.root.rotation ?? 0) * 180 / Math.PI;
+    });
+    // Pinned to 12° — the arithmetic below is built on it (the shipped default is 24°).
+    await page.evaluate(() => {
+      const rs = (window as unknown as { __renderSettings: { globalSnapshot(): Record<string, unknown>; applyGlobal(s: unknown): void } }).__renderSettings;
+      const snap = rs.globalSnapshot(); snap.rotateUnlockDeg = 12; rs.applyGlobal(snap);
+    });
+    const before = await rootDeg();
+    await gestureOn(page, 'gesturestart', 1, at, 0);
+    // One-degree steps, so the unlock fires at 12° exactly and the arithmetic below is exact.
+    for (let i = 1; i <= 45; i++) await gestureOn(page, 'gesturechange', 1, at, i);
+    // Rotation starts locked and unlocks 12° in, turning on from there.
+    expect(Math.abs((await rootDeg()) - before - (45 - 12))).toBeLessThan(0.5);
+    await gestureOn(page, 'gestureend', 1, at, 45);
+    await page.waitForTimeout(200);
+    const stored = await page.evaluate(() => (window as unknown as { __boardStore: { rotation: number } }).__boardStore.rotation);
+    expect(Math.abs(stored - (45 - 12))).toBeLessThan(0.5);
   });
 });

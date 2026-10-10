@@ -16,10 +16,11 @@
  *  1. `twoFingerPan` defaults to true, which routes a bare `page.mouse.wheel`
  *     to pixi-viewport's drag-plugin PAN path, not zoom (see
  *     BoardRenderer.installShiftWheelHandler / applyViewportPlugins). Zoom
- *     requires Shift held (`e.shiftKey && s.twoFingerPan` branch) — matching
- *     the documented "Shift+Scroll = slow zoom" binding in CLAUDE.md. Without
- *     the modifier, 10 unmodified wheel notches just pan the board off-frame
- *     and every screenshot comes out solid black.
+ *     goes through a modifier slot; since issue #40 the Shift slot defaults
+ *     to Pan (it is the browser's horizontal scroll), so `loadBoard` binds
+ *     `wheelShiftAction: 'zoom'` explicitly and `zoomAt` holds Shift. Without
+ *     a zoom modifier, 10 wheel notches just pan the board off-frame and
+ *     every screenshot comes out solid black.
  *  2. Repeatedly wheeling over one FIXED screen pixel anchors the zoom to
  *     whatever world point was under the cursor at the first notch — an
  *     anchor that happens to sit between components (as the board's on-screen
@@ -70,7 +71,8 @@ async function setOverlay(page: Page, on: boolean) {
     const mod = await import('/src/store/render-settings.ts');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const store = (mod as any).renderSettingsStore;
-    store.applyGlobal({ ...store.globalSnapshot(), textFastMode: v });
+    // wheelShiftAction: the spec zooms with Shift+wheel (see file header).
+    store.applyGlobal({ ...store.globalSnapshot(), textFastMode: v, wheelShiftAction: 'zoom' });
   }, on);
 }
 

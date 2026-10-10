@@ -1,7 +1,8 @@
-import type { BoardData, Part, Pin, Nail, Point, Trace, SilkscreenPath, Pad, DiodeReading, DiodeReferenceChannel } from './types';
+import type { BoardData, BoardText, Part, Pin, Nail, Point, Trace, SilkscreenPath, Pad, DiodeReading, DiodeReferenceChannel } from './types';
 import { computeBBox, buildNets } from './types';
 import { detectXMirrorByPinDirection } from './mirror-detect';
 import { classifyComponents, pairMajors, decideSide, unionBBox, makeRegionLookup, splitSymmetricLoop, type OutlineComponent, type ComponentPair, type CopperVotes } from './xzz-boards';
+import { buildAnnotations } from './annotation-tables';
 import { log } from '../store/log-store';
 
 // =====================================================================
@@ -198,7 +199,6 @@ function desDecrypt(buf: Uint8Array): Uint8Array {
 const XZZ_SCALE  = 10000;
 const OUTLINE_LAYER = 28;
 const SILKSCREEN_LAYER = 17;
-const decoder = new TextDecoder('utf-8', { fatal: false });
 
 export interface Segment { p1: Point; p2: Point; }
 
@@ -543,8 +543,43 @@ function ru32(d: Uint8Array, o: number): number {
 
 function ri32(d: Uint8Array, o: number): number { return ru32(d, o) | 0; }
 
+const strictUtf8 = new TextDecoder('utf-8', { fatal: true });
+const gb18030 = new TextDecoder('gb18030');
+
+// Non-ASCII a genuine UTF-8 string in these files is made of: Latin-1 symbols
+// (× ° ± µ), Greek (Ω μ), punctuation, letterlike and math symbols, CJK.
+const PLAUSIBLE_NON_ASCII = /[\u00a0-\u00ff\u0370-\u03ff\u2000-\u206f\u2100-\u214f\u2190-\u22ff\u3000-\u9fff\uff00-\uffef]/;
+
+function plausibleUtf8(s: string): boolean {
+  for (const ch of s) if (ch.charCodeAt(0) > 0x7f && !PLAUSIBLE_NON_ASCII.test(ch)) return false;
+  return true;
+}
+
+/** Names, labels and board text are GB2312 on files from Chinese tooling and
+ *  UTF-8 elsewhere; nothing in the file says which. A lenient UTF-8 decode
+ *  turned every Chinese glyph into U+FFFD, and isPlausiblePartValue then
+ *  rejected the whole label.
+ *
+ *  Validity alone cannot decide it. Short GB2312 runs are often valid UTF-8
+ *  too — 丝印 is `CB BF D3 A1`, which UTF-8 reads as `˿ӡ` — so "UTF-8 if it
+ *  decodes" misreads them; and genuine UTF-8 `×` (`C3 97`) is valid GB18030
+ *  as 脳, so "GB first" misreads that. The UTF-8 reading is kept only when it
+ *  is made of characters these files actually contain; otherwise GB18030
+ *  (a GB2312/GBK superset, ASCII-compatible). */
+export function decodeXzzText(bytes: Uint8Array): string {
+  let utf8: string | null = null;
+  try {
+    utf8 = strictUtf8.decode(bytes);
+  } catch {
+    // not UTF-8
+  }
+  if (utf8 !== null && plausibleUtf8(utf8)) return utf8;
+  const gb = gb18030.decode(bytes);
+  return utf8 !== null && gb.includes('\uFFFD') ? utf8 : gb;
+}
+
 function rstr(d: Uint8Array, o: number, n: number): string {
-  return decoder.decode(d.subarray(o, o + n)).replace(/\0/g, '').trim();
+  return decodeXzzText(d.subarray(o, o + n)).replace(/\0/g, '').trim();
 }
 
 function parseNetBlock(data: Uint8Array): Map<number, string> {
@@ -576,6 +611,8 @@ interface PinData {
   /** Pad shape from the 1-byte code at (28 + nameLen + 8): 0x01 = round (BGA),
    *  0x02 = rect (SMD). Unknown codes fall through to 'rect'. */
   padShape: 'round' | 'rect';
+  /** A reading the record itself carries (top-level test pads only). */
+  diode?: DiodeReading;
 }
 /** Structural subset of PinData used by normalizeOblongPads (exported for tests). */
 export interface OblongPinLike {
@@ -716,6 +753,8 @@ interface PartData {
   /** BOM value ("22uF", "100K") when the exporter wrote one into a body
    *  label sub-block. See readLabelSubBlock / parsePartBlock. */
   value?: string;
+  /** Made from a top-level 0x09 test pad, not a part block. */
+  testPoint?: boolean;
 }
 
 /** Longest string still plausible as a BOM value. Anything longer is a sign
@@ -788,8 +827,8 @@ function parsePinSubBlock(data: Uint8Array, ptr: number): { pin: PinData; next: 
   // 253 pins carry a non-zero value and the annular-ring relation
   // (drill < min(padW, padH)) holds on every single one — a flag field would
   // have no reason to respect it. Values land in the 6.5–60 mil range, always
-  // on connector legs, headers and mounting pins, and never on a top-level
-  // 0x09 test pad (which is correct — probe points are surface features).
+  // on connector legs, headers and mounting pins. Top-level 0x09 test pads
+  // carry it too on some files (XZZ_FORMAT.md, "Drill diameter").
   // Reverse-engineered by Sean Johnson (@sjohnson1021) and reported with
   // Switch / PS5 / MSI evidence in issue #32; the annular-ring argument and
   // the drill-vs-flag reasoning above are his.
@@ -819,7 +858,7 @@ function parsePinSubBlock(data: Uint8Array, ptr: number): { pin: PinData; next: 
     const shapeByte = data[ptr + 8];
     padShape = shapeByte === 0x01 ? 'round' : 'rect';
   }
-  // Then 27 bytes of pad geom + 5 padding bytes, then the netIndex.
+  // Then 27 bytes of pad geom + the 5-byte record-list terminator, then the netIndex.
   const unk3Ptr = ptr;
   ptr += 32;
   const netIndex = (ptr + 4 <= data.length) ? ru32(data, ptr) : 0;
@@ -951,18 +990,54 @@ function parsePartBlock(encBuf: Uint8Array): PartData | null {
   return { name: partName, side: 'top', pins, groupName, silkLines, value };
 }
 
-interface TestPadData { x: number; y: number; netIndex: number; side?: 'top' | 'bottom'; }
+export interface TestPadData {
+  x: number; y: number; netIndex: number; side?: 'top' | 'bottom';
+  /** The record's own name (a pad number such as "76"), drill and first pad
+   *  record — the same fields a part's pin sub-block carries. */
+  name: string; drill: number; padAngleDeg: number;
+  padW: number; padH: number; padShape: 'round' | 'rect';
+  /** The optional trailing `u32 len, char reading[len]` (`OL`, `375`). */
+  reading?: DiodeReading;
+  /** Set by the board-pack pass, like PartData.boardIndex. */
+  boardIndex?: number;
+}
 
-function parseTestPadBlock(data: Uint8Array): TestPadData | null {
+/** Top-level `0x09` test pad: the pin sub-block's layout (name, three pad
+ *  records, 5-byte terminator, net index), then an optional
+ *  `u32 len, char reading[len]`. The net index is therefore positional, not
+ *  the last 4 bytes: reading the tail returned 0 — no net — on every pad that
+ *  carries the reading section (2,835 of 12,657 in XZZ_FORMAT.md's sample).
+ *  Exported for xzz-testpad.test.ts. */
+export function parseTestPadBlock(data: Uint8Array): TestPadData | null {
   if (data.length < 16) return null;
   let ptr = 4; // skip pad_number
   const x = ri32(data, ptr) / XZZ_SCALE; ptr += 4;
   const y = ri32(data, ptr) / XZZ_SCALE; ptr += 4;
-  ptr += 8; // inner_diameter + unknown
+  const drill = ru32(data, ptr) / XZZ_SCALE; ptr += 4;
+  const padAngleDeg = ru32(data, ptr) / XZZ_SCALE; ptr += 4;
   if (ptr + 4 > data.length) return null;
-  const nameLen = ru32(data, ptr); ptr += 4 + nameLen;
-  const netIndex = data.length >= 4 ? ru32(data, data.length - 4) : 0;
-  return { x, y, netIndex };
+  const nameLen = ru32(data, ptr); ptr += 4;
+  const name = ptr + nameLen <= data.length ? rstr(data, ptr, nameLen) : '';
+  ptr += nameLen;
+  let padW = 0, padH = 0, padShape: 'round' | 'rect' = 'rect';
+  if (ptr + 9 <= data.length) {
+    padW = ru32(data, ptr) / XZZ_SCALE;
+    padH = ru32(data, ptr + 4) / XZZ_SCALE;
+    padShape = data[ptr + 8] === 0x01 ? 'round' : 'rect';
+  }
+  ptr += 27 + 5; // three (w, h, shape) pad records + terminator
+  const netIndex = ptr + 4 <= data.length ? ru32(data, ptr) : 0;
+  ptr += 4;
+  // Optional reading after the net index (XZZ_FORMAT.md: e.g. `OL`, `375` on
+  // Y93-PD1818 YiDianTong). Same value grammar as the tail's diode records.
+  let reading: DiodeReading | undefined;
+  if (ptr + 4 <= data.length) {
+    const len = ru32(data, ptr);
+    if (len > 0 && len <= 64 && ptr + 4 + len <= data.length) {
+      reading = classifyXzzDiode(rstr(data, ptr + 4, len)) ?? undefined;
+    }
+  }
+  return { x, y, netIndex, name, drill, padAngleDeg, padW, padH, padShape, ...(reading ? { reading } : {}) };
 }
 
 interface ViaData { x: number; y: number; outer: number; netIndex: number; mirrored?: boolean; }
@@ -978,7 +1053,8 @@ interface ViaData { x: number; y: number; outer: number; netIndex: number; mirro
  *   [16..20) u32  layer-from   (real layer index, not a flag — see below)
  *   [20..24) u32  layer-to     (ditto; always > layer-from)
  *   [24..28) u32  net index  (matches netDict)
- *   [28..32) u32  padding
+ *   [28..32) u32  text length, 0 or 1; the one-byte text is always "0"
+ *                   (XZZ_FORMAT.md "Via Block"). A 32-byte via ends here.
  *
  * Coordinate space matches the part / segment blocks.
  *
@@ -1000,6 +1076,27 @@ interface ViaData { x: number; y: number; outer: number; netIndex: number; mirro
  * rendering question, not a parsing one. The drill at [12..16) is populated
  * too (2.5–3 mil across this corpus) and equally unused.
  */
+/** Top-level `0x06` TEXT block, plaintext (not DES'd):
+ *    [layer:u32][x:i32][y:i32][size:u32][unknown:u32][rotation:u32]
+ *    [unknown:u8][unknown:u8][len:u32][text…]
+ *  The same header as a part's label sub-block. Rotation uses the format's
+ *  ×10000 degree convention. */
+function parseTextBlock(data: Uint8Array): BoardText | null {
+  if (data.length < 30) return null;
+  const len = ru32(data, 26);
+  if (30 + len > data.length) return null;
+  const text = decodeXzzText(data.subarray(30, 30 + len)).replace(/\0/g, '').trim();
+  if (!text) return null;
+  return {
+    text,
+    layer: ru32(data, 0),
+    x: ri32(data, 4) / XZZ_SCALE,
+    y: ri32(data, 8) / XZZ_SCALE,
+    size: ru32(data, 12) / XZZ_SCALE,
+    rotationDeg: ru32(data, 20) / 10000,
+  };
+}
+
 function parseViaBlock(data: Uint8Array): ViaData | null {
   if (data.length < 28) return null;
   const x         = ri32(data, 0)  / XZZ_SCALE;
@@ -1361,14 +1458,20 @@ export interface XzzTailAnnotations {
   /** `Net21` → `PP_VDD_MAIN`. Sparse — only the nets the author bothered to
    *  name; most boards carry none. */
   netAliases: Map<string, string>;
-  /** Which encoding the section used, for logging. */
-  encoding: 'none' | 'legacy' | 'json';
+  /** Which encoding the section used, for logging. `json+legacy`: both, in
+   *  one tail (32 of 138 tail-carrying files in XZZ_FORMAT.md's sample). */
+  encoding: 'none' | 'legacy' | 'json' | 'json+legacy';
+  /** `===信号` net glossary: net name → a one-line description of what the
+   *  net does ("CPU到显示屏接口MIPI总线数据1"). Keyed by the file's net name,
+   *  before `netAliases` is applied. Present on either encoding. */
+  netDescriptions: Map<string, string>;
 }
 
 function emptyAnnotations(): XzzTailAnnotations {
   return {
     diodes: new Map(), diodesByAlias: new Map(),
     partAliases: new Map(), netAliases: new Map(), encoding: 'none',
+    netDescriptions: new Map(),
   };
 }
 
@@ -1385,11 +1488,11 @@ interface XzzTailJson {
   net?: Array<{ name?: string; alias?: string }>;
 }
 
-/** Parse the post-marker section in whichever of its two encodings this file
- *  uses. Both live past the XOR boundary, so neither is ever XOR'd or DES'd.
+/** Parse the post-marker section in both of its encodings. Both live past the
+ *  XOR boundary, so neither is ever XOR'd or DES'd.
  *
  *  **Legacy** (older "Middle layer diode value" companions): newline-delimited
- *  `=<value>=<partName>(<pinNumber>)` records, nothing but diode values.
+ *  `=<value>=<partName>(<pinName>)` records, nothing but diode values.
  *
  *  **JSON** (current iPhone-era deliveries, e.g. iPhone16_16Plus): a single
  *  `{"part":[…],"net":[…],"bitmap":{…}}` document after a `===PCB<gb2312>`
@@ -1398,29 +1501,83 @@ interface XzzTailJson {
  *  can ship the JSON with the rename tables and NO `pad[]` at all — that file
  *  genuinely has no diode data, and this returns empty `diodes` for it.
  *
- *  Detection is by content, not by file name: try JSON when a `{` follows the
- *  marker, else fall back to the legacy regex. */
+ *  Detection is by content, not by file name, and a tail can carry both: the
+ *  legacy records are always read, and the JSON too when its section exists. */
 export function parseXzzTailAnnotations(raw: Uint8Array): XzzTailAnnotations {
   const pos = findDiodeMarker(raw);
   if (pos < 0) return emptyAnnotations();
 
   const tail = raw.subarray(pos + DIODE_MARKER.length);
-  // The JSON body is UTF-8, but the banner between the marker and the `{` is
-  // GB2312 ("===PCB<4 high bytes>"), which would corrupt a whole-tail UTF-8
-  // decode of the prefix. Find the brace on the raw bytes, then decode only
-  // from there. 0x7b = '{'.
-  // 0x7b = '{'. Capped scan: the banner is one short line, so a brace further
-  // in than this is not a JSON document header. A legacy tail that happens to
-  // contain a brace just fails JSON.parse below and falls through.
+  const jsonBytes = findJsonSection(tail);
+  const json = jsonBytes ? parseXzzTailJson(jsonBytes) : null;
+  const legacy = parseLegacyDiodeRecords(tail);
+  let out = legacy;
+  if (json) {
+    // One tail can carry both encodings — `===阻值` records, then the JSON — and
+    // each holds readings the other does not. JSON wins a key both define.
+    for (const [key, reading] of legacy.diodes) if (!json.diodes.has(key)) json.diodes.set(key, reading);
+    if (legacy.diodes.size > 0) json.encoding = 'json+legacy';
+    out = json;
+  }
+  out.netDescriptions = parseNetGlossary(tail);
+  return out;
+}
+
+const ascii = (s: string) => Uint8Array.from(s, c => c.charCodeAt(0));
+const JSON_MARKER = ascii('===PCB');
+const NEXT_MARKER = ascii('\n===');
+
+function indexOfBytes(hay: Uint8Array, needle: Uint8Array, from = 0): number {
+  outer: for (let i = from; i + needle.length <= hay.length; i++) {
+    for (let j = 0; j < needle.length; j++) if (hay[i + j] !== needle[j]) continue outer;
+    return i;
+  }
+  return -1;
+}
+
+/** The JSON document's bytes: from the first `{` after its `===PCB<GB2312>`
+ *  banner to the next `===` marker. Bounded by the marker, not the end of the
+ *  tail, because other sections can follow it (`===原理图`, the schematic's
+ *  file name) and JSON.parse rejects the whole document over them. Located by
+ *  the banner, not by a capped scan for the first brace, because the legacy
+ *  records can come first and run far past any cap (62 KB of them on
+ *  iPhone13 boardview(Diode value)). Searched on raw bytes: the banner is
+ *  GB2312 and the body UTF-8. A tail without the banner falls back to the
+ *  first brace in its first 4 KB, the old rule. */
+function findJsonSection(tail: Uint8Array): Uint8Array | null {
+  const banner = indexOfBytes(tail, JSON_MARKER);
+  const limit = banner >= 0 ? tail.length : Math.min(tail.length, 4096);
   let brace = -1;
-  for (let i = 0; i < tail.length && i < 4096; i++) {
+  for (let i = Math.max(banner, 0); i < limit; i++) {
     if (tail[i] === 0x7b) { brace = i; break; }
   }
-  if (brace >= 0) {
-    const json = parseXzzTailJson(tail.subarray(brace));
-    if (json) return json;
+  if (brace < 0) return null;
+  const end = indexOfBytes(tail, NEXT_MARKER, brace);
+  return tail.subarray(brace, end < 0 ? tail.length : end);
+}
+
+/** `===信号` section: `NETNAME=description`, one per line, until the next
+ *  `===` marker. Split on the FIRST `=` — descriptions contain their own (15
+ *  of 531 lines on iPhoneXSMAX Common problems). Lines are decoded one at a
+ *  time because one tail mixes encodings: GB2312 markers and prose, UTF-8
+ *  JSON. A net listed twice keeps its last description (26 repeats on that
+ *  file, all verbatim). */
+function parseNetGlossary(tail: Uint8Array): Map<string, string> {
+  const out = new Map<string, string>();
+  let inGlossary = false;
+  let start = 0;
+  for (let i = 0; i <= tail.length; i++) {
+    if (i < tail.length && tail[i] !== 0x0a) continue;
+    const line = decodeXzzText(tail.subarray(start, i)).replace(/\r$/, '');
+    start = i + 1;
+    if (line.startsWith('===')) { inGlossary = line.slice(3).trim() === '信号'; continue; }
+    if (!inGlossary) continue;
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    const net = line.slice(0, eq).trim(), text = line.slice(eq + 1).trim();
+    if (net && text) out.set(net, text);
   }
-  return parseLegacyDiodeRecords(tail);
+  return out;
 }
 
 function parseXzzTailJson(bytes: Uint8Array): XzzTailAnnotations | null {
@@ -1463,7 +1620,9 @@ function parseLegacyDiodeRecords(tail: Uint8Array): XzzTailAnnotations {
   // Decode as latin1 (records are ASCII) and scan for records.
   let s = '';
   for (let i = 0; i < tail.length; i++) s += String.fromCharCode(tail[i]);
-  const rx = /=([^=\n]*)=([A-Za-z0-9_]+)\((\d+)\)/g;
+  // The pin is a pad name, not a number: BGA balls are `D9`, `AM14`. A
+  // digits-only pin dropped 8,833 of 23,821 records in XZZ_FORMAT.md's sample.
+  const rx = /=([^=\n]*)=([A-Za-z0-9_]+)\(([A-Za-z0-9_]+)\)/g;
   let m: RegExpExecArray | null;
   while ((m = rx.exec(s))) {
     const reading = classifyXzzDiode(m[1].trim());
@@ -1737,6 +1896,7 @@ function foldBoardPack(args: {
   const viaBoard = vias.map(v => boardAt(v.x, v.y));
   const silkBoard = silk.map(s => boardAt((s.p1.x + s.p2.x) / 2, (s.p1.y + s.p2.y) / 2));
   const tpBoard = testPads.map(tp => boardAt(tp.x, tp.y));
+  testPads.forEach((tp, i) => { tp.boardIndex = tpBoard[i]; });
   const segBoard = new Int32Array(segments.length).fill(-1);
   comps.forEach((c, ci) => { for (const si of c.segIdxs) segBoard[si] = compBoard[ci]; });
   if (seamSegs.size > 0 && boards.length > 0) for (const si of seamSegs) segBoard[si] = 0;
@@ -1934,6 +2094,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   // rawTraces so the renderer's Silkscreen overlay (same toggle Allegro uses)
   // gets them with neutral styling rather than per-net trace coloring.
   const silkSegments: Segment[] = [];
+  const texts: BoardText[] = [];
 
   while (ptr + 5 <= mainEnd && ptr + 5 <= raw.length) {
     const blockType = raw[ptr]; ptr += 1;
@@ -2035,7 +2196,23 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         if (tp) testPads.push(tp);
         break;
       }
+      case 0x06: { // Text
+        const t = parseTextBlock(blockData);
+        if (t) texts.push(t);
+        break;
+      }
     }
+  }
+
+  // Reconstructed now, in the file's own frame: the fold, pack slide and mirror
+  // below exist to put copper right-side-up, and would only scramble text that
+  // the file already drew readable.
+  const annotations = buildAnnotations(texts);
+  if (annotations) {
+    log.parser.log(
+      `(pcb text) ${texts.length} text records → ${annotations.tables.length} annotation table(s)` +
+      ` [${annotations.tables.map(t => `${t.rows.length}×${t.header.length}`).join(', ')}], ${annotations.notes.length} loose note(s)`,
+    );
   }
 
   // Decide whether the part-label channel actually carries BOM values.
@@ -2124,6 +2301,16 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         t.y2 = 2 * fold.axis - t.y2;
       }
       t.mirrored = true;
+    }
+    // Test points: same single-point rule as vias. Without it, a bottom-side
+    // test point stayed at its pre-fold position with side 'top'.
+    for (const tp of testPads) {
+      const c = fold.dim === 'x' ? tp.x : tp.y;
+      const isBottom = fold.lowerIsBottom ? c < fold.axis : c > fold.axis;
+      tp.side = isBottom ? 'bottom' : 'top';
+      if (!isBottom) continue;
+      if (fold.dim === 'x') tp.x = 2 * fold.axis - tp.x;
+      else                  tp.y = 2 * fold.axis - tp.y;
     }
     // Vias use a single point — classify by it directly.
     for (const v of viasRaw) {
@@ -2461,7 +2648,71 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     );
   }
 
-  for (const pd of partDataList) {
+  // Test points (top-level 0x09) become single-pin parts, the way other
+  // files store their test points, so they draw, select and join their net.
+  // Name: "TP" + the record's pad number; the pad number alone ("76") would
+  // read as a part name and can collide with one. Pad numbers repeat on some
+  // files (five "1"s on iPadAir3 820-01531), so repeats get a suffix.
+  //
+  // Some deliveries write a 0x09 record on top of pins that already exist as
+  // part pins (iPhone13ProMax BB Boardview: 5,401 net-less records, every one
+  // on a real pin; iPhoneSE2 PCB layer: 1,913 on a same-net pin). As parts
+  // they double-draw the pin, inflate net pin counts and win the click
+  // (smallest-area ranking). A record within half its pad (≥ 1.5 mil) of a
+  // part pin whose net it shares, or that has no net, is that pin's copy and
+  // is not emitted; it still counts as a nail.
+  const noNet = (idx: number) => {
+    const n = netDict.get(idx) ?? '';
+    return n === '' || n === 'NC' || n === 'UNCONNECTED';
+  };
+  const CELL = 20;
+  const pinGrid = new Map<string, Array<{ x: number; y: number; netIndex: number }>>();
+  for (const pd of partDataList) for (const p of pd.pins) {
+    const k = `${Math.floor(p.x / CELL)},${Math.floor(p.y / CELL)}`;
+    let b = pinGrid.get(k); if (!b) pinGrid.set(k, b = []);
+    b.push(p);
+  }
+  const copiesPin = (tp: TestPadData): boolean => {
+    const tol = Math.max(1.5, Math.min(tp.padW || 0, tp.padH || 0) / 2);
+    const cx = Math.floor(tp.x / CELL), cy = Math.floor(tp.y / CELL);
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+      for (const p of pinGrid.get(`${cx + dx},${cy + dy}`) ?? []) {
+        if (Math.hypot(p.x - tp.x, p.y - tp.y) > tol) continue;
+        if (p.netIndex === tp.netIndex || noNet(tp.netIndex)) return true;
+      }
+    }
+    return false;
+  };
+  const standalone = testPads.filter(tp => !copiesPin(tp));
+  if (standalone.length < testPads.length) {
+    log.parser.log(`(pcb test points) ${testPads.length - standalone.length} of ${testPads.length} sit on an existing pin — not drawn as parts`);
+  }
+  // Test points are judged for placeholder pad geometry on their own: part
+  // pads can be placeholders on a file whose test pads carry real sizes.
+  let tpGeom: TestPadData | undefined, tpUniform = true, tpGeomCount = 0;
+  for (const tp of standalone) {
+    if (tp.padW <= 0 || tp.padH <= 0) continue;
+    tpGeomCount++;
+    if (!tpGeom) { tpGeom = tp; continue; }
+    if (tp.padW !== tpGeom.padW || tp.padH !== tpGeom.padH || tp.padShape !== tpGeom.padShape || tp.padAngleDeg !== tpGeom.padAngleDeg) { tpUniform = false; break; }
+  }
+  const tpPlaceholderGeom = tpUniform && tpGeomCount >= 100 && tpGeom !== undefined
+    && tpGeom.padShape === 'round' && tpGeom.padW === tpGeom.padH && tpGeom.padW <= 15;
+
+  const tpSeen = new Map<string, number>();
+  const testPointParts: PartData[] = standalone.map((tp, i) => {
+    const base = `TP${tp.name || i + 1}`;
+    const n = (tpSeen.get(base) ?? 0) + 1; tpSeen.set(base, n);
+    return { name: n === 1 ? base : `${base}-${n}`, side: tp.side ?? 'top', groupName: '', silkLines: [],
+    ...(tp.boardIndex !== undefined ? { boardIndex: tp.boardIndex } : {}),
+    testPoint: true,
+    pins: [{ name: '1', x: tp.x, y: tp.y, netIndex: tp.netIndex, drill: tp.drill,
+      padW: tp.padW, padH: tp.padH, padAngleDeg: tp.padAngleDeg, padShape: tp.padShape,
+      ...(tp.reading ? { diode: tp.reading } : {}) }],
+    };
+  });
+
+  for (const pd of [...partDataList, ...testPointParts]) {
     if (!pd.name) continue;
     const pins: Pin[] = pd.pins.map((p, i) => {
       const raw2 = netDict.get(p.netIndex) ?? '';
@@ -2471,7 +2722,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       // sprite) instead of a generic circle. Mirrors the Pad emission below;
       // also stops the pin-circle peeking out from under the copper overlay
       // when "Show pads" is on (the doubling fix).
-      const hasGeom = !placeholderPadGeom && p.padW > 0 && p.padH > 0;
+      const hasGeom = !(pd.testPoint ? tpPlaceholderGeom : placeholderPadGeom) && p.padW > 0 && p.padH > 0;
       const r = hasGeom ? Math.max(0.5, Math.min(p.padW, p.padH) / 2) : 8;
       const halfW = p.padW / 2, halfH = p.padH / 2;
       const a = (p.padAngleDeg % 360) * Math.PI / 180;
@@ -2489,6 +2740,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         // the 1-based index when the file carries no name.
         name: '', number: p.name || String(i + 1),
         position: { x: p.x, y: p.y }, radius: r, side: pd.side, net,
+        ...(p.diode ? { diode: p.diode } : {}),
         ...(p.drill > 0 ? { drill: p.drill } : {}),
         ...(padBounds ? { padBounds } : {}),
         ...(hasGeom ? {
@@ -2777,6 +3029,12 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   // onto a name a *different* part already holds — a rename whose target is
   // itself being vacated by another rename is fine, so collisions are tested
   // against (existing names − names being vacated).
+  // Original binary name of every renamed part. The legacy `=mV=REF(pin)`
+  // records are keyed by that name, and a tail can carry them next to the
+  // JSON whose aliases rename the part (iPhone14_14Plus YiDianTong: 1,713
+  // legacy readings, 1,081 of them unreachable by the new name), so the
+  // diode join below tries it as a third key.
+  const renamedFrom = new Map<typeof parts[number], string>();
   if (tail.partAliases.size > 0) {
     const byName = new Map<string, typeof parts[number]>();
     for (const p of parts) byName.set(p.name, p);
@@ -2789,6 +3047,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       if (!part) continue;                       // binary already uses the alias, or part absent
       if ((byName.has(alias) && !vacating.has(alias)) || claimed.has(alias)) { skipped++; continue; }
       claimed.add(alias);
+      renamedFrom.set(part, part.name);
       part.name = alias;
       renamed++;
     }
@@ -2808,6 +3067,11 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     const claimed = new Set<string>();
     for (const [name, alias] of tail.netAliases) {
       if (!existing.has(name)) continue;
+      // An alias exists to name an anonymous net (`Net21` → `PP_VDD_MAIN`).
+      // A bare number says less than any name it would replace — iPhone15
+      // AP+BB Boardview's one alias turns `90_PCIE_GP1_AP_FROM_BB_RX_P` into
+      // `380` — so it is not applied.
+      if (/^\d+$/.test(alias)) continue;
       if ((existing.has(alias) && !tail.netAliases.has(alias)) || claimed.has(alias)) continue;
       claimed.add(alias);
       apply.set(name, alias);
@@ -2825,6 +3089,19 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   // Try the `reference` key first, then the `alias` key: the two deliveries of
   // one board disagree about which of the two the binary blocks use, and after
   // the rename above `part.name` may be either.
+  // Net glossary, keyed by the name the board now uses. Descriptions of nets
+  // this file does not carry are kept: the glossary is written for the whole
+  // board and a partial file (iPhoneXSMAX Common problems: 421 of 505 present)
+  // still benefits from the rest in a search or a list.
+  const netDescriptions = new Map<string, string>();
+  for (const [net, text] of tail.netDescriptions) netDescriptions.set(tail.netAliases.get(net) ?? net, text);
+  if (netDescriptions.size > 0) {
+    const boardNets = new Set(parts.flatMap(p => p.pins.map(pin => pin.net)));
+    let onBoard = 0;
+    for (const net of netDescriptions.keys()) if (boardNets.has(net)) onBoard++;
+    log.parser.log(`[xzz tail] net glossary: ${netDescriptions.size} descriptions, ${onBoard} on a net this board has`);
+  }
+
   let diodeReference: DiodeReferenceChannel | undefined;
   if (tail.diodes.size > 0) {
     const counts = { value: 0, open: 0, none: 0 };
@@ -2834,9 +3111,11 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     // `unmatched` line up with `tail.diodes.size`.
     const matchedReadings = new Set<DiodeReading>();
     for (const part of parts) {
+      const orig = renamedFrom.get(part);
       for (const pin of part.pins) {
         const key = `${part.name}(${pin.number})`;
-        const r = tail.diodes.get(key) ?? tail.diodesByAlias.get(key);
+        const r = tail.diodes.get(key) ?? tail.diodesByAlias.get(key)
+          ?? (orig !== undefined ? tail.diodes.get(`${orig}(${pin.number})`) : undefined);
         if (r) { pin.diode = r; matchedReadings.add(r); }
       }
     }
@@ -2852,6 +3131,8 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     format: 'XZZ', outline, parts, nails, nets: buildNets(parts), bounds,
     butterflyFoldAxis: fold?.dim ?? (boardsOut && boardsOut.some(b => b.fold) ? boardsOut.find(b => b.fold)!.fold!.dim : undefined),
     diodeReference,
+    ...(annotations ? { annotations } : {}),
+    ...(netDescriptions.size > 0 ? { netDescriptions } : {}),
     traces: traces.length > 0 ? traces : undefined,
     vias: vias.length > 0 ? vias : undefined,
     silkscreen: silkscreen.length > 0 ? silkscreen : undefined,

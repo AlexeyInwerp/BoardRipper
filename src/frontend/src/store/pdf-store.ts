@@ -9,6 +9,9 @@ import { log } from './log-store';
 import { ensureIndexed } from '../pdf/pdf-index-client';
 import { scoreLookupCandidates, type LookupCandidate, type LookupContextHit } from './pdf-lookup-score';
 import { isOfflineBuild } from './build-mode';
+import { navHistoryStore } from './nav-history-store';
+import { renderSettingsStore } from './render-settings';
+import type { PdfPlace, PdfMatchRef } from './nav-history';
 
 // ES2025 shims that pdf.js calls on the main thread live in src/polyfills.ts
 // (imported first in main.tsx); the worker's copies are in the patch.
@@ -54,6 +57,21 @@ const _getDocOpts = _pdfjsBase
       wasmUrl: _pdfjsBase + 'wasm/',
     }
   : {};
+
+/** Parse-time options a document is opened with — global render settings,
+ *  read at open time. A document remembers the values it was parsed under
+ *  (`parsedWith`) so the filter menu can offer a reload when they change. */
+interface PdfParseOptions { prune: boolean; stripImages: boolean }
+function currentParseOptions(): PdfParseOptions {
+  const g = renderSettingsStore.globalSettings;
+  return { prune: g.pdfPruneInvisible !== false, stripImages: g.pdfStripWatermarkImages === true };
+}
+/** getDocument() options: the asset URLs plus the patched worker's
+ *  `brPruneInvisible` switch (see patches/README.md). Cast because the
+ *  option is ours, not part of pdf.js's typed parameters. */
+function docOpts(prune: boolean): object {
+  return { ..._getDocOpts, brPruneInvisible: prune };
+}
 
 let _workerReady: Promise<void> = Promise.resolve();
 // The dynamic import below makes Vite emit a SECOND, minified copy of the
@@ -434,6 +452,11 @@ interface PdfDocument {
   originalBuffer: ArrayBuffer;
   strippedDoc: PDFDocumentProxy | null;
   cleanMode: boolean;
+  /** Parse-time options `doc` (and `strippedDoc`) were opened with. */
+  parsedWith: PdfParseOptions;
+  /** Bumped when `reparse` swaps in freshly opened documents — the panel
+   *  drops its bitmap/tile caches on a change. */
+  parseGen: number;
   pageCount: number;
   currentPage: number;
   /** User rotation applied on top of each page's intrinsic rotation: 0/90/180/270 (CW degrees). */
@@ -462,6 +485,10 @@ interface PdfDocument {
   fileId?: number;
   /** Transient cross-lookup status shown verbatim on the SOURCE doc (e.g. "No match…"). */
   crossProbeHint: string | null;
+  /** Bumped on every explicit match navigation (Enter, ↑↓, ⌘F, cross-probe),
+   *  even when the index does not change — a single hit stepped to "again"
+   *  must still re-centre after the user panned away. */
+  matchNavSeq: number;
 }
 
 /** Follow target: a location to zoom to without highlighting */
@@ -479,8 +506,32 @@ export interface LookupContextTerm {
   kind: 'net' | 'pin';
 }
 
+export type PdfLoadPhase = 'downloading' | 'reading' | 'parsing' | 'rendering' | 'failed';
+export interface PdfLoad { name: string; phase: PdfLoadPhase; error?: string }
+export interface PdfLoadsSnapshot { count: number; names: string[]; byName: Record<string, PdfLoad> }
+
+/** What a load phase says to a user. */
+export const PDF_LOAD_PHASE_TEXT: Record<PdfLoadPhase, string> = {
+  downloading: 'Downloading',
+  reading: 'Reading the file',
+  parsing: 'Opening',
+  rendering: 'Drawing the first page',
+  failed: 'Could not open',
+};
+
 class PdfStore extends Emitter {
   private _documents: Map<string, PdfDocument> = new Map();
+  /** Text extraction waits on these: the panel's first painted page (markFirstPaint). */
+  private _firstPaintWaiters = new Map<string, () => void>();
+
+  /** The panel has a page on screen for this file. Starts the deferred text
+   *  extraction (loadFile) and ends the file's load indicator. */
+  markFirstPaint(fileName: string): void {
+    const w = this._firstPaintWaiters.get(fileName);
+    if (w) { this._firstPaintWaiters.delete(fileName); w(); }
+    if (this._loads.has(fileName)) this.endLoad(fileName);
+  }
+
   /** Per-file debounce timers for idle page-resource cleanup (see scheduleIdleCleanup). */
   private _cleanupTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private _links = new PdfLinks();
@@ -544,6 +595,43 @@ class PdfStore extends Emitter {
   }
   get isLoaded(): boolean { return this._active?.doc != null; }
   get loading(): boolean { return this._loading; }
+
+  // ── Load indicator ────────────────────────────────────────────────────
+  // Per file, from the moment an open starts until its first page is on
+  // screen. Opening a PDF used to show nothing for 0.3–1.2 s locally and the
+  // whole download from a NAS (review 2026-10-03, section 4): `_loading` is
+  // one boolean nobody read, and the panel only existed once the load was done.
+  private _loads = new Map<string, PdfLoad>();
+  private _loadsSnapshot: PdfLoadsSnapshot = { count: 0, names: [], byName: {} };
+
+  hasDocument(fileName: string): boolean { return this._documents.has(fileName); }
+
+  /** Loads in progress (failed ones are listed in `byName` but not counted). */
+  get loads(): PdfLoadsSnapshot { return this._loadsSnapshot; }
+
+  /** Begin or advance a file's load phase. */
+  setLoadPhase(fileName: string, phase: PdfLoadPhase, error?: string): void {
+    const cur = this._loads.get(fileName);
+    if (cur && cur.phase === phase && cur.error === error) return;
+    this._loads.set(fileName, { name: fileName, phase, error });
+    this._rebuildLoads();
+  }
+
+  /** The file's load is over (first page painted, panel closed, gave up). */
+  endLoad(fileName: string): void {
+    if (this._loads.delete(fileName)) this._rebuildLoads();
+  }
+
+  private _rebuildLoads(): void {
+    const byName: Record<string, PdfLoad> = {};
+    const names: string[] = [];
+    for (const l of this._loads.values()) {
+      byName[l.name] = l;
+      if (l.phase !== 'failed') names.push(l.name);
+    }
+    this._loadsSnapshot = { count: names.length, names, byName };
+    this.notify();
+  }
   /** True while background text extraction is still running (search may return partial results). */
   get textExtracting(): boolean {
     const d = this._active;
@@ -608,6 +696,34 @@ class PdfStore extends Emitter {
   /** Per-document accessors — allow panels to render without being the "active" doc */
   getDocPageCount(fileName: string): number { return this._documents.get(fileName)?.pageCount ?? 0; }
   getDocCurrentPage(fileName: string): number { return this._documents.get(fileName)?.currentPage ?? 1; }
+  hasDoc(fileName: string): boolean { return this._documents.has(fileName); }
+
+  /** Where this document is right now, as a navigation-history place. */
+  navPlaceFor(fileName: string): PdfPlace | null {
+    const d = this._documents.get(fileName);
+    if (!d) return null;
+    const m = d.activeMatchIndex >= 0 ? d.matches[d.activeMatchIndex] : undefined;
+    return {
+      kind: 'pdf', fileName, fileId: d.fileId, page: d.currentPage,
+      match: m ? { pageIndex: m.pageIndex, itemIndex: m.itemIndex, charStart: m.charStart, charEnd: m.charEnd } : undefined,
+    };
+  }
+
+  /**
+   * Navigation-history restore: re-run a query on a document (source `user`,
+   * so the field shows it as the user's own) and land on the recorded match
+   * when it still exists. Never records — the caller holds `isRestoring`.
+   */
+  restoreSearch(fileName: string, query: string, match: PdfMatchRef | null) {
+    const doc = this._documents.get(fileName);
+    if (!doc) return;
+    if (doc.searchQuery.toUpperCase() !== query.toUpperCase() || doc.matches.length === 0) {
+      this._runSearch(doc, query, 'user', false);
+    }
+    if (!match) return;
+    const idx = doc.matches.findIndex(m => m.pageIndex === match.pageIndex && m.itemIndex === match.itemIndex && m.charStart === match.charStart);
+    if (idx >= 0 && idx !== doc.activeMatchIndex) this._setActiveMatchInDoc(doc, idx);
+  }
   getDocRotation(fileName: string): number { return this._documents.get(fileName)?.rotation ?? 0; }
   getDocPageMode(fileName: string): 'single' | 'continuous' { return this._documents.get(fileName)?.pageMode ?? 'continuous'; }
   getDocMirror(fileName: string): boolean { return this._documents.get(fileName)?.mirror ?? false; }
@@ -620,6 +736,7 @@ class PdfStore extends Emitter {
   getDocSearchQuery(fileName: string): string { return this._documents.get(fileName)?.searchQuery ?? ''; }
   getDocMatches(fileName: string): PdfTextMatch[] { return this._documents.get(fileName)?.matches ?? []; }
   getDocActiveMatchIndex(fileName: string): number { return this._documents.get(fileName)?.activeMatchIndex ?? -1; }
+  getDocMatchNavSeq(fileName: string): number { return this._documents.get(fileName)?.matchNavSeq ?? 0; }
   getDocMatchGroups(fileName: string): number[][] { return this._documents.get(fileName)?.matchGroups ?? []; }
   getDocActiveGroupIndex(fileName: string): number { return this._documents.get(fileName)?.activeGroupIndex ?? -1; }
   getDocBookmarks(fileName: string): PdfBookmark[] { return this._documents.get(fileName)?.bookmarks ?? []; }
@@ -692,13 +809,14 @@ class PdfStore extends Emitter {
     // Already loaded? Just switch.
     if (this._documents.has(file.name)) {
       this._activeFileName = file.name;
+      this.endLoad(file.name);   // a caller's "downloading" for a doc we already have
       this.notify();
       return;
     }
 
     this._loading = true;
     this._activeFileName = file.name;
-    this.notify();
+    this.setLoadPhase(file.name, 'reading');   // notifies
 
     try {
       // Ensure the worker module is loaded before first getDocument() call (Electron/file://)
@@ -712,7 +830,17 @@ class PdfStore extends Emitter {
       if (fileId == null) {
         boardCache.putPdfBytes(file.name, file.size, file.lastModified, buffer.slice(0)).catch(() => {});
       }
-      const doc = await pdfjsLib.getDocument({ data: bufferCopy, ..._getDocOpts }).promise;
+      const parseOpts = currentParseOptions();
+      this.setLoadPhase(file.name, 'parsing');
+      const doc = await pdfjsLib.getDocument({ data: bufferCopy, ...docOpts(parseOpts.prune) }).promise;
+      // Cleared by markFirstPaint when the panel has the first page on screen —
+      // or here, after a while, for a panel that is not on screen to paint
+      // (Dockview unmounts inactive tabs) and would otherwise hold the banner up.
+      this._loads.set(file.name, { name: file.name, phase: 'rendering' });
+      this._rebuildLoads();
+      setTimeout(() => {
+        if (this._loads.get(file.name)?.phase === 'rendering') this.endLoad(file.name);
+      }, PdfStore.RENDERING_PHASE_MAX_MS);
 
       // Make the document available immediately — text is extracted in the background.
       const pdfDoc: PdfDocument = {
@@ -723,6 +851,10 @@ class PdfStore extends Emitter {
         originalBuffer: buffer,
         strippedDoc: null,
         cleanMode: false,
+        // stripImages is recorded as applied now: the strip that follows is
+        // part of this open, and a reload offered meanwhile would only race it.
+        parsedWith: { prune: parseOpts.prune, stripImages: parseOpts.stripImages },
+        parseGen: 0,
         pageCount: doc.numPages,
         currentPage: 1,
         rotation: 0,
@@ -731,6 +863,7 @@ class PdfStore extends Emitter {
         textPages: [],
         searchQuery: '',
         searchSource: null,
+        matchNavSeq: 0,
         lookupHint: null,
         crossProbeHint: null,
         matches: [],
@@ -748,14 +881,27 @@ class PdfStore extends Emitter {
       this._loading = false;
       this.notify();
 
-      // Extract text from all pages in the background so search becomes available.
-      // The viewer can render pages immediately without waiting for this.
-      this._extractText(pdfDoc);
+      // Extract text from all pages in the background so search becomes
+      // available — but only once the first page is on screen: the one pdf.js
+      // worker interleaves text streaming with the first page's operator
+      // list, which made the first render 1.8–3x slower (review 2026-10-03,
+      // 2.3). A panel that never paints (opened hidden) starts it after 1.5 s.
+      const name = file.name;
+      void new Promise<void>(resolve => {
+        this._firstPaintWaiters.set(name, resolve);
+        setTimeout(resolve, 1500);
+      }).then(() => {
+        if (this._firstPaintWaiters.get(name)) this._firstPaintWaiters.delete(name);
+        if (this._documents.get(name) === pdfDoc) this._extractText(pdfDoc);
+      });
+      if (parseOpts.stripImages) void this.toggleClean(file.name, true);
     } catch (err) {
       log.pdf.error('loadFile failed:', err instanceof Error ? err.message : JSON.stringify(err));
       this._activeFileName = null;
       this._loading = false;
-      this.notify();
+      // Kept (as failed) so a panel opened for this file can say what happened
+      // instead of sitting on "Loading…"; the panel ends it when it closes.
+      this.setLoadPhase(file.name, 'failed', err instanceof Error ? err.message : String(err));
       throw err;
     }
   }
@@ -802,20 +948,35 @@ class PdfStore extends Emitter {
     // (March 2024). The reader-loop form works on every browser that
     // ships ReadableStream.
     try {
-      const NOTIFY_INTERVAL = 5; // update UI every N pages
+      // Progress notifies re-render every subscriber; at most four a second.
+      const NOTIFY_MIN_MS = 250;
+      let lastNotify = performance.now();
       for (let i = 1; i <= pdfDoc.pageCount; i++) {
         if (!this._documents.has(pdfDoc.fileName)) return; // closed
-        const page = await pdfDoc.doc.getPage(i);
+        // A reparse swaps `pdfDoc.doc` and destroys the old proxy two
+        // seconds later; a page read still streaming from it then rejects.
+        // That is a swap, not a broken page: read it again from the new one.
         const collected: TextItem[] = [];
-        const reader = page.streamTextContent().getReader();
-        try {
-          for (;;) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            for (const it of value.items) collected.push(it as TextItem);
+        for (;;) {
+          const doc = pdfDoc.doc;
+          try {
+            const page = await doc.getPage(i);
+            const reader = page.streamTextContent().getReader();
+            try {
+              for (;;) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                for (const it of value.items) collected.push(it as TextItem);
+              }
+            } finally {
+              reader.releaseLock();
+            }
+            break;
+          } catch (err) {
+            if (!this._documents.has(pdfDoc.fileName)) return;   // closed
+            if (pdfDoc.doc === doc) throw err;
+            collected.length = 0;
           }
-        } finally {
-          reader.releaseLock();
         }
         const items: PdfTextItem[] = [];
         for (const ti of collected) {
@@ -846,7 +1007,8 @@ class PdfStore extends Emitter {
           });
         }
         pdfDoc.textPages.push(items);
-        if (i % NOTIFY_INTERVAL === 0) this.notify(); // progress update
+        const now = performance.now();
+        if (now - lastNotify >= NOTIFY_MIN_MS) { lastNotify = now; this.notify(); } // progress update
       }
     } catch (err) {
       const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
@@ -889,6 +1051,9 @@ class PdfStore extends Emitter {
   async getPageFor(fileName: string, pageNum: number): Promise<PDFPageProxy> {
     const d = this._documents.get(fileName);
     if (!d) throw new Error(`PDF not loaded: ${fileName}`);
+    let used = this._pagesUsed.get(fileName);
+    if (!used) { used = new Set(); this._pagesUsed.set(fileName, used); }
+    used.add(pageNum);
     return this._effectiveDoc(d).getPage(pageNum);
   }
 
@@ -901,7 +1066,7 @@ class PdfStore extends Emitter {
     const doc = await pdfjsLib.getDocument({
       data: buffer,
       fontExtraProperties: true,
-      ..._getDocOpts,
+      ...docOpts(pdfDoc.parsedWith.prune),
     }).promise;
     pdfDoc.doc = doc;
     // Clean up old proxy (safe — only tears down worker connection)
@@ -938,12 +1103,12 @@ class PdfStore extends Emitter {
    * memoises a `PDFPageProxy` (operator list, decoded images, font resources)
    * for every page visited via `getPage`, and never trims it while the doc
    * stays open — so scrolling a long schematic accumulates hundreds of parsed
-   * pages' worth of heap. After navigation settles we call `doc.cleanup(true)`
-   * (keep fonts — expensive to re-fetch, watermark-independent), which drops
-   * the operator lists / image resources for all pages. The visible page
-   * re-parses its (cheap) operator list on the next render that misses the
-   * ImageBitmap cache; nothing else is affected. Reuses the same call as
-   * flushOperatorListCache but debounced per file so it never fires mid-render.
+   * pages' worth of heap. After navigation settles, pages more than
+   * CLEANUP_KEEP_RADIUS from the current one drop their operator lists and
+   * image resources (`PDFPageProxy.cleanup()`); the pages being read keep
+   * theirs. Above CLEANUP_DOC_WIDE_PAGES parsed pages it falls back to the
+   * document-wide `doc.cleanup(true)` (keep fonts). Debounced per file so it
+   * never fires mid-gesture.
    */
   scheduleIdleCleanup(fileName: string, delayMs = 4000): void {
     const existing = this._cleanupTimers.get(fileName);
@@ -952,13 +1117,60 @@ class PdfStore extends Emitter {
       this._cleanupTimers.delete(fileName);
       const d = this._documents.get(fileName);
       if (!d) return;
-      d.doc?.cleanup(true).catch(() => { /* in-flight render — retry next idle */ });
-      d.strippedDoc?.cleanup(true).catch(() => { /* same */ });
+      const used = this._pagesUsed.get(fileName);
+      // Memory pressure only: past this many parsed pages, the document-wide
+      // cleanup (fonts and all) is worth a re-parse of what is on screen.
+      if (used && used.size > PdfStore.CLEANUP_DOC_WIDE_PAGES) {
+        used.clear();
+        d.doc?.cleanup(true).catch(() => { /* in-flight render — retry next idle */ });
+        d.strippedDoc?.cleanup(true).catch(() => { /* same */ });
+        return;
+      }
+      // Otherwise drop only pages away from the one being read. The
+      // document-wide cleanup also threw away the current page, its
+      // neighbours and the worker's fonts, so the first zoom after four
+      // seconds of reading re-parsed five pages (review 2026-10-03, 2.2).
+      // PDFPageProxy.cleanup() is per page and sends the worker nothing; it
+      // refuses (returns false) while that page is rendering, so the page
+      // stays listed and is tried again next idle.
+      if (!used) return;
+      for (const n of [...used]) {
+        if (Math.abs(n - d.currentPage) <= PdfStore.CLEANUP_KEEP_RADIUS) continue;
+        const docs = [d.doc, d.strippedDoc].filter(Boolean) as PDFDocumentProxy[];
+        Promise.all(docs.map(doc => doc.getPage(n).then(p => p.cleanup())))
+          .then(done => { if (done.every(Boolean)) used.delete(n); })
+          .catch(() => { /* page gone with a reparse — nothing to free */ });
+      }
     }, delayMs));
   }
 
+  /** Longest the 'rendering' load phase stays up without a first paint. */
+  private static readonly RENDERING_PHASE_MAX_MS = 8000;
+  /** Pages within this distance of the current one keep their parsed state. */
+  private static readonly CLEANUP_KEEP_RADIUS = 3;
+  /** Parsed pages above which the idle cleanup frees the whole document. */
+  private static readonly CLEANUP_DOC_WIDE_PAGES = 40;
+  /** Pages of each document handed out by getPageFor since the last cleanup. */
+  private _pagesUsed = new Map<string, Set<number>>();
+
+  /** Per-file queue for the operations that swap pdf.js proxies (toggleClean,
+   *  reparse): two running at once on one document raced — each read the
+   *  proxies the other was replacing and one stripped document leaked. */
+  private _docOps = new Map<string, Promise<void>>();
+  private _serial(fileName: string, fn: () => Promise<void>): Promise<void> {
+    const prev = this._docOps.get(fileName) ?? Promise.resolve();
+    const run = prev.catch(() => {}).then(fn);
+    const tracked = run.finally(() => { if (this._docOps.get(fileName) === tracked) this._docOps.delete(fileName); });
+    this._docOps.set(fileName, tracked);
+    return run;
+  }
+
   /** Toggle clean mode: strip small watermark images from the PDF data. */
-  async toggleClean(fileName: string, enabled: boolean) {
+  toggleClean(fileName: string, enabled: boolean): Promise<void> {
+    return this._serial(fileName, () => this._toggleClean(fileName, enabled));
+  }
+
+  private async _toggleClean(fileName: string, enabled: boolean) {
     const d = this._documents.get(fileName);
     if (!d) return;
     d.cleanMode = enabled;
@@ -968,7 +1180,14 @@ class PdfStore extends Emitter {
       try {
         const stripped = await stripWatermarkImages(d.originalBuffer);
         const tStrip = performance.now();
-        d.strippedDoc = await pdfjsLib.getDocument({ data: stripped, ..._getDocOpts }).promise;
+        const strippedDoc = await pdfjsLib.getDocument({ data: stripped, ...docOpts(d.parsedWith.prune) }).promise;
+        if (this._documents.get(fileName) !== d) { strippedDoc.destroy().catch(() => {}); return; }   // closed meanwhile
+        d.strippedDoc = strippedDoc;
+        d.parsedWith = { ...d.parsedWith, stripImages: true };
+        // The pages the panel drew (and cached under the clean key) while the
+        // strip ran came from the unstripped document; parseGen makes it
+        // drop them and draw from the stripped one.
+        d.parseGen++;
         const tLoad = performance.now();
         const metrics = {
           file: fileName,
@@ -982,6 +1201,13 @@ class PdfStore extends Emitter {
       } catch (err) {
         log.pdf.error('stripWatermarkImages failed:', err);
         d.cleanMode = false;
+        // The attempt was made under the current setting: record it as such,
+        // or the filter menu offers a reload that only fails the same way.
+        d.parsedWith = { ...d.parsedWith, stripImages: currentParseOptions().stripImages };
+        void import('./board-store').then(({ boardStore }) =>
+          boardStore.addToast(`Could not strip images from ${fileName} — shown unstripped.`));
+        this.notify();
+        return;
       }
     } else if (!enabled && d.strippedDoc) {
       // Clean mode turned off — drop the second (stripped) PDFDocumentProxy so a
@@ -991,10 +1217,86 @@ class PdfStore extends Emitter {
       // clean-mode change, so nothing is mid-render against it here.
       const stripped = d.strippedDoc;
       d.strippedDoc = null;
-      stripped.destroy().catch(() => {});
+      d.parseGen++;
+      // A render in flight against it may still finish.
+      setTimeout(() => stripped.destroy().catch(() => {}), 2000);
     }
+    if (!enabled) d.parsedWith = { ...d.parsedWith, stripImages: false };
 
     this.notify();
+  }
+
+  /** True when this document was opened under parse-time options that are no
+   *  longer the current global ones (see `currentParseOptions`). */
+  needsReparse(fileName: string): boolean {
+    const d = this._documents.get(fileName);
+    if (!d) return false;
+    const cur = currentParseOptions();
+    return d.parsedWith.prune !== cur.prune || d.parsedWith.stripImages !== cur.stripImages;
+  }
+
+  /** Open documents that `needsReparse`. */
+  staleDocuments(): string[] {
+    return [...this._documents.keys()].filter(n => this.needsReparse(n));
+  }
+
+  getDocParseGen(fileName: string): number {
+    return this._documents.get(fileName)?.parseGen ?? 0;
+  }
+
+  /** Reopen a document under the current parse-time options. Page, search,
+   *  rotation, bookmarks and extracted text all stay — only the pdf.js
+   *  proxies are swapped, and `parseGen` tells the panel to redraw. The old
+   *  proxies are destroyed a moment later so a render already in flight
+   *  against them can finish instead of failing. */
+  reparse(fileName: string): Promise<void> {
+    return this._serial(fileName, () => this._reparse(fileName));
+  }
+
+  private async _reparse(fileName: string): Promise<void> {
+    const d = this._documents.get(fileName);
+    if (!d) return;
+    const opts = currentParseOptions();
+    if (!this.needsReparse(fileName)) return;                // a queued reload already applied
+    if (d.parsedWith.prune === opts.prune) {
+      // Only the image strip changed: that is a second proxy added or
+      // dropped, not a reopen of the base document.
+      await this._toggleClean(fileName, opts.stripImages);
+      return;
+    }
+    const t0 = performance.now();
+    try {
+      const doc = await pdfjsLib.getDocument({ data: d.originalBuffer.slice(0), ...docOpts(opts.prune) }).promise;
+      let stripped: PDFDocumentProxy | null = null;
+      if (opts.stripImages) {
+        try {
+          const bytes = await stripWatermarkImages(d.originalBuffer);
+          stripped = await pdfjsLib.getDocument({ data: bytes, ...docOpts(opts.prune) }).promise;
+        } catch (err) {
+          log.pdf.error('stripWatermarkImages failed:', err);
+          void import('./board-store').then(({ boardStore }) =>
+            boardStore.addToast(`Could not strip images from ${fileName} — shown unstripped.`));
+        }
+      }
+      if (this._documents.get(fileName) !== d) {           // closed meanwhile
+        doc.destroy().catch(() => {});
+        stripped?.destroy().catch(() => {});
+        return;
+      }
+      const old = [d.doc, d.strippedDoc];
+      d.doc = doc;
+      d.strippedDoc = stripped;
+      d.cleanMode = stripped != null;
+      // Recorded as the setting asked for, even when the strip failed: the
+      // attempt was made, and a reload would only fail the same way.
+      d.parsedWith = { prune: opts.prune, stripImages: opts.stripImages };
+      d.parseGen++;
+      log.pdf.log(`reparsed ${fileName} (prune=${opts.prune}, stripImages=${stripped != null}) in ${Math.round(performance.now() - t0)} ms`);
+      this.notify();
+      setTimeout(() => { for (const p of old) p?.destroy().catch(() => {}); }, 2000);
+    } catch (err) {
+      log.pdf.error('reparse failed:', err instanceof Error ? err.message : String(err));
+    }
   }
 
   isDocClean(fileName: string): boolean {
@@ -1007,7 +1309,20 @@ class PdfStore extends Emitter {
     if (n < 1 || n > active.pageCount) return;
     if (n === active.currentPage) return;
     active.currentPage = n;
+    this._scheduleViewNote(active);
     this.notify();
+  }
+
+  /** A page turned by hand (keys, scroll-flip, bookmark, agent) is a
+   *  viewpoint candidate — committed by the history store only once the user
+   *  has stayed on it (flipping through a document leaves one row, for the
+   *  page they stopped on). Not a page reached by a search or a history
+   *  restore, which set `currentPage` directly. */
+  private _scheduleViewNote(d: PdfDocument) {
+    if (navHistoryStore.isRestoring) return;
+    const cur = navHistoryStore.current;
+    if (cur?.place?.kind === 'pdf' && cur.place.fileName === d.fileName && cur.place.page === d.currentPage) return;
+    navHistoryStore.recordViewpoint({ cause: 'view', label: `p.${d.currentPage}`, place: { kind: 'pdf', fileName: d.fileName, fileId: d.fileId, page: d.currentPage } });
   }
 
   /** Rotate the named doc 90° in the given direction. While rotated the layout
@@ -1070,6 +1385,10 @@ class PdfStore extends Emitter {
   searchText(query: string, source: 'user' | 'lookup' = 'user') {
     if (!this._active) return;
     this._runSearch(this._active, query, source, true);
+    if (source === 'user' && query.trim()) {
+      const d = this._active;
+      navHistoryStore.recordQuery('pdf', query, { results: d.matches.length, place: this.navPlaceFor(d.fileName) ?? undefined });
+    }
   }
 
   /**
@@ -1473,15 +1792,29 @@ class PdfStore extends Emitter {
   /** Set the active match to a specific index (silent — won't re-trigger nav UI). */
   setActiveMatchIndex(idx: number) {
     const d = this._active;
-    if (!d || idx < 0 || idx >= d.matches.length) return;
+    if (!d) return;
+    this._setActiveMatchInDoc(d, idx);
+  }
+
+  private _setActiveMatchInDoc(d: PdfDocument, idx: number) {
+    if (idx < 0 || idx >= d.matches.length) return;
     d.activeMatchIndex = idx;
     if (d.matchGroups.length > 0) {
       const g = d.matchGroups.findIndex(group => group.includes(idx));
       if (g >= 0) d.activeGroupIndex = g;
     }
     d.currentPage = d.matches[idx].pageIndex + 1;
+    d.matchNavSeq++;
     this._rebuildActiveIndicesCache(d);
+    this._touchNavMatch(d);
     this.notify();
+  }
+
+  /** Stepping within a query updates the history entry that recorded it (§3.3). */
+  private _touchNavMatch(d: PdfDocument) {
+    const m = d.activeMatchIndex >= 0 ? d.matches[d.activeMatchIndex] : undefined;
+    navHistoryStore.touchPdfMatch(d.fileName, d.currentPage,
+      m ? { pageIndex: m.pageIndex, itemIndex: m.itemIndex, charStart: m.charStart, charEnd: m.charEnd } : undefined);
   }
 
   private _stepMatch(delta: 1 | -1) {
@@ -1498,7 +1831,9 @@ class PdfStore extends Emitter {
       d.activeMatchIndex = (d.activeMatchIndex + delta + d.matches.length) % d.matches.length;
     }
     d.currentPage = d.matches[d.activeMatchIndex].pageIndex + 1;
+    d.matchNavSeq++;
     this._rebuildActiveIndicesCache(d);
+    this._touchNavMatch(d);
     this.notify();
   }
 
@@ -1547,14 +1882,19 @@ class PdfStore extends Emitter {
     const q = word.trim();
     if (!q) return;
 
+    const from = source ? `${sourceFileName} · p.${source.currentPage}` : sourceFileName;
     const sameQuery = target.searchQuery.toUpperCase() === q.toUpperCase();
     if (sameQuery && target.searchSource === 'lookup' && target.matches.length > 0) {
       if (source) source.crossProbeHint = null;   // success — clear any stale hint
       this._stepMatchInDoc(target, 1);             // cycle to next occurrence (notifies)
+      navHistoryStore.record({ cause: 'lookup', place: this.navPlaceFor(targetName), query: { surface: 'pdf', text: q }, from });
       return;
     }
 
     this._runSearch(target, q, 'lookup', false);   // fresh search (notifies)
+    if (target.matches.length > 0) {
+      navHistoryStore.record({ cause: 'lookup', place: this.navPlaceFor(targetName), query: { surface: 'pdf', text: q, results: target.matches.length }, from });
+    }
     if (source) {
       source.crossProbeHint = target.matches.length === 0
         ? `No match for ${q} in ${targetName}`
@@ -1838,6 +2178,7 @@ class PdfStore extends Emitter {
       d.doc.destroy();
       d.strippedDoc?.destroy();
       this._documents.delete(d.fileName);
+      this._pagesUsed.delete(d.fileName);
     }
     this._activeFileName = null;
     this.notify();
@@ -1904,10 +2245,12 @@ class PdfStore extends Emitter {
 
   /** Close a specific document by filename */
   closeFile(fileName: string) {
+    this.endLoad(fileName);   // a failed or half-finished load ends with its panel
     const d = this._documents.get(fileName);
     if (!d) return;
     const t = this._cleanupTimers.get(fileName);
     if (t) { clearTimeout(t); this._cleanupTimers.delete(fileName); }
+    this._pagesUsed.delete(fileName);
     d.doc.destroy();
     d.strippedDoc?.destroy();
     this._documents.delete(fileName);

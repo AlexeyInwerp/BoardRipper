@@ -14,12 +14,14 @@
 import { useSyncExternalStore, useState, useRef, useEffect, useCallback } from 'react';
 import { welcomeStore } from '../store/welcome-store';
 import { renderSettingsStore } from '../store/render-settings';
+import { PDF_INERTIA_KEY } from '../panels/PdfViewerPanel';
 import {
-  SCROLL_BINDINGS_KEY,
-  PDF_INERTIA_KEY,
+  boardScrollBindings,
   loadScrollBindings,
+  saveScrollBindings,
+  type BoardScrollBindings,
   type ScrollBindings,
-} from '../panels/PdfViewerPanel';
+} from '../store/scroll-bindings';
 import {
   WheelGestureClassifier,
   InertiaDetector,
@@ -41,25 +43,24 @@ function parse(key: ActionKey): { surface: Surface; action: Action } {
   return { surface, action };
 }
 
-function boardGesture(action: Action, twoFingerPan: boolean, dragToZoom: boolean): string {
+const SLOT_GESTURE: Record<'bare' | 'shift' | 'meta', string> = { bare: 'scroll', shift: 'Shift+scroll', meta: 'Cmd+scroll' };
+
+function boardGesture(action: Action, b: BoardScrollBindings, dragToZoom: boolean): string {
+  const parts: string[] = (['bare', 'shift', 'meta'] as const).filter(s => b[s] === action).map(s => SLOT_GESTURE[s]);
   if (action === 'pan') {
-    const parts = [twoFingerPan ? 'scroll' : 'Shift+scroll'];
     if (!dragToZoom) parts.push('drag');
-    return parts.join(' · ');
+  } else {
+    parts.push('pinch');
+    if (dragToZoom) parts.push('drag');
   }
-  const parts = [twoFingerPan ? 'Shift+scroll' : 'scroll', 'pinch'];
-  if (dragToZoom) parts.push('drag');
-  return parts.join(' · ');
+  return parts.length ? parts.join(' · ') : '—';
 }
 
 function pdfGesture(action: Action, b: ScrollBindings): string {
-  const slot = (['bare', 'shift', 'meta'] as const).find(s => b[s] === action);
-  const base = slot === 'bare' ? 'scroll'
-    : slot === 'shift' ? 'Shift+scroll'
-    : slot === 'meta' ? 'Cmd/Ctrl+scroll'
-    : '—';
+  const parts: string[] = (['bare', 'shift', 'meta'] as const).filter(s => b[s] === action).map(s => SLOT_GESTURE[s]);
   // The PDF always pans by dragging and zooms by pinch (built in).
-  return action === 'zoom' ? `${base} · pinch` : `${base} · drag`;
+  parts.push(action === 'zoom' ? 'pinch' : 'drag');
+  return parts.join(' · ');
 }
 
 export function WelcomeSetup() {
@@ -69,8 +70,6 @@ export function WelcomeSetup() {
 }
 
 function WelcomeSetupBody() {
-  const initialTfp = renderSettingsStore.globalSettings.twoFingerPan;
-
   const [boardPatch, setBoardPatch] = useState<BoardSettingPatch>({});
   const [pdf, setPdf] = useState<ScrollBindings>(() => loadScrollBindings());
   const [momentum, setMomentum] = useState(() => !renderSettingsStore.globalSettings.disableInertia);
@@ -80,9 +79,8 @@ function WelcomeSetupBody() {
   const [pdfTouched, setPdfTouched] = useState(false);
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const initialDtz = renderSettingsStore.globalSettings.dragToZoom;
-  const tfp = boardPatch.twoFingerPan ?? initialTfp;
-  const dtz = boardPatch.dragToZoom ?? initialDtz;
+  const boardBindings = boardScrollBindings({ ...renderSettingsStore.globalSettings, ...boardPatch });
+  const dtz = boardPatch.dragToZoom ?? renderSettingsStore.globalSettings.dragToZoom;
 
   const boxRef = useRef<HTMLDivElement>(null);
   const classifierRef = useRef(new WheelGestureClassifier());
@@ -91,7 +89,7 @@ function WelcomeSetupBody() {
 
   const gestureFor = (key: ActionKey): string => {
     const { surface, action } = parse(key);
-    return surface === 'board' ? boardGesture(action, tfp, dtz) : pdfGesture(action, pdf);
+    return surface === 'board' ? boardGesture(action, boardBindings, dtz) : pdfGesture(action, pdf);
   };
 
   const capture = useCallback((verdict: GestureVerdict) => {
@@ -177,10 +175,9 @@ function WelcomeSetupBody() {
   const onSave = () => {
     const cur = renderSettingsStore.globalSnapshot();
     renderSettingsStore.applyGlobal({ ...cur, ...boardPatch, disableInertia: !momentum });
-    localStorage.setItem(SCROLL_BINDINGS_KEY, JSON.stringify(pdf));
-    window.dispatchEvent(new CustomEvent('pdf-scroll-bindings-changed', { detail: pdf }));
+    saveScrollBindings(pdf);
     localStorage.setItem(PDF_INERTIA_KEY, String(momentum));
-    log.ui.log(`[welcome] saved: twoFingerPan=${tfp}, pdf=${JSON.stringify(pdf)}, momentum=${momentum}`);
+    log.ui.log(`[welcome] saved: board=${JSON.stringify(boardBindings)}, pdf=${JSON.stringify(pdf)}, momentum=${momentum}`);
     welcomeStore.finish();
   };
 

@@ -295,11 +295,14 @@ export function ComponentInfoBody({
                         {netOpen ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}
                       </span>
                     )}
-                    {pin.net}
+                    {/* Own element: the caret above is inserted before it, and
+                        "Translate page" replaces a bare text node, so React threw
+                        (issue #36; fix after Sean Johnson, b682b55). A net name is
+                        an identifier, so it is not translated. */}
+                    <span translate="no">{pin.net}</span>
                     {isSelected && branchNet && netStats && (
                       <span className="pin-net-counts" data-testid="net-counts">
-                        {' · '}{netStats.pins} pin{netStats.pins === 1 ? '' : 's'}
-                        {' · '}{netStats.comps} comp{netStats.comps === 1 ? '' : 's'}
+                        {` · ${netStats.pins} pin${netStats.pins === 1 ? '' : 's'} · ${netStats.comps} comp${netStats.comps === 1 ? '' : 's'}`}
                       </span>
                     )}
                   </td>

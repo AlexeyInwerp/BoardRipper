@@ -1,11 +1,15 @@
 import { useSyncExternalStore } from 'react';
 import { renderSettingsStore } from './render-settings';
 import {
+  ACTION_LABEL,
+  SLOT_LABEL,
+  boardScrollBindings,
+  boardScrollSettings,
   loadScrollBindings,
-  SCROLL_BINDINGS_KEY,
+  saveScrollBindings,
+  toggleBareAction,
   type ScrollAction,
-  type ScrollBindings,
-} from '../panels/PdfViewerPanel';
+} from './scroll-bindings';
 
 /**
  * Returns the current "bare" scroll action. Board's `twoFingerPan` is the
@@ -19,27 +23,28 @@ export function getBareScrollAction(): 'pan' | 'zoom' {
 }
 
 /**
- * Swap `bare` ↔ `shift` in both stores. PDF's `meta` slot is preserved so
- * any user customization in the Settings 3-slot editor survives.
+ * The ribbon / PDF-toolbar button: flip bare scroll between Pan and Zoom on
+ * both surfaces. Only the bare slot changes (`toggleBareAction`) — Shift and
+ * ⌘ keep whatever the user gave them, so a Shift slot left on Pan for the
+ * browser's horizontal scroll (issue #40) survives the button.
  */
 export function invertScrollBindings(): void {
   const cur = renderSettingsStore.globalSnapshot();
-  renderSettingsStore.applyGlobal({ ...cur, twoFingerPan: !cur.twoFingerPan });
-
-  const b = loadScrollBindings();
-  const next: ScrollBindings = { bare: b.shift, shift: b.bare, meta: b.meta };
-  localStorage.setItem(SCROLL_BINDINGS_KEY, JSON.stringify(next));
-  window.dispatchEvent(new CustomEvent('pdf-scroll-bindings-changed', { detail: next }));
+  const board = toggleBareAction(boardScrollBindings(cur));
+  renderSettingsStore.applyGlobal({ ...cur, ...boardScrollSettings(board) });
+  saveScrollBindings(toggleBareAction(loadScrollBindings()));
 }
 
-/** Tooltip for the swap button, built from the ACTUAL stored PDF bindings so
- *  a custom 3-slot config (e.g. bare='switch') is described truthfully —
- *  the old hardcoded "Pan/Zoom" pair lied whenever the third action was in
- *  one of the two visible slots. */
-export function scrollSwapTooltip(): string {
-  const b = loadScrollBindings();
-  const name = (a: ScrollAction) => a === 'pan' ? 'Pan' : a === 'zoom' ? 'Zoom' : 'Flip pages';
-  return `Scroll: ${name(b.bare)} · Shift+Scroll: ${name(b.shift)} · Ctrl/Cmd+Scroll: ${name(b.meta)} — click to swap Scroll and Shift+Scroll`;
+/** Tooltip for the toggle button, built from the ACTUAL bindings of the
+ *  surface it sits on, so a custom layout is described truthfully. */
+export function scrollSwapTooltip(surface: 'board' | 'pdf' = 'pdf'): string {
+  const b = surface === 'board'
+    ? boardScrollBindings(renderSettingsStore.globalSettings)
+    : loadScrollBindings();
+  const name = (a: ScrollAction) => ACTION_LABEL[a];
+  const bareNext = b.bare === 'pan' ? 'Zoom' : 'Pan';
+  return `${SLOT_LABEL.bare}: ${name(b.bare)} · ${SLOT_LABEL.shift}: ${name(b.shift)} · ${SLOT_LABEL.meta}: ${name(b.meta)}`
+    + ` — click to switch Scroll to ${bareNext}`;
 }
 
 /**

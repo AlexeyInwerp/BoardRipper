@@ -1,4 +1,4 @@
-import { useCallback, useState, useRef, useEffect } from 'react';
+import { useCallback, useState, useRef, useEffect, useSyncExternalStore } from 'react';
 import {
   DockviewReact,
 } from 'dockview-react';
@@ -34,18 +34,21 @@ import { FirstRunSetup } from './components/FirstRunSetup';
 import { SessionRestorePrompt } from './components/SessionRestorePrompt';
 import { setDockviewApi, ensureBoardPanel, boardPanelId, isRedockingPdf } from './store/dockview-api';
 import { boardStore } from './store/board-store';
-import { useBoardStore } from './hooks/useBoardStore';
 import { pdfStore } from './store/pdf-store';
 import { openPdfFiles } from './store/file-actions';
 import { saveDroppedToIncoming } from './store/incoming-upload';
 import { isElectron } from './store/databank-store';
 import { isLiteBuild, isOfflineBuild } from './store/build-mode';
 import { UpdatePrompt } from './components/UpdatePrompt';
+import { BackgroundLoadBanner } from './components/BackgroundLoadBanner';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { getAllExtensions, getFileExtension } from './parsers';
 import { themeStore } from './store/themes';
 import { updateStore } from './store/update-store';
 import { databankStore, captureDroppedFolder } from './store/databank-store';
+
+const subscribeBoard = (cb: () => void) => boardStore.subscribe(cb);
+const getToasts = () => boardStore.toasts;
 
 // Every Dockview panel is wrapped in a PanelErrorBoundary so one bad board
 // file / render-time throw in a single panel can't white-screen the whole app
@@ -125,7 +128,12 @@ function isDockerImageTarball(name: string): boolean {
 function App() {
   themeStore.init();
   useKeyboardShortcuts();
-  const { toasts } = useBoardStore();
+  // Toasts only. The whole board snapshot here re-rendered the entire app —
+  // every panel, the hidden start page and its Markdown — on every board
+  // change: ~170 ms of React per rotation release at 4× CPU throttle, the
+  // "rotation is laggy" report on an A12Z iPad (2026-10-07). The toast array
+  // is replaced on change, so its reference is the snapshot.
+  const toasts = useSyncExternalStore(subscribeBoard, getToasts);
   const [dragOver, setDragOver] = useState(false);
   const dragCounter = useRef(0);
   // Subscribe to all sidebar changes (collapse, side flip, tab switch)
@@ -370,6 +378,12 @@ function App() {
                 popoutUrl="popout.html"
               />
               <HomeBackdrop />
+              {/* Mounted here, over the whole dock area, never inside a
+                  board panel: Dockview drops an inactive panel's DOM, so a
+                  banner in the panel you are looking at is gone at the very
+                  moment the new tab mounts and builds — the block it exists
+                  to explain. */}
+              <BackgroundLoadBanner />
             </div>
           </div>
           {!statusBarHidden && <StatusBar />}
@@ -387,7 +401,7 @@ function App() {
         <div className="toast-container">
           {toasts.map(t => (
             <div key={t.id} className={`toast toast-${t.type}`} onClick={() => boardStore.dismissToast(t.id)}>
-              {t.message}
+              <span>{t.message}</span>
               {t.action && (
                 <button
                   className="toast-action"

@@ -392,6 +392,8 @@ export interface PdfBindings {
 
 export interface BoardSettingPatch {
   twoFingerPan?: boolean;
+  wheelShiftAction?: 'pan' | 'zoom';
+  wheelMetaAction?: 'pan' | 'zoom';
   wheelDetection?: boolean;
   dragToZoom?: boolean;
 }
@@ -403,20 +405,15 @@ export interface Recommendation {
   summary: string;
   /** Partial board patch to merge into global render settings. */
   board?: BoardSettingPatch;
-  /** Full resulting PDF bindings (a valid 3-action permutation) to persist. */
+  /** Full resulting PDF bindings to persist. */
   pdf?: PdfBindings;
 }
 
-const PDF_SLOTS = ['bare', 'shift', 'meta'] as const;
-
-/** Assign `action` to `slot`, swapping to keep a valid 3-action permutation. */
+/** Assign `action` to `slot`. Slots are independent — the other two keep
+ *  what they had (a demonstrated Shift+scroll pan must not silently move
+ *  zoom onto some other modifier). */
 function assignPdfSlot(cur: PdfBindings, slot: keyof PdfBindings, action: PdfScrollAction): PdfBindings {
-  if (cur[slot] === action) return { ...cur };
-  const displaced = PDF_SLOTS.find(s => cur[s] === action)!;
-  const next: PdfBindings = { ...cur };
-  next[displaced] = cur[slot];
-  next[slot] = action;
-  return next;
+  return { ...cur, [slot]: action };
 }
 
 function modifierToPdfSlot(m: GestureModifier): keyof PdfBindings | null {
@@ -459,30 +456,24 @@ function recommendBoard(action: Action, device: GestureDevice, modifier: Gesture
       : { ok: true, summary: 'Bare drag will ZOOM the board (Shift+drag pans).', board: { dragToZoom: true } };
   }
 
-  // Wheel / swipe.
-  if (modifier === 'meta') {
-    return { ok: false, summary: 'The board has no Cmd/Ctrl+scroll binding — use plain scroll or Shift+scroll.' };
-  }
-
-  if (action === 'pan') {
-    if (modifier === 'none') {
-      // Bare scroll pans. If it's a mouse wheel, leave the safety net off so
-      // the wheel genuinely pans rather than being re-routed to zoom.
-      const board: BoardSettingPatch = { twoFingerPan: true };
-      if (device === 'mouse-wheel') board.wheelDetection = false;
-      return { ok: true, summary: 'Bare scroll will PAN the board (Shift+scroll zooms).', board };
+  // Wheel / swipe → the matching slot. Slots are independent: demonstrating
+  // one modifier changes only that modifier.
+  const verb = action.toUpperCase();
+  switch (modifier) {
+    case 'meta':
+      return { ok: true, summary: `Cmd+scroll will ${verb} the board.`, board: { wheelMetaAction: action } };
+    case 'shift':
+      return { ok: true, summary: `Shift+scroll will ${verb} the board.`, board: { wheelShiftAction: action } };
+    case 'ctrl':
+      return { ok: false, summary: 'Ctrl+scroll is the pinch/fast-zoom path — it can’t be reassigned.' };
+    case 'none': {
+      const board: BoardSettingPatch = { twoFingerPan: action === 'pan' };
+      // Bare scroll pans on a mouse wheel: leave the safety net off so the
+      // wheel genuinely pans rather than being re-routed to zoom.
+      if (action === 'pan' && device === 'mouse-wheel') board.wheelDetection = false;
+      return { ok: true, summary: `Bare scroll will ${verb} the board.`, board };
     }
-    // shift+scroll pans ⇒ bare scroll zooms.
-    return { ok: true, summary: 'Shift+scroll will PAN; bare scroll will ZOOM the board.', board: { twoFingerPan: false } };
   }
-
-  // action === 'zoom'
-  if (modifier === 'none') {
-    // Bare scroll zooms ⇒ classic mouse layout.
-    return { ok: true, summary: 'Bare scroll will ZOOM the board (Shift+scroll pans).', board: { twoFingerPan: false } };
-  }
-  // shift+scroll zooms ⇒ bare scroll pans.
-  return { ok: true, summary: 'Shift+scroll will ZOOM; bare scroll will PAN the board.', board: { twoFingerPan: true } };
 }
 
 function recommendPdf(action: Action, device: GestureDevice, modifier: GestureModifier, currentPdf: PdfBindings): Recommendation {

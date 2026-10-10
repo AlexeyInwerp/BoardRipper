@@ -31,6 +31,14 @@ describe('parseXzzTailAnnotations — legacy record encoding', () => {
     expect(t.netAliases.size).toBe(0);
   });
 
+  it('reads BGA pad names, not only numeric pins', () => {
+    // iPhone13 boardview(Diode value): 2,675 of 3,731 records name a ball.
+    const t = parseXzzTailAnnotations(withTail('\n=711=N485(D9)\n=OL=N489(AM14)\n=359=C100(1)\n'));
+    expect(t.diodes.get('N485(D9)')).toMatchObject({ kind: 'value', mv: 711 });
+    expect(t.diodes.get('N489(AM14)')).toMatchObject({ kind: 'open' });
+    expect(t.diodes.get('C100(1)')).toMatchObject({ mv: 359 });
+  });
+
   it('is empty when the file carries no marker', () => {
     const t = parseXzzTailAnnotations(new TextEncoder().encode('XZZPCB no tail here'));
     expect(t.encoding).toBe('none');
@@ -105,5 +113,72 @@ describe('parseDiodeSection', () => {
     expect(parseDiodeSection(withTail('\n=359=C100(1)\n')).get('C100(1)')).toMatchObject({ mv: 359 });
     const json = JSON.stringify({ part: [{ reference: 'C100', pad: [{ name: '1', diode: '359' }] }] });
     expect(parseDiodeSection(withTail(BANNER + json)).get('C100(1)')).toMatchObject({ mv: 359 });
+  });
+});
+
+describe('parseXzzTailAnnotations — a tail carrying both encodings', () => {
+  const json = JSON.stringify({ part: [{ reference: 'C100', alias: 'C10602', pad: [{ name: '1', diode: '538' }] }] });
+
+  it('reads legacy records that precede the JSON section', () => {
+    // iPadAir3 820-01531 YiDianTong: 158 `===阻值` records, then the JSON.
+    const t = parseXzzTailAnnotations(withTail('\n=711=N485(D9)\n=359=R5(1)\n' + BANNER + json + '\n'));
+    expect(t.encoding).toBe('json+legacy');
+    expect(t.diodes.get('N485(D9)')).toMatchObject({ mv: 711 });
+    expect(t.diodes.get('R5(1)')).toMatchObject({ mv: 359 });
+    expect(t.diodes.get('C100(1)')).toMatchObject({ mv: 538 });
+    expect(t.partAliases.get('C100')).toBe('C10602');
+  });
+
+  it('lets the JSON win a key both encodings define', () => {
+    const t = parseXzzTailAnnotations(withTail('\n=OL=C100(1)\n' + BANNER + json + '\n'));
+    expect(t.diodes.get('C100(1)')).toMatchObject({ mv: 538 });
+  });
+
+  it('finds the JSON past 4 KB of legacy records', () => {
+    // iPhone13 boardview(Diode value): the JSON starts 62 KB into the tail.
+    const records = Array.from({ length: 400 }, (_, i) => `=${300 + i}=U1(${i + 1})`).join('\n');
+    const t = parseXzzTailAnnotations(withTail('\n' + records + '\n' + BANNER + json + '\n'));
+    expect(t.diodes.get('C100(1)')).toMatchObject({ mv: 538 });
+    expect(t.diodes.get('U1(400)')).toMatchObject({ mv: 699 });
+  });
+
+  it('parses the JSON when another section follows it', () => {
+    // Magic HL1NATASHAM: `===原理图` and a PDF name after the JSON line.
+    const t = parseXzzTailAnnotations(withTail(BANNER + json + '\n\n===原理图\ncircuit diagram.pdf\n'));
+    expect(t.encoding).toBe('json');
+    expect(t.diodes.get('C100(1)')).toMatchObject({ mv: 538 });
+  });
+});
+
+describe('parseXzzTailAnnotations — ===信号 net glossary', () => {
+  const GB = { 信号: [0xD0, 0xC5, 0xBA, 0xC5], 阻值: [0xD7, 0xE8, 0xD6, 0xB5], 显示: [0xCF, 0xD4, 0xCA, 0xBE] };
+  const ascii = (s: string) => [...new TextEncoder().encode(s)];
+  /** The tail as iPhoneXSMAX Common problems lays it out: a nameless BOM
+   *  section, the glossary, then the readings — every marker and description
+   *  in GB2312, not UTF-8. */
+  function sectionedTail(): Uint8Array {
+    const bytes = [
+      ...ascii('v6v6555v6v6===\nC230_W 0.3PF_16V 01005\n'),
+      ...ascii('==='), ...GB.信号, ...ascii('\n'),
+      ...ascii('PP_VDD_MAIN='), ...GB.显示, ...ascii('\r\n'),
+      ...ascii('RAIL_A=A=B\n'),
+      ...ascii('==='), ...GB.阻值, ...ascii('\n=359=C100(1)\n'),
+    ];
+    return new Uint8Array(bytes);
+  }
+
+  it('reads NETNAME=description lines from GB2312 and splits on the first =', () => {
+    const t = parseXzzTailAnnotations(sectionedTail());
+    expect([...t.netDescriptions]).toEqual([['PP_VDD_MAIN', '显示'], ['RAIL_A', 'A=B']]);
+  });
+
+  it('does not mistake BOM or reading lines for glossary entries, and still reads the readings', () => {
+    const t = parseXzzTailAnnotations(sectionedTail());
+    expect(t.netDescriptions.has('C230_W 0.3PF_16V 01005')).toBe(false);
+    expect(t.diodes.get('C100(1)')).toMatchObject({ mv: 359 });
+  });
+
+  it('is empty when the tail has no glossary section', () => {
+    expect(parseXzzTailAnnotations(withTail('\n=359=C100(1)\n')).netDescriptions.size).toBe(0);
   });
 });
