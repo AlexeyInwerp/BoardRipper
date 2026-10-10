@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useMemo, useEffect, useSyncExternalStore, createContext, useContext } from 'react';
 import { setWatermarkTerms } from '../store/pdf-filter-actions';
-import { IconPalette, IconLayoutBoardSplit, IconKeyboard, IconBooks, IconSettings, IconPlug, IconClick } from '@tabler/icons-react';
+import { IconPalette, IconLayoutBoardSplit, IconKeyboard, IconBooks, IconSettings, IconPlug, IconClick, IconGauge } from '@tabler/icons-react';
 import { themeStore, THEMES, ACCENT_PRESETS } from '../store/themes';
 import { isHdrCapable, onHdrCapabilityChange } from '../renderer/hdr-selection-outline';
 import { resizeModeStore } from '../store/resize-mode-store';
@@ -79,14 +79,15 @@ function useOverride(field: keyof RenderSettings) {
 
 type SectionId = MockupSectionId | 'zoomLod' | 'netLines' | 'navigation' | 'performance' | 'shortcuts' | 'partTypeOverrides' | 'server' | 'dbinfo' | 'pdf' | 'boardOverlay';
 
-export type SettingsTabId = 'theme' | 'board' | 'input' | 'library' | 'system' | 'integrations';
+export type SettingsTabId = 'theme' | 'board' | 'rendering' | 'input' | 'library' | 'system' | 'integrations';
 
-const TAB_ORDER: SettingsTabId[] = (['theme', 'board', 'input', 'library', 'system', 'integrations'] as SettingsTabId[])
+const TAB_ORDER: SettingsTabId[] = (['theme', 'board', 'rendering', 'input', 'library', 'system', 'integrations'] as SettingsTabId[])
   .filter(t => !(isLiteBuild() && (t === 'library' || t === 'integrations')));
 
 const TAB_ICONS: Record<SettingsTabId, typeof IconPalette> = {
   theme:        IconPalette,
   board:        IconLayoutBoardSplit,
+  rendering:    IconGauge,
   input:        IconKeyboard,
   library:      IconBooks,
   system:       IconSettings,
@@ -96,6 +97,7 @@ const TAB_ICONS: Record<SettingsTabId, typeof IconPalette> = {
 const TAB_LABELS: Record<SettingsTabId, string> = {
   theme:        'Theme',
   board:        'Board',
+  rendering:    'Rendering',
   input:        'Input',
   library:      'Library',
   system:       'System',
@@ -117,8 +119,11 @@ export const SECTION_TO_TAB: Record<SectionId, SettingsTabId> = {
   zoomLod:    'input',
   navigation: 'input',
   shortcuts:  'input',
+  // Rendering tab (2026-10-10): board and PDF quality, text renderer,
+  // diagnostics — it was two levels down as System ▸ Performance & Debug.
+  // The section id stays `performance` for deep links and saved open state.
+  performance: 'rendering',
   // System tab
-  performance: 'system',
   pdf:         'system',
   // Library folder + auto-scan + scan/index controls live on the Library tab.
   // The internal section id is still `server` for localStorage continuity
@@ -150,7 +155,9 @@ function loadOpenSections(tab: SettingsTabId): Set<SectionId> {
   // First visit to the Library tab: the everyday section (Scanning & Indexing)
   // starts open instead of a wall of collapsed headers.
   const fallback = (): Set<SectionId> =>
-    tab === 'library' ? new Set<SectionId>(['server']) : new Set();
+    tab === 'library' ? new Set<SectionId>(['server'])
+      : tab === 'rendering' ? new Set<SectionId>(['performance'])   // its only section
+      : new Set();
   try {
     const raw = localStorage.getItem(openSectionsKey(tab));
     if (!raw) return fallback();
@@ -2230,6 +2237,15 @@ export function SettingsPanel() {
             onChange={(e) => updateGlobal({ disableInertia: !e.target.checked })} />
         </div>
 
+        <div className="settings-subsection-label">Zoom and rotation</div>
+        <Toggle label="Smooth wheel zoom" value={draft.smoothZoom} field="smoothZoom" onUpdate={updateGlobal}
+          title="Animated cursor-anchored zoom" />
+        <Toggle label="Two-finger rotation" value={draft.twoFingerRotate} field="twoFingerRotate" onUpdate={updateGlobal}
+          title="On a touch screen, turning two fingers turns the board about the point between them. Starts locked: a turn past the unlock angle unlocks it, a two-finger double-tap locks it again and squares the board. The angle is kept when the fingers lift, snapped to the nearest right angle when within the snap window. Off: two fingers only zoom and pan." />
+        <Slider label="Rotation unlock angle" value={draft.rotateUnlockDeg} min={4} max={45} step={1} field="rotateUnlockDeg" onUpdate={updateGlobal} unit="°"
+          title="While rotation is locked, two fingers must turn this far before it unlocks. Every pinch turns a little; too low and zooming starts rotating, too high and unlocking takes a deliberate twist. Default 24°." />
+        <Slider label="Rotation snap window" value={draft.rotateSnapDeg} min={0} max={45} step={1} field="rotateSnapDeg" onUpdate={updateGlobal} unit="°"
+          title="When the fingers lift within this many degrees of 0°, 90°, 180° or 270°, the board snaps to that right angle. 0 never snaps. Default 10°." />
         <div className="settings-subsection-label">Click</div>
         <Slider label="Pin Click Radius" value={draft.clickThreshold} min={5} max={100} step={5} field="clickThreshold" onUpdate={updateGlobal}
           title="Maximum distance (screen pixels) from a pin center that counts as a click on that pin. Larger = easier to click small or densely packed pins" />
@@ -2361,36 +2377,42 @@ export function SettingsPanel() {
       )}
 
       {activeTab === SECTION_TO_TAB.performance && (
-      <CollapsibleSection id="performance" title="Performance & Debug" isOpen={openSections.has('performance')}
+      <CollapsibleSection id="performance" title="Rendering" isOpen={openSections.has('performance')}
         onToggle={toggleSection} sectionRef={performanceRef} isFocused={focusedSection === 'performance'}>
+        <div className="settings-subsection-label">Board</div>
         <div className="settings-quality-preset"><QualityPresetCard /></div>
-        <Toggle label="Show Perf Overlay" value={draft.showPerfOverlay} field="showPerfOverlay" onUpdate={updateGlobal}
-          title="Show per-phase frame-time stats (frame / lod / sel / net / gpu) on each board panel. Same toggle as the small 'i' button at the bottom-left of a panel" />
-        <Toggle label="Text fast mode (experimental)" value={draft.textFastMode} field="textFastMode" onUpdate={updateGlobal}
-          title="Draw board text on a 2D overlay instead of in-scene text objects — faster on dense boards. Experimental: report rendering glitches." />
-        <Toggle label="Smooth wheel zoom" value={draft.smoothZoom} field="smoothZoom" onUpdate={updateGlobal}
-          title="Animated cursor-anchored zoom" />
-        <Toggle label="Cap to 60 FPS" value={draft.cap60Fps} field="cap60Fps" onUpdate={updateGlobal}
+        <details className="settings-fine-tune" data-testid="settings-board-fine-tune">
+          <summary>Fine-tune — the settings the preset sets</summary>
+          <Toggle label="Cap to 60 FPS" value={draft.cap60Fps} field="cap60Fps" onUpdate={updateGlobal}
           title="Limit the renderer to 60 frames per second. Disable to let the ticker run at the display refresh rate (120/144/240 Hz) — smoother but more CPU/GPU work" />
-        <Toggle label="Two-finger rotation" value={draft.twoFingerRotate} field="twoFingerRotate" onUpdate={updateGlobal}
-          title="On a touch screen, turning two fingers turns the board about the point between them. Starts locked: a turn past the unlock angle unlocks it, a two-finger double-tap locks it again and squares the board. The angle is kept when the fingers lift, snapped to the nearest right angle when within the snap window. Off: two fingers only zoom and pan." />
-        <Slider label="Rotation unlock angle" value={draft.rotateUnlockDeg} min={4} max={45} step={1} field="rotateUnlockDeg" onUpdate={updateGlobal} unit="°"
-          title="While rotation is locked, two fingers must turn this far before it unlocks. Every pinch turns a little; too low and zooming starts rotating, too high and unlocking takes a deliberate twist. Default 24°." />
-        <Slider label="Rotation snap window" value={draft.rotateSnapDeg} min={0} max={45} step={1} field="rotateSnapDeg" onUpdate={updateGlobal} unit="°"
-          title="When the fingers lift within this many degrees of 0°, 90°, 180° or 270°, the board snaps to that right angle. 0 never snaps. Default 10°." />
-        <Toggle label="Touch device performance mode" value={draft.touchPerformanceMode} field="touchPerformanceMode" onUpdate={updateGlobal}
+          <Toggle label="Touch device performance mode" value={draft.touchPerformanceMode} field="touchPerformanceMode" onUpdate={updateGlobal}
           title="On a tablet (finger as the primary pointer): cap the board to 60 FPS instead of the panel's 120 and cap the render resolution at 1.5×. Edge smoothing stays on. Board text keeps full resolution. No effect on a mouse or trackpad machine. Takes effect when a board panel is next opened." />
-        <Slider label="Render resolution limit" value={draft.boardResolutionCap} min={0} max={2} step={0.25} field="boardResolutionCap" onUpdate={updateGlobal} unit="×"
+          <Slider label="Render resolution limit" value={draft.boardResolutionCap} min={0} max={2} step={0.25} field="boardResolutionCap" onUpdate={updateGlobal} unit="×"
           title="Ceiling on the board's render resolution in device pixels per CSS pixel. 0 = no limit of its own (a tablet still gets the touch profile's 1.5×). 1 draws 44 % of the pixels 1.5 does. Board text is unaffected." />
-        <Toggle label="Simple trace corners" value={draft.traceCorners === 'simple'} field="traceCorners"
+          <Toggle label="Edge smoothing (MSAA)" value={draft.boardAntialiasing} field="boardAntialiasing" onUpdate={updateGlobal}
+          title="Multisampled rendering for the board. Keep it on: thin lines such as the board outline are thinner than a pixel when zoomed out and break into jaggies without it. Turning it off saves GPU work on a machine that cannot afford it. Takes effect when a board panel is next opened." />
+          <Toggle label="Simple trace corners" value={draft.traceCorners === 'simple'} field="traceCorners"
           onUpdate={(p) => { const v: unknown = p.traceCorners; updateGlobal({ traceCorners: (v === true || v === 'simple') ? 'simple' : 'round' }); }}
           title="Bevelled bends and square ends instead of rounded ones: about half the trace geometry. Invisible when zoomed out; corners look square deep in." />
-        <Toggle label="Edge smoothing (MSAA)" value={draft.boardAntialiasing} field="boardAntialiasing" onUpdate={updateGlobal}
-          title="Multisampled rendering for the board. Keep it on: thin lines such as the board outline are thinner than a pixel when zoomed out and break into jaggies without it. Turning it off saves GPU work on a machine that cannot afford it. Takes effect when a board panel is next opened." />
-        <Slider label="Label Atlas Resolution" value={draft.labelAtlasResolution} min={4} max={24} step={1} field="labelAtlasResolution" onUpdate={updateGlobal}
+        </details>
+        <div className="settings-subsection-label">PDF</div>
+        <PdfQualitySelector />
+        <details className="settings-fine-tune" data-testid="settings-pdf-render-mode">
+          <summary>Render mode</summary>
+          <PdfRenderModeSelector />
+        </details>
+        <div className="settings-subsection-label">Board text</div>
+        <Toggle label="Board text on an overlay (recommended)" value={draft.textFastMode} field="textFastMode" onUpdate={updateGlobal}
+          title="Draw board text on a 2D overlay instead of as in-scene text objects — much faster on dense boards, and the default since 2026-07. Off falls back to the legacy in-scene text." />
+        {!draft.textFastMode && <>
+          <Slider label="Label Atlas Resolution" value={draft.labelAtlasResolution} min={4} max={24} step={1} field="labelAtlasResolution" onUpdate={updateGlobal}
           title="Pixel multiplier for the BitmapFont atlases used by pin/net/part labels. Higher = sharper labels at deep zoom; texture memory grows ~quadratically. Default 8. Triggers a scene rebuild." />
-        <Toggle label="Hide Text During Zoom" value={draft.hideTextDuringZoom} field="hideTextDuringZoom" onUpdate={updateGlobal}
+          <Toggle label="Hide Text During Zoom" value={draft.hideTextDuringZoom} field="hideTextDuringZoom" onUpdate={updateGlobal}
           title="Temporarily hide all text labels while zooming or panning for smoother performance. Labels reappear when interaction stops" />
+        </>}
+        <div className="settings-subsection-label">Diagnostics</div>
+        <Toggle label="Show Perf Overlay" value={draft.showPerfOverlay} field="showPerfOverlay" onUpdate={updateGlobal}
+          title="Show per-phase frame-time stats (frame / lod / sel / net / gpu) on each board panel. Same toggle as the small 'i' button at the bottom-left of a panel" />
         <Toggle label="[Debug] Pad Vertex Crosshairs" value={draft.showPadVertices} field="showPadVertices" onUpdate={updateGlobal}
           title="Draw magenta crosshair markers at each pin's exact coordinate from the board file. Useful for verifying parser accuracy" />
         <Toggle label="[Debug] Outline Vertex Numbers" value={draft.showVertexNumbers} field="showVertexNumbers" onUpdate={updateGlobal}
@@ -2401,10 +2423,7 @@ export function SettingsPanel() {
       {activeTab === SECTION_TO_TAB.pdf && (
       <CollapsibleSection id="pdf" title="PDF Viewer" isOpen={openSections.has('pdf')}
         onToggle={toggleSection} sectionRef={pdfRef} isFocused={focusedSection === 'pdf'}>
-        <div className="settings-subsection-label">Render quality</div>
-        <PdfQualitySelector />
-        <div className="settings-subsection-label">Render mode</div>
-        <PdfRenderModeSelector />
+        <p className="settings-hint">Quality and render mode are under Settings ▸ Rendering.</p>
         <div className="settings-subsection-label">Watermark filter</div>
         <PdfWatermarkFilterEditor />
         <div className="settings-subsection-label">Navigation</div>

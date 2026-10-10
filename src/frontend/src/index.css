@@ -8281,6 +8281,10 @@ body {
   flex-wrap: wrap;
   row-gap: 2px;
 }
+/* Seven tabs since Rendering (2026-10-10): narrower cells and padding so the
+   strip still fits one row at the default sidebar width. */
+.settings-tabs-row { padding: 0 4px; }
+.settings-tabs-row .icon-tab { width: 38px; }
 /* ── Icon tab cell — the one tab design for panel-internal strips (Library,
    Settings). Fixed width and height with the icon pinned at a fixed spot, so
    switching tabs never moves an icon. The caption (open tab only) and any
@@ -9934,3 +9938,15 @@ body {
   z-index: 1;
   pointer-events: none;
 }
+
+/* Settings ▸ Rendering: the knobs a preset sets, folded under it. */
+.settings-fine-tune { margin: 4px 0 10px; }
+.settings-fine-tune > summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 0.85em;
+  padding: 4px 0;
+  user-select: none;
+}
+.settings-fine-tune > summary:hover { color: var(--text-primary); }
+.settings-fine-tune[open] > summary { margin-bottom: 4px; }

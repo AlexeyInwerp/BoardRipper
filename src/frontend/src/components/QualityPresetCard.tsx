@@ -1,7 +1,7 @@
 /**
  * Board quality preset — four buttons that each write several render
  * settings at once (`store/quality-preset.ts`). Start page, beside the
- * Interface scale and HDR cards, and at the top of Settings ▸ Performance.
+ * Interface scale and HDR cards, and at the top of Settings ▸ Rendering.
  *
  * The highlighted button is derived from the settings, never stored: a hand
  * edit of any setting a preset covers shows "Custom". The readout says what
@@ -53,7 +53,7 @@ export function QualityPresetCard() {
         ))}
       </div>
       <div className="ui-scale-full-hint">
-        <span>{preset ? preset.hint : 'Custom — settings were changed by hand in Settings ▸ Performance.'}</span>
+        <span>{preset ? preset.hint : 'Custom — settings were changed by hand in Settings ▸ Rendering.'}</span>
         {isTouchPrimary() && current !== 'fast' && current !== 'fastest' && (
           <span> If boards stutter on this tablet, try Fast.</span>
         )}

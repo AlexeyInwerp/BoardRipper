@@ -1,7 +1,7 @@
 /**
  * PDF quality preset — the PDF side of the board's QualityPresetCard, with
  * the same four names (`store/pdf-quality.ts`). Start page, beside the board
- * card; Settings ▸ PDF has the same choice. Kept in step with every other
+ * card; Settings ▸ Rendering has the same choice. Kept in step with every other
  * control through the `pdf-quality-changed` event the panels already obey.
  */
 import { useEffect, useState } from 'react';

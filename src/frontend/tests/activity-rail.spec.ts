@@ -204,7 +204,7 @@ test.describe('activity rail', () => {
     // Settings strip.
     await page.click(`${RAIL} ${tab('settings')}`);
     const sTabs = page.locator('.sidebar [data-settings-tab]');
-    await expect(sTabs).toHaveCount(6);
+    await expect(sTabs).toHaveCount(7);
     const before = await sTabs.evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().x)));
     await page.locator('.sidebar [data-settings-tab="input"]').click();
     const after = await sTabs.evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().x)));
