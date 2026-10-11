@@ -92,9 +92,11 @@ Accent text is shaded automatically on light backgrounds, so the presets mostly 
 
 **G. Guard it with tests.** A unit test per scheme: labels ≥ 4.5:1 on the board and on every part body, pins ≥ 3:1 on the board, selection ≥ 3:1, semantic pin colours pairwise distinct. Keep the screenshot harness for visual review of every change.
 
-## Decisions needed
+## Decisions (2026-10-11)
 
-1. Ambient dim: keep it on by default with a canvas-coloured dim, or turn it off by default?
-2. Top/bottom as green/red is OpenBoardView's convention and users know it. Keep it, or move the side cue off colour so red can mean power only?
-3. One light scheme or two?
-4. Users who customised pin or part colours: their saved values override the new scheme. Keep them as they are, or offer a one-time reset?
+1. **Dim:** switching the scheme turns the dim off. The dim itself fades toward the canvas colour and only appears with a selection.
+2. **Sides:** top and underside get their own colour codes, so red means power only. The underside's plain signal and ground pins take their own colours (violet-grey on Dark and Light, woodgrain brown on Atari, darker grey on Monochrome); in the two-sided view the underside sits behind, faded, with dashed body edges.
+3. **Light schemes:** two. One plain Light, and one **Atari (light)**: 2600 silver-label paper and black ink, the rainbow as part tints and pin roles (red power, orange rails, blue data, green logic), Atari yellow as the selection highlighter; connectors stay silver because a large red block would read as power.
+4. **Custom colours:** a user's custom scheme and saved overrides are kept as they are.
+
+Shipping set: Dark, Light, Atari (light), Monochrome, plus Custom. All four proposed schemes pass the 26 contrast checks in the mockup (`claude.ai/artifact/9SzQM5xQaWsoEab6CPNgPX`); today's Drafting Paper passes 10, Default 23.
