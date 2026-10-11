@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BoardRenderer } from '../renderer/BoardRenderer';
 import { PanActivity } from '../store/pan-activity';
 import { boardStore } from '../store/board-store';
+import { themeStore } from '../store/themes';
 
 const MAX_W = 220;
 const MAX_H = 150;
@@ -42,9 +43,30 @@ function css(name: string, fallback: string) {
   return v || fallback;
 }
 
+/** The minimap's colours. A palette scheme (Dark, Landrex, Light, Atari) draws
+ *  it in its own colours, so a light scheme does not get a dark map of white
+ *  lines; Default keeps the translucent-white map it always had. */
+interface MapColors { bg: string | null; sheet: string; edge: string; parts: string; selected: string; view: string; viewFill: string }
+function mapColors(): MapColors {
+  const t = themeStore.activeTheme();
+  if (!t.palette) {
+    const accent = css('--accent', '#5aa0ff');
+    return { bg: null, sheet: 'rgba(255,255,255,0.06)', edge: 'rgba(255,255,255,0.55)', parts: 'rgba(255,255,255,0.32)',
+      selected: accent, view: accent, viewFill: 'rgba(90,160,255,0.12)' };
+  }
+  const b = t.board;
+  return { bg: b.canvasBackground, sheet: b.boardFill, edge: b.outline, parts: b.partOutlineTop ?? b.labelPart,
+    selected: b.selectedPart ?? b.selection, view: b.selection, viewFill: hexA(b.selection, 0.14) };
+}
+function hexA(hex: string, a: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
 /** Paint the board itself (outline + part boxes) into `ctx`, world→minimap via `k, ox, oy`. */
 function paintBoard(ctx: CanvasRenderingContext2D, model: Model, k: number, ox: number, oy: number) {
-  const accent = css('--accent', '#5aa0ff');
+  const mc = mapColors();
+  const accent = mc.selected;
   const { board } = model;
   const top = boardStore.showTop, bottom = boardStore.showBottom;
   const primaryBottom = board.primarySide === 'bottom';
@@ -60,14 +82,15 @@ function paintBoard(ctx: CanvasRenderingContext2D, model: Model, k: number, ox: 
         if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) { pen = false; continue; }
         if (pen) ctx.lineTo(p.x, p.y); else { ctx.moveTo(p.x, p.y); pen = true; }
       }
-      ctx.fillStyle = 'rgba(255,255,255,0.06)';
+      ctx.fillStyle = mc.sheet;
       ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+      ctx.strokeStyle = mc.edge;
       ctx.lineWidth = px * 1.2;
       ctx.stroke();
     }
     // Parts: the side(s) this root shows. 'all' follows the side switch.
-    ctx.fillStyle = 'rgba(255,255,255,0.32)';
+    ctx.fillStyle = mc.parts;
+    if (mc.bg) ctx.globalAlpha = 0.55;   // scheme colours are opaque; Default's are pre-faded
     for (const part of board.parts) {
       if (part.hidden) continue;
       const isTop = part.side === 'both' || (part.side === 'top') !== primaryBottom;
@@ -78,6 +101,7 @@ function paintBoard(ctx: CanvasRenderingContext2D, model: Model, k: number, ox: 
       const pb = part.bounds;
       ctx.fillRect(pb.minX, pb.minY, Math.max(px, pb.maxX - pb.minX), Math.max(px, pb.maxY - pb.minY));
     }
+    ctx.globalAlpha = 1;
     // The selected part stands out, so the map also says where the work is.
     const sel = boardStore.selection.partIndex;
     if (sel !== null && board.parts[sel]) {
@@ -115,7 +139,7 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     const cb = contentBounds(model);
     const sel = boardStore.selection.partIndex;
-    const sig = `${model.roots.map(r => r.m.join(',')).join('|')}|${model.board.parts.length}|${boardStore.showTop}${boardStore.showBottom}|${sel}`;
+    const sig = `${model.roots.map(r => r.m.join(',')).join('|')}|${model.board.parts.length}|${boardStore.showTop}${boardStore.showBottom}|${sel}|${themeStore.activeId}`;
     let base = baseRef.current;
     if (!base || base.sig !== sig) {
       // Fit the board into MAX_W × MAX_H, keeping its aspect.
@@ -135,6 +159,8 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
     if (cv.width !== base.canvas.width || cv.height !== base.canvas.height) {
       cv.width = base.canvas.width; cv.height = base.canvas.height;
     }
+    // Scheme background on the frame (palette schemes); '' falls back to the CSS chip.
+    if (cv.parentElement) cv.parentElement.style.background = mapColors().bg ?? '';
     const ctx = cv.getContext('2d')!;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, cv.width, cv.height);
@@ -145,10 +171,10 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
     const x0 = Math.max(1, v.x * base.k + base.ox), y0 = Math.max(1, v.y * base.k + base.oy);
     const x1 = Math.min(base.w - 1, (v.x + v.w) * base.k + base.ox), y1 = Math.min(base.h - 1, (v.y + v.h) * base.k + base.oy);
     if (x1 > x0 && y1 > y0) {
-      const accent = css('--accent', '#5aa0ff');
-      ctx.fillStyle = 'rgba(90,160,255,0.12)';
+      const mc = mapColors();
+      ctx.fillStyle = mc.viewFill;
       ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
-      ctx.strokeStyle = accent;
+      ctx.strokeStyle = mc.view;
       ctx.lineWidth = 1.5;
       ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
     }
@@ -188,6 +214,8 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
   useEffect(() => () => { if (hideTimer.current) clearTimeout(hideTimer.current); }, []);
   // Selection / side changes repaint the board picture.
   useEffect(() => boardStore.subscribe(() => { if (visible) paint(); }), [visible, paint]);
+  // A scheme switch repaints it in the new colours.
+  useEffect(() => themeStore.subscribe(() => { if (visible) paint(); }), [visible, paint]);
   useEffect(() => { if (visible) paint(); }, [visible, paint]);
 
   const goTo = useCallback((e: React.PointerEvent) => {

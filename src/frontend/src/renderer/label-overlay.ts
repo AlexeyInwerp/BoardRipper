@@ -290,8 +290,20 @@ export class LabelOverlay {
           ctx.globalAlpha = alpha;
           if (r.bg) {                                     // backing rect (replaces the Graphics wrappers — two-pin AND circle-net)
             const tw = textW + fontPx * 0.6;
-            ctx.fillStyle = 'rgba(0,0,0,0.55)';
+            if (r.bgColor !== undefined) {
+              ctx.fillStyle = this.css(r.bgColor);
+              ctx.globalAlpha = alpha * (r.bgAlpha ?? 0.55);
+            } else {
+              ctx.fillStyle = 'rgba(0,0,0,0.55)';
+            }
             ctx.fillRect(sx - tw / 2, sy - fontPx * 0.65, tw, fontPx * 1.3);
+            ctx.globalAlpha = alpha;
+          }
+          if (r.halo !== undefined) {                     // palette schemes: legible over any pad
+            ctx.lineJoin = 'round';
+            ctx.lineWidth = Math.min(5, Math.max(1.5, fontPx * 0.22));
+            ctx.strokeStyle = this.css(r.halo);
+            ctx.strokeText(r.text, sx, sy);
           }
           ctx.fillStyle = this.css(r.color);
           ctx.fillText(r.text, sx, sy);

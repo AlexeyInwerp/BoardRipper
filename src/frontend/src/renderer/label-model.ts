@@ -18,6 +18,13 @@ export interface LabelRecord {
   fontSize: number;              // same pre-quantization size the BitmapText would get
   color: number;                 // 0xRRGGBB
   kind: LabelKind;
+  /** Palette schemes: an outline of this colour drawn under the text, so a
+   *  name reads across body, pads and board alike. Absent = no halo (Default). */
+  halo?: number;
+  /** Palette schemes: the backing box colour and opacity when `bg` is set.
+   *  Absent = black at 0.55, as Default has always drawn it. */
+  bgColor?: number;
+  bgAlpha?: number;
   partIndex: number;             // -1 for labels with no owning part (via labels excluded from v1)
   /** Index into `part.pins` for pin-attached labels (pin number, net name,
    *  diode reading); absent for part names. Lets the overlay single out the

@@ -102,6 +102,8 @@ export interface ThemePalette {
   /** 1 = the board sheet is drawn solid in `board.boardFill`. */
   boardFillAlpha?: number;
   showPin1Marker?: boolean;
+  /** Opacity of the copper-pad overlay (Default 0.95). */
+  padAlpha?: number;
   /** Fill of a large part fades with its share of the board, so a connector
    *  the size of a third of the board is a tint, not a block. */
   fadeLargeBodies?: boolean;
@@ -208,7 +210,7 @@ export const THEMES: Record<string, Theme> = {
         ground: '#5b7676', agnd: '#6b8686', serial: '#6e7681', pci: '#6e7681', ddr: '#6e7681',
         enable: '#6e7681', onoff: '#6e7681', nc: '#5e6570',
       },
-      partTints: null, boardFillAlpha: 1,
+      partTints: null, boardFillAlpha: 1, padAlpha: 0.6,
     },
   },
   landrex: {
@@ -234,7 +236,7 @@ export const THEMES: Record<string, Theme> = {
         ground: '#5a5f9a', agnd: '#5a5f9a', serial: '#3b5bff', pci: '#3b5bff', ddr: '#3b5bff',
         enable: '#3b5bff', onoff: '#3b5bff', nc: '#55558f',
       },
-      partTints: null, boardFillAlpha: 1, showPin1Marker: false,
+      partTints: null, boardFillAlpha: 1, showPin1Marker: false, padAlpha: 0.5,
     },
   },
   light: {
@@ -266,7 +268,7 @@ export const THEMES: Record<string, Theme> = {
         resistor: '#eae5e1', capacitor: '#f0ecdb', inductor: '#e3e5e8', diode: '#dae4f1', crystal: '#f4eed7',
         transistor: '#dbf0ee', ic: '#e3ddee', connector: '#dfe5ec', fuse: '#e6e6e6', testpoint: '#deedde', shield: '#e6e6e6',
       },
-      componentFillAlpha: 0.95, boardFillAlpha: 1, fadeLargeBodies: true,
+      componentFillAlpha: 0.95, boardFillAlpha: 1, fadeLargeBodies: true, padAlpha: 0.4,
     },
   },
   atari: {
@@ -299,7 +301,7 @@ export const THEMES: Record<string, Theme> = {
         resistor: '#f8ddc4', capacitor: '#f6f2c6', inductor: '#d4e9d3', diode: '#cfd1ed', crystal: '#f6f2c6',
         transistor: '#d4e9d3', ic: '#cfd1ed', connector: '#d4d4d0', fuse: '#f8ddc4', testpoint: '#d4e9d3', shield: '#d4d4d0',
       },
-      componentFillAlpha: 1, boardFillAlpha: 1, fadeLargeBodies: true,
+      componentFillAlpha: 1, boardFillAlpha: 1, fadeLargeBodies: true, padAlpha: 0.4,
     },
   },
 };

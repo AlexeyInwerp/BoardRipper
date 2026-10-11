@@ -75,6 +75,28 @@ export const BOARD_COLORS = {
 
 const LABEL_FONT_FAMILY = 'monospace';
 
+/** Relative luminance of a 0xRRGGBB colour (WCAG). */
+function lumOf(c: number): number {
+  const ch = (v: number) => { const x = v / 255; return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
+  return 0.2126 * ch((c >> 16) & 255) + 0.7152 * ch((c >> 8) & 255) + 0.0722 * ch(c & 255);
+}
+function contrastOf(a: number, b: number): number {
+  const x = lumOf(a), y = lumOf(b);
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+}
+/** Text colour for a label drawn on `bg`: the scheme's own when it reads
+ *  (≥ 4.5:1), otherwise black or white, whichever reads better. A light
+ *  scheme's dark ink on a dark pin, or a dark scheme's light ink on a pale
+ *  pin, would otherwise vanish. Palette schemes only — Default is unchanged. */
+/** The halo under a label of colour `ink`: the opposite pole. */
+function haloFor(ink: number): number {
+  return lumOf(ink) < 0.18 ? 0xffffff : 0x000000;
+}
+function inkOn(bg: number, preferred: number): number {
+  if (contrastOf(preferred, bg) >= 4.5) return preferred;
+  return contrastOf(0x000000, bg) >= contrastOf(0xffffff, bg) ? 0x000000 : 0xffffff;
+}
+
 /** Fill opacity multipliers for a part body by size: full up to 0.5 % of the
  *  board's area, then three steps down to a tint. */
 const FADE_ALPHA = [1, 0.6, 0.35, 0.18];
@@ -942,6 +964,7 @@ export function buildBoardScene(
   const topFillMap    = new Map<number, Graphics>();
   const bottomFillMap = new Map<number, Graphics>();
   const fadeBodies = !!themeStore.activeTheme().palette?.fadeLargeBodies;
+  const autoInk = !!themeStore.activeTheme().palette;
   const boardArea = Math.max(1, (board.bounds.maxX - board.bounds.minX) * (board.bounds.maxY - board.bounds.minY));
   // NC (no-connect) pins are drawn as outline-only circles — no fill, single Graphics per side.
   const topNcPinGfx    = new Graphics();
@@ -1165,7 +1188,9 @@ export function buildBoardScene(
     // poly, etc.) while preserving net identity through colour. Pads sit
     // ABOVE the pin layer in z-order (see addChildAt at the end), so the
     // pad shape covers the pin circle and is what the user sees.
-    const PAD_ALPHA        = 0.95;
+    // A palette scheme may draw copper pads as a tint, so a large pad is not a
+    // block of the pin colour (the light schemes' pins are dark to read as dots).
+    const PAD_ALPHA        = themeStore.activeTheme().palette?.padAlpha ?? 0.95;
     const DROP_ALPHA       = 0.55;      // dimmer than real pads — they're noise
     const DRILL_COLOR      = 0x111111;
     const DRILL_ALPHA      = 0.95;
@@ -1728,11 +1753,18 @@ export function buildBoardScene(
         pinFontSize *= s.pinNumberScale || 1;      // Resize Mode: pin-number size
         pinFontSize = quantizeFontSize(pinFontSize);
         if (pinFontSize >= s.labelHideThreshold) {
+          // On a palette scheme the number reads against what is behind it:
+          // the pin itself, or the board when the BGA layout moves it beside the pin.
+          const numColor = autoInk ? inkOn(color, BOARD_COLORS.labelPin) : BOARD_COLORS.labelPin;
+          // In the BGA layout the number moves beside the pin once the net name
+          // shows, onto the board — a halo keeps it legible in both places.
+          const numHalo = autoInk && bgaAlternate && !isTwoPinPart ? { halo: haloFor(numColor) } : {};
           numRec = {
             x: pinX, y: pinY, text: numStr, fontSize: pinFontSize,
-            color: BOARD_COLORS.labelPin, kind: isTwoPinPart ? 'twoPinNet' : 'circleNum', partIndex: pi, pinIndex: pni,
+            color: numColor, kind: isTwoPinPart ? 'twoPinNet' : 'circleNum', partIndex: pi, pinIndex: pni,
             anchorX: 0.5, anchorY: numAnchorY,  // mirrors pinLabel.anchor.set(0.5, numAnchorY) incl. BGA alternating
             bg: false,
+            ...numHalo,
             alt: numAlt,
             pitch: minPinSpacing < Infinity ? minPinSpacing : undefined,
             stacked: bgaAlternate,
@@ -1741,7 +1773,7 @@ export function buildBoardScene(
           if (!(labelModel && pushLabel(labelModel, isBottom ? 'bottom' : 'top', numRec))) {
             const pinLabel = new BitmapText({
               text: numStr,
-              style: { fontSize: pinFontSize, fill: BOARD_COLORS.labelPin, fontFamily: (s.pinLabelShadow ? ensureShadowFont : ensurePinFont)(pinFontSize, s.labelAtlasResolution) },
+              style: { fontSize: pinFontSize, fill: numColor, fontFamily: (s.pinLabelShadow ? ensureShadowFont : ensurePinFont)(pinFontSize, s.labelAtlasResolution) },
             });
             pinLabel.anchor.set(0.5, numAnchorY);
             pinLabel.x = pinX;
@@ -1837,6 +1869,10 @@ export function buildBoardScene(
           singlePinNetFont = netFontSize >= s.labelHideThreshold ? netFontSize : 0;
         }
         if (netFontSize >= s.labelHideThreshold) {
+          // With its backing box on, a net name reads against the box (the
+          // scheme picks that pair); without it, against the pin.
+          const netBg = isTwoPinPart ? s.twoPinNetLabelBg : s.pinNetLabelBg;
+          const netColor = autoInk && !netBg ? inkOn(color, BOARD_COLORS.labelNet) : BOARD_COLORS.labelNet;
           // Text fast mode: emit a record (kind circleNet / twoPinNet) instead
           // of the BitmapText AND its background-rect wrapper Graphics — the
           // overlay (Task 6) paints the backing rect behind records whose `bg`
@@ -1844,16 +1880,17 @@ export function buildBoardScene(
           // never allocated on the default (off) path.
           if (!(labelModel && pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
             x: nx, y: ny, text: pin.net, fontSize: netFontSize,
-            color: BOARD_COLORS.labelNet, kind: isTwoPinPart ? 'twoPinNet' : 'circleNet', partIndex: pi, pinIndex: pni,
+            color: netColor, kind: isTwoPinPart ? 'twoPinNet' : 'circleNet', partIndex: pi, pinIndex: pni,
             anchorX, anchorY,  // mirrors netLabel.anchor.set(anchorX, anchorY) — same locals, incl. 2-pin/BGA parity
             bg: isTwoPinPart ? s.twoPinNetLabelBg : s.pinNetLabelBg,  // same condition the wrapper Graphics is created under
+            ...(autoInk ? { bgColor: BOARD_COLORS.netLabelBg, bgAlpha: BOARD_COLORS.netLabelBgAlpha } : {}),
             pitch: minPinSpacing < Infinity ? minPinSpacing : undefined,
             stacked: bgaAlternate,
             ...(netRot ? { rot: netRot } : {}),
           }))) {
             const netLabel = new BitmapText({
               text: pin.net,
-              style: { fontSize: netFontSize, fill: BOARD_COLORS.labelNet, fontFamily: (s.pinLabelShadow ? ensureShadowFont : ensurePinFont)(netFontSize, s.labelAtlasResolution) },
+              style: { fontSize: netFontSize, fill: netColor, fontFamily: (s.pinLabelShadow ? ensureShadowFont : ensurePinFont)(netFontSize, s.labelAtlasResolution) },
             });
             netLabel.anchor.set(anchorX, anchorY);
             netLabel.x = nx;
@@ -2074,6 +2111,7 @@ export function buildBoardScene(
           text: part.name, fontSize, color: labelColor, kind: 'part', partIndex: pi,
           anchorX: 0.5, anchorY: labelAnchorY,  // mirrors label.anchor.set below
           bg: false,
+          ...(autoInk ? { halo: haloFor(labelColor) } : {}),
         }))) {
           const label = new BitmapText({
             text:  part.name,
