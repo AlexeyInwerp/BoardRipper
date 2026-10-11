@@ -88,7 +88,7 @@ Accent text is shaded automatically on light backgrounds, so the presets mostly 
 
 **E. Fill fades with size.** Body opacity falls with on-screen area; above a size a body is an outline with a light tint.
 
-**F. Ship three schemes.** Dark (reworked default), Light (one, reworked), Monochrome (Landrex). Daylight and Blueprint are retired or kept only as accent variants; Custom stays.
+**F. Ship three new schemes.** Dark, Light, Monochrome next to the unchanged BoardRipper Default (see Decisions). Daylight and Blueprint are retired or kept only as accent variants; Custom stays.
 
 **G. Guard it with tests.** A unit test per scheme: labels ≥ 4.5:1 on the board and on every part body, pins ≥ 3:1 on the board, selection ≥ 3:1, semantic pin colours pairwise distinct. Keep the screenshot harness for visual review of every change.
 
@@ -98,5 +98,6 @@ Accent text is shaded automatically on light backgrounds, so the presets mostly 
 2. **Sides:** top and underside get their own colour codes, so red means power only. The underside's plain signal and ground pins take their own colours (violet-grey on Dark and Light, woodgrain brown on Atari, darker grey on Monochrome); in the two-sided view the underside sits behind, faded, with dashed body edges.
 3. **Light schemes:** two. One plain Light, and one **Atari (light)**: 2600 silver-label paper and black ink, the rainbow as part tints and pin roles (red power, orange rails, blue data, green logic), Atari yellow as the selection highlighter; connectors stay silver because a large red block would read as power.
 4. **Custom colours:** a user's custom scheme and saved overrides are kept as they are.
+5. **BoardRipper Default stays exactly as it is** and stays the default: many users are used to it. The proposed Dark is added next to it, not in its place. Nothing in the rework changes how Default draws: its pin, part and layer colours and its black ambient dim are kept, apart from the dim turning off on a scheme switch.
 
-Shipping set: Dark, Light, Atari (light), Monochrome, plus Custom. All four proposed schemes pass the 26 contrast checks in the mockup (`claude.ai/artifact/9SzQM5xQaWsoEab6CPNgPX`); today's Drafting Paper passes 10, Default 23.
+Shipping set: BoardRipper Default (unchanged, still the default), Dark, Light, Atari (light), Monochrome, plus Custom. All four proposed schemes pass the 26 contrast checks in the mockup (`claude.ai/artifact/9SzQM5xQaWsoEab6CPNgPX`); today's Drafting Paper passes 10, Default 23.
