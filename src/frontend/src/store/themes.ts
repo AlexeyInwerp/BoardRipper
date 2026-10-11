@@ -129,6 +129,9 @@ export function paletteOverrides(p: ThemePalette, global: RenderSettings): Parti
     defaultPinColorBottom: p.pins.signalBottom,
     showComponentColors: p.partTints !== null,
     partTypes,
+    // The dim appears only with a selection on these schemes; an always-on
+    // ambient dim would lay the canvas colour over the whole board.
+    ambientDim: false,
   };
   if (p.componentFillAlpha !== undefined) ov.componentFillAlpha = p.componentFillAlpha;
   if (p.boardFillAlpha !== undefined) ov.boardFillAlpha = p.boardFillAlpha;
@@ -239,7 +242,8 @@ export const THEMES: Record<string, Theme> = {
     label: 'Light',
     // Paper-white sheet, dark ink. Part tints reuse the pin hues (rail 29,
     // crystal 48, logic 174, data 213, on/off 262, one green), so parts and
-    // pins are one family. Red means power only; the underside is violet.
+    // pins are one family. Red means power only; the underside is warm brown
+    // (violet is taken by the on/off pins).
     ui: {
       bgPrimary: '#eceef1', bgSecondary: '#dee0e3', bgTertiary: '#dde0e4', textPrimary: '#1c1f24',
       textSecondary: '#5b616b', accent: '#2f6db5', border: '#c2c5c9', iconBoardBg: '#3f9142', iconPdfBg: '#c0392b',
@@ -249,12 +253,12 @@ export const THEMES: Record<string, Theme> = {
       selection: '#c26f00', butterflySelection: '#2f6db5', selectedPart: '#15191e',
       labelText: '#15191e', labelPart: '#15191e', labelNet: '#1f4f8f',
       netLabelBg: '#ffffff', netLabelBgOpacity: 0.72, dimColor: '#e6e8eb',
-      partOutlineTop: '#5d6672', partOutlineBottom: '#7a5fb0',
+      partOutlineTop: '#5d6672', partOutlineBottom: '#8a6440',
       copperTop: '#1f63d6', copperBottom: '#d95f0e',
     },
     palette: {
       pins: {
-        signalTop: '#5d6672', signalBottom: '#7a5fb0', power: '#d7261e', rail: '#d95f0e',
+        signalTop: '#5d6672', signalBottom: '#8a6440', power: '#d7261e', rail: '#d95f0e',
         ground: '#8c939c', agnd: '#8c939c', serial: '#b8338f', pci: '#1f63d6', ddr: '#3d82d8',
         enable: '#0e8f84', onoff: '#7a4fd6', nc: '#878e97',
       },
