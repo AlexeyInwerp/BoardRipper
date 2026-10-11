@@ -1,5 +1,42 @@
 # BoardRipper changelog
 
+## v0.50.0 — 2026-10-11
+
+### Added
+
+- **Four new colour schemes for the board**, each one owning every colour on
+  it — pins, part bodies, outlines, the selection, the dim and the copper:
+  - **Dark** — near-monochrome: parts are grey outlines, every pin one quiet
+    grey, ground a dark teal, and colour only for what you select (yellow net,
+    red part).
+  - **Landrex Classic**, redrawn the way Landrex Test Link drew a board: black,
+    an olive board edge, lavender part outlines, every pin the same blue.
+  - **Light** — white sheet, dark ink, part tints from the same few hues as the
+    pins.
+  - **Atari (light)** — the 2600's silver label and black ink, every colour
+    taken from the five rainbow-stripe colours.
+
+  **BoardRipper Default is unchanged** and stays the default.
+- **The underside has its own pin colour** in the new schemes, so red means
+  power and nothing else.
+- **PDF colours** (issue #41): the ◐ button now opens a menu, like the wand
+  beside it. Besides inverting, it can darken the paper while keeping red and
+  blue lines red and blue, or use exact background and text colours you
+  choose. Two sliders handle coloured lines: *Colour* (down to grey, i.e. your
+  text colour) and *Contrast* with *Auto*, which lifts pale lines so they stay
+  readable on the new background.
+
+### Changed
+
+- **Switching the colour scheme turns the dim off**, on open boards and for
+  new ones. On the new schemes the dim appears only with a selection and fades
+  toward the background instead of black.
+- On the tinted schemes a large part's fill fades with its size, so a
+  connector covering a third of the board is a tint, not a block.
+- Drafting Paper, Daylight and Blueprint are replaced by **Light**; an install
+  that had one of them selected opens in Light. A custom scheme is kept as it
+  is.
+
 ## v0.49.0 — 2026-10-10
 
 ### Added
