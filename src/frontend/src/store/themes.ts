@@ -56,7 +56,27 @@ export interface Theme {
     netLabelBg: string;
     /** Opacity 0–1 of the net-label background box. */
     netLabelBgOpacity: number;
+    /** Primary (clicked) part outline. Absent = white, the Default look. */
+    selectedPart?: string;
+    /** Colour the dim overlay fades the board toward. Absent = black. */
+    dimColor?: string;
+    /** Part border, top / underside. Absent = the green / red of Default. */
+    partOutlineTop?: string;
+    partOutlineBottom?: string;
+    /** Copper colour of the top / bottom layer. Absent = red / green. */
+    copperTop?: string;
+    copperBottom?: string;
   };
+
+  /**
+   * Role colours for a scheme that owns the whole picture (Dark, Landrex,
+   * Light, Atari — docs/specs/2026-10-11-colour-schemes-review.md). Turned into
+   * render-setting overrides by `paletteOverrides`, applied over the user's
+   * own pin groups and part types so their keywords and prefixes stay theirs
+   * and only the colours change. Absent = the theme leaves pin and part
+   * colours to the render settings (BoardRipper Default).
+   */
+  palette?: ThemePalette;
 
   /**
    * Optional render-settings overrides applied while this theme is active.
@@ -67,6 +87,60 @@ export interface Theme {
    */
   boardOverrides?: Partial<RenderSettings>;
 }
+
+/** What a pin is for, as far as colour goes. Matches the rule ids of
+ *  DEFAULT_PIN_GROUPS; `signalTop`/`signalBottom` colour every pin no group
+ *  claims, one per side, so the side has its own code and red can mean power. */
+export type PinRole = 'signalTop' | 'signalBottom' | 'power' | 'rail' | 'ground' | 'agnd'
+  | 'serial' | 'pci' | 'ddr' | 'enable' | 'onoff' | 'nc';
+
+export interface ThemePalette {
+  pins: Record<PinRole, string>;
+  /** Fill per part-type id; null = parts are outlines with no fill. */
+  partTints: Record<string, string> | null;
+  componentFillAlpha?: number;
+  /** 1 = the board sheet is drawn solid in `board.boardFill`. */
+  boardFillAlpha?: number;
+  showPin1Marker?: boolean;
+  /** Fill of a large part fades with its share of the board, so a connector
+   *  the size of a third of the board is a tint, not a block. */
+  fadeLargeBodies?: boolean;
+}
+
+/** DEFAULT_PIN_GROUPS rule id → role. A rule the user added has no role and
+ *  keeps its own colour. */
+const RULE_ROLE: Record<string, PinRole> = {
+  'power-v': 'power', 'power-pp': 'rail', 'gnd-sep': 'agnd', gnd: 'ground',
+  serial: 'serial', pci: 'pci', ddr: 'ddr', enable: 'enable', onoff: 'onoff', nc: 'nc',
+};
+
+/** The render-setting overrides a palette theme implies, built on the user's
+ *  own settings: pin groups and part types keep every keyword and prefix, only
+ *  the colours of the built-in rules and types are swapped. */
+export function paletteOverrides(p: ThemePalette, global: RenderSettings): Partial<RenderSettings> {
+  const pinGroups = (global.pinGroups ?? []).map(g => ({
+    ...g,
+    rules: g.rules.map(r => (RULE_ROLE[r.id] ? { ...r, color: p.pins[RULE_ROLE[r.id]] } : r)),
+  }));
+  const partTypes = (global.partTypes ?? []).map(t => (p.partTints?.[t.id] ? { ...t, color: p.partTints[t.id] } : t));
+  const ov: Partial<RenderSettings> = {
+    pinGroups,
+    defaultPinColorTop: p.pins.signalTop,
+    defaultPinColorBottom: p.pins.signalBottom,
+    showComponentColors: p.partTints !== null,
+    partTypes,
+  };
+  if (p.componentFillAlpha !== undefined) ov.componentFillAlpha = p.componentFillAlpha;
+  if (p.boardFillAlpha !== undefined) ov.boardFillAlpha = p.boardFillAlpha;
+  if (p.showPin1Marker !== undefined) ov.showPin1Marker = p.showPin1Marker;
+  return ov;
+}
+
+/** Interface chrome shared by the dark schemes (identical to Default's). */
+const DARK_UI: Theme['ui'] = {
+  bgPrimary: '#08080c', bgSecondary: '#0f0f18', bgTertiary: '#0c1424', textPrimary: '#e0e0e0',
+  textSecondary: '#a0a0b0', accent: '#4a9eff', border: '#1a1a28', iconBoardBg: '#44cc44', iconPdfBg: '#cc4444',
+};
 
 export const THEMES: Record<string, Theme> = {
   default: {
@@ -104,141 +178,124 @@ export const THEMES: Record<string, Theme> = {
     },
     // Default theme = no overrides. Whatever the user has configured wins.
   },
+  // ──────────────────────────────────────────────────────────────────────
+  // Palette schemes (2026-10-11 review, docs/specs/2026-10-11-colour-schemes-review.md).
+  // Each owns every colour on the board: pins by role and side, part bodies,
+  // outlines, selection, dim and copper. All four pass the contrast checks in
+  // themes.test.ts (labels ≥ 4.5:1 on the board and on every part body, pins
+  // and selection ≥ 3:1). Mockup: claude.ai/artifact/9SzQM5xQaWsoEab6CPNgPX.
+  dark: {
+    id: 'dark',
+    label: 'Dark',
+    // Near-monochrome on NexusBV's principle: parts are grey outlines, every
+    // pin one quiet grey, power a step brighter, ground a dark teal. Colour is
+    // kept for the selection (yellow net, red part).
+    ui: DARK_UI,
+    board: {
+      canvasBackground: '#08090b', boardFill: '#0f1114', outline: '#4a5260',
+      selection: '#fff033', butterflySelection: '#44aaff', selectedPart: '#ff2b2b',
+      labelText: '#e6e9ec', labelPart: '#d4d8dd', labelNet: '#b8c2cc',
+      netLabelBg: '#000000', netLabelBgOpacity: 0.6, dimColor: '#08090b',
+      partOutlineTop: '#5a606a', partOutlineBottom: '#6f6550',
+      copperTop: '#39a9ff', copperBottom: '#f0a94a',
+    },
+    palette: {
+      pins: {
+        signalTop: '#6e7681', signalBottom: '#9c8a6a', power: '#a7afb9', rail: '#959da7',
+        ground: '#5b7676', agnd: '#6b8686', serial: '#6e7681', pci: '#6e7681', ddr: '#6e7681',
+        enable: '#6e7681', onoff: '#6e7681', nc: '#5e6570',
+      },
+      partTints: null, boardFillAlpha: 1,
+    },
+  },
   landrex: {
     id: 'landrex',
     label: 'Landrex Classic',
-    // A true black-and-white board: greyscale pins/parts, NO net or component
-    // colour (the classic Landrex / OpenBoardView monochrome look). Unlike the
-    // old version this is READABLE (black board + white labels + label shadow,
-    // not white-on-white) and still fully EDITABLE — editing any colour forks
-    // the theme into the custom slot like every other theme; the greyscale
-    // override is just a starting point. Interface chrome stays dark.
-    ui: {
-      bgPrimary:     '#08080c',
-      bgSecondary:   '#0f0f18',
-      bgTertiary:    '#0c1424',
-      textPrimary:   '#e0e0e0',
-      textSecondary: '#a0a0b0',
-      accent:        '#4a9eff',
-      border:        '#1a1a28',
-      iconBoardBg:   '#44cc44',
-      iconPdfBg:     '#cc4444',
-    },
+    // As Landrex Test Link drew a board: black, an olive board edge,
+    // lavender-grey part outlines, every pin the same blue, nothing filled.
+    // The only additions: ground set apart, an amber underside, a yellow
+    // selected net and a red selected part. Editing any colour forks the theme
+    // into the custom slot like every other theme.
+    ui: DARK_UI,
     board: {
-      // Black board defined by a white outline; boardFill matches the canvas so
-      // white pin/net labels sit on black — readable, not white-on-white.
-      canvasBackground:   '#000000',
-      boardFill:          '#000000',
-      outline:            '#ffffff',
-      selection:          '#ffff44',   // selection/butterfly stay functional
-      butterflySelection: '#44aaff',   // highlights (not part/net colour)
-      labelText:          '#ffffff',
-      labelPart:          '#e6e6e6',
-      labelNet:           '#c8c8c8',
-      netLabelBg:         '#000000',
-      netLabelBgOpacity:  0.55,
+      canvasBackground: '#000000', boardFill: '#000000', outline: '#9c9a4e',
+      selection: '#fff033', butterflySelection: '#44aaff', selectedPart: '#ff2b2b',
+      labelText: '#ffffff', labelPart: '#d8d8e8', labelNet: '#c8c8e0',
+      netLabelBg: '#000000', netLabelBgOpacity: 0.55, dimColor: '#000000',
+      partOutlineTop: '#8f8fc8', partOutlineBottom: '#a08850',
+      copperTop: '#3b5bff', copperBottom: '#e0a040',
     },
-    // Greyscale supermode — no part/net colour. Forking to custom + editing a
-    // pin group writes a non-empty pinGroups, so colour is still one edit away.
-    boardOverrides: {
-      showComponentColors:   false,      // part bodies drawn without type colour
-      showPin1Marker:        false,      // no red pin-1 dot
-      pinGroups:             [],         // no net-class colours
-      defaultPinColorTop:    '#cfcfcf',  // light-grey pins (top side)
-      defaultPinColorBottom: '#8f8f8f',  // mid-grey pins (bottom) — side cue
+    palette: {
+      pins: {
+        signalTop: '#3b5bff', signalBottom: '#e0a040', power: '#3b5bff', rail: '#3b5bff',
+        ground: '#5a5f9a', agnd: '#5a5f9a', serial: '#3b5bff', pci: '#3b5bff', ddr: '#3b5bff',
+        enable: '#3b5bff', onoff: '#3b5bff', nc: '#55558f',
+      },
+      partTints: null, boardFillAlpha: 1, showPin1Marker: false,
     },
   },
-
-  // ──────────────────────────────────────────────────────────────────────
-  // Light themes. These are the first themes whose ui.bgPrimary is light;
-  // they rely on the luminance-aware machinery added alongside them:
-  //   - pickTextColors() flips body text to graphite (theme.ui.text* on a
-  //     light base is ignored — the values below are documentation only).
-  //   - shadeToward() is used for knob-derived siblings, but the non-override
-  //     path reads bgSecondary/border verbatim, so those are pre-darkened.
-  // Board side: canvas is a tinted mat, boardFill a near-white sheet on top,
-  // outline a dark ink, every label dark, and selection an amber that pops on
-  // a light canvas (the dark-theme yellow #ffff44 is invisible on paper).
-  // No boardOverrides — the user's render settings ride through unchanged.
-  'drafting-paper': {
-    id: 'drafting-paper',
-    label: 'Drafting Paper (light)',
+  light: {
+    id: 'light',
+    label: 'Light',
+    // Paper-white sheet, dark ink. Part tints reuse the pin hues (rail 29,
+    // crystal 48, logic 174, data 213, on/off 262, one green), so parts and
+    // pins are one family. Red means power only; the underside is violet.
     ui: {
-      bgPrimary:     '#f4f1ea',
-      bgSecondary:   '#e5e3dc',
-      bgTertiary:    '#e7e2d6',
-      textPrimary:   '#1c1f24',
-      textSecondary: '#5b616b',
-      accent:        '#b5532a',
-      border:        '#cbc7bc',
-      iconBoardBg:   '#3f9142',
-      iconPdfBg:     '#c0392b',
+      bgPrimary: '#eceef1', bgSecondary: '#dee0e3', bgTertiary: '#dde0e4', textPrimary: '#1c1f24',
+      textSecondary: '#5b616b', accent: '#2f6db5', border: '#c2c5c9', iconBoardBg: '#3f9142', iconPdfBg: '#c0392b',
     },
     board: {
-      canvasBackground:   '#ece7db',
-      boardFill:          '#fbfaf6',
-      outline:            '#8a7a5f',
-      selection:          '#e0a526',
-      butterflySelection: '#2f6db5',
-      labelText:          '#2b2722',
-      labelPart:          '#5b4f3c',
-      labelNet:           '#7a5a2a',
-      netLabelBg:         '#fbfaf6',
-      netLabelBgOpacity:  0.72,
+      canvasBackground: '#e6e8eb', boardFill: '#ffffff', outline: '#5d6672',
+      selection: '#c26f00', butterflySelection: '#2f6db5', selectedPart: '#15191e',
+      labelText: '#15191e', labelPart: '#15191e', labelNet: '#1f4f8f',
+      netLabelBg: '#ffffff', netLabelBgOpacity: 0.72, dimColor: '#e6e8eb',
+      partOutlineTop: '#5d6672', partOutlineBottom: '#7a5fb0',
+      copperTop: '#1f63d6', copperBottom: '#d95f0e',
+    },
+    palette: {
+      pins: {
+        signalTop: '#5d6672', signalBottom: '#7a5fb0', power: '#d7261e', rail: '#d95f0e',
+        ground: '#8c939c', agnd: '#8c939c', serial: '#b8338f', pci: '#1f63d6', ddr: '#3d82d8',
+        enable: '#0e8f84', onoff: '#7a4fd6', nc: '#878e97',
+      },
+      partTints: {
+        resistor: '#eae5e1', capacitor: '#f0ecdb', inductor: '#e3e5e8', diode: '#dae4f1', crystal: '#f4eed7',
+        transistor: '#dbf0ee', ic: '#e3ddee', connector: '#dfe5ec', fuse: '#e6e6e6', testpoint: '#deedde', shield: '#e6e6e6',
+      },
+      componentFillAlpha: 0.95, boardFillAlpha: 1, fadeLargeBodies: true,
     },
   },
-  daylight: {
-    id: 'daylight',
-    label: 'Daylight (light)',
+  atari: {
+    id: 'atari',
+    label: 'Atari (light)',
+    // The 2600's silver label and black ink. Every colour is one of the five
+    // rainbow-stripe hues (green #4faf4a, yellow #f4e325, orange #fe8b1f,
+    // red #ed3823, blue #2a3192) at a set lightness: pale tints for parts,
+    // deep shades for pins (red power, orange rails, blue data, green logic),
+    // muted orange for the woodgrain underside. Six neutrals.
     ui: {
-      bgPrimary:     '#eceef1',
-      bgSecondary:   '#dee0e3',
-      bgTertiary:    '#dde0e4',
-      textPrimary:   '#1c1f24',
-      textSecondary: '#5b616b',
-      accent:        '#2f6db5',
-      border:        '#c2c5c9',
-      iconBoardBg:   '#3f9142',
-      iconPdfBg:     '#c0392b',
+      bgPrimary: '#ececea', bgSecondary: '#dcdcd8', bgTertiary: '#d4d4d0', textPrimary: '#111111',
+      textSecondary: '#4a4a48', accent: '#2a3192', border: '#b8b8b4', iconBoardBg: '#3d883a', iconPdfBg: '#c62310',
     },
     board: {
-      canvasBackground:   '#e4e7eb',
-      boardFill:          '#f8f9fb',
-      outline:            '#5a6470',
-      selection:          '#e08a1e',
-      butterflySelection: '#2f6db5',
-      labelText:          '#1f2329',
-      labelPart:          '#4a5560',
-      labelNet:           '#2f6db5',
-      netLabelBg:         '#f8f9fb',
-      netLabelBgOpacity:  0.72,
+      canvasBackground: '#b8b8b4', boardFill: '#ececea', outline: '#111111',
+      selection: '#cb6301', butterflySelection: '#2a3192', selectedPart: '#111111',
+      labelText: '#111111', labelPart: '#111111', labelNet: '#2a3192',
+      netLabelBg: '#ececea', netLabelBgOpacity: 0.72, dimColor: '#ececea',
+      partOutlineTop: '#111111', partOutlineBottom: '#6f4b2a',
+      copperTop: '#2a3192', copperBottom: '#cb6301',
     },
-  },
-  'blueprint-light': {
-    id: 'blueprint-light',
-    label: 'Blueprint (light)',
-    ui: {
-      bgPrimary:     '#e9eef5',
-      bgSecondary:   '#dbe0e6',
-      bgTertiary:    '#d6dfeb',
-      textPrimary:   '#16263a',
-      textSecondary: '#52606f',
-      accent:        '#1f5fa8',
-      border:        '#bcc4cf',
-      iconBoardBg:   '#2f7d4f',
-      iconPdfBg:     '#b5453a',
-    },
-    board: {
-      canvasBackground:   '#dde6f0',
-      boardFill:          '#f3f7fc',
-      outline:            '#16263a',
-      selection:          '#e0892a',
-      butterflySelection: '#1f5fa8',
-      labelText:          '#16263a',
-      labelPart:          '#2c4663',
-      labelNet:           '#1f5fa8',
-      netLabelBg:         '#f3f7fc',
-      netLabelBgOpacity:  0.72,
+    palette: {
+      pins: {
+        signalTop: '#4a4a48', signalBottom: '#6f4b2a', power: '#c62310', rail: '#cb6301',
+        ground: '#86867f', agnd: '#86867f', serial: '#2a3192', pci: '#2a3192', ddr: '#414ac8',
+        enable: '#3d883a', onoff: '#316c2d', nc: '#6c6c68',
+      },
+      partTints: {
+        resistor: '#f8ddc4', capacitor: '#f6f2c6', inductor: '#d4e9d3', diode: '#cfd1ed', crystal: '#f6f2c6',
+        transistor: '#d4e9d3', ic: '#cfd1ed', connector: '#d4d4d0', fuse: '#f8ddc4', testpoint: '#d4e9d3', shield: '#d4d4d0',
+      },
+      componentFillAlpha: 1, boardFillAlpha: 1, fadeLargeBodies: true,
     },
   },
 };
@@ -371,11 +428,16 @@ interface PersistedTheme {
   activeId: string;
 }
 
+/** Schemes retired in the 2026-10-11 review; an install that had one picked
+ *  moves to its replacement instead of falling back to Default. */
+const RETIRED_THEMES: Record<string, string> = { 'drafting-paper': 'light', daylight: 'light', 'blueprint-light': 'light' };
+
 function loadFromStorage(): string {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_ID;
     const parsed = JSON.parse(raw) as PersistedTheme;
+    if (parsed?.activeId && RETIRED_THEMES[parsed.activeId]) return RETIRED_THEMES[parsed.activeId];
     // CUSTOM_ID is valid even though it isn't in THEMES — activeTheme() falls
     // back to default if the custom theme blob is missing.
     if (parsed?.activeId && (THEMES[parsed.activeId] || parsed.activeId === CUSTOM_ID)) return parsed.activeId;
@@ -423,6 +485,7 @@ function seedCustomFrom(src: Theme): Theme {
     // boardOverrides start empty: the custom theme only overrides global
     // render-settings (pin / net colours) once the user explicitly opts in.
     boardOverrides: src.boardOverrides ? structuredClone(src.boardOverrides) : undefined,
+    palette: src.palette ? structuredClone(src.palette) : undefined,
   };
 }
 
@@ -526,6 +589,11 @@ class ThemeStore extends Emitter {
   private _scale: number = UI_SCALE_DEFAULT;
   private _customTheme: Theme | null = null;
   private _initialized = false;
+  private _switch: { seq: number; prev: Theme } = { seq: 0, prev: THEMES[DEFAULT_ID] };
+
+  /** The last explicit scheme switch: a counter and the scheme left behind.
+   *  Knob changes (accent, background, chrome) notify too but never move it. */
+  get lastSwitch(): { seq: number; prev: Theme } { return this._switch; }
 
   /** Call once at app startup. Idempotent — second call no-ops. */
   init(): void {
@@ -608,6 +676,7 @@ class ThemeStore extends Emitter {
       return;
     }
     if (id === this._activeId) return;
+    this._switch = { seq: this._switch.seq + 1, prev: this.activeTheme() };
     this._activeId = id;
     saveToStorage(id);
     this.applyAll();
@@ -777,7 +846,12 @@ export const themeStore = new ThemeStore();
 // renderSettingsStore.recomputeEffective() — calling .recomputeEffective()
 // directly would be cleaner but that method is private; setActiveBoard is
 // the public hook used elsewhere for the same purpose.
-setThemeOverridesProvider(() => themeStore.activeTheme().boardOverrides);
+setThemeOverridesProvider((global) => {
+  const t = themeStore.activeTheme();
+  if (!t.palette) return t.boardOverrides;
+  // A palette theme's colours, then the custom theme's own edits on top.
+  return { ...paletteOverrides(t.palette, global), ...(t.boardOverrides ?? {}) };
+});
 
 // On theme change, force render-settings to re-merge so the new theme's
 // boardOverrides take effect. We poke applyGlobal to trigger the existing
@@ -791,9 +865,10 @@ setThemeOverridesProvider(() => themeStore.activeTheme().boardOverrides);
 // actually be affected: the active theme has boardOverrides now, OR the
 // previous active theme had them (so a switch away from an override theme
 // still clears the stale overlay — e.g. leaving Landrex).
-let _prevThemeHadOverrides = !!themeStore.activeTheme().boardOverrides;
+const themeHasOverrides = () => { const t = themeStore.activeTheme(); return !!t.boardOverrides || !!t.palette; };
+let _prevThemeHadOverrides = themeHasOverrides();
 themeStore.subscribe(() => {
-  const hasOverrides = !!themeStore.activeTheme().boardOverrides;
+  const hasOverrides = themeHasOverrides();
   if (!hasOverrides && !_prevThemeHadOverrides) {
     // Pure-UI knob change with no board-override involvement either way —
     // nothing for render-settings to re-merge.

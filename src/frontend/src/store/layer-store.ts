@@ -4,6 +4,7 @@
  * Stored per-tab in BoardTab. This module provides the default palette
  * and helper functions for layer state management.
  */
+import { themeStore, type Theme } from './themes';
 
 /**
  * Default layer palette — 15 distinct colors forming a gradient-like
@@ -28,6 +29,20 @@ export const DEFAULT_LAYER_PALETTE: number[] = [
   0xcc8844, // 13 bronze
   0x88ccaa, // 14 sage
 ];
+
+/** A layer's default colour under a theme. A theme with copper colours
+ *  (Dark, Landrex, Light, Atari) gives the top and bottom copper its own pair
+ *  — blue / amber on the dark schemes, never the red and green the pins use
+ *  for power and side — and inner layers keep the palette. */
+export function defaultLayerColor(name: string, index: number, theme: Theme = themeStore.activeTheme()): number {
+  const u = name.toUpperCase();
+  const { copperTop, copperBottom } = theme.board;
+  if (copperTop && copperBottom) {
+    if (u.includes('BOTTOM') || /\bBOT\b/.test(u) || u.startsWith('B.') || u === 'B_CU') return hexToColor(copperBottom);
+    if (u.includes('TOP') || u.startsWith('F.') || u === 'F_CU') return hexToColor(copperTop);
+  }
+  return DEFAULT_LAYER_PALETTE[index % DEFAULT_LAYER_PALETTE.length];
+}
 
 export interface LayerState {
   visible: boolean;
@@ -55,7 +70,7 @@ export function createLayerStates(
 
   return layerNames.map((name, i) => ({
     visible: allVisible ? true : (primaryIdx >= 0 ? i === primaryIdx : i === 0),
-    color: DEFAULT_LAYER_PALETTE[i % DEFAULT_LAYER_PALETTE.length],
+    color: defaultLayerColor(name, i),
     name,
   }));
 }

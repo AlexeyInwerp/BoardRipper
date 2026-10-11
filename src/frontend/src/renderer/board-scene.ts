@@ -39,7 +39,7 @@ import {
 import type { RenderSettings } from '../store/render-settings';
 import { pushLabel, sortLabelModel, type LabelModel, type LabelRecord, type RotLayout } from './label-model';
 import { capsuleParams, isOblongRoundPad, capsuleGrowForRadius, type CapsuleParams } from './pad-capsule';
-import { DEFAULT_LAYER_PALETTE } from '../store/layer-store';
+import { defaultLayerColor } from '../store/layer-store';
 import { themeStore, hexToInt } from '../store/themes';
 
 /**
@@ -61,9 +61,10 @@ export const BOARD_COLORS = {
   get netLabelBg()         { return hexToInt(themeStore.activeTheme().board.netLabelBg ?? '#000000'); },
   get netLabelBgAlpha()    { return themeStore.activeTheme().board.netLabelBgOpacity ?? 0.6; },
   get boardFillDefault()   { return hexToInt(themeStore.activeTheme().board.boardFill); },
-  // Palette entries below are not theme slots in v1 — they remain static.
-  partBoundsTop:     0x336633,
-  partBoundsBottom:  0x663333,
+  // Part borders: a palette theme sets its own; Default keeps green / red.
+  get partBoundsTop()      { return hexToInt(themeStore.activeTheme().board.partOutlineTop ?? '#336633'); },
+  get partBoundsBottom()   { return hexToInt(themeStore.activeTheme().board.partOutlineBottom ?? '#663333'); },
+  // Palette entries below are not theme slots — they remain static.
   /** Parts whose position was inferred from routing rather than read from the
    *  file (`Part.placementInferred`). Amber and dashed so it can never be
    *  mistaken for real placement data. */
@@ -73,6 +74,16 @@ export const BOARD_COLORS = {
 };
 
 const LABEL_FONT_FAMILY = 'monospace';
+
+/** Fill opacity multipliers for a part body by size: full up to 0.5 % of the
+ *  board's area, then three steps down to a tint. */
+const FADE_ALPHA = [1, 0.6, 0.35, 0.18];
+function fadeStep(shareOfBoard: number): number {
+  if (shareOfBoard <= 0.005) return 0;
+  if (shareOfBoard <= 0.02) return 1;
+  if (shareOfBoard <= 0.08) return 2;
+  return 3;
+}
 
 /** Clamp trace stroke width to prevent power pours from visually dominating signal traces */
 const MAX_TRACE_WIDTH = 30;
@@ -927,8 +938,11 @@ export function buildBoardScene(
   // Component-type fill Graphics — one Graphics per color, same batching pattern as pins.
   // A single Graphics with multiple fill() calls of different colors doesn't work reliably
   // in PixiJS v8 (all paths may get the last color). Use Map<color, Graphics> instead.
+  // Keyed colour + fade step × 0x1000000 (see fadeStep).
   const topFillMap    = new Map<number, Graphics>();
   const bottomFillMap = new Map<number, Graphics>();
+  const fadeBodies = !!themeStore.activeTheme().palette?.fadeLargeBodies;
+  const boardArea = Math.max(1, (board.bounds.maxX - board.bounds.minX) * (board.bounds.maxY - board.bounds.minY));
   // NC (no-connect) pins are drawn as outline-only circles — no fill, single Graphics per side.
   const topNcPinGfx    = new Graphics();
   const bottomNcPinGfx = new Graphics();
@@ -998,7 +1012,7 @@ export function buildBoardScene(
         const gfx = new Graphics();
         for (const s of layerSurfaces) drawSurface(gfx, s);
         const layerColor = board.layerNames && layerIdx < board.layerNames.length
-          ? DEFAULT_LAYER_PALETTE[layerIdx % DEFAULT_LAYER_PALETTE.length]
+          ? defaultLayerColor(board.layerNames[layerIdx], layerIdx)
           : 0xcc3333;
         gfx.fill({ color: layerColor, alpha: SURFACE_ALPHA });
         layerContainer.addChild(gfx);
@@ -1043,7 +1057,7 @@ export function buildBoardScene(
         layerContainer.label = `trace-layer-${layerIdx}`;
         // Use palette color for this layer
         const layerColor = board.layerNames && layerIdx < board.layerNames.length
-          ? DEFAULT_LAYER_PALETTE[layerIdx % DEFAULT_LAYER_PALETTE.length]
+          ? defaultLayerColor(board.layerNames[layerIdx], layerIdx)
           : 0xcc3333;
         strokeTraceTiles(layerContainer, layerTraces, layerColor, s.traceCorners === 'simple');
         traceLayer.addChild(layerContainer);
@@ -1983,8 +1997,12 @@ export function buildBoardScene(
       if (s.showComponentColors && override?.color && !skipFill) {
         const fillColor = parseInt(override.color.replace('#', ''), 16);
         const map = isBottom ? bottomFillMap : topFillMap;
-        let gfx = map.get(fillColor);
-        if (!gfx) { gfx = new Graphics(); map.set(fillColor, gfx); }
+        // Large parts fade (palette themes): one of four alpha steps by the
+        // part's share of the board, so a board-wide connector is a tint.
+        const step = fadeBodies ? fadeStep((fillW * fillH) / boardArea) : 0;
+        const key = fillColor + step * 0x1000000;
+        let gfx = map.get(key);
+        if (!gfx) { gfx = new Graphics(); map.set(key, gfx); }
         if (fillPoly) {
           gfx.moveTo(fillPoly[0][0], fillPoly[0][1]);
           for (let i = 1; i < fillPoly.length; i++) gfx.lineTo(fillPoly[i][0], fillPoly[i][1]);
@@ -2096,12 +2114,12 @@ export function buildBoardScene(
   tick(`parts loop (${board.parts.length} parts, pin Graphics + label BitmapTexts)`);
 
   // Flush component-type fills — one Graphics per color, added before grid cells (fills under pins)
-  for (const [color, gfx] of topFillMap) {
-    gfx.fill({ color, alpha: s.componentFillAlpha });
+  for (const [key, gfx] of topFillMap) {
+    gfx.fill({ color: key % 0x1000000, alpha: s.componentFillAlpha * FADE_ALPHA[Math.floor(key / 0x1000000)] });
     topFillLayer.addChild(gfx);
   }
-  for (const [color, gfx] of bottomFillMap) {
-    gfx.fill({ color, alpha: s.componentFillAlpha });
+  for (const [key, gfx] of bottomFillMap) {
+    gfx.fill({ color: key % 0x1000000, alpha: s.componentFillAlpha * FADE_ALPHA[Math.floor(key / 0x1000000)] });
     bottomFillLayer.addChild(gfx);
   }
 

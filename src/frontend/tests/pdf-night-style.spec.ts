@@ -1,5 +1,5 @@
 /**
- * PDF night mode (issue #41): one ◐ button, three styles in its hold / right-click menu.
+ * PDF night mode (issue #41): one ◐ button, three styles in its click menu.
  *  - Invert colours: `invert(1)` — red turns cyan.
  *  - Dark paper, keep colours: paper black, red/blue stay red/blue, lighter.
  *  - Custom colours: paper becomes exactly the chosen background, black ink
@@ -7,8 +7,8 @@
  * Below them, two controls for coloured lines in every style: Colour (0 % =
  * grey, i.e. a shade of the text colour) and Contrast with Auto, which pulls
  * pale lines toward the text colour until they read against the background.
- * The button toggles the chosen style; holding it or a right-click opens the
- * menu. Choices persist and apply to every PDF.
+ * The button opens the menu on click, like the wand. Choices persist and apply
+ * to every PDF.
  *
  * Public fixture, so it always runs.
  */
@@ -76,33 +76,31 @@ function contrast(a: number[], b: number[]): number {
 
 const styleOf = (page: Page) => page.getByTestId('pdf-night-btn').getAttribute('data-night-style');
 
-test('night mode: toggle, pick a style, style persists', async ({ page }) => {
+test('the button opens the menu on click; Off and the styles live in it; the choice persists', async ({ page }) => {
   await openFixture(page);
   expect(await filterOf(page)).toBe('');
 
+  // A click opens the menu and changes nothing by itself (like the wand).
   await page.getByTestId('pdf-night-btn').click();
-  expect(await filterOf(page)).not.toBe('');
-  expect(await styleOf(page)).toBe('invert');
+  await expect(page.getByTestId('pdf-night-menu')).toBeVisible();
+  expect(await filterOf(page)).toBe('');
 
-  await page.getByTestId('pdf-night-btn').click({ button: 'right' });
   await page.getByTestId('pdf-night-dark').click();
   await expect(page.getByTestId('pdf-night-menu')).toBeVisible();  // stays open for the sliders
   expect(await styleOf(page)).toBe('dark');
-  await page.keyboard.press('Escape');
+  expect(await filterOf(page)).not.toBe('');
+  await expect(page.getByTestId('pdf-night-btn')).toHaveClass(/active/);
+
+  // A second click on the button closes the menu.
+  await page.getByTestId('pdf-night-btn').click();
   await expect(page.getByTestId('pdf-night-menu')).toHaveCount(0);
 
-  // The button toggles the dark style off and back on.
+  // Off is in the menu and closes it.
   await page.getByTestId('pdf-night-btn').click();
-  expect(await filterOf(page)).toBe('');
-  await page.getByTestId('pdf-night-btn').click();
-  expect(await filterOf(page)).not.toBe('');
-
-  // A hold opens the menu without toggling; Off turns it off.
-  await page.getByTestId('pdf-night-btn').click({ delay: 650 });
-  await expect(page.getByTestId('pdf-night-menu')).toBeVisible();
-  expect(await filterOf(page)).not.toBe('');
   await page.getByTestId('pdf-night-off').click();
+  await expect(page.getByTestId('pdf-night-menu')).toHaveCount(0);
   expect(await filterOf(page)).toBe('');
+  await expect(page.getByTestId('pdf-night-btn')).not.toHaveClass(/active/);
 
   const stored = await page.evaluate(() => ({
     on: localStorage.getItem('boardripper-pdf-nightmode'),
@@ -112,7 +110,7 @@ test('night mode: toggle, pick a style, style persists', async ({ page }) => {
 });
 
 const pick = async (page: Page, id: string) => {
-  if (!(await page.getByTestId('pdf-night-menu').count())) await page.getByTestId('pdf-night-btn').click({ button: 'right' });
+  if (!(await page.getByTestId('pdf-night-menu').count())) await page.getByTestId('pdf-night-btn').click();
   await page.getByTestId(id).click();
 };
 

@@ -5092,6 +5092,11 @@ export class BoardRenderer {
     }
   }
 
+  /** The dim fades toward the scheme's canvas colour; black on Default. */
+  private dimColor(): number {
+    return hexToInt(themeStore.activeTheme().board.dimColor ?? '#000000');
+  }
+
   private onThemeUpdate(): void {
     const board = themeStore.activeTheme().board;
     if (this.app && this.app.renderer) {
@@ -5417,7 +5422,8 @@ export class BoardRenderer {
     // distinct from the yellow members, the worklist mark colours
     // (amber/red/green) and the cyan selection-set, and matches the white
     // selected-part name label. Focus-blink still flashes red.
-    const PRIMARY_SEL = 0xffffff;
+    // A palette theme names its own (red on Dark / Landrex, ink on the light schemes).
+    const PRIMARY_SEL = hexToInt(themeStore.activeTheme().board.selectedPart ?? '#ffffff');
     const blinkRed = this.selectionBlinkPhase > 0 && this.selectionBlinkPhase % 2 === 1;
     const selColor = blinkRed ? 0xcc2222 : PRIMARY_SEL;
     gfx.fill({ color: PRIMARY_SEL, alpha: Math.min(0.22, s.selectionFillAlpha * 3 + 0.08) });
@@ -5649,12 +5655,12 @@ export class BoardRenderer {
         const cx = (b.minX + b.maxX) / 2;
         const cy = (b.minY + b.maxY) / 2;
         this.netDimGfx.rect(cx - pad, cy - pad, pad * 2, pad * 2);
-        this.netDimGfx.fill({ color: 0x000000, alpha: s.dimOverlayAlpha });
+        this.netDimGfx.fill({ color: this.dimColor(), alpha: s.dimOverlayAlpha });
         // Butterfly: mirror the dim into the bottom-half's own gfx so the
         // bottom side also dims (it lives in butterflyRoot, not scene.root).
         if (butterfly) {
           this.butterflyDimGfx.rect(cx - pad, cy - pad, pad * 2, pad * 2);
-          this.butterflyDimGfx.fill({ color: 0x000000, alpha: s.dimOverlayAlpha });
+          this.butterflyDimGfx.fill({ color: this.dimColor(), alpha: s.dimOverlayAlpha });
         }
       }
 
@@ -5747,10 +5753,10 @@ export class BoardRenderer {
         const cx = (b.minX + b.maxX) / 2;
         const cy = (b.minY + b.maxY) / 2;
         this.netDimGfx.rect(cx - pad, cy - pad, pad * 2, pad * 2);
-        this.netDimGfx.fill({ color: 0x000000, alpha: s.dimOverlayAlpha });
+        this.netDimGfx.fill({ color: this.dimColor(), alpha: s.dimOverlayAlpha });
         if (butterfly) {
           this.butterflyDimGfx.rect(cx - pad, cy - pad, pad * 2, pad * 2);
-          this.butterflyDimGfx.fill({ color: 0x000000, alpha: s.dimOverlayAlpha });
+          this.butterflyDimGfx.fill({ color: this.dimColor(), alpha: s.dimOverlayAlpha });
         }
       }
 

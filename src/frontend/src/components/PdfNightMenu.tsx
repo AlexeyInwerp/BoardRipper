@@ -1,13 +1,15 @@
 /**
  * PdfNightMenu — the PDF toolbar's night-mode control (issue #41).
  *
- * The ◐ button toggles night mode in the chosen style; holding it or a
- * right-click opens a menu to pick the style — invert, dark paper with
- * colours kept, or custom colours — and, for custom, the exact paper and ink
- * colours. State is global and persisted in `store/pdf-night-store.ts`.
+ * The ◐ button opens a menu on click, like the wand beside it: Off, the three
+ * styles — invert, dark paper with colours kept, or custom colours — the exact
+ * paper and ink colours for custom, and the controls for coloured lines. The
+ * button is lit while night mode is on. State is global and persisted in
+ * `store/pdf-night-store.ts`.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { IconChevronDown } from '@tabler/icons-react';
 import { pdfNightStore, usePdfNight, type NightStyle } from '../store/pdf-night-store';
 import './PdfFilterMenu.css';
 
@@ -23,20 +25,12 @@ const STYLE_TITLE: Record<NightStyle, string> = {
   custom: 'custom colours',
 };
 
-/** Long-press, as on the board ribbon's history chevrons. */
-const HOLD_MS = 500;
-
 export function PdfNightMenu() {
   const s = usePdfNight();
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
-  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const holdFired = useRef(false);
-  const cancelHold = useCallback(() => {
-    if (holdTimer.current) { clearTimeout(holdTimer.current); holdTimer.current = null; }
-  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -74,31 +68,20 @@ export function PdfNightMenu() {
       <button
         ref={btnRef}
         type="button"
-        className={`pdf-toolbar-btn pdf-night-btn${s.on ? ' active' : ''}${open ? ' open' : ''}`}
+        className={`pdf-toolbar-btn pdf-corrector-btn pdf-filter-btn pdf-night-btn${s.on ? ' active' : ''}${open ? ' open' : ''}`}
         data-testid="pdf-night-btn"
         data-night-style={s.style}
         aria-haspopup="menu"
         aria-expanded={open}
-        title={`Night mode: ${STYLE_TITLE[s.style]} · hold or right-click for styles and colours`}
-        onPointerDown={e => {
-          holdFired.current = false;
-          if (e.button !== 0) return;
-          cancelHold();
-          holdTimer.current = setTimeout(() => { holdTimer.current = null; holdFired.current = true; setOpen(true); }, HOLD_MS);
-        }}
-        onPointerUp={cancelHold}
-        onPointerLeave={cancelHold}
-        onContextMenu={e => { e.preventDefault(); cancelHold(); setOpen(v => !v); }}
-        onClick={() => {
-          if (holdFired.current) { holdFired.current = false; return; }
-          pdfNightStore.setOn(!s.on);
-        }}
+        title={s.on ? `PDF colours: ${STYLE_TITLE[s.style]}` : 'PDF colours'}
+        onClick={() => setOpen(v => !v)}
       >
-        &#x25D0;
+        <span aria-hidden="true">&#x25D0;</span>
+        <IconChevronDown size={10} className="pdf-filter-caret" />
       </button>
       {open && createPortal(
-        <div ref={menuRef} className="quick-menu pdf-filter-menu pdf-night-menu" role="menu" aria-label="Night mode" data-testid="pdf-night-menu">
-          <div className="quick-menu-header">Night mode · all PDFs</div>
+        <div ref={menuRef} className="quick-menu pdf-filter-menu pdf-night-menu" role="menu" aria-label="PDF colours" data-testid="pdf-night-menu">
+          <div className="quick-menu-header">PDF colours · all PDFs</div>
           <button type="button" role="menuitemradio" aria-checked={!s.on} data-testid="pdf-night-off"
                   onClick={() => { pdfNightStore.setOn(false); close(); }}>
             <span className="quick-menu-tick">{!s.on ? '✓' : ''}</span>

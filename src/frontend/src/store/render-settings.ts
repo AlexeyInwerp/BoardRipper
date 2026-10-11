@@ -1378,7 +1378,7 @@ export function resolvePinColor(settings: RenderSettings, netName: string, side:
  *
  * Default returns undefined ⇒ no theme overrides ⇒ behaviour unchanged.
  */
-type ThemeOverridesProvider = () => Partial<RenderSettings> | undefined;
+type ThemeOverridesProvider = (global: RenderSettings) => Partial<RenderSettings> | undefined;
 let themeOverridesProvider: ThemeOverridesProvider = () => undefined;
 
 /** Called by themes.ts at module init. Subsequent calls update the provider. */
@@ -1725,7 +1725,7 @@ class RenderSettingsStore extends Emitter {
     // Theme overrides layer ON TOP of board overrides — themes are the user's
     // most recent intent ("I picked Landrex, please make everything monochrome")
     // and should override saved board-specific settings.
-    const themeOv = themeOverridesProvider() ?? {};
+    const themeOv = themeOverridesProvider(this._global) ?? {};
     this._effective = mergeSettings(mergeSettings(this._global, boardOv), themeOv);
   }
 
@@ -1755,7 +1755,7 @@ class RenderSettingsStore extends Emitter {
     // rendered with un-merged settings until the next theme switch.
     const hadOverrides = this._activeBoard ? this.hasBoardOverrides(this._activeBoard) : false;
     const hasOverrides = fileName ? this.hasBoardOverrides(fileName) : false;
-    const themeOv = themeOverridesProvider();
+    const themeOv = themeOverridesProvider(this._global);
     const themeHasOverrides = !!themeOv && Object.keys(themeOv).length > 0;
     this._activeBoard = fileName;
     if (hadOverrides || hasOverrides || themeHasOverrides) {

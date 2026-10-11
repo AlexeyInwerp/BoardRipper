@@ -12,7 +12,8 @@ import { renderSettingsStore, partBridgesHierarchy } from './render-settings';
 import { log } from './log-store';
 import { loadProgressStore } from './load-progress-store';
 import { fileViewPrefsStore } from './file-view-prefs-store';
-import { createLayerStates } from './layer-store';
+import { createLayerStates, defaultLayerColor } from './layer-store';
+import { themeStore, type Theme } from './themes';
 import type { LayerState } from './layer-store';
 import { deriveBoardView } from './derive-board-view';
 import { navHistoryStore } from './nav-history-store';
@@ -946,6 +947,22 @@ class BoardStore extends Emitter {
       return part.pins[tab.selection.pinIndex] ?? null;
     }
     return null;
+  }
+
+  /** A colour-scheme switch (decision 2026-10-11): the dim goes off on every
+   *  open board and as the default for new ones, and a copper layer still on
+   *  the old scheme's default colour moves to the new scheme's. A colour the
+   *  user picked by hand stays. */
+  applyThemeChange(prev: Theme) {
+    for (const tab of this._tabs) {
+      tab.dimMode = 'off';
+      if (tab.layerStates.length) {
+        tab.layerStates = tab.layerStates.map((l, i) =>
+          l.color === defaultLayerColor(l.name, i, prev) ? { ...l, color: defaultLayerColor(l.name, i) } : l);
+      }
+    }
+    saveViewPrefs({ ...loadViewPrefs(), dimMode: 'off' });
+    this.notify();
   }
 
   private updateActiveTab(patch: Partial<BoardTab>) {
@@ -2621,6 +2638,19 @@ class BoardStore extends Emitter {
 }
 
 export const boardStore = new BoardStore();
+
+// Scheme switches turn the dim off (see applyThemeChange). Only a change of
+// the active scheme counts — accent / background / chrome knobs notify the
+// same store and must not touch the dim.
+{
+  let seenSwitch = themeStore.lastSwitch.seq;
+  themeStore.subscribe(() => {
+    const { seq, prev } = themeStore.lastSwitch;
+    if (seq === seenSwitch) return;
+    seenSwitch = seq;
+    boardStore.applyThemeChange(prev);
+  });
+}
 
 // Expose for integration tests (Playwright) — DEV builds only
 if (typeof window !== 'undefined' && import.meta.env.DEV) {
