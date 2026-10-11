@@ -1,10 +1,11 @@
 /**
- * PDF night mode (issue #41): one ◐ button, three styles under its caret menu.
+ * PDF night mode (issue #41): one ◐ button, three styles in its hold / right-click menu.
  *  - Invert colours: `invert(1)` — red turns cyan.
  *  - Dark paper, keep colours: paper black, red/blue stay red/blue, lighter.
  *  - Custom colours: paper becomes exactly the chosen background, black ink
  *    exactly the chosen text colour.
- * The button toggles the chosen style; choices persist and apply to every PDF.
+ * The button toggles the chosen style; holding it or a right-click opens the
+ * menu. Choices persist and apply to every PDF.
  *
  * Public fixture, so it always runs.
  */
@@ -67,7 +68,7 @@ test('night mode: toggle, pick a style, style persists', async ({ page }) => {
   await page.getByTestId('pdf-night-btn').click();
   expect(await filterOf(page)).toBe('invert(1)');
 
-  await page.getByTestId('pdf-night-menu-btn').click();
+  await page.getByTestId('pdf-night-btn').click({ button: 'right' });
   await page.getByTestId('pdf-night-dark').click();
   await expect(page.getByTestId('pdf-night-menu')).toHaveCount(0);
   expect(await filterOf(page)).toBe('invert(1) hue-rotate(180deg)');
@@ -78,8 +79,10 @@ test('night mode: toggle, pick a style, style persists', async ({ page }) => {
   await page.getByTestId('pdf-night-btn').click();
   expect(await filterOf(page)).toBe('invert(1) hue-rotate(180deg)');
 
-  // Right-click opens the same menu; Off turns it off, a style turns it back on.
-  await page.getByTestId('pdf-night-btn').click({ button: 'right' });
+  // A hold opens the menu without toggling; Off turns it off.
+  await page.getByTestId('pdf-night-btn').click({ delay: 650 });
+  await expect(page.getByTestId('pdf-night-menu')).toBeVisible();
+  expect(await filterOf(page)).toBe('invert(1) hue-rotate(180deg)');
   await page.getByTestId('pdf-night-off').click();
   expect(await filterOf(page)).toBe('');
 
@@ -93,13 +96,13 @@ test('night mode: toggle, pick a style, style persists', async ({ page }) => {
 test('each style puts the right colours on screen', async ({ page }) => {
   await openFixture(page);
 
-  await page.getByTestId('pdf-night-menu-btn').click();
+  await page.getByTestId('pdf-night-btn').click({ button: 'right' });
   await page.getByTestId('pdf-night-invert').click();
   let s = await swatches(page);
   expect(near(s.paper, [0, 0, 0])).toBe(true);
   expect(s.red[1]).toBeGreaterThan(s.red[0] + 60);                 // red → cyan
 
-  await page.getByTestId('pdf-night-menu-btn').click();
+  await page.getByTestId('pdf-night-btn').click({ button: 'right' });
   await page.getByTestId('pdf-night-dark').click();
   s = await swatches(page);
   expect(near(s.paper, [0, 0, 0])).toBe(true);
@@ -108,7 +111,7 @@ test('each style puts the right colours on screen', async ({ page }) => {
   expect(s.red[0] + s.red[1] + s.red[2]).toBeGreaterThan(0xcc);    // …and lighter
 
   // Custom: exact colours, both on a dark and on a light paper.
-  await page.getByTestId('pdf-night-menu-btn').click();
+  await page.getByTestId('pdf-night-btn').click({ button: 'right' });
   await page.getByTestId('pdf-night-custom').click();
   await expect(page.getByTestId('pdf-night-menu')).toBeVisible();   // stays open for the wells
   await page.getByTestId('pdf-night-bg').fill('#203040');
@@ -120,7 +123,7 @@ test('each style puts the right colours on screen', async ({ page }) => {
   expect(near(s.ink, [0xe0, 0xd0, 0xc0])).toBe(true);
   expect(s.red[0]).toBeGreaterThan(s.red[2] + 30);                 // red stays reddish
 
-  await page.getByTestId('pdf-night-menu-btn').click();
+  await page.getByTestId('pdf-night-btn').click({ button: 'right' });
   await page.getByTestId('pdf-night-bg').fill('#f4ecd8');           // sepia paper
   await page.getByTestId('pdf-night-fg').fill('#3a2e20');
   await page.keyboard.press('Escape');

@@ -88,9 +88,7 @@
 }
 
 /* Night-mode menu (PdfNightMenu) — same menu body, plus the two colour wells. */
-.pdf-night-wrapper { display: inline-flex; align-items: center; }
-.pdf-night-caret { padding: 1px 2px !important; margin-left: -2px; display: inline-flex !important; align-items: center; }
-.pdf-night-caret.open { background: var(--surface-active); }
+.pdf-night-btn.open { background: var(--surface-active); }
 .pdf-night-menu { width: 230px; }
 .pdf-night-colors {
   display: flex;
