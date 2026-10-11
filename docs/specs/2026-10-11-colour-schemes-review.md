@@ -88,7 +88,7 @@ Accent text is shaded automatically on light backgrounds, so the presets mostly 
 
 **E. Fill fades with size.** Body opacity falls with on-screen area; above a size a body is an outline with a light tint.
 
-**F. Ship three new schemes.** Dark, Light, Monochrome next to the unchanged BoardRipper Default (see Decisions). Daylight and Blueprint are retired or kept only as accent variants; Custom stays.
+**F. Ship three new schemes.** Dark, Light and Atari (light) next to the unchanged BoardRipper Default and Landrex Classic (see Decisions). Daylight and Blueprint are retired or kept only as accent variants; Custom stays.
 
 **G. Guard it with tests.** A unit test per scheme: labels ≥ 4.5:1 on the board and on every part body, pins ≥ 3:1 on the board, selection ≥ 3:1, semantic pin colours pairwise distinct. Keep the screenshot harness for visual review of every change.
 
@@ -100,4 +100,7 @@ Accent text is shaded automatically on light backgrounds, so the presets mostly 
 4. **Custom colours:** a user's custom scheme and saved overrides are kept as they are.
 5. **BoardRipper Default stays exactly as it is** and stays the default: many users are used to it. The proposed Dark is added next to it, not in its place. Nothing in the rework changes how Default draws: its pin, part and layer colours and its black ambient dim are kept, apart from the dim turning off on a scheme switch.
 
-Shipping set: BoardRipper Default (unchanged, still the default), Dark, Light, Atari (light), Monochrome, plus Custom. All four proposed schemes pass the 26 contrast checks in the mockup (`claude.ai/artifact/9SzQM5xQaWsoEab6CPNgPX`); today's Drafting Paper passes 10, Default 23.
+6. **No separate Monochrome:** it duplicated Landrex Classic, which stays as it is (like Default).
+7. **NexusBV Web as a secondary reference.** Its board colours, read from the published bundle of `web.nexusbv.net` on 2026-10-11: background `#060606`, board `#0b0c0d`, pins and pads `#46464f`, part box `#45454e`, part text `#dddddd` at 0.71, pin text `#bbbbbb`, ground `#304242`, no-connect `#25252c`, selected net `#fff033`, selected part `#ff2b2b`, board outline `#373737`, other nets of a web `#3399ff`, copper top `#39a9ff`, copper bottom `#f0a94a`, other layers `#9aa8b8` plus an 8-colour cycle. One dark theme: every pin but ground and NC is the same grey (pins ≈ 2.1:1 on the board), and colour is kept for the selection. Taken from it: the teal-tinted ground in Dark, and blue top / amber bottom as the model for copper layers instead of today's red / green.
+
+Shipping set: BoardRipper Default and Landrex Classic (both unchanged; Default stays the default), Dark, Light, Atari (light), plus Custom. All three new schemes pass the 26 contrast checks in the mockup (`claude.ai/artifact/9SzQM5xQaWsoEab6CPNgPX`); today's Drafting Paper passes 10, Default 23, NexusBV's own 13.
