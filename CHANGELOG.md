@@ -19,6 +19,10 @@
   **BoardRipper Default is unchanged** and stays the default.
 - **The underside has its own pin colour** in the new schemes, so red means
   power and nothing else.
+- On the new schemes, part names and pin numbers stay readable over dark pads
+  (a halo, or black/white text where the scheme's own would not read), the
+  boxes behind net names follow the scheme instead of always being black, and
+  the minimap is drawn in the scheme's colours.
 - **PDF colours** (issue #41): the ◐ button now opens a menu, like the wand
   beside it. Besides inverting, it can darken the paper while keeping red and
   blue lines red and blue, or use exact background and text colours you
