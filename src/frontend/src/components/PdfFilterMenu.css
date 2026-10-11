@@ -89,7 +89,7 @@
 
 /* Night-mode menu (PdfNightMenu) — same menu body, plus the two colour wells. */
 .pdf-night-btn.open { background: var(--surface-active); }
-.pdf-night-menu { width: 230px; }
+.pdf-night-menu { width: 250px; }
 .pdf-night-colors {
   display: flex;
   flex-wrap: wrap;
@@ -110,13 +110,31 @@
   background: none;
   cursor: pointer;
 }
-.pdf-night-menu .pdf-night-reset {
-  width: auto;
-  margin-left: auto;
-  padding: 1px 6px;
-  font-size: 10.5px;
+.pdf-night-sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 9px 6px 27px;
+  font-size: 11px;
+  color: var(--text-primary);
+}
+.pdf-night-sliders.off { opacity: 0.5; }
+.pdf-night-sliders label { display: flex; align-items: center; gap: 6px; }
+.pdf-night-sliders label > span:first-child { width: 52px; flex-shrink: 0; }
+.pdf-night-sliders input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.pdf-night-sliders input[type="range"].auto { opacity: 0.45; }
+.pdf-night-val { width: 36px; text-align: right; color: var(--text-secondary); font-size: 10.5px; }
+.pdf-night-menu .pdf-night-auto {
+  width: 36px;
+  padding: 1px 0;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font-size: 10px;
+  text-align: center;
+  justify-content: center;
   color: var(--text-secondary);
 }
+.pdf-night-menu .pdf-night-auto.on { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
 .pdf-night-colors input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
 .pdf-night-colors input[type="color"]::-webkit-color-swatch { border: none; border-radius: 2px; }
 .pdf-night-colors input[type="color"]::-moz-color-swatch { border: none; border-radius: 2px; }

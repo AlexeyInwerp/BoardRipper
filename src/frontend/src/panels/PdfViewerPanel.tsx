@@ -14,7 +14,7 @@ import { contextMenuStore } from '../store/context-menu-store';
 import { log } from '../store/log-store';
 import { PdfFilterMenu } from '../components/PdfFilterMenu';
 import { PdfNightMenu } from '../components/PdfNightMenu';
-import { usePdfNight, nightFilter, customTransfer } from '../store/pdf-night-store';
+import { usePdfNight, nightPipeline } from '../store/pdf-night-store';
 import type { GlyphDebugState, PageGlyphData } from '../pdf/glyph-types';
 import { DEFAULT_GLYPH_DEBUG_STATE } from '../pdf/glyph-types';
 import { extractPageGlyphs, clearFontCache } from '../pdf/glyph-extractor';
@@ -843,6 +843,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const nightMode = night.on;
   // url(#…) needs a plain id; useId's colons/guillemets are not one.
   const nightFilterId = `pdf-night-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
+  const nightFx = nightPipeline(night, nightFilterId);
   const [cleanContrast] = useState(() => {
     try { const v = localStorage.getItem(CLEAN_CONTRAST_KEY); return v ? Number(v) : DEFAULT_CLEAN_CONTRAST; } catch { return DEFAULT_CLEAN_CONTRAST; }
   });
@@ -4239,12 +4240,17 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         </div>
       )}
 
-      {night.on && night.style === 'custom' && (
-        // Custom night colours: white paper → bg, black ink → fg, per channel.
+      {nightFx?.svg && (
+        // Night mode: contrast curve, then white paper → bg, black ink → fg.
         <svg width="0" height="0" aria-hidden="true" style={{ position: 'absolute' }}>
           <filter id={nightFilterId} colorInterpolationFilters="sRGB">
             <feComponentTransfer>
-              {customTransfer(night).map((t, i) => {
+              <feFuncR type="table" tableValues={nightFx.svg.table} />
+              <feFuncG type="table" tableValues={nightFx.svg.table} />
+              <feFuncB type="table" tableValues={nightFx.svg.table} />
+            </feComponentTransfer>
+            <feComponentTransfer>
+              {nightFx.svg.map.map((t, i) => {
                 const F = (['feFuncR', 'feFuncG', 'feFuncB'] as const)[i];
                 return <F key={F} type="linear" slope={t.slope} intercept={t.intercept} />;
               })}
@@ -4255,7 +4261,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       <div
         className="pdf-canvas-container"
         ref={containerRef}
-        style={{ cursor: isDraggingRef.current ? 'grabbing' : 'crosshair', filter: nightFilter(night, nightFilterId) }}
+        style={{ cursor: isDraggingRef.current ? 'grabbing' : 'crosshair', filter: nightFx?.css }}
       >
       {/* Every touch lands here, and only here. Without this layer the target
           of a touch depended on what happened to be under the finger: page 1

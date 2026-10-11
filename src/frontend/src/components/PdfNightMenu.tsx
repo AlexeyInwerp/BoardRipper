@@ -109,7 +109,7 @@ export function PdfNightMenu() {
             return (
               <button key={style} type="button" role="menuitemradio" aria-checked={checked}
                       data-testid={`pdf-night-${style}`} title={hint}
-                      onClick={() => { pdfNightStore.setStyle(style); if (style !== 'custom') close(); }}>
+                      onClick={() => pdfNightStore.setStyle(style)}>
                 <span className="quick-menu-tick">{checked ? '✓' : ''}</span>
                 {label}
               </button>
@@ -126,11 +126,34 @@ export function PdfNightMenu() {
                      onChange={e => { pdfNightStore.setColors({ fg: e.target.value }); pdfNightStore.setStyle('custom'); }} />
               Text and lines
             </label>
-            <button type="button" className="pdf-night-reset" data-testid="pdf-night-reset"
-                    onClick={() => pdfNightStore.resetColors()}>
-              Reset
-            </button>
           </div>
+          <div className="quick-menu-sep" role="separator" />
+          <div className="quick-menu-header">Coloured text and lines</div>
+          <div className={`pdf-night-sliders${s.on ? '' : ' off'}`}>
+            <label title="0 % turns every coloured line into a shade of the text colour">
+              <span>Colour</span>
+              <input type="range" min={0} max={200} step={5} value={s.colour} data-testid="pdf-night-colour"
+                     onChange={e => pdfNightStore.setColour(Number(e.target.value))} />
+              <span className="pdf-night-val" translate="no">{s.colour === 0 ? 'Grey' : `${s.colour} %`}</span>
+            </label>
+            <label title="Pulls pale lines toward the text colour so they stay readable on the new background">
+              <span>Contrast</span>
+              <input type="range" min={0} max={100} step={5} value={s.contrast} data-testid="pdf-night-contrast"
+                     className={s.contrastAuto ? 'auto' : ''}
+                     onChange={e => pdfNightStore.setContrast(Number(e.target.value))} />
+              <button type="button" role="checkbox" aria-checked={s.contrastAuto}
+                      className={`pdf-night-auto${s.contrastAuto ? ' on' : ''}`} data-testid="pdf-night-contrast-auto"
+                      title="Choose the contrast from the background and text colours"
+                      onClick={() => pdfNightStore.setContrastAuto(!s.contrastAuto)}>
+                Auto
+              </button>
+            </label>
+          </div>
+          <button type="button" role="menuitem" data-testid="pdf-night-reset"
+                  onClick={() => pdfNightStore.resetColors()}>
+            <span className="quick-menu-tick" />
+            Reset colours
+          </button>
         </div>,
         document.body,
       )}

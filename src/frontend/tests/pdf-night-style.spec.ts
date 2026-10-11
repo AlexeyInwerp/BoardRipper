@@ -4,6 +4,9 @@
  *  - Dark paper, keep colours: paper black, red/blue stay red/blue, lighter.
  *  - Custom colours: paper becomes exactly the chosen background, black ink
  *    exactly the chosen text colour.
+ * Below them, two controls for coloured lines in every style: Colour (0 % =
+ * grey, i.e. a shade of the text colour) and Contrast with Auto, which pulls
+ * pale lines toward the text colour until they read against the background.
  * The button toggles the chosen style; holding it or a right-click opens the
  * menu. Choices persist and apply to every PDF.
  *
@@ -31,12 +34,12 @@ const filterOf = (page: Page) =>
 
 /** Colour of three swatches (white paper, red line, black ink) seen through the
  *  container's own filter, read back from a real screenshot. */
-async function swatches(page: Page): Promise<{ paper: number[]; red: number[]; ink: number[] }> {
+async function swatches(page: Page): Promise<{ paper: number[]; red: number[]; ink: number[]; pale: number[] }> {
   await page.locator('.pdf-canvas-container').evaluate(el => {
     const d = document.createElement('div');
     d.id = 'night-swatch';
     d.style.cssText = 'position:absolute;left:0;top:0;z-index:99;display:flex';
-    for (const c of ['#ffffff', '#cc0000', '#000000']) {
+    for (const c of ['#ffffff', '#cc0000', '#000000', '#a8e0a8']) {
       const s = document.createElement('div');
       s.style.cssText = `width:20px;height:20px;background:${c}`;
       d.appendChild(s);
@@ -52,37 +55,52 @@ async function swatches(page: Page): Promise<{ paper: number[]; red: number[]; i
     c.width = img.width; c.height = img.height;
     const ctx = c.getContext('2d')!;
     ctx.drawImage(img, 0, 0);
-    const y = Math.floor(img.height / 2), w = img.width / 3;
-    return [0, 1, 2].map(i => Array.from(ctx.getImageData(Math.floor(w * i + w / 2), y, 1, 1).data.slice(0, 3)));
+    const y = Math.floor(img.height / 2), w = img.width / 4;
+    return [0, 1, 2, 3].map(i => Array.from(ctx.getImageData(Math.floor(w * i + w / 2), y, 1, 1).data.slice(0, 3)));
   }, png.toString('base64'));
   await page.locator('#night-swatch').evaluate(el => el.remove());
-  return { paper: px[0], red: px[1], ink: px[2] };
+  return { paper: px[0], red: px[1], ink: px[2], pale: px[3] };
 }
 
 const near = (a: number[], b: number[], tol = 3) => a.every((v, i) => Math.abs(v - b[i]) <= tol);
+
+/** WCAG contrast of two sRGB 0…255 colours. */
+function contrast(a: number[], b: number[]): number {
+  const lum = (c: number[]) => {
+    const l = c.map(v => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * l[0] + 0.7152 * l[1] + 0.0722 * l[2];
+  };
+  const [x, y] = [lum(a), lum(b)];
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+}
+
+const styleOf = (page: Page) => page.getByTestId('pdf-night-btn').getAttribute('data-night-style');
 
 test('night mode: toggle, pick a style, style persists', async ({ page }) => {
   await openFixture(page);
   expect(await filterOf(page)).toBe('');
 
   await page.getByTestId('pdf-night-btn').click();
-  expect(await filterOf(page)).toBe('invert(1)');
+  expect(await filterOf(page)).not.toBe('');
+  expect(await styleOf(page)).toBe('invert');
 
   await page.getByTestId('pdf-night-btn').click({ button: 'right' });
   await page.getByTestId('pdf-night-dark').click();
+  await expect(page.getByTestId('pdf-night-menu')).toBeVisible();  // stays open for the sliders
+  expect(await styleOf(page)).toBe('dark');
+  await page.keyboard.press('Escape');
   await expect(page.getByTestId('pdf-night-menu')).toHaveCount(0);
-  expect(await filterOf(page)).toBe('invert(1) hue-rotate(180deg)');
 
-  // The button now toggles the dark style off and back on.
+  // The button toggles the dark style off and back on.
   await page.getByTestId('pdf-night-btn').click();
   expect(await filterOf(page)).toBe('');
   await page.getByTestId('pdf-night-btn').click();
-  expect(await filterOf(page)).toBe('invert(1) hue-rotate(180deg)');
+  expect(await filterOf(page)).not.toBe('');
 
   // A hold opens the menu without toggling; Off turns it off.
   await page.getByTestId('pdf-night-btn').click({ delay: 650 });
   await expect(page.getByTestId('pdf-night-menu')).toBeVisible();
-  expect(await filterOf(page)).toBe('invert(1) hue-rotate(180deg)');
+  expect(await filterOf(page)).not.toBe('');
   await page.getByTestId('pdf-night-off').click();
   expect(await filterOf(page)).toBe('');
 
@@ -93,17 +111,25 @@ test('night mode: toggle, pick a style, style persists', async ({ page }) => {
   expect(stored).toEqual({ on: '0', style: 'dark' });
 });
 
+const pick = async (page: Page, id: string) => {
+  if (!(await page.getByTestId('pdf-night-menu').count())) await page.getByTestId('pdf-night-btn').click({ button: 'right' });
+  await page.getByTestId(id).click();
+};
+
 test('each style puts the right colours on screen', async ({ page }) => {
   await openFixture(page);
 
-  await page.getByTestId('pdf-night-btn').click({ button: 'right' });
-  await page.getByTestId('pdf-night-invert').click();
+  // Plain styles with the contrast curve off: the classic results, CSS only.
+  await pick(page, 'pdf-night-contrast-auto');   // Auto off …
+  await page.getByTestId('pdf-night-contrast').fill('0');   // … and no curve
+  await pick(page, 'pdf-night-invert');
+  expect(await filterOf(page)).toBe('invert(1)');
   let s = await swatches(page);
   expect(near(s.paper, [0, 0, 0])).toBe(true);
   expect(s.red[1]).toBeGreaterThan(s.red[0] + 60);                 // red → cyan
 
-  await page.getByTestId('pdf-night-btn').click({ button: 'right' });
-  await page.getByTestId('pdf-night-dark').click();
+  await pick(page, 'pdf-night-dark');
+  expect(await filterOf(page)).toBe('hue-rotate(180deg) invert(1)');
   s = await swatches(page);
   expect(near(s.paper, [0, 0, 0])).toBe(true);
   expect(near(s.ink, [255, 255, 255])).toBe(true);
@@ -111,24 +137,43 @@ test('each style puts the right colours on screen', async ({ page }) => {
   expect(s.red[0] + s.red[1] + s.red[2]).toBeGreaterThan(0xcc);    // …and lighter
 
   // Custom: exact colours, both on a dark and on a light paper.
-  await page.getByTestId('pdf-night-btn').click({ button: 'right' });
-  await page.getByTestId('pdf-night-custom').click();
-  await expect(page.getByTestId('pdf-night-menu')).toBeVisible();   // stays open for the wells
+  await pick(page, 'pdf-night-custom');
   await page.getByTestId('pdf-night-bg').fill('#203040');
   await page.getByTestId('pdf-night-fg').fill('#e0d0c0');
-  await page.keyboard.press('Escape');
   expect(await filterOf(page)).toMatch(/^hue-rotate\(180deg\) url\("?#pdf-night-/);
   s = await swatches(page);
   expect(near(s.paper, [0x20, 0x30, 0x40])).toBe(true);
   expect(near(s.ink, [0xe0, 0xd0, 0xc0])).toBe(true);
   expect(s.red[0]).toBeGreaterThan(s.red[2] + 30);                 // red stays reddish
+  const paleBefore = contrast(s.pale, s.paper);
 
-  await page.getByTestId('pdf-night-btn').click({ button: 'right' });
+  // Auto contrast: the pale green line now reads against the paper; paper and
+  // ink stay exactly where they were.
+  await pick(page, 'pdf-night-contrast-auto');
+  s = await swatches(page);
+  expect(near(s.paper, [0x20, 0x30, 0x40])).toBe(true);
+  expect(near(s.ink, [0xe0, 0xd0, 0xc0])).toBe(true);
+  expect(contrast(s.pale, s.paper)).toBeGreaterThan(paleBefore + 1);
+  expect(contrast(s.pale, s.paper)).toBeGreaterThan(3);              // WCAG large-text level; it was 1.7
+  expect(s.red[0]).toBeGreaterThan(s.red[2] + 20);                 // and red is still red
+
+  // Colour 0: coloured lines become a shade of the text colour.
+  await page.getByTestId('pdf-night-colour').fill('0');
+  s = await swatches(page);
+  const fg = [0xe0, 0xd0, 0xc0], bg = [0x20, 0x30, 0x40];
+  const t = (s.red[0] - bg[0]) / (fg[0] - bg[0]);
+  expect(near(s.red, bg.map((b, i) => b + (fg[i] - b) * t), 6)).toBe(true);
+  await page.getByTestId('pdf-night-colour').fill('100');
+
   await page.getByTestId('pdf-night-bg').fill('#f4ecd8');           // sepia paper
   await page.getByTestId('pdf-night-fg').fill('#3a2e20');
-  await page.keyboard.press('Escape');
   expect(await filterOf(page)).toMatch(/^url\("?#pdf-night-/);
   s = await swatches(page);
   expect(near(s.paper, [0xf4, 0xec, 0xd8])).toBe(true);
   expect(near(s.ink, [0x3a, 0x2e, 0x20])).toBe(true);
+
+  // Reset restores the defaults, Auto included.
+  await page.getByTestId('pdf-night-reset').click();
+  await expect(page.getByTestId('pdf-night-contrast-auto')).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByTestId('pdf-night-colour')).toHaveValue('100');
 });
