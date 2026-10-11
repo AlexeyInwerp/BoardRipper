@@ -63,6 +63,10 @@ export interface Theme {
     /** Part border, top / underside. Absent = the green / red of Default. */
     partOutlineTop?: string;
     partOutlineBottom?: string;
+    /** Highlighter yellow behind the selected net's pins on a light scheme
+     *  (see RenderSettings.lightSelectionStyle). Absent = the scheme keeps the
+     *  glow in its selection colour (Default, Dark, Landrex). */
+    highlighter?: string;
     /** Copper colour of the top / bottom layer. Absent = red / green. */
     copperTop?: string;
     copperBottom?: string;
@@ -254,7 +258,7 @@ export const THEMES: Record<string, Theme> = {
       canvasBackground: '#e6e8eb', boardFill: '#ffffff', outline: '#5d6672',
       selection: '#c26f00', butterflySelection: '#2f6db5', selectedPart: '#15191e',
       labelText: '#15191e', labelPart: '#15191e', labelNet: '#1f4f8f',
-      netLabelBg: '#ffffff', netLabelBgOpacity: 0.72, dimColor: '#e6e8eb',
+      netLabelBg: '#ffffff', netLabelBgOpacity: 0.72, dimColor: '#e6e8eb', highlighter: '#ffd400',
       partOutlineTop: '#5d6672', partOutlineBottom: '#8a6440',
       copperTop: '#1f63d6', copperBottom: '#d95f0e',
     },
@@ -287,7 +291,7 @@ export const THEMES: Record<string, Theme> = {
       canvasBackground: '#b8b8b4', boardFill: '#ececea', outline: '#111111',
       selection: '#cb6301', butterflySelection: '#2a3192', selectedPart: '#111111',
       labelText: '#111111', labelPart: '#111111', labelNet: '#2a3192',
-      netLabelBg: '#ececea', netLabelBgOpacity: 0.72, dimColor: '#ececea',
+      netLabelBg: '#ececea', netLabelBgOpacity: 0.72, dimColor: '#ececea', highlighter: '#f4e325',
       partOutlineTop: '#111111', partOutlineBottom: '#6f4b2a',
       copperTop: '#2a3192', copperBottom: '#cb6301',
     },

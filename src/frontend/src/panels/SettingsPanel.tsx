@@ -16,7 +16,7 @@ import {
   useSettingsSearch,
   recordRenderedField,
 } from './settings/SettingsSearch';
-import type { RenderSettings, PartType, PadShape, BodyShape, PinGroup, PinGroupRule } from '../store/render-settings';
+import type { RenderSettings, PartType, PadShape, BodyShape, PinGroup, PinGroupRule, LightSelectionStyle } from '../store/render-settings';
 import { SettingsMockup } from './SettingsMockup';
 import { QualityPresetCard } from '../components/QualityPresetCard';
 import { resetLocalSettings } from '../store/reset-local-settings';
@@ -1410,6 +1410,38 @@ function PdfQualitySelector() {
   );
 }
 
+// ---- Selected pins on the light schemes ----
+
+const LIGHT_SELECTION_OPTIONS: { id: LightSelectionStyle; label: string; title: string }[] = [
+  { id: 'highlighter', label: 'Highlighter', title: 'A yellow halo behind each pin, the pin in its own colour, a thin ink ring' },
+  { id: 'ink', label: 'Ink pins', title: 'Each pin filled solid ink with a white rim' },
+  { id: 'inkHighlighter', label: 'Ink on highlighter', title: 'Each pin filled solid ink on a yellow halo' },
+];
+
+/** How the selected net's pins are marked on Light and Atari, where a coloured
+ *  glow does not show on paper. Other schemes keep their glow. */
+function LightSelectionStyleRow({ value, onUpdate }: { value: LightSelectionStyle; onUpdate: DraftUpdater }) {
+  useEffect(() => { recordRenderedField('lightSelectionStyle'); }, []);
+  const { hidden, matched } = useFieldSearchState('lightSelectionStyle');
+  if (hidden) return null;
+  return (
+    <div className={`settings-row${matched ? ' settings-search-match' : ''}`}
+      title="How the pins of the selected net are marked on the light schemes (Light, Atari)">
+      <label className="settings-label">Selected pins on light schemes</label>
+      <div className="settings-btn-group">
+        {LIGHT_SELECTION_OPTIONS.map(o => (
+          <button key={o.id} type="button" title={o.title}
+            className={`settings-btn-option${value === o.id ? ' active' : ''}`}
+            data-testid={`settings-light-sel-${o.id}`}
+            onClick={() => onUpdate({ lightSelectionStyle: o.id })}>
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ---- PDF render mode selector ----
 
 const RENDER_MODE_LABELS: Record<'auto' | 'standard' | 'always-tile', string> = {
@@ -2320,6 +2352,7 @@ export function SettingsPanel() {
           title="How much larger (mils) the yellow net highlight circle is compared to the pin circle. Creates a visible ring around each pin in the selected net" />
         <Slider label="Highlight Ring Opacity" value={draft.netHighlightAlpha} min={0} max={1} step={0.05} field="netHighlightAlpha" onUpdate={updateDraft}
           title="Opacity of the yellow highlight ring around pins in the selected net. Higher = more visible ring" />
+        <LightSelectionStyleRow value={draft.lightSelectionStyle} onUpdate={updateDraft} />
         <Slider label="Dim Overlay Strength" value={draft.dimOverlayAlpha} min={0} max={0.8} step={0.05} field="dimOverlayAlpha" onUpdate={updateDraft}
           title="Opacity of the black overlay that dims unselected areas when a net is highlighted. 0 = no dimming, higher = darker" />
         <Toggle label="Ambient Dim" value={draft.ambientDim} field="ambientDim" onUpdate={updateDraft}

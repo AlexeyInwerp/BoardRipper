@@ -85,6 +85,8 @@ export interface PinGroup {
   rules: PinGroupRule[];
 }
 
+export type LightSelectionStyle = 'highlighter' | 'ink' | 'inkHighlighter';
+
 export interface RenderSettings {
   outlineWidth: number;
   outlineAlpha: number;
@@ -214,6 +216,12 @@ export interface RenderSettings {
    *  yellow/blue selection overlay is suppressed — used by Landrex for a
    *  clean monochrome look without the noisy highlight glow. */
   showSelectionHalo: boolean;
+  /** How the pins of the selected net are marked on the light schemes (Light,
+   *  Atari), where a coloured glow does not show on paper. `highlighter`: a
+   *  yellow halo behind the pin, the pin in its own colour, a thin ink ring.
+   *  `ink`: the pin filled ink with a white rim. `inkHighlighter`: an ink pin
+   *  on the yellow halo. Other schemes keep their glow. */
+  lightSelectionStyle: LightSelectionStyle;
   /** Opacity of the black dim overlay (0 = no dim, 1 = fully black) */
   dimOverlayAlpha: number;
   /** Always dim the board even when nothing is selected — hover/click punches through */
@@ -692,6 +700,7 @@ export const DEFAULTS: RenderSettings = {
   hdrFocusGlow: false,
   hdrGlowIntensity: 6,   // provisional — tune live on an HDR display
   showSelectionHalo: true,
+  lightSelectionStyle: 'highlighter',
   dimOverlayAlpha: 0.5,
   ambientDim: true,
 

@@ -5737,6 +5737,13 @@ export class BoardRenderer {
     const botHighlightsByColor = new Map<number, (() => void)[]>();
     const affectedTopNames = new Set<string>();
     const affectedBotNames = new Set<string>();
+    // Light schemes (a theme with a highlighter): the primary net's pins get a
+    // highlighter / ink treatment instead of the glow, which does not show on
+    // paper. Each entry draws the pin's shape grown by `g` world units.
+    const theme = themeStore.activeTheme();
+    const lightStyle = theme.board.highlighter ? s.lightSelectionStyle : null;
+    const litTop: { shape: (g: number) => void; color: number }[] = [];
+    const litBot: { shape: (g: number) => void; color: number }[] = [];
 
     // The per-net highlight runs for a real selection (primaryNet + adjacents)
     // AND for shared "connection" nets even when nothing is singly selected.
@@ -5856,7 +5863,26 @@ export class BoardRenderer {
           // exactly that reason: it IS the sprite's own call, so a capsule
           // glows as a capsule without the halo widening to the raw pad.
           const usePadShapeForGlow = boardStore.showPads;
-          if (usePadShapeForGlow && storedPads && storedPads[ref.pinIndex]) {
+          if (lightStyle && glowColor === COLORS.netHighlight) {
+            // Drawn in its own pass below, dim or not: the halo goes UNDER the
+            // pin, so the pin has to be redrawn on top of it either way.
+            let shape: (g: number) => void;
+            if (usePadShapeForGlow && storedPads && storedPads[ref.pinIndex]) {
+              const padPoly = storedPads[ref.pinIndex];
+              shape = () => drawPoly(gfx, padPoly);   // a stored polygon cannot grow; the halo stroke widens it
+            } else if (usePadShapeForGlow && pb) {
+              const padGeom: PadGeometry = {
+                bounds: pb, shape: pin.padShape, width: pin.padWidth, height: pin.padHeight,
+                angleDeg: pin.padAngleDeg, cornerRadius: pin.padCornerRadius, polygon: pin.padPolygon,
+              };
+              shape = (g) => drawPadShape(gfx, padGeom, g);
+            } else {
+              const clamp = this.activeScene?.pinRadiusClamp.get(ref.partIndex) ?? Infinity;
+              const r = Math.min(computePinRadius(s, pin.radius), clamp);
+              shape = (g) => drawPinShape(gfx, pin, r, g);
+            }
+            (isBotGfx ? litBot : litTop).push({ shape, color: pinColor });
+          } else if (usePadShapeForGlow && storedPads && storedPads[ref.pinIndex]) {
             const padPoly = storedPads[ref.pinIndex];
             pushDim(() => drawPoly(gfx, padPoly));
             pushGlow(() => drawPoly(gfx, padPoly));
@@ -5917,6 +5943,41 @@ export class BoardRenderer {
             this.acquireNetLabel(srcLabel);
           }
         }
+      }
+
+      // Light-scheme pass for the primary net (see lightStyle above).
+      if (lightStyle) {
+        const ink = hexToInt(theme.board.selectedPart ?? theme.board.labelPart);
+        const hl = hexToInt(theme.board.highlighter!);
+        const haloW = Math.max(s.netHighlightGrow * 3, 8);   // world units, each side of the pin
+        const ringW = Math.max(s.selectionWidth * 0.6, 1);
+        const pass = (gfx: Graphics, lit: { shape: (g: number) => void; color: number }[]) => {
+          if (lit.length === 0) return;
+          if (lightStyle !== 'ink') {
+            // Highlighter halo: the pin's own shape, filled and stroked wide in yellow.
+            for (const p of lit) p.shape(0);
+            gfx.fill({ color: hl, alpha: 0.95 });
+            for (const p of lit) p.shape(0);
+            gfx.stroke({ width: haloW * 2, color: hl, alpha: 0.95, join: 'round' });
+          } else {
+            // White rim around the ink pin.
+            for (const p of lit) p.shape(0);
+            gfx.stroke({ width: ringW * 3, color: 0xffffff, alpha: 1, join: 'round' });
+          }
+          if (lightStyle === 'highlighter') {
+            // The pin in its own colour, then a thin ink ring just outside it.
+            const byColor = new Map<number, ((g: number) => void)[]>();
+            for (const p of lit) { const a = byColor.get(p.color); if (a) a.push(p.shape); else byColor.set(p.color, [p.shape]); }
+            for (const [color, shapes] of byColor) { for (const sh of shapes) sh(0); gfx.fill({ color, alpha: 1 }); }
+            for (const p of lit) p.shape(s.netHighlightGrow * 0.5);
+            gfx.stroke({ width: ringW, color: ink, alpha: 1 });
+          } else {
+            for (const p of lit) p.shape(0);
+            gfx.fill({ color: ink, alpha: 1 });
+          }
+        };
+        pass(this.selectionGfx, litTop);
+        pass(this.butterflySelectionGfx, litBot);
       }
 
       // Pin redraws above dim, grouped by pin color (full alpha).

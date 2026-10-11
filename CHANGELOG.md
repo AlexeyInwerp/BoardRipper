@@ -1,5 +1,17 @@
 # BoardRipper changelog
 
+## v0.50.1 — 2026-10-11
+
+### Changed
+
+- **Selected pins are clearly marked on Light and Atari.** The coloured glow
+  did not show on paper (and on Atari it was the rail colour itself). The pins
+  of the selected net now sit on a yellow highlighter halo with a thin ink ring
+  and keep their own colour. Settings ▸ Selection & Highlight ▸ *Selected pins
+  on light schemes* offers two more: *Ink pins* (solid ink with a white rim)
+  and *Ink on highlighter*. The dark schemes and BoardRipper Default are
+  unchanged.
+
 ## v0.50.0 — 2026-10-11
 
 ### Added
