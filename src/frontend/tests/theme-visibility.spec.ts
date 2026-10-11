@@ -33,8 +33,8 @@ const BVR_FILE = path.resolve(__dirname, '../../../samples/820-02100/820-02100.b
 const haveBoard = fs.existsSync(BVR_FILE);
 
 // Themes under test. Keep in sync with THEMES in src/store/themes.ts.
-const DARK_THEMES = ['default', 'landrex'];
-const LIGHT_THEMES = ['drafting-paper', 'daylight', 'blueprint-light', 'custom'];
+const DARK_THEMES = ['default', 'landrex', 'dark'];
+const LIGHT_THEMES = ['light', 'atari', 'custom'];
 const ALL_THEMES = [...DARK_THEMES, ...LIGHT_THEMES];
 
 // A user-built LIGHT custom theme, seeded directly into localStorage. Proves

@@ -21,7 +21,7 @@ const BOARDS: [string, string][] = [
   ['tomu', S('kicad/tomu-fpga.kicad_pcb')],
   ['lap', S('LA-P161PR1B.brd')],
 ];
-const THEMES = ['default', 'landrex', 'drafting-paper', 'daylight', 'blueprint-light'];
+const THEMES = ['default', 'landrex', 'dark', 'light', 'atari'];
 test.setTimeout(600_000);
 
 async function open(browser: Browser, theme: string, file: string): Promise<Page> {

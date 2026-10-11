@@ -274,7 +274,7 @@ export const THEMES: Record<string, Theme> = {
     // deep shades for pins (red power, orange rails, blue data, green logic),
     // muted orange for the woodgrain underside. Six neutrals.
     ui: {
-      bgPrimary: '#ececea', bgSecondary: '#dcdcd8', bgTertiary: '#d4d4d0', textPrimary: '#111111',
+      bgPrimary: '#ececea', bgSecondary: '#dcdcd8', bgTertiary: '#e0e0dc', textPrimary: '#111111',
       textSecondary: '#4a4a48', accent: '#2a3192', border: '#b8b8b4', iconBoardBg: '#3d883a', iconPdfBg: '#c62310',
     },
     board: {

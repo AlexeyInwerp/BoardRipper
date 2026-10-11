@@ -56,7 +56,7 @@ test.describe('Themes', () => {
 
   test('light theme flips background light and text dark (auto-contrast)', async ({ page }) => {
     await page.addInitScript(() => {
-      localStorage.setItem('boardripper-theme', JSON.stringify({ activeId: 'daylight' }));
+      localStorage.setItem('boardripper-theme', JSON.stringify({ activeId: 'light' }));
       localStorage.removeItem('boardripper-background-override');
     });
     await page.goto('/');
@@ -69,10 +69,33 @@ test.describe('Themes', () => {
         text: cs.getPropertyValue('--text-primary').trim(),
       };
     });
-    // Daylight is a light theme: background light, and pickTextColors must have
+    // Light is a light theme: background light, and pickTextColors must have
     // flipped body text to the dark graphite pair (the white-on-white guard).
     expect(vars.bg.toLowerCase()).toBe('#eceef1');
     expect(vars.text.toLowerCase()).toBe('#1c1f24');
+  });
+
+  test('a retired light scheme (Daylight) opens as Light', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('boardripper-theme', JSON.stringify({ activeId: 'daylight' }));
+    });
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    const active = await page.evaluate(async () => (await import('/src/store/themes.ts')).themeStore.activeId);
+    expect(active).toBe('light');
+  });
+
+  test('switching scheme turns the dim off on open boards and for new ones', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    const dim = await page.evaluate(async () => {
+      const { themeStore } = await import('/src/store/themes.ts');
+      themeStore.setTheme('default');
+      localStorage.setItem('boardripper-view-prefs', JSON.stringify({ dimMode: 'dim' }));
+      themeStore.setTheme('dark');
+      return JSON.parse(localStorage.getItem('boardripper-view-prefs') || '{}').dimMode;
+    });
+    expect(dim).toBe('off');
   });
 
   test('Settings panel renders four tabs', async ({ page }) => {
