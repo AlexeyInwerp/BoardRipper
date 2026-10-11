@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useState, useMemo, useSyncExternalStore } from 'react';
+import { useRef, useEffect, useCallback, useState, useMemo, useSyncExternalStore, useId } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { usePdfDoc } from '../hooks/usePdfStore';
 import { pdfStore, pdfFontSize, PDF_LOAD_PHASE_TEXT } from '../store/pdf-store';
@@ -13,6 +13,8 @@ import { fileInputRefs } from '../store/file-inputs';
 import { contextMenuStore } from '../store/context-menu-store';
 import { log } from '../store/log-store';
 import { PdfFilterMenu } from '../components/PdfFilterMenu';
+import { PdfNightMenu } from '../components/PdfNightMenu';
+import { usePdfNight, nightFilter, customTransfer } from '../store/pdf-night-store';
 import type { GlyphDebugState, PageGlyphData } from '../pdf/glyph-types';
 import { DEFAULT_GLYPH_DEBUG_STATE } from '../pdf/glyph-types';
 import { extractPageGlyphs, clearFontCache } from '../pdf/glyph-extractor';
@@ -44,7 +46,6 @@ const MOUSE_WHEEL_SPEED = 0.001;    // mouse wheel zoom sensitivity
  *  the use site. */
 const PINCH_STEP_CAP = 90;
 const LINE_HEIGHT_RATIO = 1.2;
-const NIGHT_MODE_KEY = 'boardripper-pdf-nightmode';
 const CLEAN_CONTRAST_KEY = 'boardripper-pdf-clean-contrast';
 const DEFAULT_CLEAN_CONTRAST = 3;
 
@@ -838,9 +839,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const forceFullTierRef = useRef(false);
   const CRISP_SETTLE_MS = 500;
 
-  const [nightMode, setNightMode] = useState(() => {
-    try { return localStorage.getItem(NIGHT_MODE_KEY) === '1'; } catch { return false; }
-  });
+  const night = usePdfNight();
+  const nightMode = night.on;
+  // url(#…) needs a plain id; useId's colons/guillemets are not one.
+  const nightFilterId = `pdf-night-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
   const [cleanContrast] = useState(() => {
     try { const v = localStorage.getItem(CLEAN_CONTRAST_KEY); return v ? Number(v) : DEFAULT_CLEAN_CONTRAST; } catch { return DEFAULT_CLEAN_CONTRAST; }
   });
@@ -4198,17 +4200,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
         <div className="pdf-toolbar-group">
           <PdfFilterMenu fileName={pdfFileName} />
-          <button
-            className={`pdf-toolbar-btn pdf-night-btn${nightMode ? ' active' : ''}`}
-            onClick={() => setNightMode(v => {
-              const next = !v;
-              try { localStorage.setItem(NIGHT_MODE_KEY, next ? '1' : '0'); } catch { /* ignore */ }
-              return next;
-            })}
-            title="Toggle night mode (invert colors)"
-          >
-            &#x25D0;
-          </button>
+          <PdfNightMenu />
         </div>
         <div className="pdf-viewport-group">
           <button
@@ -4247,10 +4239,23 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         </div>
       )}
 
+      {night.on && night.style === 'custom' && (
+        // Custom night colours: white paper → bg, black ink → fg, per channel.
+        <svg width="0" height="0" aria-hidden="true" style={{ position: 'absolute' }}>
+          <filter id={nightFilterId} colorInterpolationFilters="sRGB">
+            <feComponentTransfer>
+              {customTransfer(night).map((t, i) => {
+                const F = (['feFuncR', 'feFuncG', 'feFuncB'] as const)[i];
+                return <F key={F} type="linear" slope={t.slope} intercept={t.intercept} />;
+              })}
+            </feComponentTransfer>
+          </filter>
+        </svg>
+      )}
       <div
         className="pdf-canvas-container"
         ref={containerRef}
-        style={{ cursor: isDraggingRef.current ? 'grabbing' : 'crosshair', filter: nightMode ? 'invert(1)' : undefined }}
+        style={{ cursor: isDraggingRef.current ? 'grabbing' : 'crosshair', filter: nightFilter(night, nightFilterId) }}
       >
       {/* Every touch lands here, and only here. Without this layer the target
           of a touch depended on what happened to be under the finger: page 1

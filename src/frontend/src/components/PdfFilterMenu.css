@@ -86,3 +86,39 @@
   color: var(--text-secondary);
   padding: 0 2px;
 }
+
+/* Night-mode menu (PdfNightMenu) — same menu body, plus the two colour wells. */
+.pdf-night-wrapper { display: inline-flex; align-items: center; }
+.pdf-night-caret { padding: 1px 2px !important; margin-left: -2px; display: inline-flex !important; align-items: center; }
+.pdf-night-caret.open { background: var(--surface-active); }
+.pdf-night-menu { width: 230px; }
+.pdf-night-colors {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 4px 9px 6px 27px;
+  font-size: 11px;
+  color: var(--text-primary);
+}
+.pdf-night-colors.off { opacity: 0.5; }
+.pdf-night-colors label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.pdf-night-colors input[type="color"] {
+  width: 26px;
+  height: 18px;
+  padding: 1px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: none;
+  cursor: pointer;
+}
+.pdf-night-menu .pdf-night-reset {
+  width: auto;
+  margin-left: auto;
+  padding: 1px 6px;
+  font-size: 10.5px;
+  color: var(--text-secondary);
+}
+.pdf-night-colors input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.pdf-night-colors input[type="color"]::-webkit-color-swatch { border: none; border-radius: 2px; }
+.pdf-night-colors input[type="color"]::-moz-color-swatch { border: none; border-radius: 2px; }
