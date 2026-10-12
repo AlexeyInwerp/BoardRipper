@@ -5452,10 +5452,16 @@ export class BoardRenderer {
     // (amber/red/green) and the cyan selection-set, and matches the white
     // selected-part name label. Focus-blink still flashes red.
     // A palette theme names its own (red on Dark / Landrex, ink on the light schemes).
-    const PRIMARY_SEL = hexToInt(themeStore.activeTheme().board.selectedPart ?? '#ffffff');
+    const tb = themeStore.activeTheme().board;
+    const PRIMARY_SEL = hexToInt(tb.selectedPart ?? '#ffffff');
     const blinkRed = this.selectionBlinkPhase > 0 && this.selectionBlinkPhase % 2 === 1;
     const selColor = blinkRed ? 0xcc2222 : PRIMARY_SEL;
-    gfx.fill({ color: PRIMARY_SEL, alpha: Math.min(0.22, s.selectionFillAlpha * 3 + 0.08) });
+    // The wash under the outline: white brightens a body on a dark canvas, but
+    // on paper the ink is black and a black wash made the selected part the
+    // darkest thing on the board (2026-10-13). A scheme with a highlighter
+    // washes in that colour instead — the marker, with the ink kept for the edge.
+    const washColor = tb.highlighter ? hexToInt(tb.highlighter) : PRIMARY_SEL;
+    gfx.fill({ color: washColor, alpha: Math.min(0.22, s.selectionFillAlpha * 3 + 0.08) });
     // ×1.25 over the setting (default 2 px → 2.5 px): enough primacy over
     // the member boxes, without the band the old ×1.7 world-mil stroke became.
     gfx.stroke({ width: stroke * 1.25, color: selColor, alpha: 1.0 });

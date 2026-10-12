@@ -1,5 +1,35 @@
 # BoardRipper changelog
 
+## Unreleased
+
+### Fixed
+
+- **A colour scheme no longer leaks into a board's own settings.** Applying a
+  change in Settings ▸ *this board* while Dark, Landrex, Light or Atari was
+  active saved the whole scheme as that board's overrides, so the board kept
+  the scheme's colours under BoardRipper Default. Cancel and Preview also
+  dropped the scheme until the next board switch. A board's own keywords and
+  part types now survive a scheme, and a scheme is in effect from startup, not
+  from the first board open.
+- **On Light and Atari the selected part is no longer the darkest thing on the
+  board**: its body is washed in the highlighter colour, not the ink. Pin
+  numbers and net names on ink-filled pins (the *Ink pins* styles) are drawn
+  in white so they stay readable; the highlighter halo stops short of
+  neighbouring pins on fine-pitch parts; the spotlight dim fades toward the
+  scheme's colour instead of black; the minimap follows edits to a custom
+  scheme.
+- **PDF colours:** *Auto* contrast now lands pale lines exactly at 4.5:1 (it was
+  about 4.35:1). The ◐ and filter menus open in the window the PDF panel is in
+  when it has been popped out.
+- Deleting a custom scheme counts as a scheme switch, so the dim and the copper
+  colours follow.
+
+### Docs
+
+- CLAUDE.md, README and the colour-schemes review corrected against the code
+  (rotation unlock 24°, the Rendering tab, 15 formats, dev port 8082, the
+  licence lines, and what shipped differently from the scheme spec).
+
 ## v0.50.1 — 2026-10-11
 
 ### Changed
