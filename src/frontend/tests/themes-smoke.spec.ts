@@ -98,7 +98,7 @@ test.describe('Themes', () => {
     expect(dim).toBe('off');
   });
 
-  test('Settings panel renders four tabs', async ({ page }) => {
+  test('Settings panel renders its tab strip', async ({ page }) => {
     await page.addInitScript(() => {
       localStorage.removeItem('boardripper-theme');
       localStorage.removeItem('boardripper-settings-active-tab');
@@ -114,11 +114,10 @@ test.describe('Themes', () => {
     const panel = page.locator('[data-testid="settings-panel"]');
     await expect(panel).toBeVisible();
 
-    const tabsRow = panel.locator('.settings-tabs-row, .library-tabs-row').first();
-    await expect(tabsRow.getByText('Theme', { exact: true })).toBeVisible();
-    await expect(tabsRow.getByText('Board', { exact: true })).toBeVisible();
-    await expect(tabsRow.getByText('Input', { exact: true })).toBeVisible();
-    await expect(tabsRow.getByText('System', { exact: true })).toBeVisible();
+    // Icon tabs: only the open one is captioned, so locate by data-settings-tab.
+    for (const id of ['theme', 'board', 'rendering', 'input', 'system']) {
+      await expect(panel.locator(`[data-settings-tab="${id}"]`)).toBeVisible();
+    }
   });
 
   test('Theme tab shows the board + pin-group colour editors', async ({ page }) => {
@@ -136,8 +135,7 @@ test.describe('Themes', () => {
 
     // The board + pin colour editors (carried by theme) live on the Theme tab.
     // Creation of the custom slot is implicit on first edit (no Create button).
-    const tabsRow = panel.locator('.settings-tabs-row, .library-tabs-row').first();
-    await tabsRow.getByText('Theme', { exact: true }).click();
+    await panel.locator('[data-settings-tab="theme"]').click();
     await expect(panel.getByText('Pin colours (by net group)')).toBeVisible();
     await expect(panel.getByText('Power', { exact: true })).toBeVisible();
     await expect(panel.getByText('Component fills')).toBeVisible();
