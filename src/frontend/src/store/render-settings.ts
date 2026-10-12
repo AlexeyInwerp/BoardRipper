@@ -1729,13 +1729,36 @@ class RenderSettingsStore extends Emitter {
   private _activeBoard: string = '';
   private _effective: RenderSettings = this._global;
 
-  private recomputeEffective() {
-    const boardOv = this._activeBoard ? (this._boardOverrides[this._activeBoard] ?? {}) : {};
+  private activeBoardOverrides(): Partial<RenderSettings> {
+    return this._activeBoard ? (this._boardOverrides[this._activeBoard] ?? {}) : {};
+  }
+
+  /** Layer the theme overlay on global⊕board settings. The provider is handed
+   *  the board-merged settings, so a palette rebuilds pin groups / part types
+   *  from the board's own keywords and prefixes, not only the global ones. */
+  private withTheme(boardMerged: RenderSettings): RenderSettings {
     // Theme overrides layer ON TOP of board overrides — themes are the user's
     // most recent intent ("I picked Landrex, please make everything monochrome")
     // and should override saved board-specific settings.
-    const themeOv = themeOverridesProvider(this._global) ?? {};
-    this._effective = mergeSettings(mergeSettings(this._global, boardOv), themeOv);
+    const themeOv = themeOverridesProvider(boardMerged) ?? {};
+    return mergeSettings(boardMerged, themeOv);
+  }
+
+  private recomputeEffective() {
+    this._effective = this.withTheme(mergeSettings(this._global, this.activeBoardOverrides()));
+  }
+
+  /** Recompute the effective settings (e.g. after the theme changed) and
+   *  notify only when they actually differ — a knob change that leaves the
+   *  board colours alone must not rebuild every scene. */
+  refreshEffective() {
+    const prev = this._effective;
+    this.recomputeEffective();
+    if (JSON.stringify(prev) === JSON.stringify(this._effective)) {
+      this._effective = prev; // keep the reference stable for snapshot readers
+      return;
+    }
+    this.notify();
   }
 
   /** Effective settings (global + active board overrides merged) */
@@ -1764,7 +1787,9 @@ class RenderSettingsStore extends Emitter {
     // rendered with un-merged settings until the next theme switch.
     const hadOverrides = this._activeBoard ? this.hasBoardOverrides(this._activeBoard) : false;
     const hasOverrides = fileName ? this.hasBoardOverrides(fileName) : false;
-    const themeOv = themeOverridesProvider(this._global);
+    const themeOv = themeOverridesProvider(fileName
+      ? mergeSettings(this._global, this._boardOverrides[fileName] ?? {})
+      : this._global);
     const themeHasOverrides = !!themeOv && Object.keys(themeOv).length > 0;
     this._activeBoard = fileName;
     if (hadOverrides || hasOverrides || themeHasOverrides) {
@@ -1776,6 +1801,13 @@ class RenderSettingsStore extends Emitter {
   /** Take a snapshot of effective settings */
   snapshot(): RenderSettings {
     return structuredClone(this._effective);
+  }
+
+  /** Global + active board overrides, WITHOUT the theme overlay — the
+   *  baseline for editing a board's overrides. Diffing the effective settings
+   *  against global would store the whole palette as per-board overrides. */
+  boardSnapshot(): RenderSettings {
+    return structuredClone(mergeSettings(this._global, this.activeBoardOverrides()));
   }
 
   /** Take a snapshot of global settings (ignoring board overrides) */
@@ -1976,12 +2008,26 @@ class RenderSettingsStore extends Emitter {
     }
   }
 
-  // ── Legacy compat (used by preview/cancel flow) ────────────────────────
+  // ── Preview (Settings panel draft) ─────────────────────────────────────
 
-  /** Apply effective settings directly (for preview mode) */
-  applySettings(settings: RenderSettings) {
-    this._effective = structuredClone(settings);
-    // Don't persist to global or overrides — preview is temporary
+  /**
+   * Show draft settings without persisting them. `layer` says what the draft
+   * stands for: 'global' — the global settings, so the active board's
+   * overrides still apply on top; 'board' — global⊕board already. The theme
+   * overlay is layered on top either way, so a preview never drops the
+   * active scheme's colours.
+   */
+  previewSettings(settings: RenderSettings, layer: 'global' | 'board') {
+    const base = layer === 'global'
+      ? mergeSettings(structuredClone(settings), this.activeBoardOverrides())
+      : structuredClone(settings);
+    this._effective = this.withTheme(base);
+    this.notify();
+  }
+
+  /** Drop any preview and return to the stored settings. */
+  endPreview() {
+    this.recomputeEffective();
     this.notify();
   }
 

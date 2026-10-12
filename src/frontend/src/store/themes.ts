@@ -617,6 +617,10 @@ class ThemeStore extends Emitter {
     this.applyAll();
     applyUiScaleToDOM(this._scale);
     this._initialized = true;
+    // init() does not notify, so the subscriber below never sees the stored
+    // scheme: re-merge here, or a palette scheme's colours wait for the first
+    // board to activate (the Theme-tab editors read Default's meanwhile).
+    renderSettingsStore.refreshEffective();
   }
 
   get activeId(): string {
@@ -773,9 +777,12 @@ class ThemeStore extends Emitter {
 
   /** Delete the custom theme and, if it was active, fall back to default. */
   resetCustom(): void {
+    const prev = this.activeTheme();
     this._customTheme = null;
     saveCustomTheme(null);
     if (this._activeId === CUSTOM_ID) {
+      // A scheme switch like setTheme's: board-store's applyThemeChange reads it.
+      this._switch = { seq: this._switch.seq + 1, prev };
       this._activeId = DEFAULT_ID;
       saveToStorage(DEFAULT_ID);
       this.applyAll();
@@ -853,45 +860,26 @@ class ThemeStore extends Emitter {
 export const themeStore = new ThemeStore();
 
 // Wire theme overrides into render-settings. The provider is read by
-// renderSettingsStore.recomputeEffective() — calling .recomputeEffective()
-// directly would be cleaner but that method is private; setActiveBoard is
-// the public hook used elsewhere for the same purpose.
-setThemeOverridesProvider((global) => {
+// renderSettingsStore whenever it re-merges; `base` is global⊕active board
+// overrides, so a palette keeps the board's own keywords and prefixes.
+setThemeOverridesProvider((base) => {
   const t = themeStore.activeTheme();
   if (!t.palette) return t.boardOverrides;
   // A palette theme's colours, then the custom theme's own edits on top.
-  return { ...paletteOverrides(t.palette, global), ...(t.boardOverrides ?? {}) };
+  return { ...paletteOverrides(t.palette, base), ...(t.boardOverrides ?? {}) };
 });
+renderSettingsStore.refreshEffective();
 
 // On theme change, force render-settings to re-merge so the new theme's
-// boardOverrides take effect. We poke applyGlobal to trigger the existing
-// recompute path without changing state.
+// overlay takes effect (or a left scheme's overlay goes).
 //
-// IMPORTANT: themeStore.notify() fires on EVERY interface knob change —
-// accent / background / chrome picks too — and those are pure-UI CSS-variable
-// changes that carry no boardOverrides. Poking applyGlobal on each of them
-// forces a full structuredClone + localStorage write + global notify for a
-// cosmetic change. Gate the poke so it only fires when board rendering can
-// actually be affected: the active theme has boardOverrides now, OR the
-// previous active theme had them (so a switch away from an override theme
-// still clears the stale overlay — e.g. leaving Landrex).
-const themeHasOverrides = () => { const t = themeStore.activeTheme(); return !!t.boardOverrides || !!t.palette; };
-let _prevThemeHadOverrides = themeHasOverrides();
+// themeStore.notify() fires on EVERY interface knob change too — accent /
+// background / chrome picks, which carry no board colours. refreshEffective
+// compares the merged result and notifies only when it changed, so those cost
+// one merge and no scene rebuild. There used to be a gate here on "had / has
+// an overlay", but its baseline was taken at module load, before init() read
+// the stored scheme, so leaving a palette scheme stored from the last session
+// was never re-merged.
 themeStore.subscribe(() => {
-  const hasOverrides = themeHasOverrides();
-  if (!hasOverrides && !_prevThemeHadOverrides) {
-    // Pure-UI knob change with no board-override involvement either way —
-    // nothing for render-settings to re-merge.
-    return;
-  }
-  _prevThemeHadOverrides = hasOverrides;
-  const cur = renderSettingsStore.activeBoard;
-  // setActiveBoard short-circuits when the value is unchanged unless either
-  // side has overrides — bypass that by using applyGlobal which always
-  // recomputes + notifies. Pass the current global snapshot unchanged.
-  renderSettingsStore.applyGlobal(renderSettingsStore.globalSnapshot());
-  // Restore active board if applyGlobal cleared it (it shouldn't, but be safe).
-  if (cur && renderSettingsStore.activeBoard !== cur) {
-    renderSettingsStore.setActiveBoard(cur);
-  }
+  renderSettingsStore.refreshEffective();
 });

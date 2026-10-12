@@ -1827,23 +1827,28 @@ export function SettingsPanel() {
   const isBoardMode = effectiveMode === 'board';
 
   const baselineRef = useRef<RenderSettings>(
-    isBoardMode ? renderSettingsStore.snapshot() : renderSettingsStore.globalSnapshot()
+    isBoardMode ? renderSettingsStore.boardSnapshot() : renderSettingsStore.globalSnapshot()
   );
   const [draft, setDraft] = useState<RenderSettings>(() =>
-    isBoardMode ? renderSettingsStore.snapshot() : renderSettingsStore.globalSnapshot()
+    isBoardMode ? renderSettingsStore.boardSnapshot() : renderSettingsStore.globalSnapshot()
   );
   const [previewing, setPreviewing] = useState(false);
   const [dirty, setDirty] = useState(false);
   const previewingRef = useRef(previewing);
   previewingRef.current = previewing;
+  // What the draft stands for: global⊕board in board mode, global otherwise.
+  // The store layers board overrides / the theme on top accordingly.
+  const previewLayer = isBoardMode ? 'board' as const : 'global' as const;
+  const previewLayerRef = useRef(previewLayer);
+  previewLayerRef.current = previewLayer;
 
   // Reset draft/baseline when mode changes
   useEffect(() => {
-    const snap = isBoardMode ? renderSettingsStore.snapshot() : renderSettingsStore.globalSnapshot();
+    const snap = isBoardMode ? renderSettingsStore.boardSnapshot() : renderSettingsStore.globalSnapshot();
     baselineRef.current = structuredClone(snap);
     setDraft(structuredClone(snap));
     setDirty(false);
-    if (previewing) { renderSettingsStore.applySettings(snap); setPreviewing(false); }
+    if (previewing) { renderSettingsStore.endPreview(); setPreviewing(false); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveMode, activeFileName]);
 
@@ -1927,7 +1932,7 @@ export function SettingsPanel() {
   const updateDraft: DraftUpdater = useCallback((partial) => {
     setDraft(prev => {
       const next = { ...prev, ...partial };
-      if (previewingRef.current) renderSettingsStore.applySettings(next);
+      if (previewingRef.current) renderSettingsStore.previewSettings(next, previewLayerRef.current);
       return next;
     });
     setDirty(true);
@@ -1971,7 +1976,7 @@ export function SettingsPanel() {
   useEffect(() => {
     return renderSettingsStore.subscribe(() => {
       if (selfUpdateRef.current || dirtyRef.current || previewingRef.current) return;
-      const snap = isBoardMode ? renderSettingsStore.snapshot() : renderSettingsStore.globalSnapshot();
+      const snap = isBoardMode ? renderSettingsStore.boardSnapshot() : renderSettingsStore.globalSnapshot();
       baselineRef.current = structuredClone(snap);
       setDraft(structuredClone(snap));
     });
@@ -1997,16 +2002,16 @@ export function SettingsPanel() {
     setDirty(false); setPreviewing(false);
   };
   const handleCancel = () => {
-    renderSettingsStore.applySettings(baselineRef.current);
+    if (previewing) renderSettingsStore.endPreview();
     setDraft(structuredClone(baselineRef.current));
     setDirty(false); setPreviewing(false);
   };
   const handlePreview = () => {
     if (previewing) {
-      renderSettingsStore.applySettings(baselineRef.current);
+      renderSettingsStore.endPreview();
       setPreviewing(false);
     } else {
-      renderSettingsStore.applySettings(draft);
+      renderSettingsStore.previewSettings(draft, previewLayer);
       setPreviewing(true);
     }
   };
@@ -2016,12 +2021,12 @@ export function SettingsPanel() {
       const global = renderSettingsStore.globalSnapshot();
       setDraft(global);
       setDirty(true);
-      if (previewing) renderSettingsStore.applySettings(global);
+      if (previewing) renderSettingsStore.previewSettings(global, 'board');
     } else {
       const defaults = structuredClone(DEFAULTS);
       setDraft(defaults);
       setDirty(true);
-      if (previewing) renderSettingsStore.applySettings(defaults);
+      if (previewing) renderSettingsStore.previewSettings(defaults, 'global');
     }
   };
 
