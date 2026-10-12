@@ -45,6 +45,9 @@ export function PdfFilterMenu({ fileName }: { fileName: string }) {
   const [reloading, setReloading] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  // The document the button lives in: a panel popped out into its own window
+  // must open, dismiss and clamp its menu there, not in the main window.
+  const [doc, setDoc] = useState<Document>(document);
 
   const terms = g.pdfWatermarkFilter ?? [];
   const textOn = g.pdfWatermarkFilterEnabled !== false;
@@ -71,15 +74,16 @@ export function PdfFilterMenu({ fileName }: { fileName: string }) {
       close();
     };
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
-    document.addEventListener('pointerdown', onDown, true);
-    document.addEventListener('keydown', onKey);
-    window.addEventListener('resize', close);
+    const win = doc.defaultView ?? window;
+    doc.addEventListener('pointerdown', onDown, true);
+    doc.addEventListener('keydown', onKey);
+    win.addEventListener('resize', close);
     return () => {
-      document.removeEventListener('pointerdown', onDown, true);
-      document.removeEventListener('keydown', onKey);
-      window.removeEventListener('resize', close);
+      doc.removeEventListener('pointerdown', onDown, true);
+      doc.removeEventListener('keydown', onKey);
+      win.removeEventListener('resize', close);
     };
-  }, [open, close]);
+  }, [open, close, doc]);
 
   // Anchor under the button, right-aligned, clamped to the viewport.
   useLayoutEffect(() => {
@@ -88,9 +92,10 @@ export function PdfFilterMenu({ fileName }: { fileName: string }) {
     const el = menuRef.current;
     if (!b || !el) return;
     const r = el.getBoundingClientRect();
-    el.style.left = `${Math.max(4, Math.min(b.right - r.width, window.innerWidth - r.width - 4))}px`;
-    el.style.top = `${Math.max(4, Math.min(b.bottom + 4, window.innerHeight - r.height - 4))}px`;
-  }, [open, terms.length]);
+    const win = doc.defaultView ?? window;
+    el.style.left = `${Math.max(4, Math.min(b.right - r.width, win.innerWidth - r.width - 4))}px`;
+    el.style.top = `${Math.max(4, Math.min(b.bottom + 4, win.innerHeight - r.height - 4))}px`;
+  }, [open, terms.length, doc]);
 
   const commitDraft = () => {
     const term = draft.trim();
@@ -124,7 +129,7 @@ export function PdfFilterMenu({ fileName }: { fileName: string }) {
         aria-haspopup="menu"
         aria-expanded={open}
         title={stale.length > 0 ? 'PDF filters — reload needed to apply a change' : 'PDF filters'}
-        onClick={() => setOpen(v => !v)}
+        onClick={e => { setDoc(e.currentTarget.ownerDocument); setOpen(v => !v); }}
       >
         <IconWand size={14} />
         <IconChevronDown size={10} className="pdf-filter-caret" />
@@ -203,7 +208,7 @@ export function PdfFilterMenu({ fileName }: { fileName: string }) {
             {reloadLabel}
           </button>
         </div>,
-        document.body,
+        doc.body,
       )}
     </div>
   );

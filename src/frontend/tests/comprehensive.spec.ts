@@ -18,6 +18,7 @@ const _REAL_PDF_B = path.resolve(__dirname, '../../../samples/820-02935 051-0828
 const haveBvr3 = fs.existsSync(REAL_BVR3);
 const haveBrd = fs.existsSync(REAL_BRD);
 const havePdfA = fs.existsSync(REAL_PDF_A);
+const PUBLIC_PDF = path.resolve(__dirname, 'fixtures/two-page-text.pdf');
 
 /** Helper: load a board and wait for stats to appear */
 async function loadBoard(page: import('@playwright/test').Page, filePath: string, expectedText?: string) {
@@ -644,27 +645,34 @@ test.describe('Comprehensive Board Tests', () => {
   });
 
   test('PDF night mode persists across panel reloads', async ({ page }) => {
-    test.skip(!haveBvr3 || !havePdfA, 'proprietary BVR3/PDF fixtures not present');
+    // Public fixture: the ◐ button opens the PDF colours menu, which holds the
+    // on/off choice; picking a style turns night mode on.
+    const openPdf = async () => {
+      await page.getByTestId('file-input').setInputFiles(PUBLIC_PDF);
+      const tab = page.locator('.dv-tab', { hasText: /\.pdf$/i }).first();
+      await expect(tab).toBeVisible({ timeout: 15000 });
+      await tab.click();
+      await expect(page.locator('.pdf-canvas-container')).toBeVisible({ timeout: 15000 });
+    };
     await page.goto('/');
-    await loadBoard(page, REAL_BVR3, '3075');
+    await openPdf();
 
-    const pdfInput = page.getByTestId('pdf-input');
-    await pdfInput.setInputFiles(REAL_PDF_A);
-    await page.waitForTimeout(1000);
+    const nightBtn = page.getByTestId('pdf-night-btn');
+    await expect(nightBtn).not.toHaveClass(/\bactive\b/);
+    await nightBtn.click();
+    await expect(page.getByTestId('pdf-night-menu')).toBeVisible();
+    await page.getByTestId('pdf-night-dark').click();
+    await expect(nightBtn).toHaveClass(/\bactive\b/);
+    expect(await page.evaluate(() => localStorage.getItem('boardripper-pdf-nightmode'))).toBe('1');
 
-    // Find and click night mode button in the PDF panel
-    const nightBtn = page.locator('.pdf-toolbar-btn').filter({ hasText: '🌙' }).or(
-      page.locator('button[title*="night mode"]')
-    ).first();
-
-    if (await nightBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await nightBtn.click();
-      await page.waitForTimeout(200);
-
-      // Verify localStorage was set
-      const val = await page.evaluate(() => localStorage.getItem('boardripper-pdf-nightmode'));
-      expect(val).toBe('1');
-    }
+    await page.reload();
+    // The reload offers the previous session back; decline and reopen the fixture.
+    const prompt = page.getByTestId('session-restore-prompt');
+    await prompt.waitFor({ timeout: 5000 }).then(() => page.getByTestId('session-discard').click(), () => {});
+    await openPdf();
+    await expect(page.getByTestId('pdf-night-btn')).toHaveClass(/\bactive\b/);
+    await expect(page.getByTestId('pdf-night-btn')).toHaveAttribute('data-night-style', 'dark');
+    await expect(page.locator('.pdf-canvas-container')).toHaveCSS('filter', /hue-rotate|invert|url/);
   });
 
   // ═══════════════════════════════════════════════════════════════════════

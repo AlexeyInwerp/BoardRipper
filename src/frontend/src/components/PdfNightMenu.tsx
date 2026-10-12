@@ -30,6 +30,9 @@ export function PdfNightMenu() {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  // The document the button lives in: a panel popped out into its own window
+  // must open, dismiss and clamp its menu there, not in the main window.
+  const [doc, setDoc] = useState<Document>(document);
   const close = useCallback(() => setOpen(false), []);
 
   useEffect(() => {
@@ -40,15 +43,16 @@ export function PdfNightMenu() {
       close();
     };
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
-    document.addEventListener('pointerdown', onDown, true);
-    document.addEventListener('keydown', onKey);
-    window.addEventListener('resize', close);
+    const win = doc.defaultView ?? window;
+    doc.addEventListener('pointerdown', onDown, true);
+    doc.addEventListener('keydown', onKey);
+    win.addEventListener('resize', close);
     return () => {
-      document.removeEventListener('pointerdown', onDown, true);
-      document.removeEventListener('keydown', onKey);
-      window.removeEventListener('resize', close);
+      doc.removeEventListener('pointerdown', onDown, true);
+      doc.removeEventListener('keydown', onKey);
+      win.removeEventListener('resize', close);
     };
-  }, [open, close]);
+  }, [open, close, doc]);
 
   // Anchor under the button group, right-aligned, clamped to the viewport.
   useLayoutEffect(() => {
@@ -57,9 +61,10 @@ export function PdfNightMenu() {
     const el = menuRef.current;
     if (!b || !el) return;
     const r = el.getBoundingClientRect();
-    el.style.left = `${Math.max(4, Math.min(b.right - r.width, window.innerWidth - r.width - 4))}px`;
-    el.style.top = `${Math.max(4, Math.min(b.bottom + 4, window.innerHeight - r.height - 4))}px`;
-  }, [open, s.style]);
+    const win = doc.defaultView ?? window;
+    el.style.left = `${Math.max(4, Math.min(b.right - r.width, win.innerWidth - r.width - 4))}px`;
+    el.style.top = `${Math.max(4, Math.min(b.bottom + 4, win.innerHeight - r.height - 4))}px`;
+  }, [open, s.style, doc]);
 
   const customOn = s.on && s.style === 'custom';
 
@@ -74,7 +79,7 @@ export function PdfNightMenu() {
         aria-haspopup="menu"
         aria-expanded={open}
         title={s.on ? `PDF colours: ${STYLE_TITLE[s.style]}` : 'PDF colours'}
-        onClick={() => setOpen(v => !v)}
+        onClick={e => { setDoc(e.currentTarget.ownerDocument); setOpen(v => !v); }}
       >
         <span aria-hidden="true">&#x25D0;</span>
         <IconChevronDown size={10} className="pdf-filter-caret" />
@@ -138,7 +143,7 @@ export function PdfNightMenu() {
             Reset colours
           </button>
         </div>,
-        document.body,
+        doc.body,
       )}
     </div>
   );

@@ -178,26 +178,42 @@ const lerp = (a: RGB, b: RGB, t: number): RGB => [0, 1, 2].map(i => a[i] + (b[i]
 const AUTO_REF = 0.88;
 /** Strongest manual setting: everything below paper at 20 % of its distance. */
 const MIN_SCALE = 0.2;
-/** Where the curve leaves `m·x` and ramps to paper white — the anti-aliased
- *  rim of text and lines lives above it. A table knot (KNOT_STEPS of 25). */
+/** The knot where the squeezed range ends at the limit `m·knot` and a straight
+ *  ramp to paper white begins — the anti-aliased rim of text and lines lives
+ *  above it. A table knot (KNOT_STEPS of TABLE_STEPS). */
 const KNOT_STEPS = 23;
 const TABLE_STEPS = 25;
 
-/** Contrast scale for Auto: the largest m ≤ 1 that puts a source line of
- *  lightness `AUTO_REF` at WCAG 4.5:1 against the paper — or, when the chosen
- *  ink itself is softer than that, at 60 % of the ink's own contrast, so a
- *  deliberately low-contrast pair is respected rather than overridden. */
+/** Contrast scale for Auto: the largest m ≤ 1 whose curve puts a source line
+ *  of lightness `AUTO_REF` at WCAG 4.5:1 against the paper — or, when the
+ *  chosen ink itself is softer than that, at 60 % of the ink's own contrast,
+ *  so a deliberately low-contrast pair is respected rather than overridden.
+ *  Solved against the real table curve, not `m·x`: the curve sits above
+ *  `m·x` between the knee and the knot, so dividing by AUTO_REF fell short of
+ *  the target (4.35:1 on black/white). */
 export function autoScale(bgHex: string, fgHex: string): number {
   const bg = rgb(bgHex), fg = rgb(fgHex);
   const target = Math.min(4.5, 1 + (contrastRatio(fg, bg) - 1) * 0.6);
-  // Output for source lightness y is lerp(fg, bg, y); its contrast with the
-  // paper falls as y rises. Find the largest y still at the target.
-  let lo = 0, hi = 1;
+  // Output for source lightness x is lerp(fg, bg, curve(x)); a larger m lifts
+  // the curve and lowers the contrast. Find the largest m still at the target.
+  const reaches = (m: number) => contrastRatio(lerp(fg, bg, tableValueAt(m, AUTO_REF)), bg) >= target;
+  if (reaches(1)) return 1;
+  if (!reaches(MIN_SCALE)) return MIN_SCALE;
+  let lo = MIN_SCALE, hi = 1;
   for (let i = 0; i < 30; i++) {
     const mid = (lo + hi) / 2;
-    if (contrastRatio(lerp(fg, bg, mid), bg) >= target) lo = mid; else hi = mid;
+    if (reaches(mid)) lo = mid; else hi = mid;
   }
-  return Math.min(1, Math.max(MIN_SCALE, lo / AUTO_REF));
+  return lo;
+}
+
+/** The curve's output for source value x, interpolated between the table's
+ *  knots exactly as `feFuncX type="table"` does. */
+export function tableValueAt(m: number, x: number): number {
+  const t = contrastTable(m);
+  const n = t.length - 1;
+  const k = Math.min(n - 1, Math.floor(Math.max(0, Math.min(1, x)) * n));
+  return t[k] + (t[k + 1] - t[k]) * (Math.max(0, Math.min(1, x)) * n - k);
 }
 
 /** Below this fraction of the limit, values are left as drawn. */
