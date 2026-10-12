@@ -1,6 +1,6 @@
 # BoardRipper
 
-Web-based PCB boardview viewer for board-level repair. Fourteen boardview formats and the matching PDF schematic, side by side, in a browser. GPU-accelerated rendering, dockable panels, self-hosted via Docker. Free, AGPL-3.0.
+Web-based PCB boardview viewer for board-level repair. Fifteen boardview formats and the matching PDF schematic, side by side, in a browser. GPU-accelerated rendering, dockable panels, self-hosted via Docker. Free, AGPL-3.0.
 
 ![Boardview and PDF schematic side by side — instant cross-reference](docs/screenshots/01-board-pdf-lookup.png)
 
@@ -26,7 +26,7 @@ Same codebase as the Docker build — `npm run build:lite` / `npm run build:offl
 ## Features
 
 - **GPU-accelerated rendering** — PixiJS v8 / WebGL, 10,000+ components at 60 fps on a modern GPU. Bench-tested down to Intel HD 4000-era integrated graphics (10–30 fps).
-- **Fourteen board formats** — see table below. Both `.cad` and `.brd` are shared extensions; BoardRipper sniffs file content to pick the right parser.
+- **Fifteen board formats** — see table below. Both `.cad` and `.brd` are shared extensions; BoardRipper sniffs file content to pick the right parser.
 - **PDF schematic, in sync** — pan, zoom, text search, bookmarks, night mode. Right-click a net on the board to search it in the schematic.
 - **Multi-board tabs** — open several boards at once, switch between them.
 - **Multi-layer support** — show/hide top, bottom, and inner layers independently. Butterfly mode shows top and bottom side by side.
@@ -45,10 +45,9 @@ Same codebase as the Docker build — `npm run build:lite` / `npm run build:offl
 ![Multi-layer Allegro BRD with layer sidebar — toggle signal, power, and ground planes independently](docs/screenshots/03-multi-layer.png)
 
 - **Panel system** — Dockview: dockable, floating, and popout-to-new-window panels.
-  - Component Info (pins list, metadata)
-  - Net List (searchable, click to highlight)
-  - Search Results
+  - Board viewer, with a sidebar for part info, layers, search, revisions, notes and the worklist
   - PDF Viewer
+  - Library, History and Tools (calculators, part comparison, worklists)
   - Settings (live preview mockup, per-net color rules, label/pin/outline tuning)
   - Debug Panel (scoped log viewer, frame-time)
 - **Electron desktop wrapper** — standalone macOS (universal + legacy) and Windows builds.
@@ -65,6 +64,7 @@ Same codebase as the Docker build — `npm run build:lite` / `npm run build:offl
 | **BDV** | `.brd` / `.bdv` | Plain-text boardview (BRDOUT / NETS / PARTS / PINS / NAILS) | [BDV_FORMAT.md](docs/formats/BDV_FORMAT.md) |
 | **BDV ASC** | `.bdv` | Honhan / Tebo-ICT obfuscated multi-section ASC (line-key cipher) | [BDV_ASC_FORMAT.md](docs/formats/BDV_ASC_FORMAT.md) |
 | **FZ** | `.fz` | ASUS, RC6-encrypted, zlib-compressed | [FZ_FORMAT.md](docs/formats/FZ_FORMAT.md) |
+| **CAE** | `.cae` | ASRock PCBRepair Pro; same container and cipher as FZ, different key. Not yet verified against a real file | [FZ_FORMAT.md](docs/formats/FZ_FORMAT.md) |
 | **GenCAD** | `.cad` | GenCAD 1.4 PCB interchange (text) | [CAD_FORMAT.md](docs/formats/CAD_FORMAT.md) |
 | **Mentor Neutral** | `.cad` | Mentor Boardstation neutral file (Samsung / Quanta / Compal exports) | [MENTOR_NEUTRAL_FORMAT.md](docs/formats/MENTOR_NEUTRAL_FORMAT.md) |
 | **XZZ** | `.pcb` | XZZ PCB, DES-encrypted boardview | [XZZ_FORMAT.md](docs/formats/XZZ_FORMAT.md) |
@@ -79,7 +79,7 @@ Same codebase as the Docker build — `npm run build:lite` / `npm run build:offl
 
 ## Keyboard shortcuts
 
-The full, always-current list lives in **Settings ▸ Shortcuts** (and on the home-screen Getting Started card). The headline shortcuts:
+The full, always-current list lives in **Settings ▸ Input ▸ Keyboard Shortcuts** (and on the home-screen Getting Started card). The headline shortcuts:
 
 | | |
 |---|---|
@@ -92,9 +92,9 @@ The full, always-current list lives in **Settings ▸ Shortcuts** (and on the ho
 | **Zoom in / out** | `Shift+W` / `Shift+S` (centred on canvas) |
 | **Toggle Library sidebar** | `~` — the physical key left of `1` (`Backquote` / `IntlBackslash`); works on US, German, and most other layouts |
 | **Jump board ↔ PDF** | `Tab` |
-| **PDF page nav** | `PgUp` / `PgDn` (or `⌘↑` / `⌘↓` on Mac) |
+| **PDF page nav** | `PgUp` / `PgDn`, or `↑` / `↓` while a PDF panel is active and has no search matches (`Home` / `End` for first / last) |
 
-The keyboard pan and zoom step sizes are configurable in **Settings ▸ Navigation ▸ Keyboard pan / zoom**. The right-click context menu adds a top-row icon strip with **Copy net / Copy part / Search net / Search part** (board) and **Copy / Search Web** (PDF text) — search opens Google in a new tab.
+The keyboard pan and zoom step sizes are configurable in **Settings ▸ Input ▸ Navigation ▸ Keyboard pan / zoom**. The right-click context menu adds a top-row icon strip with **Copy net / Copy part / Search net / Search part** (board) and **Copy / Search Web** (PDF text) — search opens Google in a new tab.
 
 > **Layout note.** WSAD/QE/Shift+WS bind to the printed letter on your keyboard, so on AZERTY layouts the keys are physically Z/Q/S/D rather than the W/A/S/D positions — a layout-aware remapping is on the roadmap. The `~` library toggle is layout-independent.
 
@@ -106,7 +106,7 @@ The keyboard pan and zoom step sizes are configurable in **Settings ▸ Navigati
 | Frontend | React 19 + TypeScript + Vite 7 |
 | Panels | Dockview v5 |
 | Backend | Go (`net/http` stdlib) |
-| Container | Docker multi-stage, scratch-based, ~25 MB image / ~13 MB compressed |
+| Container | Docker multi-stage, scratch-based, ~28 MB image / ~14 MB compressed |
 | Desktop | Electron (macOS universal + Windows) |
 | Tests | Playwright (Chromium headless) |
 
@@ -154,7 +154,7 @@ The released artifact is the Docker image (above) — no per-platform standalone
 
 ```bash
 # Frontend (hot reload)
-cd src/frontend && npm install && npm run dev    # http://localhost:5173
+cd src/frontend && npm install && npm run dev    # http://localhost:8082
 
 # Backend (separate terminal) — the Vite dev proxy targets port 1336
 cd src/backend && PORT=1336 go run .             # http://localhost:1336
@@ -285,7 +285,7 @@ A handful of versions are also kept on GHCR (`v0.19.0`, `v0.19.5`, `v0.20.5`, `v
 
 ## Electron desktop wrapper (optional)
 
-Prebuilt Electron wrappers are published with every release (`BoardRipper-macOS-universal-<version>.zip`, `BoardRipper-Windows-x64-<version>.zip`). They run the same Go backend + React frontend inside an Electron shell. The Docker / server path is the primary way to deploy BoardRipper; the desktop wrapper is here for single-machine use.
+Prebuilt Electron wrappers are published with every release (`BoardRipper-macOS-universal-<version>.zip`, `BoardRipper-Windows-x64-<version>.zip`). They run the same React frontend inside an Electron shell; the Go backend is bundled but runs only while **Settings ▸ Integrations ▸ MCP** is enabled, and then also brings the library database, board database, OBD and PDF search to the desktop. The Docker / server path is the primary way to deploy BoardRipper; the desktop wrapper is here for single-machine use.
 
 The wrappers are **unsigned**, so macOS Gatekeeper and Windows SmartScreen will warn on first launch:
 
@@ -308,7 +308,7 @@ Output in `desktop/out/` (macOS), `desktop/out-legacy/` (macOS legacy), `desktop
 
 BoardRipper is released under the **GNU Affero General Public License v3.0** (AGPL-3.0). See [LICENSE](LICENSE) for the full text.
 
-This project incorporates code derived from KiCad (GPL-3.0) — specifically the Cadence Allegro BRD reader in [`src/frontend/src/parsers/allegro/`](src/frontend/src/parsers/allegro/), transliterated from KiCad's `pcbnew/pcb_io/allegro/` C++ source — which is why AGPL-3.0 was chosen: it is compatible with GPL-3.0 and additionally closes the "SaaS loophole" by requiring source availability to users who interact with a hosted instance over a network.
+This project incorporates code derived from KiCad — the Cadence Allegro BRD reader in [`src/frontend/src/parsers/allegro/`](src/frontend/src/parsers/allegro/), transliterated from KiCad's `pcbnew/pcb_io/allegro/` (GPL-3.0), and the Altium reader in [`src/frontend/src/parsers/altium/`](src/frontend/src/parsers/altium/), transliterated from `pcbnew/pcb_io/altium/` (GPL-2.0+, one file GPL-3.0+) — which is why AGPL-3.0 was chosen: it is compatible with GPL-3.0 and additionally closes the "SaaS loophole" by requiring source availability to users who interact with a hosted instance over a network.
 
 For a complete list of third-party sources, libraries, and attributions, see [THIRD_PARTY.md](THIRD_PARTY.md).
 
@@ -333,7 +333,7 @@ BoardRipper exists because of the reverse-engineering work already done by the b
 
 **Parser references**
 
-- [KiCad](https://gitlab.com/kicad/code/kicad) *(GPL-3.0)* — Cadence Allegro BRD reader, transliterated to TypeScript. The reason BoardRipper as a whole is AGPL-3.0.
+- [KiCad](https://gitlab.com/kicad/code/kicad) *(GPL-3.0 / GPL-2.0+)* — Cadence Allegro BRD and Altium PcbDoc readers, transliterated to TypeScript. The reason BoardRipper as a whole is AGPL-3.0.
 - [OpenBoardView](https://github.com/OpenBoardView/OpenBoardView) *(MIT)* — reference implementations for BVR1/BVR3, BRD (Apple), BDV (plain-text), BDV ASC (Honhan / Tebo-ICT), FZ (ASUS), GenCAD, XZZ.
 - [eagleview](https://github.com/nitrocaster/eagleview) by Pavel Kovalenko *(MIT)* — TVW / Teboview parser source.
 - [brd_parser](https://github.com/bernayigit/brd_parser) by Jeff Wheeler *(MIT)* — cross-validation reference for Allegro block layout.

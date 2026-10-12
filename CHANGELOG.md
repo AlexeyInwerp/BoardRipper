@@ -16,13 +16,15 @@
 
 ### Added
 
-- **Four new colour schemes for the board**, each one owning every colour on
-  it — pins, part bodies, outlines, the selection, the dim and the copper:
+- **Three new colour schemes for the board, and Landrex Classic redrawn.**
+  Each of the four owns every colour on the board — pins, part bodies,
+  outlines, the selection, the dim and the copper:
   - **Dark** — near-monochrome: parts are grey outlines, every pin one quiet
     grey, ground a dark teal, and colour only for what you select (yellow net,
     red part).
-  - **Landrex Classic**, redrawn the way Landrex Test Link drew a board: black,
-    an olive board edge, lavender part outlines, every pin the same blue.
+  - **Landrex Classic** (not new) is redrawn the way Landrex Test Link drew a
+    board: black, an olive board edge, lavender part outlines, every pin the
+    same blue. Its old black-and-white look is gone.
   - **Light** — white sheet, dark ink, part tints from the same few hues as the
     pins.
   - **Atari (light)** — the 2600's silver label and black ink, every colour
@@ -40,7 +42,10 @@
   blue lines red and blue, or use exact background and text colours you
   choose. Two sliders handle coloured lines: *Colour* (down to grey, i.e. your
   text colour) and *Contrast* with *Auto*, which lifts pale lines so they stay
-  readable on the new background.
+  readable on the new background. *Auto* is on by default for every style,
+  including plain invert and night mode carried over from v0.49, so inverted
+  pages now show pale lines stronger than before. The old plain invert is Auto
+  off and Contrast at 0.
 
 ### Changed
 
