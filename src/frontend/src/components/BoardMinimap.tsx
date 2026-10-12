@@ -58,6 +58,12 @@ function mapColors(): MapColors {
   return { bg: b.canvasBackground, sheet: b.boardFill, edge: b.outline, parts: b.partOutlineTop ?? b.labelPart,
     selected: b.selectedPart ?? b.selection, view: b.selection, viewFill: hexA(b.selection, 0.14) };
 }
+/** The cached board picture's colour key: the colours paintBoard reads, not
+ *  just the scheme id — editing the custom scheme keeps the id 'custom'. */
+function mapSig(): string {
+  const c = mapColors();
+  return `${c.sheet}|${c.edge}|${c.parts}|${c.selected}|${c.bg ?? ''}`;
+}
 function hexA(hex: string, a: number): string {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
@@ -139,7 +145,7 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     const cb = contentBounds(model);
     const sel = boardStore.selection.partIndex;
-    const sig = `${model.roots.map(r => r.m.join(',')).join('|')}|${model.board.parts.length}|${boardStore.showTop}${boardStore.showBottom}|${sel}|${themeStore.activeId}`;
+    const sig = `${model.roots.map(r => r.m.join(',')).join('|')}|${model.board.parts.length}|${boardStore.showTop}${boardStore.showBottom}|${sel}|${mapSig()}`;
     let base = baseRef.current;
     if (!base || base.sig !== sig) {
       // Fit the board into MAX_W × MAX_H, keeping its aspect.

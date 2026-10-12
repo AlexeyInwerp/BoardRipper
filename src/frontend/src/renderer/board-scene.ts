@@ -37,7 +37,7 @@ import {
   isOutlineOnlyNet,
 } from '../store/render-settings';
 import type { RenderSettings } from '../store/render-settings';
-import { pushLabel, sortLabelModel, type LabelModel, type LabelRecord, type RotLayout } from './label-model';
+import { pushLabel, sortLabelModel, inkOn, haloFor, type LabelModel, type LabelRecord, type RotLayout } from './label-model';
 import { capsuleParams, isOblongRoundPad, capsuleGrowForRadius, type CapsuleParams } from './pad-capsule';
 import { defaultLayerColor } from '../store/layer-store';
 import { themeStore, hexToInt } from '../store/themes';
@@ -75,27 +75,10 @@ export const BOARD_COLORS = {
 
 const LABEL_FONT_FAMILY = 'monospace';
 
-/** Relative luminance of a 0xRRGGBB colour (WCAG). */
-function lumOf(c: number): number {
-  const ch = (v: number) => { const x = v / 255; return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
-  return 0.2126 * ch((c >> 16) & 255) + 0.7152 * ch((c >> 8) & 255) + 0.0722 * ch(c & 255);
-}
-function contrastOf(a: number, b: number): number {
-  const x = lumOf(a), y = lumOf(b);
-  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
-}
-/** Text colour for a label drawn on `bg`: the scheme's own when it reads
- *  (≥ 4.5:1), otherwise black or white, whichever reads better. A light
- *  scheme's dark ink on a dark pin, or a dark scheme's light ink on a pale
- *  pin, would otherwise vanish. Palette schemes only — Default is unchanged. */
-/** The halo under a label of colour `ink`: the opposite pole. */
-function haloFor(ink: number): number {
-  return lumOf(ink) < 0.18 ? 0xffffff : 0x000000;
-}
-function inkOn(bg: number, preferred: number): number {
-  if (contrastOf(preferred, bg) >= 4.5) return preferred;
-  return contrastOf(0x000000, bg) >= contrastOf(0xffffff, bg) ? 0x000000 : 0xffffff;
-}
+/** BitmapText path: pin labels that sit on their pin, with the colour they take
+ *  while that pin is filled with a light scheme's ink (see LabelRecord.inkColor).
+ *  renderSelection recolours the selected part's raised labels from this. */
+export const pinLabelInk = new WeakMap<BitmapText, { pinIndex: number; color: number }>();
 
 /** Fill opacity multipliers for a part body by size: full up to 0.5 % of the
  *  board's area, then three steps down to a tint. */
@@ -965,6 +948,11 @@ export function buildBoardScene(
   const bottomFillMap = new Map<number, Graphics>();
   const fadeBodies = !!themeStore.activeTheme().palette?.fadeLargeBodies;
   const autoInk = !!themeStore.activeTheme().palette;
+  // Light schemes: the ink renderSelection fills a lit pin with under the
+  // 'ink' / 'inkHighlighter' styles (same expression as there). A label on
+  // such a pin needs its own colour against that ink — see LabelRecord.inkColor.
+  const selTheme = themeStore.activeTheme();
+  const selInk = selTheme.board.highlighter ? hexToInt(selTheme.board.selectedPart ?? selTheme.board.labelPart) : null;
   const boardArea = Math.max(1, (board.bounds.maxX - board.bounds.minX) * (board.bounds.maxY - board.bounds.minY));
   // NC (no-connect) pins are drawn as outline-only circles — no fill, single Graphics per side.
   const topNcPinGfx    = new Graphics();
@@ -1759,12 +1747,14 @@ export function buildBoardScene(
           // In the BGA layout the number moves beside the pin once the net name
           // shows, onto the board — a halo keeps it legible in both places.
           const numHalo = autoInk && bgaAlternate && !isTwoPinPart ? { halo: haloFor(numColor) } : {};
+          const numInk = selInk !== null ? inkOn(selInk, BOARD_COLORS.labelPin) : null;
           numRec = {
             x: pinX, y: pinY, text: numStr, fontSize: pinFontSize,
             color: numColor, kind: isTwoPinPart ? 'twoPinNet' : 'circleNum', partIndex: pi, pinIndex: pni,
             anchorX: 0.5, anchorY: numAnchorY,  // mirrors pinLabel.anchor.set(0.5, numAnchorY) incl. BGA alternating
             bg: false,
             ...numHalo,
+            ...(numInk !== null ? { inkColor: numInk } : {}),
             alt: numAlt,
             pitch: minPinSpacing < Infinity ? minPinSpacing : undefined,
             stacked: bgaAlternate,
@@ -1778,6 +1768,7 @@ export function buildBoardScene(
             pinLabel.anchor.set(0.5, numAnchorY);
             pinLabel.x = pinX;
             pinLabel.y = pinY;
+            if (numInk !== null) pinLabelInk.set(pinLabel, { pinIndex: pni, color: numInk });
             if (isTwoPinPart) {
               deferredTwoPinTexts.push(pinLabel);
             } else {
@@ -1873,6 +1864,7 @@ export function buildBoardScene(
           // scheme picks that pair); without it, against the pin.
           const netBg = isTwoPinPart ? s.twoPinNetLabelBg : s.pinNetLabelBg;
           const netColor = autoInk && !netBg ? inkOn(color, BOARD_COLORS.labelNet) : BOARD_COLORS.labelNet;
+          const netInk = selInk !== null && !netBg ? inkOn(selInk, BOARD_COLORS.labelNet) : null;
           // Text fast mode: emit a record (kind circleNet / twoPinNet) instead
           // of the BitmapText AND its background-rect wrapper Graphics — the
           // overlay (Task 6) paints the backing rect behind records whose `bg`
@@ -1884,6 +1876,7 @@ export function buildBoardScene(
             anchorX, anchorY,  // mirrors netLabel.anchor.set(anchorX, anchorY) — same locals, incl. 2-pin/BGA parity
             bg: isTwoPinPart ? s.twoPinNetLabelBg : s.pinNetLabelBg,  // same condition the wrapper Graphics is created under
             ...(autoInk ? { bgColor: BOARD_COLORS.netLabelBg, bgAlpha: BOARD_COLORS.netLabelBgAlpha } : {}),
+            ...(netInk !== null ? { inkColor: netInk } : {}),
             pitch: minPinSpacing < Infinity ? minPinSpacing : undefined,
             stacked: bgaAlternate,
             ...(netRot ? { rot: netRot } : {}),
@@ -1895,6 +1888,7 @@ export function buildBoardScene(
             netLabel.anchor.set(anchorX, anchorY);
             netLabel.x = nx;
             netLabel.y = ny;
+            if (netInk !== null) pinLabelInk.set(netLabel, { pinIndex: pni, color: netInk });
             const bgPad = Math.max(1, netFontSize * 0.12);
             if (isTwoPinPart) {
               if (s.twoPinNetLabelBg) {

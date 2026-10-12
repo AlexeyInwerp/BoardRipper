@@ -34,7 +34,7 @@ import type { PinDiffStatus } from '../store/part-compare';
 import { worklistStore, MARK_COLOR_HEX, MEAS_KINDS, type NetMeasurement } from '../store/worklist-store';
 import { PART_MARK_SVG, NET_MARK_SVG, WATER_SVG, SURGE_SVG, MEAS_SVG, MEAS_LETTER, escapeHtml } from './worklist-tooltip-icons';
 import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
-import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape, drawPinShape } from './board-scene';
+import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape, drawPinShape, pinLabelInk } from './board-scene';
 import { LabelOverlay } from './label-overlay';
 import { focusHaloGeometry } from './focus-halo';
 import { isOblongRoundPad, capsuleGrowForRadius, capsulePolygon } from './pad-capsule';
@@ -763,6 +763,13 @@ export class BoardRenderer {
   // Pin labels raised above the ambient dim overlay for the selected part.
   // Each entry remembers where to put the child back on the next update.
   private raisedPinLabels: { child: Container; parent: Container; index: number }[] = [];
+  /** Light schemes, 'ink' styles: pins the last renderSelection filled with
+   *  ink (part index → pin indices), read by the label overlay so their labels
+   *  read against the ink. Null when nothing is inked. */
+  private inkedPins: Map<number, Set<number>> | null = null;
+  /** BitmapText path: raised pin labels recoloured for an inked pin, with the
+   *  fill to give back when the selection is redrawn. */
+  private inkRecoloured: { label: BitmapText; fill: BitmapText['style']['fill'] }[] = [];
   // The bright-white clone of the selected part's name label (lives in
   // netLabelLayer). Tracked so the per-tick loop can fade its alpha when the
   // part grows large enough on screen that the label would cover pins.
@@ -807,6 +814,8 @@ export class BoardRenderer {
   private selectionBlinkTimer: ReturnType<typeof setTimeout> | null = null;
   // Halo sprite — soft glow drawn under the selected part
   private _haloTexture: Texture | null = null;
+  /** The dim colour `_haloTexture` was painted in (see buildHaloTexture). */
+  private _haloTextureColor = -1;
   private _haloSprite: Sprite | null = null;
   // Last-rendered selection — used to skip redundant renderSelection() on tab switch
   private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, adjacentNetsSize: 0, searchLen: 0, board: null as BoardData | null, dimMode: 'dim' as 'off' | 'dim' | 'darklight', butterfly: false, showTop: true, showBottom: true, showGhosts: true, discoHighlight: false, searchSelectionActive: false, connectionHighlight: false, rotation: 0, mirrorX: false, mirrorY: false, flipAxis: 'x' as 'x' | 'y' };
@@ -2784,6 +2793,7 @@ export class BoardRenderer {
       hoverPinIndex: this.hoverPinIndex,
       dimActive,
       litParts: dimActive ? litParts : null,
+      inkedPins: this.inkedPins,
     }, {
       labelMinScreenPx: s.labelMinScreenPx,
       circleLabelMinScreenPx: s.circleLabelMinScreenPx,
@@ -5163,21 +5173,28 @@ export class BoardRenderer {
    * transparent at the edge. No clear core — the brightness of the
    * selected component is preserved by drawing the part's Container
    * ABOVE the spotlight in z-order (see updateHalo).
+   *
+   * Painted in the scheme's dim colour (black on Default, so Default's
+   * texture is the one it always had) and kept per colour: a Sprite tint
+   * multiplies, so a black texture cannot be tinted toward a light scheme's
+   * paper. On a colour change the old texture is NOT destroyed here — the
+   * sprite may still hold it; updateHalo swaps it first, then frees it.
    */
-  private buildHaloTexture(): Texture {
-    if (this._haloTexture && !this._haloTexture.destroyed) return this._haloTexture;
-    this._haloTexture = null;   // stale/destroyed — rebuild below
+  private buildHaloTexture(color: number): Texture {
+    if (this._haloTexture && !this._haloTexture.destroyed && this._haloTextureColor === color) return this._haloTexture;
     const size = 256;
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = size;
     const ctx = canvas.getContext('2d')!;
     const r = size / 2;
+    const rgb = `${(color >> 16) & 255}, ${(color >> 8) & 255}, ${color & 255}`;
     const grad = ctx.createRadialGradient(r, r, 0, r, r, r);
-    grad.addColorStop(0.00, 'rgba(0, 0, 0, 0.75)');
-    grad.addColorStop(1.00, 'rgba(0, 0, 0, 0)');
+    grad.addColorStop(0.00, `rgba(${rgb}, 0.75)`);
+    grad.addColorStop(1.00, `rgba(${rgb}, 0)`);
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
     this._haloTexture = Texture.from(canvas);
+    this._haloTextureColor = color;
     return this._haloTexture;
   }
 
@@ -5214,13 +5231,25 @@ export class BoardRenderer {
       if (this._haloSprite && !this._haloSprite.destroyed) {
         try { this._haloSprite.destroy(); } catch { /* ignore */ }
       }
-      const tex = this.buildHaloTexture();
+      const prev = this._haloTexture;
+      const tex = this.buildHaloTexture(this.dimColor());
+      // A texture of the previous dim colour that no live sprite holds any more.
+      if (prev && prev !== tex && !prev.destroyed) { try { prev.destroy(true); } catch { /* ignore */ } }
       const spr = new Sprite(tex);
       spr.anchor.set(0.5, 0.5);
       // Decoration only — don't capture pointer events; pins under the
       // halo's painted radius must remain selectable.
       spr.eventMode = 'none';
       this._haloSprite = spr;
+    } else {
+      // The scheme's dim colour changed since the texture was painted: give
+      // the sprite the new one before freeing the old (never while held).
+      const old = this._haloSprite.texture;
+      const tex = this.buildHaloTexture(this.dimColor());
+      if (tex !== old) {
+        this._haloSprite.texture = tex;
+        try { old.destroy(true); } catch { /* ignore */ }
+      }
     }
 
     const scene = this.activeScene;
@@ -5480,6 +5509,11 @@ export class BoardRenderer {
     this.selectionBlinkPhase = 0;
     this.netDimGfx.clear();
     this.butterflyDimGfx.clear();
+    this.inkedPins = null;
+    for (const { label, fill } of this.inkRecoloured) {
+      if (!label.destroyed) label.style.fill = fill;
+    }
+    this.inkRecoloured.length = 0;
     // Restore any pin labels previously raised above the dim overlay back to
     // their original parents (top/bottom pin layers inside the part container).
     // Visibility is not touched here — LoD (applyLabelVisibility) owns the
@@ -5742,8 +5776,11 @@ export class BoardRenderer {
     // paper. Each entry draws the pin's shape grown by `g` world units.
     const theme = themeStore.activeTheme();
     const lightStyle = theme.board.highlighter ? s.lightSelectionStyle : null;
-    const litTop: { shape: (g: number) => void; color: number }[] = [];
-    const litBot: { shape: (g: number) => void; color: number }[] = [];
+    // `reach`: how far a halo may grow past this pin before it reaches a
+    // neighbour drawn at its largest (Infinity off a dense part).
+    type LitPin = { shape: (g: number) => void; color: number; partIndex: number; pinIndex: number; reach: number };
+    const litTop: LitPin[] = [];
+    const litBot: LitPin[] = [];
 
     // The per-net highlight runs for a real selection (primaryNet + adjacents)
     // AND for shared "connection" nets even when nothing is singly selected.
@@ -5867,21 +5904,33 @@ export class BoardRenderer {
             // Drawn in its own pass below, dim or not: the halo goes UNDER the
             // pin, so the pin has to be redrawn on top of it either way.
             let shape: (g: number) => void;
+            // The pin's half-size across its narrow side — the side a dense
+            // part's neighbour sits on.
+            let rSelf: number;
+            const clamp = this.activeScene?.pinRadiusClamp.get(ref.partIndex) ?? Infinity;
             if (usePadShapeForGlow && storedPads && storedPads[ref.pinIndex]) {
               const padPoly = storedPads[ref.pinIndex];
               shape = () => drawPoly(gfx, padPoly);   // a stored polygon cannot grow; the halo stroke widens it
+              let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+              for (const [x, y] of padPoly) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+              rSelf = Math.min(x1 - x0, y1 - y0) / 2;
             } else if (usePadShapeForGlow && pb) {
               const padGeom: PadGeometry = {
                 bounds: pb, shape: pin.padShape, width: pin.padWidth, height: pin.padHeight,
                 angleDeg: pin.padAngleDeg, cornerRadius: pin.padCornerRadius, polygon: pin.padPolygon,
               };
               shape = (g) => drawPadShape(gfx, padGeom, g);
+              rSelf = Math.min(pb.maxX - pb.minX, pb.maxY - pb.minY) / 2;
             } else {
-              const clamp = this.activeScene?.pinRadiusClamp.get(ref.partIndex) ?? Infinity;
               const r = Math.min(computePinRadius(s, pin.radius), clamp);
               shape = (g) => drawPinShape(gfx, pin, r, g);
+              rSelf = r;
             }
-            (isBotGfx ? litBot : litTop).push({ shape, color: pinColor });
+            // The clamp is 45 % of the part's pitch, so a neighbour is never
+            // drawn past 0.55 × pitch from this pin's centre: the halo may fill
+            // the gap up to there and no further.
+            const reach = clamp < Infinity ? Math.max(0, (clamp / 0.45) * 0.55 - rSelf) : Infinity;
+            (isBotGfx ? litBot : litTop).push({ shape, color: pinColor, partIndex: ref.partIndex, pinIndex: ref.pinIndex, reach });
           } else if (usePadShapeForGlow && storedPads && storedPads[ref.pinIndex]) {
             const padPoly = storedPads[ref.pinIndex];
             pushDim(() => drawPoly(gfx, padPoly));
@@ -5951,14 +6000,25 @@ export class BoardRenderer {
         const hl = hexToInt(theme.board.highlighter!);
         const haloW = Math.max(s.netHighlightGrow * 3, 8);   // world units, each side of the pin
         const ringW = Math.max(s.selectionWidth * 0.6, 1);
-        const pass = (gfx: Graphics, lit: { shape: (g: number) => void; color: number }[]) => {
+        const pass = (gfx: Graphics, lit: LitPin[]) => {
           if (lit.length === 0) return;
           if (lightStyle !== 'ink') {
             // Highlighter halo: the pin's own shape, filled and stroked wide in yellow.
             for (const p of lit) p.shape(0);
             gfx.fill({ color: hl, alpha: 0.95 });
-            for (const p of lit) p.shape(0);
-            gfx.stroke({ width: haloW * 2, color: hl, alpha: 0.95, join: 'round' });
+            // Stroked per halo width: on a fine-pitch part the halo stops where
+            // a neighbour could begin (`reach`), so it never paints over pins
+            // that are not on the net — the 8-mil floor holds only where it fits.
+            const byWidth = new Map<number, LitPin[]>();
+            for (const p of lit) {
+              const w = Math.min(haloW, p.reach);
+              if (w <= 0) continue;
+              const a = byWidth.get(w); if (a) a.push(p); else byWidth.set(w, [p]);
+            }
+            for (const [w, pins] of byWidth) {
+              for (const p of pins) p.shape(0);
+              gfx.stroke({ width: w * 2, color: hl, alpha: 0.95, join: 'round' });
+            }
           } else {
             // White rim around the ink pin.
             for (const p of lit) p.shape(0);
@@ -5978,6 +6038,29 @@ export class BoardRenderer {
         };
         pass(this.selectionGfx, litTop);
         pass(this.butterflySelectionGfx, litBot);
+        // Ink-filled pins: their labels must read against the ink, not the pin
+        // colour they were built against. The overlay reads `inkedPins`; on the
+        // BitmapText path only the selected part's raised labels sit above the
+        // fill, so those are recoloured here and given back on the next pass.
+        if (lightStyle !== 'highlighter' && (litTop.length > 0 || litBot.length > 0)) {
+          const inked = new Map<number, Set<number>>();
+          for (const p of litTop.length > 0 ? litTop.concat(litBot) : litBot) {
+            let set = inked.get(p.partIndex);
+            if (!set) { set = new Set(); inked.set(p.partIndex, set); }
+            set.add(p.pinIndex);
+          }
+          this.inkedPins = inked;
+          const selInked = sel.partIndex !== null ? inked.get(sel.partIndex) : undefined;
+          if (selInked) {
+            for (const { child } of this.raisedPinLabels) {
+              if (!(child instanceof BitmapText)) continue;
+              const info = pinLabelInk.get(child);
+              if (!info || !selInked.has(info.pinIndex)) continue;
+              this.inkRecoloured.push({ label: child, fill: child.style.fill });
+              child.style.fill = info.color;
+            }
+          }
+        }
       }
 
       // Pin redraws above dim, grouped by pin color (full alpha).

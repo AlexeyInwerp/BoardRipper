@@ -4,7 +4,7 @@
  *  canvas. Text draws upright in screen space (counter-flip machinery not
  *  needed); positions transform through the per-side label-layer world
  *  matrices so rotate/mirror/butterfly work unchanged. */
-import type { LabelModel, LabelRecord } from './label-model';
+import { haloFor, type LabelModel, type LabelRecord } from './label-model';
 import { log } from '../store/log-store';
 import { resizeModeStore } from '../store/resize-mode-store';
 
@@ -22,6 +22,9 @@ export interface OverlayViewState {
   hoverPinIndex?: number | null;
   dimActive: boolean;
   litParts: ReadonlySet<number> | null;
+  /** Light schemes, 'ink' styles: the pins renderSelection fills with ink,
+   *  part index → pin indices. Their labels take `LabelRecord.inkColor`. */
+  inkedPins?: ReadonlyMap<number, ReadonlySet<number>> | null;
 }
 export interface OverlayThresholds {
   labelMinScreenPx: number;
@@ -299,13 +302,21 @@ export class LabelOverlay {
             ctx.fillRect(sx - tw / 2, sy - fontPx * 0.65, tw, fontPx * 1.3);
             ctx.globalAlpha = alpha;
           }
-          if (r.halo !== undefined) {                     // palette schemes: legible over any pad
+          // A pin filled with a light scheme's ink: the colour chosen against
+          // the pin at build would be ink on ink, so take the one chosen against
+          // the ink, haloed — the stacked BGA number may sit beside the pin.
+          let color = r.color, halo = r.halo;
+          if (r.inkColor !== undefined && r.pinIndex !== undefined && view.inkedPins?.get(r.partIndex)?.has(r.pinIndex)) {
+            color = r.inkColor;
+            halo = haloFor(color);
+          }
+          if (halo !== undefined) {                       // palette schemes: legible over any pad
             ctx.lineJoin = 'round';
             ctx.lineWidth = Math.min(5, Math.max(1.5, fontPx * 0.22));
-            ctx.strokeStyle = this.css(r.halo);
+            ctx.strokeStyle = this.css(halo);
             ctx.strokeText(r.text, sx, sy);
           }
-          ctx.fillStyle = this.css(r.color);
+          ctx.fillStyle = this.css(color);
           ctx.fillText(r.text, sx, sy);
           // Record the painted box (centered draw) for Resize Mode hit-testing.
           // A few px of slop makes small labels easier to click.

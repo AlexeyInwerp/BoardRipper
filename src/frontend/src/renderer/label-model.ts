@@ -25,6 +25,11 @@ export interface LabelRecord {
    *  Absent = black at 0.55, as Default has always drawn it. */
   bgColor?: number;
   bgAlpha?: number;
+  /** Light schemes: the colour this pin label takes while its pin is filled
+   *  with the scheme's ink (`lightSelectionStyle` 'ink' / 'inkHighlighter'),
+   *  chosen against the ink, not the pin. Absent = the label does not sit on
+   *  the pin (backed net names) or the scheme has no ink style. */
+  inkColor?: number;
   partIndex: number;             // -1 for labels with no owning part (via labels excluded from v1)
   /** Index into `part.pins` for pin-attached labels (pin number, net name,
    *  diode reading); absent for part names. Lets the overlay single out the
@@ -75,6 +80,29 @@ export interface LabelModel { top: LabelRecord[]; bottom: LabelRecord[]; }
  *  Turned (90°/270°): x = cx + sUp · sign, anchorY = sA, with sign −1 at 90°
  *  and +1 at 270° (board +X points down the screen at 90°, up at 270°). */
 export interface RotLayout { cx: number; cy: number; nUp: number; nA: number; sUp: number; sA: number }
+
+/** Relative luminance of a 0xRRGGBB colour (WCAG). */
+export function lumOf(c: number): number {
+  const ch = (v: number) => { const x = v / 255; return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
+  return 0.2126 * ch((c >> 16) & 255) + 0.7152 * ch((c >> 8) & 255) + 0.0722 * ch(c & 255);
+}
+/** WCAG contrast ratio of two 0xRRGGBB colours. */
+export function contrastOf(a: number, b: number): number {
+  const x = lumOf(a), y = lumOf(b);
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+}
+/** The halo under a label of colour `ink`: the opposite pole. */
+export function haloFor(ink: number): number {
+  return lumOf(ink) < 0.18 ? 0xffffff : 0x000000;
+}
+/** Text colour for a label drawn on `bg`: the scheme's own when it reads
+ *  (≥ 4.5:1), otherwise black or white, whichever reads better. A light
+ *  scheme's dark ink on a dark pin, or a dark scheme's light ink on a pale
+ *  pin, would otherwise vanish. Palette schemes only — Default is unchanged. */
+export function inkOn(bg: number, preferred: number): number {
+  if (contrastOf(preferred, bg) >= 4.5) return preferred;
+  return contrastOf(0x000000, bg) >= contrastOf(0xffffff, bg) ? 0x000000 : 0xffffff;
+}
 
 /** 0 = unturned, 1 = 90°, 3 = 270° (180° lays out like 0°). */
 export function rotLayoutKey(rotationDeg: number): 0 | 1 | 3 {
