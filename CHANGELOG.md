@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- **Connection lines follow the colour scheme.** Light draws the lit net in
+  its selection orange and adjacent nets in blue, Atari in its orange and blue;
+  the dark schemes keep yellow and blue. The line colours in Settings ▸ Net
+  Lines apply on BoardRipper Default, and the row says so on a scheme.
 - **A colour scheme no longer leaks into a board's own settings.** Applying a
   change in Settings ▸ *this board* while Dark, Landrex, Light or Atari was
   active saved the whole scheme as that board's overrides, so the board kept

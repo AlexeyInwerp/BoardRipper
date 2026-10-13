@@ -56,6 +56,12 @@ describe('palette schemes pass the contrast gates', () => {
       expect(contrastRatio(t.board.selectedPart!, board)).toBeGreaterThanOrEqual(3);
     });
 
+    it(`${t.label}: net lines ≥ 3:1 on the board, and the two line colours differ`, () => {
+      expect(contrastRatio(p.netLine, board), p.netLine).toBeGreaterThanOrEqual(3);
+      expect(contrastRatio(p.adjacentNetLine, board), p.adjacentNetLine).toBeGreaterThanOrEqual(3);
+      expect(p.netLine).not.toBe(p.adjacentNetLine);
+    });
+
     it(`${t.label}: the underside has its own code, and it is not the power colour`, () => {
       expect(p.pins.signalBottom).not.toBe(p.pins.signalTop);
       expect(p.pins.signalBottom).not.toBe(p.pins.power);
@@ -74,6 +80,12 @@ describe('paletteOverrides keeps the user\'s rules and only swaps colours', () =
     expect(power.rules.find(r => r.id === 'mine')!.color).toBe('#123456');
     expect(ov.defaultPinColorTop).toBe(THEMES.dark.palette!.pins.signalTop);
     expect(ov.defaultPinColorBottom).toBe(THEMES.dark.palette!.pins.signalBottom);
+  });
+
+  it('net-line colours come from the palette', () => {
+    const ov = paletteOverrides(THEMES.light.palette!, DEFAULTS);
+    expect(ov.netLineColor).toBe(0xc26f00);
+    expect(ov.adjacentNetLineColor).toBe(0x2f6db5);
   });
 
   it('outline-only schemes turn part colours off; tinted ones recolour by type id', () => {

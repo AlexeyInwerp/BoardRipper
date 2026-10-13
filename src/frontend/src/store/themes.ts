@@ -2,6 +2,7 @@ import { Emitter } from './emitter';
 import { log } from './log-store';
 import { setThemeOverridesProvider, renderSettingsStore } from './render-settings';
 import type { RenderSettings } from './render-settings';
+import { hexToInt } from './color-math';
 import {
   shadeToward,
   pickAccentFg,
@@ -111,6 +112,11 @@ export interface ThemePalette {
   /** Fill of a large part fades with its share of the board, so a connector
    *  the size of a third of the board is a tint, not a block. */
   fadeLargeBodies?: boolean;
+  /** Connection lines of the lit net, and of the nets reached through 2-pin
+   *  parts in chain-adjacent mode. Default's yellow / blue are invisible on
+   *  paper, so a scheme names its own. */
+  netLine: string;
+  adjacentNetLine: string;
 }
 
 /** DEFAULT_PIN_GROUPS rule id → role. A rule the user added has no role and
@@ -138,6 +144,8 @@ export function paletteOverrides(p: ThemePalette, global: RenderSettings): Parti
     // The dim appears only with a selection on these schemes; an always-on
     // ambient dim would lay the canvas colour over the whole board.
     ambientDim: false,
+    netLineColor: hexToInt(p.netLine),
+    adjacentNetLineColor: hexToInt(p.adjacentNetLine),
   };
   if (p.componentFillAlpha !== undefined) ov.componentFillAlpha = p.componentFillAlpha;
   if (p.boardFillAlpha !== undefined) ov.boardFillAlpha = p.boardFillAlpha;
@@ -215,6 +223,7 @@ export const THEMES: Record<string, Theme> = {
         enable: '#6e7681', onoff: '#6e7681', nc: '#5e6570',
       },
       partTints: null, boardFillAlpha: 1, padAlpha: 0.6,
+      netLine: '#fff033', adjacentNetLine: '#44aaff',
     },
   },
   landrex: {
@@ -241,6 +250,7 @@ export const THEMES: Record<string, Theme> = {
         enable: '#3b5bff', onoff: '#3b5bff', nc: '#55558f',
       },
       partTints: null, boardFillAlpha: 1, showPin1Marker: false, padAlpha: 0.5,
+      netLine: '#fff033', adjacentNetLine: '#44aaff',
     },
   },
   light: {
@@ -273,6 +283,9 @@ export const THEMES: Record<string, Theme> = {
         transistor: '#dbf0ee', ic: '#e3ddee', connector: '#dfe5ec', fuse: '#e6e6e6', testpoint: '#deedde', shield: '#e6e6e6',
       },
       componentFillAlpha: 0.95, boardFillAlpha: 1, fadeLargeBodies: true, padAlpha: 0.4,
+      // The lines in the selection orange and the butterfly blue: yellow on
+      // white paper is not a line.
+      netLine: '#c26f00', adjacentNetLine: '#2f6db5',
     },
   },
   atari: {
@@ -306,6 +319,7 @@ export const THEMES: Record<string, Theme> = {
         transistor: '#d4e9d3', ic: '#cfd1ed', connector: '#d4d4d0', fuse: '#f8ddc4', testpoint: '#d4e9d3', shield: '#d4d4d0',
       },
       componentFillAlpha: 1, boardFillAlpha: 1, fadeLargeBodies: true, padAlpha: 0.4,
+      netLine: '#cb6301', adjacentNetLine: '#2a3192',
     },
   },
 };

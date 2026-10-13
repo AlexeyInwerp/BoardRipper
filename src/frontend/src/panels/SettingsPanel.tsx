@@ -2403,6 +2403,11 @@ export function SettingsPanel() {
             />
           </div>
         </div>
+        {themeStore.activeTheme().palette && (
+          <p className="settings-hint">
+            The {themeStore.activeTheme().label} scheme sets the line colours; these apply on BoardRipper Default.
+          </p>
+        )}
         <Slider label="Line Width" value={draft.netLineWidth} min={0.5} max={5} step={0.5} field="netLineWidth" onUpdate={updateDraft}
           title="Thickness of the connection lines drawn between pins of the same net when a net is selected" />
         <Slider label="Line Opacity" value={draft.netLineAlpha} min={0} max={1} step={0.05} field="netLineAlpha" onUpdate={updateDraft}
