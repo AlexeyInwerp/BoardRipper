@@ -6551,6 +6551,9 @@ export class BoardRenderer {
     for (const entry of activeNets) {
       this.appendNetLineSegmentsFor(entry.name, entry.color, mode, sel, s);
     }
+    // One line per recompute (a selection or mode change, never per frame):
+    // the record to read off a device when "the lines did not change".
+    log.render.log(`net lines: mode=${mode} net=${sel.highlightedNet} part=${sel.partIndex ?? '-'} pin=${sel.pinIndex ?? '-'} adjacent=${sel.adjacentNets.size} segments=${this.netLineSegments.length}`);
 
     // Bucketise by colour once. The per-frame renderNetLines path iterates
     // these directly with no further allocation (was: rebuilt each frame).
