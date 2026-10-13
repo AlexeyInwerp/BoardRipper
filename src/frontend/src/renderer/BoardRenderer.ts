@@ -818,7 +818,7 @@ export class BoardRenderer {
   private _haloTextureColor = -1;
   private _haloSprite: Sprite | null = null;
   // Last-rendered selection — used to skip redundant renderSelection() on tab switch
-  private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, adjacentNetsSize: 0, searchLen: 0, board: null as BoardData | null, dimMode: 'dim' as 'off' | 'dim' | 'darklight', butterfly: false, showTop: true, showBottom: true, showGhosts: true, discoHighlight: false, searchSelectionActive: false, connectionHighlight: false, rotation: 0, mirrorX: false, mirrorY: false, flipAxis: 'x' as 'x' | 'y' };
+  private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, adjacentNetsSize: 0, searchLen: 0, board: null as BoardData | null, dimMode: 'dim' as 'off' | 'dim' | 'darklight', butterfly: false, showTop: true, showBottom: true, showGhosts: true, discoHighlight: false, searchSelectionActive: false, connectionHighlight: false, rotation: 0, mirrorX: false, mirrorY: false, flipAxis: 'x' as 'x' | 'y', netLineMode: 'off' as NetLineMode };
   // Track previous top/bottom state for flip-to-center
   private prevShowTop = true;
   private prevShowBottom = false;
@@ -1054,7 +1054,7 @@ export class BoardRenderer {
       this.viewport.x += t.anchorScreenX - sp.x;
       this.viewport.y += t.anchorScreenY - sp.y;
       this.needsRender = true;
-      // No netLinesDirty: a pan or zoom never moves the world-space segments (rotateLive marks them when it turns the board), and a dirty flag holds off the in-zoom re-stroke (onZoomFrame).
+      // No netLinesDirty: a pan or zoom never moves the world-space segments (a live turn carries them rigidly, rotateLive), and a dirty flag holds off the in-zoom re-stroke (onZoomFrame).
       this.viewport.emit('moved', { viewport: this.viewport, type: 'animate' });
       if (next === t.targetScale) this.zoomTween = null;
     }
@@ -2385,7 +2385,7 @@ export class BoardRenderer {
       }
       this.viewport.emit('moved', { viewport: this.viewport, type: 'pinch' });
       this.needsRender = true;
-      // No netLinesDirty: a pan or zoom never moves the world-space segments (rotateLive marks them when it turns the board), and a dirty flag holds off the in-zoom re-stroke (onZoomFrame).
+      // No netLinesDirty: a pan or zoom never moves the world-space segments (a live turn carries them rigidly, rotateLive), and a dirty flag holds off the in-zoom re-stroke (onZoomFrame).
     };
     this.containerEl.addEventListener('gesturestart', this.boundGestureStart, { passive: false });
     this.containerEl.addEventListener('gesturechange', this.boundGestureChange, { passive: false });
@@ -2835,13 +2835,12 @@ export class BoardRenderer {
     // at the new width each zoom frame; a big one only when the scale has
     // moved 20 % since its last stroke. Never from here when the segments
     // themselves are dirty (that recompute is the expensive part and waits
-    // for the settle), and not during a live two-finger rotation, which
-    // moves the roots the segments were projected through — then the lines
-    // are cleared as before, because a misplaced line is worse than none.
+    // for the settle). A live two-finger rotation needs nothing special: it
+    // turns the net-line Graphics with the roots (rotateLive), so the cached
+    // segments stay right and are re-stroked like any other zoom frame. (They
+    // used to be cleared for the whole turn — the 2026-10-13 iPad "vanish".)
     if (this.netLineSegments.length > 0) {
-      if (this.liveRotate?.engaged) {
-        if (!this.netLinesHiddenForZoom) { this.netLinesGfx.clear(); this.netLinesPulseGfx?.clear(); this.netLineBakeSig = ''; }
-      } else if (!this.netLinesDirty) {
+      if (!this.netLinesDirty) {
         const k = Math.abs(this.viewport.scale.x);
         const ratio = this.netLinesStrokeScale > 0 ? k / this.netLinesStrokeScale : Infinity;
         if (this.netLineSegments.length <= 300 || ratio > 1.2 || ratio < 1 / 1.2) {
@@ -3994,9 +3993,14 @@ export class BoardRenderer {
         || boardStore.rotation !== lrs.rotation
         || boardStore.mirrorX !== lrs.mirrorX
         || boardStore.mirrorY !== lrs.mirrorY
-        || boardStore.flipAxis !== lrs.flipAxis) {
+        || boardStore.flipAxis !== lrs.flipAxis
+        // The net-line mode decides which lines exist (and, in chain-adjacent,
+        // which nets glow). Without it here a press of the ribbon button never
+        // reached renderSelection and the lines kept the previous mode — even
+        // 'off' kept them — until a re-selection (field report 2026-10-13).
+        || boardStore.netLineMode !== lrs.netLineMode) {
         this.renderSelection();
-        this.lastRenderedSel = { partIndex: sel.partIndex, pinIndex: sel.pinIndex, highlightedNet: sel.highlightedNet, adjacentNetsSize: sel.adjacentNets.size, searchLen, board: this.board, dimMode: boardStore.dimMode, butterfly: boardStore.butterfly, showTop: boardStore.showTop, showBottom: boardStore.showBottom, showGhosts: boardStore.showGhosts, discoHighlight: boardStore.discoHighlight, searchSelectionActive: boardStore.searchSelectionActive, connectionHighlight: boardStore.connectionHighlight, rotation: boardStore.rotation, mirrorX: boardStore.mirrorX, mirrorY: boardStore.mirrorY, flipAxis: boardStore.flipAxis };
+        this.lastRenderedSel = { partIndex: sel.partIndex, pinIndex: sel.pinIndex, highlightedNet: sel.highlightedNet, adjacentNetsSize: sel.adjacentNets.size, searchLen, board: this.board, dimMode: boardStore.dimMode, butterfly: boardStore.butterfly, showTop: boardStore.showTop, showBottom: boardStore.showBottom, showGhosts: boardStore.showGhosts, discoHighlight: boardStore.discoHighlight, searchSelectionActive: boardStore.searchSelectionActive, connectionHighlight: boardStore.connectionHighlight, rotation: boardStore.rotation, mirrorX: boardStore.mirrorX, mirrorY: boardStore.mirrorY, flipAxis: boardStore.flipAxis, netLineMode: boardStore.netLineMode };
       }
 
       // PDF follow mode: search for selected component
@@ -4595,7 +4599,7 @@ export class BoardRenderer {
 
       this.viewport.emit('moved', { viewport: this.viewport, type: 'wheel' });
       this.needsRender = true;
-      // No netLinesDirty: a pan or zoom never moves the world-space segments (rotateLive marks them when it turns the board), and a dirty flag holds off the in-zoom re-stroke (onZoomFrame).
+      // No netLinesDirty: a pan or zoom never moves the world-space segments (a live turn carries them rigidly, rotateLive), and a dirty flag holds off the in-zoom re-stroke (onZoomFrame).
       e.preventDefault();
       e.stopPropagation();
     };
@@ -4681,15 +4685,21 @@ export class BoardRenderer {
     if (step === 0) return;
     const P = this.viewport.toWorld(midX, midY);
     const cos = Math.cos(step), sin = Math.sin(step);
-    for (const root of [scene.root, scene.butterflyRoot]) {
-      if (!root) continue;
-      const dx = root.position.x - P.x, dy = root.position.y - P.y;
-      root.position.set(P.x + dx * cos - dy * sin, P.y + dx * sin + dy * cos);
-      root.rotation += step;
+    // The net lines are world-space children of the viewport, not of the
+    // roots, so they turn with the same rigid transform about the same P —
+    // O(1), no segment recompute per finger move, and they stay on the pins
+    // for the whole gesture. They used to be cleared for as long as a turn was
+    // engaged, which on an unlocked iPad (2° dead zone) blanked them on nearly
+    // every pinch (field report 2026-10-13). The commit recomputes them
+    // through the committed roots and resets this carried transform.
+    for (const node of [scene.root, scene.butterflyRoot, this.netLinesGfx, this.netLinesPulseGfx]) {
+      if (!node || node.destroyed) continue;
+      const dx = node.position.x - P.x, dy = node.position.y - P.y;
+      node.position.set(P.x + dx * cos - dy * sin, P.y + dx * sin + dy * cos);
+      node.rotation += step;
     }
     lr.appliedRad = targetRad - lr.baseRad;
     this.needsRender = true;
-    this.netLinesDirty = true;
     this.overlayDirty = true;
     this.overlayContentDirty = true;
   }
@@ -4743,7 +4753,12 @@ export class BoardRenderer {
     this.viewport.y += mid.y - now.y;
     this.viewport.emit('moved', { viewport: this.viewport, type: 'pinch' });
     this.needsRender = true;
+    // Recompute through the committed roots and draw now: setRotation may not
+    // have notified (a turn that snapped back to the angle it started from),
+    // and a dirty flag nobody draws from holds off the zoom re-stroke and
+    // leaves the gesture's carried transform on the lines.
     this.netLinesDirty = true;
+    this.renderNetLines();
     this.overlayContentDirty = true;
     // The one record of what a gesture was, readable off the device: the
     // stream that owned it, the raw angle it reported (pointer: the pair's
@@ -4818,7 +4833,7 @@ export class BoardRenderer {
 
       this.viewport.emit('moved', { viewport: this.viewport, type: 'pinch' });
       this.needsRender = true;
-      // No netLinesDirty: a pan or zoom never moves the world-space segments (rotateLive marks them when it turns the board), and a dirty flag holds off the in-zoom re-stroke (onZoomFrame).
+      // No netLinesDirty: a pan or zoom never moves the world-space segments (a live turn carries them rigidly, rotateLive), and a dirty flag holds off the in-zoom re-stroke (onZoomFrame).
     };
     this.containerEl.addEventListener('pointermove', this.boundTouchPinchMove, { capture: true });
   }
@@ -4924,7 +4939,7 @@ export class BoardRenderer {
           this.zoomAtScreen(anchorX, anchorY, incDy * DRAG_ZOOM_SPEED);
           this.viewport.emit('moved', { viewport: this.viewport, type: 'wheel' });
           this.needsRender = true;
-          this.netLinesDirty = true;
+          // No netLinesDirty: a zoom never moves the world-space segments, and a dirty flag holds off the in-zoom re-stroke (onZoomFrame).
         }
         this.containerEl.style.cursor = incDy < 0 ? 'zoom-in' : 'zoom-out';
         ev.preventDefault();
@@ -5495,10 +5510,7 @@ export class BoardRenderer {
     // orientation in the key so a flip recomputes. Hover-dim state is still
     // excluded so it stays cheap (A3).
     {
-      const sel = boardStore.selection;
-      const selKey = `${sel.highlightedNet ?? ''}|${sel.partIndex ?? -1}|${sel.pinIndex ?? -1}`
-        + `|${boardStore.butterfly}|${boardStore.showTop}|${boardStore.showBottom}`
-        + `|${boardStore.flipAxis}|${boardStore.mirrorX}|${boardStore.mirrorY}|${boardStore.rotation}`;
+      const selKey = this.netLinesGeometryKey();
       if (selKey !== this.lastNetLinesSelKey || this.board !== this.lastNetLinesSelBoard) {
         this.lastNetLinesSelKey = selKey;
         this.lastNetLinesSelBoard = this.board;
@@ -6481,12 +6493,44 @@ export class BoardRenderer {
 
   // --- Net lines rendering ---
 
+  /** Everything the cached net-line segments are a function of: the lit
+   *  net / part / pin, the mode (which lines exist at all — 'off' none, star
+   *  vs chain a different set, chain-adjacent the adjacent nets too), and the
+   *  board's orientation (segments are baked in WORLD space through each
+   *  root's transform). Pan and zoom are deliberately absent: they never move
+   *  world-space segments. One key, so a new input cannot be added to one
+   *  check and forgotten in another — the mode was missing from both. */
+  private netLinesGeometryKey(): string {
+    const sel = boardStore.selection;
+    const mode = boardStore.netLineMode;
+    return `${sel.highlightedNet ?? ''}|${sel.partIndex ?? -1}|${sel.pinIndex ?? -1}`
+      + `|${mode}|${mode === 'chain-adjacent' ? [...sel.adjacentNets].join(',') : ''}`
+      + `|${boardStore.butterfly}|${boardStore.showTop}|${boardStore.showBottom}`
+      + `|${boardStore.flipAxis}|${boardStore.mirrorX}|${boardStore.mirrorY}|${boardStore.rotation}`;
+  }
+
+  /** Put the net-line Graphics back in plain world space. A live two-finger
+   *  rotation turns them rigidly with the roots (rotateLive) instead of
+   *  recomputing per move; any recompute projects through the roots as they
+   *  are now, so the carried turn must be dropped at the same moment or it
+   *  would be applied twice. */
+  private resetNetLinesTransform() {
+    for (const g of [this.netLinesGfx, this.netLinesPulseGfx]) {
+      if (!g || g.destroyed) continue;
+      if (g.rotation !== 0 || g.position.x !== 0 || g.position.y !== 0) {
+        g.rotation = 0;
+        g.position.set(0, 0);
+      }
+    }
+  }
+
   /** Recompute cached net line segments (start/end points + color) when selection or viewport changes */
   private recomputeNetLineSegments() {
     this.netLineSegments = [];
     this.netLineSegmentsByColor.clear();
     this.netLineFadeDist = 0;
     this.netLinesDirty = false;
+    this.resetNetLinesTransform();
 
     const mode = boardStore.netLineMode;
     if (!this.board || mode === 'off') return;
@@ -6673,6 +6717,9 @@ export class BoardRenderer {
         if (!this.netLinesPulseGfx || this.netLinesPulseGfx.destroyed) {
           this.netLinesPulseGfx = new Graphics();
           this.netLinesPulseGfx.eventMode = 'none';
+          // Same transform as its sibling — a live rotation carries one on both.
+          this.netLinesPulseGfx.position.copyFrom(this.netLinesGfx.position);
+          this.netLinesPulseGfx.rotation = this.netLinesGfx.rotation;
         }
         // Sibling immediately above netLinesGfx (added later = painted later).
         // NEVER netLinesGfx.addChild(...) — see the field note on the A5 field.
@@ -8146,7 +8193,7 @@ export class BoardRenderer {
     this.viewport.position.set(c.x, c.y);
     this.programmaticMove = true;
     this.needsRender = true;
-    this.netLinesDirty = true;
+    // No netLinesDirty: a camera pose never moves the world-space segments.
   }
 
   private handleRightClick(e: { clientX: number; clientY: number }) {
@@ -8326,7 +8373,7 @@ export class BoardRenderer {
     const dy = direction === 'up' ? stepY : direction === 'down' ? -stepY : 0;
     this.viewport.position.set(this.viewport.position.x + dx, this.viewport.position.y + dy);
     this.needsRender = true;
-    this.netLinesDirty = true;
+    // No netLinesDirty: a pan never moves the world-space segments.
   }
 
   private zoomKeyboard(direction: ZoomDirection) {
@@ -8338,7 +8385,9 @@ export class BoardRenderer {
     this.zoomAtScreen(cx, cy, rawDelta, true);
     this.viewport.emit('moved', { viewport: this.viewport, type: 'wheel' });
     this.needsRender = true;
-    this.netLinesDirty = true;
+    // No netLinesDirty: a zoom never moves the world-space segments; the
+    // zoom-frame re-stroke and its settle redraw the width. A dirty flag here
+    // made that settle recompute — in mode 'off' that emptied the cache.
   }
 
   destroy() {

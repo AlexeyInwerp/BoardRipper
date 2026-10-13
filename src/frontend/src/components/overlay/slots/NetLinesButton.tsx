@@ -7,6 +7,7 @@ export function NetLinesButton({ ctx }: { ctx: SlotCtx }) {
   return (
     <button
       className={`board-netlines-toggle ${netLineMode !== 'off' ? 'active' : ''}`}
+      data-testid="netlines-btn"
       onClick={() => boardStore.cycleNetLineMode()}
       title={
         netLineMode === 'off'

@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- **Connection lines follow the mode button at once, and no longer vanish on
+  a pinch.** Pressing the net-lines button changed the mode but drew nothing
+  until the next re-selection, and *off* left the old lines on screen; the
+  next recompute (a rotation, a camera restore, on a desktop a keyboard or
+  drag zoom) then wiped them, and the button could not bring them back. With
+  rotation unlocked, any pinch whose fingers twisted past 2° blanked the lines
+  for the whole gesture. Now a press redraws immediately, *off* clears, and a
+  live two-finger turn carries the lines with the board.
 - **Connection lines follow the colour scheme.** Light draws the lit net in
   its selection orange and adjacent nets in blue, Atari in its orange and blue;
   the dark schemes keep yellow and blue. The line colours in Settings ▸ Net
