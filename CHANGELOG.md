@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- **A board beside a schematic answers the net-lines button.** While a PDF
+  panel is the active one the board panel is paused (no frames are drawn),
+  so a mode change made there — or any other change from the store — showed
+  only after the next tap on the board. The board now draws the frames such a
+  change needs and pauses again; a lookup from the schematic no longer leaves
+  it running until the panel is next activated.
 - **Connection lines follow the mode button at once, and no longer vanish on
   a pinch.** Pressing the net-lines button changed the mode but drew nothing
   until the next re-selection, and *off* left the old lines on screen; the

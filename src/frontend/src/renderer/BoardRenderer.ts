@@ -1034,6 +1034,22 @@ export class BoardRenderer {
   }
 
   /** Safely stop the ticker — app or ticker may be null/destroyed. */
+  /** True between pause() and resume(): the panel is not the active one.
+   *  The ticker may still run for a while — a store change, a camera
+   *  animation or a wheel wake — and the tick stops it again once nothing is
+   *  pending (see the end of onTick). */
+  private panelPaused = false;
+
+  /** A store change arrived while the panel is paused: start the ticker so
+   *  it is drawn. Before this, a mode button pressed while a PDF panel was
+   *  active updated the geometry and nobody drew a frame — "nothing happens
+   *  until the next net is clicked" (field report 2026-10-14). */
+  private wakeWhilePaused() {
+    if (!this.panelPaused || this.app.ticker.started || this.destroyed || this.contextLost || !this.initialized) return;
+    this.app.ticker.start();
+    this.needsRender = true;
+  }
+
   private stopTicker() {
     try { this.app?.ticker?.stop(); } catch { /* context may be lost */ }
   }
@@ -1296,11 +1312,23 @@ export class BoardRenderer {
         this.perfThrottle = 0;
       }
     }
+
+    // A paused panel's ticker runs only for what is pending — a store wake,
+    // a camera animation, a glide, a blink — and stops when that is drawn.
+    // A PDF word lookup used to leave it running until the panel was next
+    // activated; the wheel wake re-pauses on its own 300 ms timer.
+    if (this.panelPaused && !this.needsRender && !this.zoomTween && !this.zoomAnim
+      && this.selectionBlinkPhase === 0 && !this.selectionBlinkTimer && this.cullRefreshFrames === 0
+      && !this.wheelIdleTimer
+      && !(this.viewport?.plugins.get('decelerate') as { isActive?(): boolean } | null)?.isActive?.()) {
+      this.stopTicker();
+    }
   };
 
   /** Pause the renderer (stop ticker, zero CPU cost). Call when panel is hidden. */
   pause() {
     log.render.log('pause', 'tab=' + this.tabId);
+    this.panelPaused = true;
     if (boardStore.activeTabId === this.tabId) {
       log.render.warn(`pausing the store-active renderer tab=${this.tabId} — possible spurious isActive=false`);
     } else {
@@ -1415,6 +1443,7 @@ export class BoardRenderer {
   /** Resume the renderer (restart ticker). Call when panel becomes visible. */
   resume() {
     if (this.destroyed) return;
+    this.panelPaused = false;
     // Panel is visible again — cancel any pending deep-pause release.
     this.cancelDeepPause();
     // GPU was released (pause/context loss) — need full re-init
@@ -4038,6 +4067,7 @@ export class BoardRenderer {
         // subject instead of the part we just flew to.
         if (focus.blink !== false) this.startSelectionBlink();
       }
+      this.wakeWhilePaused();
     } catch (err) {
       log.render.error('onBoardUpdate crashed:', err);
     }
