@@ -553,12 +553,27 @@ class PdfStore extends Emitter {
   private _followTarget: FollowTarget | null = null;
   /** Last word clicked in any PDF panel — read by Cmd+F handler when a PDF is focused */
   private _lastClickedWord: string | null = null;
+  /** True from a click until the find shortcut takes the word. A second ⌘F
+   *  with no click in between must not re-apply the old word over whatever
+   *  the field holds now (2026-10-20: "pan to another page, ⌘F again, the
+   *  search box is overwritten"). */
+  private _clickedWordPending = false;
   /** Location of the last clicked word — used by searchText to pick the exact
    *  match under the click rather than heuristic "nearest page". */
   private _lastClickedLocation: { fileName: string; pageIndex: number; itemIndex: number } | null = null;
 
   get lastClickedWord(): string | null { return this._lastClickedWord; }
-  setLastClickedWord(word: string | null): void { this._lastClickedWord = word; }
+  setLastClickedWord(word: string | null): void {
+    this._lastClickedWord = word;
+    this._clickedWordPending = word != null;
+  }
+  /** The word clicked since the find shortcut last took one, or null.
+   *  Consumes it: the next call answers null until another click. */
+  takeClickedWordForFind(): string | null {
+    if (!this._clickedWordPending) return null;
+    this._clickedWordPending = false;
+    return this._lastClickedWord;
+  }
   setLastClickedLocation(loc: { fileName: string; pageIndex: number; itemIndex: number } | null): void {
     this._lastClickedLocation = loc;
   }

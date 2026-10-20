@@ -77,6 +77,26 @@ function copySelectionText(): string | null {
   return null;
 }
 
+/** The find-field prefill for a board tab's selection: a selected pin stands
+ *  for its net, otherwise the part's name, otherwise the lit net. Null when
+ *  nothing is selected. */
+function boardSelectionText(tab: typeof boardStore.activeTab): string | null {
+  const sel = tab?.selection;
+  if (!sel || !tab?.board) return null;
+  if (sel.pinIndex != null && sel.pinIndex >= 0 && sel.highlightedNet) return sel.highlightedNet;
+  if (sel.partIndex != null) return tab.board.parts[sel.partIndex]?.name ?? null;
+  return sel.highlightedNet ?? null;
+}
+
+/** The find field of the panel showing `fileName` — every PDF find field
+ *  carries `data-pdf-file`, so this needs no registration to have happened. */
+function pdfSearchInputFor(fileName: string): HTMLInputElement | null {
+  for (const el of document.querySelectorAll<HTMLInputElement>('.pdf-search-input')) {
+    if (el.dataset.pdfFile === fileName) return el;
+  }
+  return null;
+}
+
 export function useKeyboardShortcuts() {
   useEffect(() => {
     const trackMouse = (e: MouseEvent) => { _lastMouseX = e.clientX; _lastMouseY = e.clientY; };
@@ -84,10 +104,13 @@ export function useKeyboardShortcuts() {
 
     const handler = (e: KeyboardEvent) => {
       // Cmd/Ctrl+F — routing:
-      //   1. Active board tab has a linked PDF → activate the PDF panel, prefill
-      //      its search with the selected component/net name (if any), focus it.
-      //   2. A PDF panel is already active (ref set) → focus its search.
-      //   3. Otherwise → fall back to top-bar board search.
+      //   1. A PDF find field is focused with text → step to the next match.
+      //   2. A board panel is active → its sidebar search, prefilled with the
+      //      selection (pin → net, part → name, net → name).
+      //   3. A PDF panel is active → its find field: a word clicked since the
+      //      last ⌘F becomes the query; an existing query is only focused.
+      //   4. Otherwise → the active board's linked PDF with the selection,
+      //      then the registered PDF field, then the top-bar global search.
       const focusSearch = getShortcut('focusSearch');
       // Match focusSearch with OR without shift — the block below routes
       // shift to prevMatch and unshifted to nextMatch. The matcher's
@@ -115,43 +138,44 @@ export function useKeyboardShortcuts() {
 
         const tab = boardStore.activeTab;
         const linkedPdf = tab?.pdfFileNames?.[0];
-        const sel = tab?.selection;
-        const partIdx = sel?.partIndex;
-        const selectedPart = (partIdx != null && tab?.board)
-          ? tab.board.parts[partIdx]
-          : null;
         // Priority: pin-selected (→ net name) > part-only (→ component name) > net-only
-        // From board panel context. For PDF panel context, override below.
-        let prefillText: string | null = null;
-        if (sel?.pinIndex != null && sel.pinIndex >= 0 && sel.highlightedNet) {
-          prefillText = sel.highlightedNet;
-        } else if (selectedPart) {
-          prefillText = selectedPart.name;
-        } else if (sel?.highlightedNet) {
-          prefillText = sel.highlightedNet;
-        }
+        const selectionText = boardSelectionText(tab);
 
-        // If the currently active dockview panel is a PDF panel, prefer its
-        // last-clicked word over the board selection.
         const api = getDockviewApi();
         const activePanelId = api?.activePanel?.id ?? '';
+
+        // Board panel: ⌘F is the board's own search, prefilled with what is
+        // selected — a part's name, a net's name (a selected pin stands for
+        // its net). It used to hand a selection to the linked PDF instead,
+        // so finding the selected part on the *board* took a detour through
+        // the schematic (2026-10-20).
+        if (activePanelId.startsWith('board-')) {
+          e.preventDefault();
+          const boardTabId = parseInt(activePanelId.slice('board-'.length), 10);
+          openBoardSearch(selectionText ?? '', isNaN(boardTabId) ? undefined : boardTabId);
+          focusBoardSearchInput();
+          return;
+        }
+
         const activePdfFile: string | null = activePanelId.startsWith('pdf-')
           ? (api?.activePanel?.params as { pdfFileName?: string } | undefined)?.pdfFileName ?? null
           : null;
-        if (activePdfFile) {
-          const pdfClicked = pdfStore.lastClickedWord;
-          if (pdfClicked) prefillText = pdfClicked;
-        }
 
-        // Board panel active with NO selection → open BoardSidebar search tab.
-        // Board panel active WITH selection → fall through to PDF lookup.
-        if (activePanelId.startsWith('board-') && !prefillText) {
-          e.preventDefault();
-          const tabIdStr = activePanelId.slice('board-'.length);
-          const boardTabId = parseInt(tabIdStr, 10);
-          openBoardSearch('', isNaN(boardTabId) ? undefined : boardTabId);
-          focusBoardSearchInput();
-          return;
+        let prefillText: string | null = selectionText;
+        if (activePdfFile) {
+          // A word clicked since the last ⌘F is a new request and replaces
+          // the query. Anything else leaves the field alone: the user panned
+          // to another page and pressed ⌘F again to get back to the find
+          // field, not to have its text replaced with a stale word — or with
+          // the board's selection — and not to have the view jump to another
+          // occurrence by re-running the same search.
+          const clicked = pdfStore.takeClickedWordForFind();
+          const current = pdfStore.getDocSearchQuery(activePdfFile).trim();
+          if (clicked && clicked.trim().toLowerCase() !== current.toLowerCase()) {
+            prefillText = clicked;
+          } else if (current) {
+            prefillText = null;
+          }
         }
 
         // Route target PDF: if a PDF panel is the active dockview panel, use
@@ -167,9 +191,10 @@ export function useKeyboardShortcuts() {
             pdfStore.searchText(prefillText, 'lookup');
           }
           // Wait a tick for the PDF panel's onDidActiveChange effect to register
-          // searchInputRef.current into fileInputRefs.pdfSearch.
+          // searchInputRef.current into fileInputRefs.pdfSearch. The field also
+          // carries its file name, which is the surer way to the right one.
           setTimeout(() => {
-            const input = fileInputRefs.pdfSearch;
+            const input = pdfSearchInputFor(targetPdf) ?? fileInputRefs.pdfSearch;
             if (!input) return;
             if (prefillText) input.value = prefillText;
             input.focus();

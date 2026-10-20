@@ -577,6 +577,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     // the node this effect registered, not whatever the ref happens to point
     // at when React tears the panel down (the input may already be detached).
     const searchInputNode = searchInputRef.current;
+    // A panel that mounts already active — the first PDF opened, or the one
+    // Dockview restores — gets no activation event, so the field was never
+    // registered and ⌘F found nothing to focus (2026-10-20). `isLoaded` is in
+    // the deps because the field exists only once the document does.
+    if (props.api.isActive && searchInputNode) fileInputRefs.pdfSearch = searchInputNode;
     // Also switch when this panel becomes active (focused)
     const disposable = props.api.onDidActiveChange((e) => {
       log.pdf.log(`onDidActiveChange pdf=${pdfFileName} isActive=${e.isActive} storeActive=${boardStore.activeTabId}`);
@@ -608,7 +613,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       }
       disposable.dispose();
     };
-  }, [pdfFileName, props.api]);
+  }, [pdfFileName, props.api, isLoaded]);
 
   // Board/PDF linking lives in the dockview tab (∞) — see components/PdfTab.tsx.
 
