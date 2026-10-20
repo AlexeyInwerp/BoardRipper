@@ -400,6 +400,9 @@ body {
   z-index: 100;
   display: flex;
   flex-direction: column;
+  /* The Library spoiler can add fifty rows; the list scrolls, the bar does not grow. */
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
 }
 
 .toolbar-search-option {
@@ -465,6 +468,71 @@ body {
 
 .toolbar-search-option:hover .toolbar-search-count {
   color: #fff;
+}
+
+/* Library files listed under the Library row (first five, "N more…" spoiler). */
+.toolbar-search-files {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+}
+
+.toolbar-search-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 10px 4px 26px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 0.82em;
+  cursor: pointer;
+  text-align: left;
+}
+
+.toolbar-search-file:hover {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.toolbar-search-file-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.toolbar-search-file-name,
+.toolbar-search-file-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolbar-search-file-sub {
+  font-size: 0.85em;
+  color: var(--text-secondary);
+}
+
+.toolbar-search-file:hover .toolbar-search-file-sub {
+  color: inherit;
+  opacity: 0.8;
+}
+
+.toolbar-search-more {
+  padding: 4px 10px 5px 26px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 0.8em;
+  cursor: pointer;
+  text-align: left;
+}
+
+.toolbar-search-more:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
 }
 
 /* Bind link icon + dropdown (shared between board tabs and PDF toolbar) */

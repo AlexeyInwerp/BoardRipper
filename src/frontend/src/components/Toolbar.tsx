@@ -8,11 +8,12 @@ import { showSidebarTab } from './Sidebar.utils';
 import { SidebarCycleButton } from './SidebarCycleButton';
 import { getAllExtensions, getFileExtension } from '../parsers';
 import { fileInputRefs } from '../store/file-inputs';
-import { openPdfFiles } from '../store/file-actions';
+import { openLibraryFileById, openPdfFiles } from '../store/file-actions';
 import { updateStore, fmtVersion } from '../store/update-store';
 import { ReleaseNotes } from './ReleaseNotes';
 import { pdfStore } from '../store/pdf-store';
-import { databankStore, isElectron } from '../store/databank-store';
+import { databankStore, isElectron, type DatabankFile } from '../store/databank-store';
+import { log } from '../store/log-store';
 import { isLiteBuild, isOfflineBuild } from '../store/build-mode';
 
 /** Touch-first device (tablet). Evaluated once — the primary pointer of a
@@ -322,6 +323,51 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
 
 interface SearchResult { label: string; count: number; action: () => void; group: string }
 
+/** Library files listed under the Library row before the "more" spoiler. */
+const LIBRARY_HITS_SHOWN = 5;
+/** Rows the spoiler may add; past that the Library panel is the list. */
+const LIBRARY_HITS_CAP = 50;
+
+/** The Library panel's own metadata filter (file name, board number,
+ *  manufacturer, model), ranked so a board-number hit or a name that starts
+ *  with the query comes first. Same predicate as the count the Library row
+ *  shows, so the rows and the number agree. */
+function libraryHitsFor(ql: string): DatabankFile[] {
+  const hits: { f: DatabankFile; rank: number }[] = [];
+  for (const f of databankStore.files) {
+    const name = f.filename.toLowerCase();
+    const bn = f.board_number?.toLowerCase() ?? '';
+    let rank: number;
+    if (bn && bn === ql) rank = 0;
+    else if ((bn && bn.includes(ql)) || name.startsWith(ql)) rank = 1;
+    else if (name.includes(ql)) rank = 2;
+    else if (f.manufacturer?.toLowerCase().includes(ql) || f.model?.toLowerCase().includes(ql)) rank = 3;
+    else continue;
+    hits.push({ f, rank });
+  }
+  hits.sort((a, b) => a.rank - b.rank || a.f.filename.localeCompare(b.f.filename));
+  return hits.map(h => h.f);
+}
+
+/** Second line of a library row: the board number when the file name does
+ *  not already carry it, then the folder. */
+function libraryHitSubtitle(f: DatabankFile): string {
+  const folder = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : '';
+  const bn = f.board_number && !f.filename.toLowerCase().includes(f.board_number.toLowerCase())
+    ? f.board_number
+    : '';
+  return [bn, folder].filter(Boolean).join(' · ');
+}
+
+/** Open a library file from the dropdown the way a Library row does: it
+ *  becomes the selected and most recent file, then the shared open path
+ *  (cache first, bound PDFs, PDF panel) takes it. */
+function openLibraryHit(f: DatabankFile): void {
+  databankStore.selectFile(f.id);
+  databankStore.addToHistory(f);
+  openLibraryFileById(f.id).catch(err => log.ui.error('Global search: failed to open library file:', err));
+}
+
 /** Global search — searches board tabs, open PDFs, and library. Shows per-tab dropdown. */
 function GlobalSearch() {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -329,6 +375,10 @@ function GlobalSearch() {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
+  // Library files matching the query, listed under the Library row. The
+  // Library row itself stays: it opens the panel with the whole list.
+  const [libraryHits, setLibraryHits] = useState<DatabankFile[]>([]);
+  const [libraryExpanded, setLibraryExpanded] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Register search input ref for Cmd+F shortcut. Capture inputRef.current in
@@ -353,7 +403,7 @@ function GlobalSearch() {
 
   const runSearch = useCallback((q: string) => {
     const ql = q.toLowerCase().trim();
-    if (!ql) { setResults([]); setOpen(false); return; }
+    if (!ql) { setResults([]); setLibraryHits([]); setOpen(false); return; }
 
     const items: SearchResult[] = [];
 
@@ -378,18 +428,10 @@ function GlobalSearch() {
       });
     }
 
-    // Library: count by board_number, filename, manufacturer, model (same filter as LibraryPanel)
-    let libraryCount = 0;
-    for (const f of databankStore.files) {
-      if (f.filename.toLowerCase().includes(ql) ||
-          f.board_number?.toLowerCase().includes(ql) ||
-          f.manufacturer?.toLowerCase().includes(ql) ||
-          f.model?.toLowerCase().includes(ql)) {
-        libraryCount++;
-      }
-    }
+    // Library: by board_number, filename, manufacturer, model (same filter as LibraryPanel)
+    const hits = libraryHitsFor(ql);
     items.push({
-      label: 'Library', count: libraryCount, group: 'Library',
+      label: 'Library', count: hits.length, group: 'Library',
       action: () => {
         databankStore.setViewMode('metadata');
         showSidebarTab('library');
@@ -397,6 +439,8 @@ function GlobalSearch() {
       },
     });
     setResults(items);
+    setLibraryHits(hits);
+    setLibraryExpanded(false);
     setOpen(true);
   }, []);
 
@@ -409,6 +453,8 @@ function GlobalSearch() {
 
   // Group results by category
   const groups = ['Board', 'PDF', 'Library'];
+  const libraryRow = results.find(r => r.group === 'Library');
+  const shownHits = libraryExpanded ? libraryHits.slice(0, LIBRARY_HITS_CAP) : libraryHits.slice(0, LIBRARY_HITS_SHOWN);
 
   return (
     <div className="toolbar-search-wrap" ref={wrapRef}>
@@ -441,6 +487,47 @@ function GlobalSearch() {
               </button>
             ));
           })}
+          {shownHits.length > 0 && (
+            <div className="toolbar-search-files" data-testid="search-library-files">
+              {shownHits.map(f => (
+                <button
+                  key={f.id}
+                  className="toolbar-search-file"
+                  data-testid="search-library-file"
+                  title={f.path}
+                  onClick={() => { setOpen(false); openLibraryHit(f); }}
+                >
+                  <span className={`library-file-icon ${f.file_type === 'board' ? 'library-icon-board' : 'library-icon-pdf'}`}>
+                    {f.file_type === 'board' ? 'B' : 'P'}
+                  </span>
+                  <span className="toolbar-search-file-text">
+                    <span className="toolbar-search-file-name" translate="no">{f.filename}</span>
+                    {libraryHitSubtitle(f) && (
+                      <span className="toolbar-search-file-sub" translate="no">{libraryHitSubtitle(f)}</span>
+                    )}
+                  </span>
+                </button>
+              ))}
+              {!libraryExpanded && libraryHits.length > LIBRARY_HITS_SHOWN && (
+                <button
+                  className="toolbar-search-more"
+                  data-testid="search-library-more"
+                  onClick={() => setLibraryExpanded(true)}
+                >
+                  {`${libraryHits.length - LIBRARY_HITS_SHOWN} more…`}
+                </button>
+              )}
+              {libraryExpanded && libraryHits.length > LIBRARY_HITS_CAP && libraryRow && (
+                <button
+                  className="toolbar-search-more"
+                  data-testid="search-library-all"
+                  onClick={() => { setOpen(false); libraryRow.action(); }}
+                >
+                  {`Show all ${libraryHits.length} in the Library`}
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
