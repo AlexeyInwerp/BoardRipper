@@ -1,10 +1,11 @@
 /**
  * ⌘F / Ctrl+F routing (2026-10-20).
  *
- * Board panel: the shortcut opens the board's own search, prefilled with the
- * selection — a part's name, a net's name, a selected pin's net. It used to
- * hand a selection to the linked PDF, so finding the selected part on the
- * board itself took a detour through the schematic.
+ * Board panel: the shortcut lands in the ribbon's find field — Find part
+ * with the selected part's name, Find net with a lit net's or a selected
+ * pin's net — and the sidebar search follows the ribbon. It used to hand a
+ * selection to the linked PDF, so finding the selected part on the board
+ * itself took a detour through the schematic.
  *
  * PDF panel: a word clicked since the last ⌘F becomes the query. Without a
  * new click the shortcut only focuses the find field — it neither replaces
@@ -42,7 +43,7 @@ const bs = (page: Page) => page.evaluate(() => {
 test.describe('⌘F on a board panel', () => {
   test.skip(!fs.existsSync(BOARD), 'needs samples/kicad/tomu-fpga.kicad_pcb');
 
-  test('opens the board search prefilled with the selected part, net or pin net', async ({ page }) => {
+  test('lands in the ribbon find field with the selected part, net or pin net; the sidebar follows', async ({ page }) => {
     await page.goto('/');
     await expect(page.getByTestId('toolbar')).toBeVisible({ timeout: 15000 });
     const hooks = await page.evaluate(() => !!(window as unknown as { __boardStore?: unknown }).__boardStore);
@@ -54,16 +55,25 @@ test.describe('⌘F on a board panel', () => {
     const { parts, nets } = await bs(page);
     const partIdx = parts.findIndex(p => p.name === 'U1');
     expect(partIdx).toBeGreaterThanOrEqual(0);
-    const field = page.locator('.search-tab-input');
+    const partField = page.getByTestId('parts-filter-input');
+    const netField = page.getByTestId('nets-filter-input');
 
-    // Part selected → the part's name.
+    // Part selected → Find part, with the part's name.
     await page.evaluate(i => (window as unknown as { __boardStore: BoardStoreHook }).__boardStore.selectPart(i), partIdx);
     await page.keyboard.press(FIND);
-    await expect(page.locator('[data-board-tab="search"]')).toHaveClass(/active/);
-    await expect(field).toHaveValue('U1');
-    await expect(field).toBeFocused();
+    await expect(partField).toHaveValue('U1');
+    await expect(partField).toBeFocused();
 
-    // Net lit, no part → the net's name.
+    // The sidebar search shows the same query.
+    await page.locator('.board-sidebar-toggle').first().click();
+    await page.locator('[data-board-tab="search"]').click();
+    const sidebar = page.locator('.search-tab-input');
+    await expect(sidebar).toHaveValue('U1');
+    // …and follows what is typed in the ribbon.
+    await partField.fill('R1');
+    await expect(sidebar).toHaveValue('R1');
+
+    // Net lit, no part → Find net, with the net's name.
     const net = nets.find(n => n && n !== 'GND') ?? nets[0];
     await page.evaluate(n => {
       const s = (window as unknown as { __boardStore: BoardStoreHook }).__boardStore;
@@ -72,8 +82,9 @@ test.describe('⌘F on a board panel', () => {
     }, net);
     await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
     await page.keyboard.press(FIND);
-    await expect(field).toHaveValue(net);
-    await expect(field).toBeFocused();
+    await expect(netField).toHaveValue(net);
+    await expect(netField).toBeFocused();
+    await expect(sidebar).toHaveValue(net);
 
     // Pin selected → its net, not the part.
     const pinIdx = parts[partIdx].nets.findIndex(n => !!n);
@@ -81,7 +92,8 @@ test.describe('⌘F on a board panel', () => {
     await page.evaluate(([p, i]) => (window as unknown as { __boardStore: BoardStoreHook }).__boardStore.selectPin(p, i), [partIdx, pinIdx]);
     await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
     await page.keyboard.press(FIND);
-    await expect(field).toHaveValue(parts[partIdx].nets[pinIdx]!);
+    await expect(netField).toHaveValue(parts[partIdx].nets[pinIdx]!);
+    await expect(netField).toBeFocused();
   });
 });
 

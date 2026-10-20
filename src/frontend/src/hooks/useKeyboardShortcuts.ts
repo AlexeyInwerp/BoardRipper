@@ -11,6 +11,8 @@ import { toggleLibrarySidebar } from '../components/Sidebar.utils';
 import { copyText } from '../clipboard';
 import { peekHintStore } from '../store/peek-hint-store';
 import { historyBack, historyForward } from '../store/nav-history-actions';
+import { focusRibbonFind } from '../components/overlay/ribbon-find';
+import { log } from '../store/log-store';
 
 /**
  * Global keyboard shortcut handler — attach once in App.
@@ -144,15 +146,25 @@ export function useKeyboardShortcuts() {
         const api = getDockviewApi();
         const activePanelId = api?.activePanel?.id ?? '';
 
-        // Board panel: ⌘F is the board's own search, prefilled with what is
-        // selected — a part's name, a net's name (a selected pin stands for
-        // its net). It used to hand a selection to the linked PDF instead,
-        // so finding the selected part on the *board* took a detour through
-        // the schematic (2026-10-20).
+        // Board panel: ⌘F is the ribbon's find field — Find net for a lit
+        // net or a selected pin, Find part otherwise — prefilled with the
+        // selection; the sidebar search follows the ribbon. A ribbon without
+        // that slot falls back to the sidebar search. It used to hand a
+        // selection to the linked PDF instead, so finding the selected part
+        // on the *board* took a detour through the schematic (2026-10-20).
         if (activePanelId.startsWith('board-')) {
           e.preventDefault();
           const boardTabId = parseInt(activePanelId.slice('board-'.length), 10);
-          openBoardSearch(selectionText ?? '', isNaN(boardTabId) ? undefined : boardTabId);
+          const sel = tab?.selection;
+          const kind = sel?.highlightedNet && (sel.partIndex == null || (sel.pinIndex != null && sel.pinIndex >= 0))
+            ? 'nets' : 'parts';
+          const text = selectionText ?? '';
+          if (!isNaN(boardTabId) && focusRibbonFind(boardTabId, kind, text)) {
+            log.ui.log(`find: board ribbon ${kind} field`, { text });
+            return;
+          }
+          log.ui.log('find: board sidebar search (no ribbon field)', { text });
+          openBoardSearch(text, isNaN(boardTabId) ? undefined : boardTabId);
           focusBoardSearchInput();
           return;
         }
@@ -173,8 +185,12 @@ export function useKeyboardShortcuts() {
           const current = pdfStore.getDocSearchQuery(activePdfFile).trim();
           if (clicked && clicked.trim().toLowerCase() !== current.toLowerCase()) {
             prefillText = clicked;
+            log.ui.log('find: pdf field takes the clicked word', { file: activePdfFile, text: clicked, was: current });
           } else if (current) {
             prefillText = null;
+            log.ui.log('find: pdf field kept', { file: activePdfFile, text: current, clicked });
+          } else {
+            log.ui.log('find: pdf field prefilled from the board selection', { file: activePdfFile, text: prefillText });
           }
         }
 

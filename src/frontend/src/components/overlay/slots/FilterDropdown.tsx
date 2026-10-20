@@ -20,6 +20,7 @@ import { useBoardStore } from '../../../hooks/useBoardStore';
 import { useRenderSettings } from '../../../hooks/useRenderSettings';
 import { SuggestionList, type DropdownPopoverGroup } from '../dropdown-popover';
 import { getOverlayIndex } from '../get-overlay-index';
+import { registerRibbonFind } from '../ribbon-find';
 import type { SlotCtx } from '../slot-ctx';
 
 type Kind = 'parts' | 'nets';
@@ -63,6 +64,27 @@ export function FilterDropdown({ ctx, kind }: { ctx: SlotCtx; kind: Kind }) {
 
   // Focus the popped-out field the moment it appears.
   useEffect(() => { if (collapsible && expanded) inputRef.current?.focus(); }, [collapsible, expanded]);
+
+  // Cmd/Ctrl+F lands here: the selected part's or net's name goes in the
+  // field, which is focused with the text selected. The field may not exist
+  // yet (vertical ribbon, collapsed), so the focus waits for the render.
+  const focusPendingRef = useRef(false);
+  useEffect(() => registerRibbonFind(ctx.tabId, kind, {
+    prefill: (text) => {
+      setQuery(text);
+      setHighlight(0);
+      setOpen(true);
+      setExpanded(true);
+      boardStore.setSearch(text);
+      focusPendingRef.current = true;
+    },
+  }), [ctx.tabId, kind]);
+  useEffect(() => {
+    if (!focusPendingRef.current || !inputRef.current) return;
+    focusPendingRef.current = false;
+    inputRef.current.focus();
+    inputRef.current.select();
+  });
 
   if (!board) {
     return (
@@ -160,7 +182,8 @@ export function FilterDropdown({ ctx, kind }: { ctx: SlotCtx; kind: Kind }) {
           value={query}
           data-testid={m.inputId}
           title={m.title}
-          onChange={e => { setQuery(e.target.value); setHighlight(0); setOpen(true); }}
+          // The sidebar's search follows this field: one query, two views.
+          onChange={e => { setQuery(e.target.value); setHighlight(0); setOpen(true); boardStore.setSearch(e.target.value); }}
           onFocus={() => {
             setOpen(true);
             if (selectedName) {
