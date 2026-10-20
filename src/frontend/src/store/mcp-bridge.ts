@@ -573,8 +573,13 @@ async function dispatchDrive(op: string, p: any): Promise<any> {
     }
     case 'highlight_net': {
       const board = requireBoard();
+      const pins = netPins(board, p.net);
+      if (!pins) throw new Error(`net not found: ${p.net}`);
+      if (pins.length === 0) throw new Error(`net has no connected pins: ${p.net}`);
       boardStore.highlightNet(p.net, { via: 'mcp' });
-      const pins = netPins(board, p.net) ?? [];
+      if (boardStore.selection.highlightedNet !== p.net) {
+        throw new Error(`net highlight was not applied: ${p.net}`);
+      }
       const parts = Array.from(new Set(pins.map((x) => x.part).filter(Boolean)));
       toast(`Agent highlighted net ${p.net}`);
       return { ok: true, net: p.net, pins_highlighted: pins.length, parts };
@@ -587,9 +592,14 @@ async function dispatchDrive(op: string, p: any): Promise<any> {
     case 'select_part': {
       const board = requireBoard();
       const part = findPart(board, p.refdes);
-      boardStore.focusPart(p.refdes, { cause: 'click', via: 'mcp' });
-      toast(`Agent selected ${p.refdes}`);
-      return { ok: true, refdes: p.refdes, found: !!part, side: part?.side ?? null, centered: !!part };
+      if (!part) throw new Error(`part not found: ${p.refdes}`);
+      boardStore.focusPart(part.name, { cause: 'click', via: 'mcp' });
+      const selected = boardStore.selectedPart;
+      if (selected?.name !== part.name) {
+        throw new Error(`part selection was not applied: ${part.name}`);
+      }
+      toast(`Agent selected ${selected.name}`);
+      return { ok: true, refdes: selected.name, found: true, side: selected.side, centered: true };
     }
     case 'set_side': {
       requireBoard();
