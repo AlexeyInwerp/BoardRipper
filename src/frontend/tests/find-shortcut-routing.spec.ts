@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const BOARD = path.resolve(here, '../../../samples/kicad/tomu-fpga.kicad_pcb');
 const PDF = path.resolve(here, 'fixtures/two-page-text.pdf');
+const MANY = path.resolve(here, 'fixtures/many-page-text.pdf');
 const FIND = process.platform === 'darwin' ? 'Meta+f' : 'Control+f';
 
 type BoardStoreHook = {
@@ -120,6 +121,47 @@ async function dragMouse(page: Page, from: { x: number; y: number }, dx: number,
   await ev('pointerup', from.x + dx, from.y + dy, 0);
   await page.waitForTimeout(400);
 }
+
+/** The report of 2026-10-20, as reproduced: a typed query, a board open with
+ *  a selected part, pages dragged up and down (grabbing the page moves the
+ *  focus off the field), then ⌘F. The old shortcut prefilled the board's
+ *  selected part over the query. */
+test('⌘F keeps a typed PDF query after dragging pages, with a part selected on the board', async ({ page }) => {
+  test.skip(!fs.existsSync(BOARD), 'needs samples/kicad/tomu-fpga.kicad_pcb');
+  test.setTimeout(60000);
+  await page.goto('/');
+  await expect(page.getByTestId('toolbar')).toBeVisible({ timeout: 15000 });
+  const hooks = await page.evaluate(() => !!(window as unknown as { __boardStore?: unknown }).__boardStore);
+  test.skip(!hooks, 'DEV bundle only');
+  await page.getByTestId('file-input').setInputFiles(BOARD);
+  await expect(page.locator('.dv-tab', { hasText: 'tomu-fpga' })).toBeVisible({ timeout: 20000 });
+  await page.waitForTimeout(1000);
+  await page.evaluate(() => (window as unknown as { __boardStore: BoardStoreHook }).__boardStore.selectPart(3));
+  await page.getByTestId('file-input').setInputFiles(MANY);
+  await expect(page.locator('.pdf-canvas-container')).toBeVisible({ timeout: 20000 });
+  await page.waitForTimeout(2500);
+
+  const field = page.locator('.pdf-search-input');
+  await field.click();
+  await field.fill('PAGE_8_MARKER');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(1200);
+
+  const b = (await page.locator('.pdf-canvas-container').boundingBox())!;
+  const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+  for (const dir of [-1, 1, -1]) {
+    await page.mouse.move(cx, cy);
+    await page.mouse.down();
+    for (let i = 1; i <= 6; i++) { await page.mouse.move(cx, cy + dir * i * 60); await page.waitForTimeout(30); }
+    await page.mouse.up();
+    await page.waitForTimeout(500);
+  }
+  await expect(field).not.toBeFocused();
+
+  await page.keyboard.press(FIND);
+  await expect(field).toHaveValue('PAGE_8_MARKER');
+  await expect(field).toBeFocused();
+});
 
 const clickedWord = (page: Page) => page.evaluate(() =>
   (window as unknown as { __pdfStore?: { lastClickedWord: string | null } }).__pdfStore?.lastClickedWord ?? null);
