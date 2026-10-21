@@ -9,13 +9,21 @@ endobj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 7 0 R >> >> /Contents 4 0 R >>
 endobj
 4 0 obj
-<< /Length 210 >>
+<< /Length 465 >>
 stream
 q 0 0 0 rg
-BT /F1 18 Tf 60 740 Td (BoardRipper test page 1) Tj ET
-BT /F1 18 Tf 60 712 Td (U1 PP3V3_S5 J4900) Tj ET
-BT /F1 18 Tf 60 684 Td (R120 C310 Q7) Tj ET
-BT /F1 18 Tf 60 656 Td (NET AP_SMC_RESET_L) Tj ET
+BT /F1 18 Tf 60 740 Td (BoardRipper) Tj ET
+BT /F1 18 Tf 195 740 Td (test) Tj ET
+BT /F1 18 Tf 253 740 Td (page) Tj ET
+BT /F1 18 Tf 311 740 Td (1) Tj ET
+BT /F1 18 Tf 60 712 Td (U1) Tj ET
+BT /F1 18 Tf 96 712 Td (PP3V3_S5) Tj ET
+BT /F1 18 Tf 198 712 Td (J4900) Tj ET
+BT /F1 18 Tf 60 684 Td (R120) Tj ET
+BT /F1 18 Tf 118 684 Td (C310) Tj ET
+BT /F1 18 Tf 176 684 Td (Q7) Tj ET
+BT /F1 18 Tf 60 656 Td (NET) Tj ET
+BT /F1 18 Tf 107 656 Td (AP_SMC_RESET_L) Tj ET
 Q
 endstream
 endobj
@@ -23,13 +31,20 @@ endobj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 7 0 R >> >> /Contents 6 0 R >>
 endobj
 6 0 obj
-<< /Length 207 >>
+<< /Length 431 >>
 stream
 q 0 0 0 rg
-BT /F1 18 Tf 60 740 Td (BoardRipper test page 2) Tj ET
-BT /F1 18 Tf 60 712 Td (U8100 PPBUS_G3H) Tj ET
-BT /F1 18 Tf 60 684 Td (L7210 D2 F9000) Tj ET
-BT /F1 18 Tf 60 656 Td (NET PM_SLP_S4_L) Tj ET
+BT /F1 18 Tf 60 740 Td (BoardRipper) Tj ET
+BT /F1 18 Tf 195 740 Td (test) Tj ET
+BT /F1 18 Tf 253 740 Td (page) Tj ET
+BT /F1 18 Tf 311 740 Td (2) Tj ET
+BT /F1 18 Tf 60 712 Td (U8100) Tj ET
+BT /F1 18 Tf 129 712 Td (PPBUS_G3H) Tj ET
+BT /F1 18 Tf 60 684 Td (L7210) Tj ET
+BT /F1 18 Tf 129 684 Td (D2) Tj ET
+BT /F1 18 Tf 165 684 Td (F9000) Tj ET
+BT /F1 18 Tf 60 656 Td (NET) Tj ET
+BT /F1 18 Tf 107 656 Td (PM_SLP_S4_L) Tj ET
 Q
 endstream
 endobj
@@ -43,11 +58,11 @@ xref
 0000000058 00000 n 
 0000000121 00000 n 
 0000000247 00000 n 
-0000000508 00000 n 
-0000000634 00000 n 
-0000000892 00000 n 
+0000000763 00000 n 
+0000000889 00000 n 
+0000001371 00000 n 
 trailer
 << /Size 8 /Root 1 0 R >>
 startxref
-962
+1441
 %%EOF

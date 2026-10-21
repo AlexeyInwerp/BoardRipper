@@ -168,17 +168,62 @@ const clickedWord = (page: Page) => page.evaluate(() =>
 
 /** Sweep the top of the page for a word other than `not`; the fixture's words
  *  are refdes-shaped so any hit is a plausible lookup. */
-async function clickSomeWord(page: Page, not: string | null): Promise<string> {
+async function clickSomeWord(page: Page, not: string | null, want?: string): Promise<string> {
   const b = (await page.locator('.pdf-canvas-container').boundingBox())!;
   for (let fy = 0.03; fy < 0.97; fy += 0.012) {
     for (let fx = 0.08; fx < 0.8; fx += 0.03) {
       await tapAt(page, b.x + b.width * fx, b.y + b.height * fy);
       const w = await clickedWord(page);
-      if (w && w !== not) return w;
+      if (w && w !== not && (!want || w === want)) return w;
     }
   }
   throw new Error('no word hit in the sweep');
 }
+
+/** A PDF linked to a board: a word click there focuses the part on the board
+ *  and mirrors the query into the board's search, and the auto-switch brings
+ *  the linked panel forward on every tab change. Neither may move Dockview's
+ *  active panel away from the one the user is in — or ⌘F lands in the
+ *  linked board's find field (2026-10-21). */
+test('⌘F stays in the PDF after a word click and after a tab switch, with a linked board', async ({ page }) => {
+  test.skip(!fs.existsSync(BOARD), 'needs samples/kicad/tomu-fpga.kicad_pcb');
+  test.setTimeout(60000);
+  await page.goto('/');
+  await expect(page.getByTestId('toolbar')).toBeVisible({ timeout: 15000 });
+  const hooks = await page.evaluate(() => !!(window as unknown as { __boardStore?: unknown }).__boardStore);
+  test.skip(!hooks, 'DEV bundle only');
+  await page.getByTestId('file-input').setInputFiles(BOARD);
+  await expect(page.locator('.dv-tab', { hasText: 'tomu-fpga' })).toBeVisible({ timeout: 20000 });
+  await page.waitForTimeout(1000);
+  await page.getByTestId('file-input').setInputFiles(PDF);
+  await expect(page.locator('.pdf-canvas-container')).toBeVisible({ timeout: 20000 });
+  await page.waitForTimeout(2500);
+  await page.evaluate(() => {
+    const s = (window as unknown as { __boardStore: { activeTabId: number; addPdfBinding: (t: number, n: string) => void } }).__boardStore;
+    s.addPdfBinding(s.activeTabId, 'two-page-text.pdf');
+  });
+
+  const field = page.locator('.pdf-search-input');
+  const { parts } = await bs(page);
+  const u1 = parts.findIndex(p => p.name === 'U1');
+
+  // Click "U1" on the page: the board follows (selects U1), the user stays in the PDF.
+  await clickSomeWord(page, null, 'U1');
+  await expect.poll(() => page.evaluate(() =>
+    (window as unknown as { __boardStore: { selection: { partIndex: number | null } } }).__boardStore.selection.partIndex)).toBe(u1);
+  await page.keyboard.press(FIND);
+  await expect(field).toHaveValue('U1');
+  await expect(field).toBeFocused();
+  await expect(page.getByTestId('parts-filter-input')).not.toBeFocused();
+
+  // Board tab, then PDF tab: the follow brings the board forward, ⌘F is still the PDF's.
+  await page.locator('.dv-tab', { hasText: 'tomu-fpga' }).click();
+  await page.locator('.dv-tab', { hasText: 'two-page-text.pdf' }).click();
+  await page.waitForTimeout(300);
+  await page.keyboard.press(FIND);
+  await expect(field).toBeFocused();
+  await expect(field).toHaveValue('U1');
+});
 
 const transform = (page: Page) => page.evaluate(() =>
   (document.querySelector('.pdf-page-wrapper') as HTMLElement | null)?.style.transform ?? '');

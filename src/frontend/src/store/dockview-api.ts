@@ -404,9 +404,16 @@ export function activateLinkedPanel(
   if (!api) return false;
   const panel = api.getPanel(panelId);
   if (!panel) return false;
+  // The panel the user chose stays Dockview's active panel: the linked one
+  // comes to the front of its own group and the user's is re-activated right
+  // after. Leaving the linked panel active made every "which panel am I in"
+  // reader — ⌘F first of all — answer with the panel the user had NOT clicked
+  // (2026-10-21: ⌘F in a PDF landed in the linked board's find field).
+  const chosen = api.activePanel;
   _linkActivating = true;
   switchFn();
   panel.api.setActive();
+  if (chosen && chosen.id !== panelId && api.getPanel(chosen.id)) chosen.api.setActive();
   _linkActivating = false;
   return true;
 }

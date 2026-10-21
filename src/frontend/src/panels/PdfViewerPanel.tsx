@@ -3514,7 +3514,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const nav = { cause: 'lookup' as const, from: `${pdfFileName} · p.${hit.pageIndex + 1}` };
       if (isPart) boardStore.focusPart(hit.word, nav);
       else if (isNet) boardStore.focusNet(hit.word, nav);
-      if (isPart || isNet) openBoardSearch(hit.word);
+      if (isPart || isNet) openBoardSearch(hit.word, undefined, { activate: false });
     }
 
     // PDF↔PDF cross-lookup: if this PDF is linked to another, drive the
@@ -3549,7 +3549,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       } else {
         boardStore.focusNet(hit.word, nav);
       }
-      openBoardSearch(hit.word);
+      openBoardSearch(hit.word, undefined, { activate: false });
     }
   }, [hitTestWord, pdfFileName, hideClickHighlight]);
 

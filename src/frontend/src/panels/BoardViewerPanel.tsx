@@ -100,13 +100,14 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   // Register per-tab handler for toolbar → board search
   useEffect(() => {
     if (tabId == null) return;
-    return registerBoardSearchHandler(tabId, (query: string) => {
+    return registerBoardSearchHandler(tabId, (query: string, { activate }) => {
       boardStore.switchTab(tabId);
       boardStore.setSearch(query);
       setSidebarOpen(true);
       setSidebarTab('search');
-      // Activate this panel in dockview
-      props.api.setActive();
+      // Activate this panel in dockview — unless the search is a mirror of a
+      // PDF click, where the user stays in the PDF.
+      if (activate) props.api.setActive();
     });
   }, [tabId, props.api]);
 

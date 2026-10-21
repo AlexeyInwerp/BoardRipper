@@ -10,7 +10,11 @@
 
 import { boardStore } from '../store/board-store';
 
-type SearchHandler = (query: string) => void;
+/** `activate`: bring the board panel to the front (a search the user aimed at
+ *  the board). A mirror from a PDF click passes false — the user is in the PDF
+ *  and the board follows without taking Dockview's active panel. */
+export interface BoardSearchOpts { activate: boolean }
+type SearchHandler = (query: string, opts: BoardSearchOpts) => void;
 type SidebarTabName = 'layers' | 'info' | 'search' | 'worklist' | 'revisions';
 type SidebarTabHandler = (tab: SidebarTabName) => void;
 
@@ -27,12 +31,12 @@ export function registerBoardSidebarTabHandler(tabId: number, fn: SidebarTabHand
   return () => { sidebarTabHandlers.delete(tabId); };
 }
 
-export function openBoardSearch(query: string, tabId?: number): void {
+export function openBoardSearch(query: string, tabId?: number, opts: BoardSearchOpts = { activate: true }): void {
   if (tabId != null) {
-    searchHandlers.get(tabId)?.(query);
+    searchHandlers.get(tabId)?.(query, opts);
   } else {
     const activeId = boardStore.activeTabId;
-    if (activeId != null) searchHandlers.get(activeId)?.(query);
+    if (activeId != null) searchHandlers.get(activeId)?.(query, opts);
   }
 }
 

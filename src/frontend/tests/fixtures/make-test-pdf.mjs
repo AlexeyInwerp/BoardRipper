@@ -16,9 +16,20 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
+/** One text object per WORD, not per line: pdf.js reports a whole `Tj` as one
+ *  text item and drops the spaces of this width-less font, so a click on
+ *  "U1" used to read as "U1PP3V3_S5J4900" and matched nothing on a board.
+ *  Words are placed at ~11 pt per character, 18 pt Helvetica. */
 function page(lines) {
   const body = lines
-    .map((t, i) => `BT /F1 18 Tf 60 ${740 - i * 28} Td (${t}) Tj ET`)
+    .flatMap((t, i) => {
+      let x = 60;
+      return t.split(' ').map(word => {
+        const op = `BT /F1 18 Tf ${x} ${740 - i * 28} Td (${word}) Tj ET`;
+        x += word.length * 11 + 14;
+        return op;
+      });
+    })
     .join('\n');
   return `q 0 0 0 rg\n${body}\nQ`;
 }
