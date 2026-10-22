@@ -24,6 +24,7 @@ import { setLibrarySearch } from '../panels/LibraryPanel';
 import { countInBoardTab, countInPdf, findInBoardTab, findInPdf } from '../store/cross-target-search';
 import { SearchScopeBadge, type SearchScope } from './SearchScopeBadge';
 import { isTwoWindowMode, toggleTwoWindowMode, onTwoWindowModeChange } from '../store/two-window-mode';
+import { uiZoom } from '../store/ui-zoom';
 
 declare const __APP_VERSION__: string;
 
@@ -597,7 +598,8 @@ export function Toolbar() {
     const text = el?.getAttribute('data-tooltip');
     if (!el || !text) return;
     const r = el.getBoundingClientRect();
-    setTip({ text, x: r.left + r.width / 2, y: r.bottom + 8 });
+    const z = uiZoom();
+    setTip({ text, x: (r.left + r.width / 2) / z, y: r.bottom / z + 8 });
   }, []);
   const hideTip = useCallback((e: React.MouseEvent) => {
     const from = (e.target as HTMLElement).closest('[data-tooltip]');
@@ -615,11 +617,12 @@ export function Toolbar() {
     el.style.top = `${tip.y}px`;
     el.style.transform = 'translateX(-50%)';
     const r = el.getBoundingClientRect();
+    const z = uiZoom();
     let dx = 0;
     if (r.right > window.innerWidth - pad) dx = (window.innerWidth - pad) - r.right;
     else if (r.left < pad) dx = pad - r.left;
-    if (dx) el.style.transform = `translateX(calc(-50% + ${Math.round(dx)}px))`;
-    if (r.bottom > window.innerHeight - pad) el.style.top = `${tip.y - r.height - 16}px`;
+    if (dx) el.style.transform = `translateX(calc(-50% + ${Math.round(dx / z)}px))`;
+    if (r.bottom > window.innerHeight - pad) el.style.top = `${tip.y - r.height / z - 16}px`;
   }, [tip]);
 
   return (

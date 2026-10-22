@@ -24,6 +24,7 @@ import { createPortal } from 'react-dom';
 import { resizeModeStore, CONTROLS } from '../store/resize-mode-store';
 import { DEFAULTS, type RenderSettings } from '../store/render-settings';
 import { RangeControl } from './RangeControl';
+import { uiZoom } from '../store/ui-zoom';
 
 function subscribe(cb: () => void) {
   return resizeModeStore.subscribe(cb);
@@ -137,10 +138,13 @@ export function ResizePopup() {
   const groupModified = popup.keys.some(k => resizeModeStore.isModified(k));
 
   const W = 250;
-  const maxH = window.innerHeight - 24;
+  // Fixed inside the zoomed body: the pointer is unzoomed, the offsets are not.
+  const z = uiZoom();
+  const winW = window.innerWidth / z, winH = window.innerHeight / z;
+  const maxH = winH - 24;
   const H = Math.min(maxH, 60 + popup.keys.length * 68);
-  const left = Math.min(Math.max(8, popup.pageX + 12), window.innerWidth - W - 8);
-  const top = Math.min(Math.max(8, popup.pageY + 12), window.innerHeight - H - 8);
+  const left = Math.min(Math.max(8, popup.pageX / z + 12), winW - W - 8);
+  const top = Math.min(Math.max(8, popup.pageY / z + 12), winH - H - 8);
 
   return createPortal(
     <div

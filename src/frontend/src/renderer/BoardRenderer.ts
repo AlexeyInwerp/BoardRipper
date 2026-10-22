@@ -702,6 +702,7 @@ export class BoardRenderer {
   private hoverPinIndex: number | null = null;
   /** Bound wheel wake-up handler for cleanup */
   private boundWheelWake: ((e: WheelEvent) => void) | null = null;
+  private boundPointerCapture: ((e: PointerEvent) => void) | null = null;
   /** Bound shift+wheel handler — intercepts before pixi-viewport to implement scroll bindings */
   private boundShiftWheel: ((e: WheelEvent) => void) | null = null;
   private boundDragZoomDown: ((e: PointerEvent) => void) | null = null;
@@ -1411,6 +1412,7 @@ export class BoardRenderer {
         canvas.removeEventListener('pointermove', this.boundHover);
         canvas.removeEventListener('pointerleave', this.boundHideTooltip!);
         if (this.boundWheelWake) canvas.removeEventListener('wheel', this.boundWheelWake);
+        if (this.boundPointerCapture) canvas.removeEventListener('pointerdown', this.boundPointerCapture);
       }
       // Symmetry with destroy(): drop webglcontextlost/restored listeners off the
       // old canvas (reinitApp reinstalls them on the fresh canvas). Otherwise the
@@ -1786,6 +1788,7 @@ export class BoardRenderer {
       newCanvas.addEventListener('pointermove', this.boundHover);
       newCanvas.addEventListener('pointerleave', this.boundHideTooltip!);
       if (this.boundWheelWake) newCanvas.addEventListener('wheel', this.boundWheelWake, { passive: true });
+      if (this.boundPointerCapture) newCanvas.addEventListener('pointerdown', this.boundPointerCapture);
     }
     this.installContextLossHandlers(newCanvas);
 
@@ -2285,6 +2288,20 @@ export class BoardRenderer {
       this.scheduleWheelIdlePause();
     };
     this.tooltipCanvas.addEventListener('wheel', this.boundWheelWake, { passive: true });
+
+    // A mouse drag keeps the board: PixiJS listens for pointermove on the
+    // canvas only, so the moment the pointer crossed onto the ribbon, the
+    // minimap or out of the panel the pan froze until it came back —
+    // "scrolling stops when the mouse goes beyond the rendering area"
+    // (2026-10-22). Capturing the pointer on the canvas keeps every move on
+    // it until release, as any other app's drag does. Touch has implicit
+    // capture already; drag-to-zoom later moves the capture to the container
+    // on purpose (see dragZoomActive).
+    this.boundPointerCapture = (e: PointerEvent) => {
+      if (e.pointerType === 'touch' || e.button === 2) return;
+      try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
+    };
+    this.tooltipCanvas.addEventListener('pointerdown', this.boundPointerCapture);
 
     // WebGL context loss recovery — browser may reclaim context when canvas is hidden
     this.installContextLossHandlers(this.app.renderer.canvas as HTMLCanvasElement);
@@ -4588,6 +4605,35 @@ export class BoardRenderer {
    * horizontal-scroll gesture (Shift+wheel, or whatever a utility maps) intact
    * — the axis was decided before the event reached us (issue #40).
    */
+  /** Events this renderer re-dispatched onto its canvas, so a listener up
+   *  the tree that forwards wheels never forwards one twice. */
+  private static readonly forwardedWheels = new WeakSet<Event>();
+
+  /** Re-dispatch a wheel that landed on an overlay of the board panel (the
+   *  ribbon, the minimap, the slide sheet) onto the canvas, where pixi-viewport
+   *  and the capture handler expect it. Those overlays are siblings of the
+   *  canvas host, so a scroll that drifted onto one stopped the pan dead —
+   *  "scrolling stops when the mouse goes beyond the rendering area"
+   *  (2026-10-22). Returns false for an event that is already a forward. */
+  forwardWheel(e: WheelEvent): boolean {
+    if (BoardRenderer.forwardedWheels.has(e)) return false;
+    const canvas = this.app?.canvas;
+    if (!canvas) return false;
+    const clone = new WheelEvent('wheel', {
+      bubbles: true, cancelable: true, composed: true,
+      view: canvas.ownerDocument.defaultView,
+      clientX: e.clientX, clientY: e.clientY, screenX: e.screenX, screenY: e.screenY,
+      deltaX: e.deltaX, deltaY: e.deltaY, deltaZ: e.deltaZ, deltaMode: e.deltaMode,
+      ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey, altKey: e.altKey,
+      buttons: e.buttons,
+    });
+    BoardRenderer.forwardedWheels.add(clone);
+    e.preventDefault();
+    e.stopPropagation();
+    canvas.dispatchEvent(clone);
+    return true;
+  }
+
   private installShiftWheelHandler(): void {
     // Remove previous listener if viewport was recreated (e.g. context-loss reinit)
     if (this.boundShiftWheel) {
@@ -8521,12 +8567,14 @@ export class BoardRenderer {
       this.tooltipCanvas.removeEventListener('pointermove', this.boundHover);
       this.tooltipCanvas.removeEventListener('pointerleave', this.boundHideTooltip!);
       if (this.boundWheelWake) this.tooltipCanvas.removeEventListener('wheel', this.boundWheelWake);
+      if (this.boundPointerCapture) this.tooltipCanvas.removeEventListener('pointerdown', this.boundPointerCapture);
       this.tooltipCanvas = null;
     }
     if (this.hoverRafId !== null) { cancelAnimationFrame(this.hoverRafId); this.hoverRafId = null; }
     this.boundHover = null;
     this.boundHideTooltip = null;
     this.boundWheelWake = null;
+    this.boundPointerCapture = null;
     this.tooltipEl?.remove();
     this.tooltipEl = null;
     // Tear down the Canvas2D label overlay (removes its containerEl-sibling canvas).

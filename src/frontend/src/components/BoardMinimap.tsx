@@ -224,6 +224,7 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
   useEffect(() => themeStore.subscribe(() => { if (visible) paint(); }), [visible, paint]);
   useEffect(() => { if (visible) paint(); }, [visible, paint]);
 
+  const dragging = useRef(false);
   const goTo = useCallback((e: React.PointerEvent) => {
     const base = baseRef.current, cv = canvasRef.current;
     if (!base || !cv || !renderer) return;
@@ -246,9 +247,17 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
         if (!visible || e.button !== 0) return;
         e.stopPropagation();
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        dragging.current = true;
         goTo(e);
       }}
-      onPointerMove={e => { if (e.buttons & 1 && visible) goTo(e); }}
+      // Only a press that began on the map drags the view. A board drag that
+      // merely crosses the map — which fades in under the very pan that is
+      // being made — must not recentre on the map point (2026-10-22, "jumps
+      // as if the map were being used").
+      onPointerMove={e => { if (dragging.current && e.buttons & 1 && visible) goTo(e); }}
+      onPointerUp={() => { dragging.current = false; }}
+      onPointerCancel={() => { dragging.current = false; }}
+      onLostPointerCapture={() => { dragging.current = false; }}
     >
       <canvas ref={canvasRef} style={{ width: size.w, height: size.h }} />
     </div>

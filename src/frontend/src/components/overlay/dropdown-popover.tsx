@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
+import { uiZoom } from '../../store/ui-zoom';
 import type { OverlayIndexRow } from './get-overlay-index';
 
 const MAX_RENDERED_ROWS = 500;
@@ -55,15 +56,19 @@ export function SuggestionList({ groups, highlight, onHighlight, onSelect, onClo
   // short window) it opens upward instead.
   useLayoutEffect(() => {
     const updatePos = () => {
-      const r = anchorRef.current?.getBoundingClientRect();
-      if (!r) return;
+      const rc = anchorRef.current?.getBoundingClientRect();
+      if (!rc) return;
+      // The list is fixed inside the zoomed body: work in its zoomed frame.
+      const z = uiZoom();
+      const r = { left: rc.left / z, top: rc.top / z, bottom: rc.bottom / z, width: rc.width / z };
+      const winW = window.innerWidth / z, winH = window.innerHeight / z;
       const GAP = 4, MARGIN = 8, PREFERRED = 300, MIN_BELOW = 160;
       const width = Math.max(r.width, 200);
-      const left = Math.max(MARGIN, Math.min(r.left, window.innerWidth - width - MARGIN));
-      const below = window.innerHeight - r.bottom - GAP - MARGIN;
+      const left = Math.max(MARGIN, Math.min(r.left, winW - width - MARGIN));
+      const below = winH - r.bottom - GAP - MARGIN;
       const above = r.top - GAP - MARGIN;
       if (below < Math.min(PREFERRED, MIN_BELOW) && above > below) {
-        setPos({ bottom: window.innerHeight - r.top + GAP, left, width, maxHeight: Math.min(PREFERRED, above) });
+        setPos({ bottom: winH - r.top + GAP, left, width, maxHeight: Math.min(PREFERRED, above) });
       } else {
         setPos({ top: r.bottom + GAP, left, width, maxHeight: Math.max(80, Math.min(PREFERRED, below)) });
       }

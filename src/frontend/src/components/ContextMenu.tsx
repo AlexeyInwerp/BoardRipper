@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useSyncExternalStore, useState } from 'react';
 import { addWatermarkTerm } from '../store/pdf-filter-actions';
-import { IconCopy, IconWorld, IconPin, IconPinFilled, IconShieldPlus } from '@tabler/icons-react';
+import { IconCopy, IconWorld, IconPin, IconPinFilled, IconShieldPlus, IconSearch } from '@tabler/icons-react';
+import { uiZoom } from '../store/ui-zoom';
 import { contextMenuStore } from '../store/context-menu-store';
 import type { ContextMenuState } from '../store/context-menu-store';
 import { boardStore } from '../store/board-store';
@@ -842,10 +843,24 @@ export function ContextMenu() {
       </div>
     );
 
+    // Find the text in this very PDF — the magnifier, first (2026-10-22).
+    const findHereItem = (
+      <div
+        key="find-here"
+        className="context-menu-item"
+        data-testid="ctx-pdf-find-here"
+        onClick={(e) => doPdfSearch(e, originPdf, state.query)}
+        title="Search this PDF for the text under the cursor"
+      >
+        <IconSearch size={14} stroke={1.8} />
+        <span style={{ marginLeft: 6 }}>{`Find "${state.query}" in this PDF`}</span>
+      </div>
+    );
+
     // Note: even with no boards/PDFs open to search locally, we still fall
     // through to the "Search all donors" escape hatch below — donor search is
     // a library-wide action, independent of what's currently open.
-    const sections: React.ReactNode[] = [wmItem];
+    const sections: React.ReactNode[] = [findHereItem, wmItem];
 
     // PDF mode has exactly one query per right-click, so donor rows are
     // flat (no spoiler, no variants). Each row = click = jump + search.
@@ -907,7 +922,7 @@ export function ContextMenu() {
     <div
       className="context-menu"
       ref={menuRef}
-      style={{ left: state.screenX, top: state.screenY }}
+      style={{ left: state.screenX / uiZoom(), top: state.screenY / uiZoom() }}
       onClick={(e) => e.stopPropagation()}
     >
       {header}

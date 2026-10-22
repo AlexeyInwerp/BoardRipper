@@ -10,6 +10,7 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { uiZoom } from '../store/ui-zoom';
 
 export type QuickMenuItem =
   | { kind: 'header'; label: string }
@@ -56,14 +57,16 @@ export function QuickMenu({ x, y, items, onClose, ariaLabel, testId }: Props) {
     if (!el || !doc) return;
     const win = doc.defaultView ?? window;
     const r = el.getBoundingClientRect();
-    el.style.left = `${Math.max(4, Math.min(x, win.innerWidth - r.width - 4))}px`;
-    el.style.top = `${Math.max(4, Math.min(y, win.innerHeight - r.height - 4))}px`;
+    // Fixed inside the zoomed body: pointer and rect are unzoomed, offsets are not.
+    const z = uiZoom(doc);
+    el.style.left = `${Math.max(4, Math.min(x / z, (win.innerWidth - r.width) / z - 4))}px`;
+    el.style.top = `${Math.max(4, Math.min(y / z, (win.innerHeight - r.height) / z - 4))}px`;
   }, [x, y, items.length, doc]);
 
   if (!doc) return <span ref={anchorRef} hidden />;
 
   return createPortal(
-    <div ref={ref} className="quick-menu" role="menu" aria-label={ariaLabel} data-testid={testId} style={{ left: x, top: y }}>
+    <div ref={ref} className="quick-menu" role="menu" aria-label={ariaLabel} data-testid={testId} style={{ left: x / uiZoom(doc ?? document), top: y / uiZoom(doc ?? document) }}>
       {items.map((it, i) => {
         if (it.kind === 'sep') return <div key={i} className="quick-menu-sep" role="separator" />;
         if (it.kind === 'header') return <div key={i} className="quick-menu-header">{it.label}</div>;

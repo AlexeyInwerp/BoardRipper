@@ -97,6 +97,28 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   }, []);
   const prevLayerCountRef = useRef(0);
 
+  // A wheel over the panel's overlays — ribbon, minimap, slide sheet, the
+  // sidebar toggle — goes to the board. The sidebar keeps its own (its lists
+  // scroll), as does any scrollable element and any text field.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const onWheel = (e: WheelEvent) => {
+      const renderer = rendererRef.current;
+      const host = containerRef.current;
+      const target = e.target as Element | null;
+      if (!renderer || !host || !target || host.contains(target)) return;
+      if (target.closest('.board-sidebar, input, textarea, select, [data-wheel-own]')) return;
+      for (let el: Element | null = target; el && el !== root; el = el.parentElement) {
+        const cs = getComputedStyle(el);
+        if ((cs.overflowY === 'auto' || cs.overflowY === 'scroll') && el.scrollHeight > el.clientHeight) return;
+      }
+      renderer.forwardWheel(e);
+    };
+    root.addEventListener('wheel', onWheel, { capture: true, passive: false });
+    return () => root.removeEventListener('wheel', onWheel, true);
+  }, []);
+
   // Register per-tab handler for toolbar → board search
   useEffect(() => {
     if (tabId == null) return;

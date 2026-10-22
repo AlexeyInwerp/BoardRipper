@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { uiZoom } from '../store/ui-zoom';
 import { createPortal } from 'react-dom';
 import { IconLink, IconLinkOff } from '@tabler/icons-react';
 
@@ -57,7 +58,8 @@ export function BindLink({ boundNames, options, onToggle, title, primaryLabel, u
     if (!open) return;
     if (fixedDropdown && btnRef.current) {
       const r = btnRef.current.getBoundingClientRect();
-      setDropPos({ top: r.bottom + 4, left: r.left });
+      const z = uiZoom();
+      setDropPos({ top: r.bottom / z + 4, left: r.left / z });
     }
     const onMouse = (e: MouseEvent) => {
       const t = e.target as Node;
