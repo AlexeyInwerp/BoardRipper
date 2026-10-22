@@ -1,9 +1,52 @@
 # BoardRipper changelog
 
-## Unreleased
+## v0.50.2 — 2026-10-23
+
+### Added
+
+- **Library files in the global search.** The toolbar search lists the first
+  five matching library files under the Library row — board number, file name
+  and folder, board or PDF — with a *N more…* spoiler for the rest. A click
+  opens the file; the Library row still opens the panel with the whole list.
+- **Find in this PDF.** The PDF's right-click menu has a magnifier next to
+  copy and web search that searches the open PDF for the text under the
+  cursor.
+
+### Changed
+
+- **⌘F / Ctrl+F on a board lands in the ribbon's find field** — *Find part*
+  with the selected part's name, *Find net* with a lit net's or a selected
+  pin's net — and the sidebar's Search tab follows whatever the ribbon field
+  holds. It used to send a selection to the linked schematic.
+- **⌘F on a PDF keeps the query.** A word clicked since the last ⌘F becomes
+  the query; otherwise the shortcut only focuses the field. It used to replace
+  the text with the board's selected part after the page had been dragged, and
+  re-ran the search, which jumped to another occurrence.
+- **The browser's own shortcuts and menu stay out of the way**: ⌘F, ⌘G, ⌘S,
+  ⌘D, ⌘P, ⌘O and the zoom keys never reach the browser, and a right-click on
+  the tab strip or any other chrome no longer opens its menu (text fields keep
+  it for paste).
 
 ### Fixed
 
+- **Popups at a scaled interface.** With the interface scale at anything but
+  100 %, the ribbon's suggestion list, the context menus, the resize popup,
+  the link dropdown and the toolbar tooltips opened away from where they
+  belong — at 125 % a quarter of the screen to the right. They now land on
+  their field or pointer at every scale.
+- **Panning no longer stops at the panel edge.** A mouse drag follows the
+  pointer until the button is released, over the toolbar, the sidebar or
+  outside the window; a scroll over the ribbon, the minimap or the slide sheet
+  moves the board; and the minimap only drives the view for a press that began
+  on it — it fades in under the pan being made and used to jump the view when
+  the drag crossed it.
+- **⌘F after a click in a linked schematic stays in the schematic.** The
+  auto-switch that brings the linked board forward left the board as the
+  active panel, so the shortcut answered with the panel the user had not
+  clicked.
+- **The first PDF opened now has a working ⌘F.** A panel that was active from
+  the start never registered its find field, so the shortcut set the text
+  without focusing it.
 - **A board beside a schematic answers the net-lines button.** While a PDF
   panel is the active one the board panel is paused (no frames are drawn),
   so a mode change made there — or any other change from the store — showed
