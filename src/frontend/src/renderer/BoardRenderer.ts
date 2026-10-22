@@ -1676,6 +1676,12 @@ export class BoardRenderer {
       screenWidth: this.containerEl.clientWidth || 1,
       screenHeight: this.containerEl.clientHeight || 1,
       events: this.app.renderer.events,
+      // A drag follows the pointer until the button is released, wherever it
+      // goes — pixi-viewport otherwise takes `pointermove` only while the
+      // pointer hit-tests inside the screen rect and ends the drag on
+      // `pointerleave` (2026-10-22, "click and drag stops when the pointer
+      // leaves the board view").
+      allowPreserveDragOutside: true,
     });
     this.applyViewportPlugins();
     this.installShiftWheelHandler();
@@ -1862,6 +1868,7 @@ export class BoardRenderer {
       screenWidth: this.containerEl.clientWidth,
       screenHeight: this.containerEl.clientHeight,
       events: this.app.renderer.events,
+      allowPreserveDragOutside: true, // see the init site above
     });
 
     this.applyViewportPlugins();
