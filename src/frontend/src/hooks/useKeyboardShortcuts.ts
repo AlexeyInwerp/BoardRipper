@@ -530,6 +530,14 @@ export function useKeyboardShortcuts() {
     // sheet's text boxes do, and ⌘F typed there opened the browser's find bar
     // (2026-10-22, "sometimes ⌘F causes the browser's search").
     const BROWSER_CHORD_KEYS = new Set(['=', '+', '-', '0', 'f', 'g', 'e', 's', 'd', 'p', 'o', 'j']);
+    // The browser's context menu never opens either — a right-click on a tab
+    // strip or any other chrome showed it (2026-10-22). Text fields keep it:
+    // paste and spell-check live there.
+    const blockNativeContextMenu = (e: MouseEvent) => {
+      const t = e.target as Element | null;
+      if (t?.closest?.('input, textarea, [contenteditable="true"], [data-native-menu]')) return;
+      e.preventDefault();
+    };
     const blockKeyboardZoom = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
       if (mod && !e.altKey && BROWSER_CHORD_KEYS.has(e.key.toLowerCase())) {
@@ -572,6 +580,7 @@ export function useKeyboardShortcuts() {
     document.addEventListener('keydown', handler);
     document.addEventListener('keyup', spaceKeyupHandler);
     window.addEventListener('keydown', blockKeyboardZoom, true);
+    window.addEventListener('contextmenu', blockNativeContextMenu, true);
     document.addEventListener('wheel', blockBrowserZoom, { passive: false });
     window.addEventListener('blur', spaceBlurHandler);
 
@@ -585,6 +594,7 @@ export function useKeyboardShortcuts() {
       doc.addEventListener('keydown', handler);
       doc.addEventListener('keyup', spaceKeyupHandler);
       doc.defaultView?.addEventListener('keydown', blockKeyboardZoom, true);
+      doc.defaultView?.addEventListener('contextmenu', blockNativeContextMenu, true);
       doc.addEventListener('mousemove', trackMouse, { passive: true });
       popoutDocs.add(doc);
     };
@@ -592,6 +602,7 @@ export function useKeyboardShortcuts() {
       doc.removeEventListener('keydown', handler);
       doc.removeEventListener('keyup', spaceKeyupHandler);
       doc.defaultView?.removeEventListener('keydown', blockKeyboardZoom, true);
+      doc.defaultView?.removeEventListener('contextmenu', blockNativeContextMenu, true);
       doc.removeEventListener('mousemove', trackMouse);
       popoutDocs.delete(doc);
     };
@@ -612,6 +623,7 @@ export function useKeyboardShortcuts() {
       document.removeEventListener('keydown', handler);
       document.removeEventListener('keyup', spaceKeyupHandler);
       window.removeEventListener('keydown', blockKeyboardZoom, true);
+      window.removeEventListener('contextmenu', blockNativeContextMenu, true);
       document.removeEventListener('wheel', blockBrowserZoom);
       window.removeEventListener('blur', spaceBlurHandler);
       clearInterval(scanInterval);

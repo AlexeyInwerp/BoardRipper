@@ -31,3 +31,21 @@ test('⌘F / ⌘S / ⌘D / ⌘P are default-prevented even from an element that 
   for (const key of ['f', 's', 'd', 'p', 'g', '0', '=']) expect(results[key], key).toBe(true);
   expect(results.plain).toBe(false);
 });
+
+test('the native context menu is blocked on chrome such as the tab strip, not in text fields', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByTestId('toolbar')).toBeVisible({ timeout: 15000 });
+  const r = await page.evaluate(() => {
+    const fire = (el: Element) => {
+      const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 });
+      el.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    };
+    const toolbar = document.querySelector('[data-testid="toolbar"]')!;
+    const input = document.querySelector('[data-testid="search-input"]')!;
+    return { toolbar: fire(toolbar), body: fire(document.body), input: fire(input) };
+  });
+  expect(r.toolbar).toBe(true);
+  expect(r.body).toBe(true);
+  expect(r.input).toBe(false);
+});

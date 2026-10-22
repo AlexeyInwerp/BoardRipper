@@ -8,7 +8,8 @@
  * right of its field, at 80 % to the left and above it. Every such popup now
  * divides by the body zoom (`store/ui-zoom.ts`).
  *
- * Also covers the PDF context menu's new first row, "Find … in this PDF".
+ * Also covers the PDF context menu's magnifier chip, "Find … in this PDF",
+ * on the header line next to copy and web search.
  */
 import { test, expect, type Page } from '@playwright/test';
 import path from 'node:path';
@@ -65,7 +66,7 @@ for (const scale of ['1.25', '0.8']) {
       for (let fx = 0.08; fx < 0.8; fx += 0.03) {
         const x = b.x + b.width * fx, y = b.y + b.height * fy;
         await page.mouse.click(x, y, { button: 'right' });
-        const item = page.getByTestId('ctx-pdf-find-here');
+        const item = page.getByTestId('qa-find-pdf');
         if (await item.count()) { hit = { x, y }; break outer; }
         await page.keyboard.press('Escape');
       }
@@ -74,9 +75,8 @@ for (const scale of ['1.25', '0.8']) {
     const m = (await rect(page, '.context-menu'))!;
     expect(Math.abs(m.x - hit!.x)).toBeLessThan(12);
     expect(Math.abs(m.y - hit!.y)).toBeLessThan(12);
-    const item = page.getByTestId('ctx-pdf-find-here');
-    const label = await item.textContent();
-    const word = /Find "(.+)" in this PDF/.exec(label ?? '')?.[1];
+    const item = page.getByTestId('qa-find-pdf');
+    const word = (await page.getByTestId('qa-copy-text').textContent())?.trim();
     expect(word).toBeTruthy();
     await item.click();
     const field = page.locator('.pdf-search-input');

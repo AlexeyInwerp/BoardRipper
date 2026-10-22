@@ -428,6 +428,9 @@ export function ContextMenu() {
        *  *removes* the entry instead of adding (toggle semantics, mirrors
        *  shift-click on the canvas). */
       worklistLit?: boolean;
+      /** Find the value in the PDF the menu was opened on (magnifier chip,
+       *  after the web search — "the same line as copy and web search"). */
+      findInPdf?: (e: React.MouseEvent) => void;
       testKind?: 'part' | 'net' | 'text';
     } = {},
   ): React.ReactElement => {
@@ -468,6 +471,16 @@ export function ContextMenu() {
             onClick={(e) => { e.stopPropagation(); searchValue(value); }}
           >
             <IconWorld size={12} stroke={2} />
+          </button>
+        )}
+        {actions.findInPdf && (
+          <button
+            className="ctxmenu-chip-action"
+            title={`Find '${value}' in this PDF`}
+            data-testid="qa-find-pdf"
+            onClick={actions.findInPdf}
+          >
+            <IconSearch size={12} stroke={2} />
           </button>
         )}
       </span>
@@ -521,7 +534,7 @@ export function ContextMenu() {
     if (!q) return null;
     return (
       <div className="context-menu-header" data-testid="context-menu-header">
-        {renderValueChip(q, { search: true, testKind: 'text' })}
+        {renderValueChip(q, { search: true, testKind: 'text', findInPdf: (e) => doPdfSearch(e, originPdf, q) })}
       </div>
     );
   };
@@ -843,24 +856,10 @@ export function ContextMenu() {
       </div>
     );
 
-    // Find the text in this very PDF — the magnifier, first (2026-10-22).
-    const findHereItem = (
-      <div
-        key="find-here"
-        className="context-menu-item"
-        data-testid="ctx-pdf-find-here"
-        onClick={(e) => doPdfSearch(e, originPdf, state.query)}
-        title="Search this PDF for the text under the cursor"
-      >
-        <IconSearch size={14} stroke={1.8} />
-        <span style={{ marginLeft: 6 }}>{`Find "${state.query}" in this PDF`}</span>
-      </div>
-    );
-
     // Note: even with no boards/PDFs open to search locally, we still fall
     // through to the "Search all donors" escape hatch below — donor search is
     // a library-wide action, independent of what's currently open.
-    const sections: React.ReactNode[] = [findHereItem, wmItem];
+    const sections: React.ReactNode[] = [wmItem];
 
     // PDF mode has exactly one query per right-click, so donor rows are
     // flat (no spoiler, no variants). Each row = click = jump + search.
