@@ -6,7 +6,7 @@ import type { PDFDict as PDFDictT, PDFRef as PDFRefT } from 'pdf-lib';
 import { Emitter } from './emitter';
 import { PdfLinks } from './pdf-links';
 import { log } from './log-store';
-import { ensureIndexed } from '../pdf/pdf-index-client';
+import { ensureIndexed, pdfIndexClient } from '../pdf/pdf-index-client';
 import { scoreLookupCandidates, type LookupCandidate, type LookupContextHit } from './pdf-lookup-score';
 import { isOfflineBuild } from './build-mode';
 import { navHistoryStore } from './nav-history-store';
@@ -1042,6 +1042,11 @@ class PdfStore extends Emitter {
           pdfDoc.textPages.map((page) => page.map((item) => item.str)),
         );
       }
+    } else if (pdfDoc.fileId != null && this._documents.get(pdfDoc.fileName) === pdfDoc) {
+      // pdf.js stopped part-way and the document is still open: nothing will
+      // upload this file's text, so ask the server's own extractor for it
+      // (a no-op there when the file is already indexed).
+      void pdfIndexClient.priorityIndex(pdfDoc.fileId);
     }
 
     // Watermark sizes are computed lazily per page on first render — the

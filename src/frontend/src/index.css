@@ -6326,6 +6326,22 @@ body {
   padding: 2px 4px 4px;
 }
 
+/* PDF search status strip (failed / partial / no index): one line per fact,
+   a Retry button at the end when retrying can help. */
+.library-pdf-search-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 4px 8px;
+}
+.library-pdf-search-status > span {
+  flex: 1 1 100%;
+}
+.library-pdf-search-status > button {
+  flex: none;
+}
+
 .library-search-result {
   padding: 4px 6px;
   border-radius: 3px;

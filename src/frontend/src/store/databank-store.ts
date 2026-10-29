@@ -1,7 +1,7 @@
 import { lookupBoard } from './apple-boards';
 import { log } from './log-store';
 import { Emitter } from './emitter';
-import { isLiteBuild } from './build-mode';
+import { isLiteBuild, hasHttpBackend } from './build-mode';
 import { folderLibrary, folderPickMode, captureDroppedFolder } from './folder-library';
 import type { CapturedDrop, FolderLibraryState, FolderScan, PickResult, ScanProgress } from './folder-library';
 export { captureDroppedFolder };
@@ -28,8 +28,7 @@ export function isElectron(): boolean {
  *  instead of loadFile's file:// origin) — see docs/specs/
  *  2026-07-15-desktop-mcp-backend-sidecar-design.md §4. */
 export function hasBackend(): boolean {
-  if (isLiteBuild()) return false;   // lite web build: no HTTP backend, ever
-  return !isElectron() || (typeof location !== 'undefined' && location.protocol !== 'file:');
+  return hasHttpBackend();
 }
 
 
@@ -228,6 +227,17 @@ export interface FolderNode {
    *  both modes without an extra adapter. */
   files?: DatabankFile[];
 }
+
+/** How a streamed PDF search ended. `partial`: the server stopped at a cap
+ *  (`reason` "files" | "pages" | "time") — more matches exist. `ignored`:
+ *  query terms dropped as too short. */
+export type PdfSearchOutcome =
+  | { kind: 'done'; total: number; partial: boolean; reason: string; ignored: string[] }
+  | { kind: 'failed'; reason: string; code: string }
+  | { kind: 'aborted' };
+
+/** Silence after which a PDF search stream is given up on. */
+const STREAM_IDLE_MS = 30_000;
 
 export interface SearchResult {
   file_id: number;
@@ -1589,23 +1599,74 @@ class DatabankStore extends Emitter {
   private _pdfIndexTimer: ReturnType<typeof setInterval> | null = null;
   _pdfIndexProgress: PdfIndexProgress | null = null;
   _pdfIndexStats: PdfIndexStats | null = null;
+  /** What the PDF-index endpoints last said. `unknown`: no answer yet (render
+   *  as waiting). `ok`: they answer. `unavailable`: this server has no index,
+   *  its text extractor failed, or it stopped answering — `_pdfIndexReason`
+   *  says which. Before, every one of those read as "idle" or "no results". */
+  _pdfIndexState: 'unknown' | 'ok' | 'unavailable' = 'unknown';
+  _pdfIndexReason = '';
+  private _pdfIndexInflight: Promise<void> | null = null;
+  private _pdfIndexMisses = 0;
+  private _pdfIndexVisibilityHooked = false;
+
+  /** One poll: progress + stats, never two at once. The old 1.5 s interval had
+   *  no guard and no timeout, so under a slow server the polls queued up until
+   *  the browser's per-host connection limit stalled every other request. */
+  private _pdfIndexTick(): Promise<void> {
+    if (this._pdfIndexInflight) return this._pdfIndexInflight;
+    this._pdfIndexInflight = (async () => {
+      const [p, s] = await Promise.all([pdfIndexClient.progressCall(), pdfIndexClient.statsCall()]);
+      if (p.ok) {
+        this._pdfIndexMisses = 0;
+        this._pdfIndexProgress = p.data;
+        // Stats can time out on a busy server while progress answers; keep
+        // the last good numbers rather than blanking them.
+        if (s.ok) this._pdfIndexStats = s.data;
+        if (p.data.engine_error) {
+          this._pdfIndexState = 'unavailable';
+          this._pdfIndexReason = `the server's PDF text extractor did not start (${p.data.engine_error})`;
+        } else {
+          this._pdfIndexState = 'ok';
+          this._pdfIndexReason = '';
+        }
+        if (!p.data.running) this._stopPdfIndexPolling();
+      } else {
+        this._pdfIndexMisses++;
+        // A server that answers without the index (404, or the SPA's HTML
+        // for an unknown path) has none — that is decisive at once. A timeout
+        // or a refused connection may be a restart: three in a row.
+        const noIndexHere = p.status === 404 || p.status === 200 || p.reason === 'no server';
+        if (noIndexHere || this._pdfIndexMisses >= 3) {
+          const was = this._pdfIndexState;
+          this._pdfIndexState = 'unavailable';
+          this._pdfIndexReason = noIndexHere
+            ? 'this server has no PDF text index'
+            : `the server stopped answering (${p.reason})`;
+          if (was !== 'unavailable') log.scan.warn(`PDF index: ${this._pdfIndexReason}`);
+          this._stopPdfIndexPolling();
+        }
+      }
+      this.notify();
+    })().finally(() => { this._pdfIndexInflight = null; });
+    return this._pdfIndexInflight;
+  }
 
   startPdfIndexPolling() {
+    if (!hasBackend()) return;
     this._stopPdfIndexPolling();
-    const tick = async () => {
-      const [progress, stats] = await Promise.all([
-        pdfIndexClient.progress(),
-        pdfIndexClient.stats(),
-      ]);
-      this._pdfIndexProgress = progress;
-      this._pdfIndexStats = stats;
-      this.notify();
-      if (this._pdfIndexProgress && !this._pdfIndexProgress.running) {
-        this._stopPdfIndexPolling();
-      }
-    };
-    void tick();
-    this._pdfIndexTimer = setInterval(tick, 1500);
+    if (!this._pdfIndexVisibilityHooked && typeof document !== 'undefined') {
+      this._pdfIndexVisibilityHooked = true;
+      // A hidden tab skips its ticks (below); coming back resyncs at once and
+      // resumes polling if a sweep is still running.
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && this._pdfIndexState !== 'unknown') void this.fetchPdfIndexStats();
+      });
+    }
+    void this._pdfIndexTick();
+    this._pdfIndexTimer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      void this._pdfIndexTick();
+    }, 1500);
   }
 
   _stopPdfIndexPolling() {
@@ -1616,15 +1677,20 @@ class DatabankStore extends Emitter {
   }
 
   async fetchPdfIndexStats(): Promise<void> {
-    const [progress, stats] = await Promise.all([
-      pdfIndexClient.progress(),
-      pdfIndexClient.stats(),
-    ]);
-    this._pdfIndexProgress = progress;
-    this._pdfIndexStats = stats;
-    this.notify();
-    // If already running at startup, start polling
-    if (progress?.running) this.startPdfIndexPolling();
+    if (!hasBackend()) return;
+    this._pdfIndexMisses = 0;
+    await this._pdfIndexTick();
+    // If a sweep is running (started here or by the server), follow it.
+    if (this._pdfIndexProgress?.running && !this._pdfIndexTimer) this.startPdfIndexPolling();
+  }
+
+  /** Start indexing and follow it. Awaits the start before polling: polled
+   *  at the same time, the first answer could still say "not running" and
+   *  end the poll before the sweep showed. Returns the reason on failure. */
+  async runPdfIndex(): Promise<string | null> {
+    const r = await pdfIndexClient.run();
+    this.startPdfIndexPolling();
+    return r.ok ? null : r.reason;
   }
 
   // ── Dedup (content-hash) polling ────────────────────────────────────
@@ -1831,6 +1897,9 @@ class DatabankStore extends Emitter {
         // Stop polling when file scan is done
         if (!status.running) {
           this._stopScanPolling();
+          // A scan that added or changed PDFs starts an index sweep on the
+          // server; without this the Library learned of it only on reload.
+          void this.fetchPdfIndexStats();
           if (this._filesFetchedAfterScan) {
             this.notify();
           }
@@ -1905,44 +1974,79 @@ class DatabankStore extends Emitter {
 
   /** Streaming variant of {@link searchPdfs}. Consumes the backend NDJSON
    *  stream and dispatches each parsed message to the caller's callbacks so
-   *  results render progressively. Pass an AbortSignal to cancel a superseded
-   *  search; a cancelled fetch throwing is expected and swallowed silently. */
+   *  results render progressively, and resolves with how the search ended.
+   *  Every server stream ends with one `done` or one `error` line; a stream
+   *  that ends without either was cut (proxy, restart, network) and is a
+   *  failure, not "no results". A stream silent for STREAM_IDLE_MS is given
+   *  up on: the server's own deadline is 10 s, so that much silence means the
+   *  answer is not coming. */
   async searchPdfsStream(
     query: string,
     scope: 'all' | 'donor',
-    cb: { onResult: (r: SearchResult) => void; onCounts?: (counts: Record<string, number>) => void; onDone?: (total: number) => void },
+    cb: { onResult: (r: SearchResult) => void; onCounts?: (counts: Record<string, number>) => void },
     signal?: AbortSignal,
-  ): Promise<void> {
-    if (!query.trim()) return;
+  ): Promise<PdfSearchOutcome> {
+    if (!query.trim()) return { kind: 'done', total: 0, partial: false, reason: '', ignored: [] };
+    if (!hasBackend()) return { kind: 'failed', reason: 'PDF text search needs the BoardRipper server', code: 'no_server' };
     const params = new URLSearchParams({ q: query, scope });
+    const ctl = new AbortController();
+    const onAbort = () => ctl.abort();
+    signal?.addEventListener('abort', onAbort);
+    let idle = false;
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+    const armIdle = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => { idle = true; ctl.abort(); }, STREAM_IDLE_MS);
+    };
     try {
-      const res = await fetch(`/api/databank/search/stream?${params}`, { signal });
-      if (!res.ok || !res.body) return;
+      armIdle();
+      const res = await fetch(`/api/databank/search/stream?${params}`, { signal: ctl.signal });
+      const ct = res.headers.get('content-type') || '';
+      if (!res.ok) return { kind: 'failed', reason: `the server answered HTTP ${res.status}`, code: 'http' };
+      if (!ct.includes('ndjson') || !res.body) {
+        return { kind: 'failed', reason: 'this server has no PDF text index', code: 'no_index' };
+      }
       const reader = res.body.getReader();
       const dec = new TextDecoder();
       let buf = '';
       for (;;) {
         const { value, done } = await reader.read();
         if (done) break;
+        armIdle();
         buf += dec.decode(value, { stream: true });
         let nl;
         while ((nl = buf.indexOf('\n')) >= 0) {
           const line = buf.slice(0, nl).trim();
           buf = buf.slice(nl + 1);
           if (!line) continue;
-          let msg: { type?: string; counts?: Record<string, number>; total?: number; error?: string };
+          let msg: {
+            type?: string; counts?: Record<string, number>; total?: number; error?: string; code?: string;
+            partial?: boolean; partial_reason?: string; ignored?: string[];
+          };
           try { msg = JSON.parse(line); } catch { continue; }
           if (msg.type === 'result') cb.onResult(msg as unknown as SearchResult);
           else if (msg.type === 'counts') cb.onCounts?.(msg.counts ?? {});
-          else if (msg.type === 'done') cb.onDone?.(msg.total ?? 0);
-          else if (msg.type === 'error') log.scan.warn(`PDF search stream error: ${msg.error}`);
+          else if (msg.type === 'done') {
+            return {
+              kind: 'done', total: msg.total ?? 0, partial: !!msg.partial,
+              reason: msg.partial_reason ?? '', ignored: msg.ignored ?? [],
+            };
+          } else if (msg.type === 'error') {
+            log.scan.warn(`PDF search stream error: ${msg.error}`);
+            return { kind: 'failed', reason: msg.error ?? 'search failed', code: msg.code ?? 'search' };
+          }
         }
       }
+      return { kind: 'failed', reason: 'the answer was cut off before it finished', code: 'cut' };
     } catch (err) {
+      if (idle) return { kind: 'failed', reason: `no answer for ${STREAM_IDLE_MS / 1000} s`, code: 'idle' };
       // A cancelled fetch (superseded search) throws AbortError — expected, stay quiet.
-      if (err instanceof DOMException && err.name === 'AbortError') return;
-      if (signal?.aborted) return;
+      if (signal?.aborted) return { kind: 'aborted' };
       log.scan.warn('PDF search stream failed:', err);
+      return { kind: 'failed', reason: 'could not reach the server', code: 'network' };
+    } finally {
+      if (idleTimer) clearTimeout(idleTimer);
+      signal?.removeEventListener('abort', onAbort);
     }
   }
 

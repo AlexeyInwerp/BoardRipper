@@ -1057,7 +1057,9 @@ function DatabaseInfoSection() {
 // ---- Library settings (auto-pdf, history depth, clear history) ----
 
 function LibrarySettingsSection() {
-  const { autoPdf, historyDepth, recentItems, scanStatus, pdfIndexProgress, pdfIndexStats, libraryLoadMode } = useDatabank();
+  const { autoPdf, historyDepth, recentItems, scanStatus, pdfIndexProgress, pdfIndexStats, pdfIndexState, pdfIndexReason, libraryLoadMode } = useDatabank();
+  // Why the last "Index all / Continue" did not start a sweep, if it didn't.
+  const [runError, setRunError] = useState<string | null>(null);
   const [depthDraft, setDepthDraft] = useState<string>(String(historyDepth));
   const scanRunning = scanStatus?.running ?? false;
   const pdfIndexRunning = pdfIndexProgress?.running ?? false;
@@ -1188,7 +1190,7 @@ function LibrarySettingsSection() {
             ) : (
               <button
                 className="settings-action-btn"
-                onClick={() => { void pdfIndexClient.run(); databankStore.startPdfIndexPolling(); }}
+                onClick={async () => { setRunError(await databankStore.runPdfIndex()); }}
                 title={hasPending
                   ? 'Continue indexing the remaining pending PDFs from where it left off.'
                   : 'Index all PDFs (extract searchable text).'}
@@ -1206,7 +1208,18 @@ function LibrarySettingsSection() {
           </span>
         </div>
 
-        {pdfIndexRunning && pdfIndexProgress ? (
+        {pdfIndexState === 'unavailable' ? (
+          <div className="settings-pdfindex-stats settings-pdfindex-err" data-testid="pdf-index-unavailable">
+            Not available: {pdfIndexReason}.
+          </div>
+        ) : runError ? (
+          <div className="settings-pdfindex-stats settings-pdfindex-err">Could not start: {runError}</div>
+        ) : null}
+        {pdfIndexRunning && pdfIndexProgress && pdfIndexProgress.total === 0 && pdfIndexProgress.done === 0 ? (
+          // The server lists the library before it knows the total; "0 / 0"
+          // there read as "nothing to do" while it was counting.
+          <div className="settings-pdfindex-stats">Counting files to index…</div>
+        ) : pdfIndexRunning && pdfIndexProgress ? (
           <>
             <div className="settings-pdfindex-bar">
               <div className="settings-pdfindex-fill" style={{ width: `${indexPct}%` }} />
@@ -1234,6 +1247,11 @@ function LibrarySettingsSection() {
             {pdfIndexStats.pending > 0 && <span> · {pdfIndexStats.pending.toLocaleString()} pending</span>}
             {pdfIndexStats.failed > 0 && (
               <span className="settings-pdfindex-err"> · {pdfIndexStats.failed} failed</span>
+            )}
+            {(pdfIndexStats.given_up ?? 0) > 0 && (
+              <span title="Files that failed three times are no longer retried automatically. Retry them from the Library's failed list, or they are retried when the file changes.">
+                {' '}({pdfIndexStats.given_up} no longer retried)
+              </span>
             )}
           </div>
         ) : null}

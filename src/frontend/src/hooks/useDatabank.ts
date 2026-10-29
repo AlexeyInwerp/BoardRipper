@@ -49,6 +49,8 @@ interface DatabankSnapshot {
   donorIds: ReadonlySet<number>;
   pdfIndexProgress: PdfIndexProgress | null;
   pdfIndexStats: PdfIndexStats | null;
+  pdfIndexState: 'unknown' | 'ok' | 'unavailable';
+  pdfIndexReason: string;
   dedupProgress: DedupProgress | null;
   dedupStats: DedupStats | null;
   pendingPdfSearch: { query: string; scope: 'all' | 'donor' } | null;
@@ -90,6 +92,8 @@ export const useDatabank = createStoreHook<DatabankSnapshot>(databankStore, () =
   donorIds: databankStore.donorIds,
   pdfIndexProgress: databankStore._pdfIndexProgress,
   pdfIndexStats: databankStore._pdfIndexStats,
+  pdfIndexState: databankStore._pdfIndexState,
+  pdfIndexReason: databankStore._pdfIndexReason,
   dedupProgress: databankStore._dedupProgress,
   dedupStats: databankStore._dedupStats,
   pendingPdfSearch: databankStore.pendingPdfSearch,

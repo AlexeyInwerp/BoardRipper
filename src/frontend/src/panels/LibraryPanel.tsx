@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useDatabank } from '../hooks/useDatabank';
 import { useLibraryLoad } from '../store/library-load-store';
 import { databankStore, contentCollapsePlan, isElectron, AUTOBIND_RULE_LABEL } from '../store/databank-store';
-import type { CollapsedFileInfo, DatabankBinding, DatabankFile, DonorBackupInfo, DonorEntry, FileDetail, FolderNode, MetadataGroup, ModelGroup, SearchResult, ViewMode } from '../store/databank-store';
+import type { CollapsedFileInfo, DatabankBinding, DatabankFile, DonorBackupInfo, DonorEntry, FileDetail, FolderNode, MetadataGroup, ModelGroup, PdfSearchOutcome, SearchResult, ViewMode } from '../store/databank-store';
 import { pdfIndexClient } from '../pdf/pdf-index-client';
 import type { PdfIndexFailedEntry } from '../pdf/pdf-index-client';
 import { boardStore } from '../store/board-store';
@@ -125,6 +125,54 @@ function renderSnippet(snippet: string): React.ReactNode[] {
   return out;
 }
 
+/** The PDF search status strip: why a search ended other than with the full
+ *  answer, and whether there is an index to search at all. Lives above the
+ *  results so the list never jumps; says nothing while a search runs or when
+ *  it simply finished. */
+function PdfSearchStatus({ outcome, shown, indexState, indexReason, onRetry }: {
+  outcome: PdfSearchOutcome | null;
+  shown: number;
+  indexState: 'unknown' | 'ok' | 'unavailable';
+  indexReason: string;
+  onRetry: () => void;
+}) {
+  if (outcome?.kind === 'failed' && outcome.code !== 'cancelled') {
+    const text = outcome.code === 'too_short'
+      ? 'Search terms need at least 2 letters or digits.'
+      : `Search failed: ${outcome.reason}.`;
+    return (
+      <div className="library-search-results-header library-pdf-search-status" data-testid="pdf-search-failed">
+        <span>{text}</span>
+        {outcome.code !== 'too_short' && outcome.code !== 'no_index' && outcome.code !== 'no_server' && (
+          <button className="library-search-btn" onClick={onRetry}>Retry</button>
+        )}
+      </div>
+    );
+  }
+  if (outcome?.kind === 'done' && (outcome.partial || outcome.ignored.length > 0)) {
+    const parts: string[] = [];
+    if (outcome.partial) {
+      parts.push(outcome.reason === 'time'
+        ? `Showing what was found in 10 s (${shown} files) — add a word to narrow the search.`
+        : `Showing the first ${shown} files — add a word to narrow the search.`);
+    }
+    if (outcome.ignored.length > 0) parts.push(`Ignored (too short): ${outcome.ignored.join(' ')}`);
+    return (
+      <div className="library-search-results-header library-pdf-search-status" data-testid="pdf-search-partial">
+        {parts.map((p) => <span key={p}>{p}</span>)}
+      </div>
+    );
+  }
+  if (indexState === 'unavailable') {
+    return (
+      <div className="library-search-results-header library-pdf-search-status" data-testid="pdf-index-unavailable">
+        <span>PDF text search is not available: {indexReason}.</span>
+      </div>
+    );
+  }
+  return null;
+}
+
 // Global setter for toolbar search integration
 let _externalSearchSetter: ((q: string) => void) | null = null;
 export function setLibrarySearch(query: string): void {
@@ -160,7 +208,7 @@ export function LibraryPanel() {
     stats, filesComplete, loading,
     filesVersion,
     donorIds,
-    pdfIndexProgress, pdfIndexStats, dedupProgress,
+    pdfIndexProgress, pdfIndexStats, pdfIndexState, pdfIndexReason, dedupProgress,
     pendingPdfSearch,
   } = useDatabank();
   const libraryLoad = useLibraryLoad();
@@ -290,6 +338,9 @@ export function LibraryPanel() {
   const [pdfScope, setPdfScope] = useState<'all' | 'donor'>('all');
   const [pdfResults, setPdfResults] = useState<SearchResult[]>([]);
   const [pdfSearching, setPdfSearching] = useState(false);
+  // How the last search ended — null while one runs or before the first.
+  // "No results" is only ever said for a search that finished.
+  const [pdfOutcome, setPdfOutcome] = useState<PdfSearchOutcome | null>(null);
   // Tracks the in-flight stream so a new search can abort the previous one.
   const pdfSearchAbort = useRef<AbortController | null>(null);
   // Buffer + flush plumbing: incoming results accumulate here and are flushed
@@ -310,6 +361,7 @@ export function LibraryPanel() {
     pdfBufferRef.current = [];
     setPdfResults([]);
     setPdfSearching(true);
+    setPdfOutcome(null);
 
     const flush = () => {
       if (pdfBufferRef.current.length === 0) return;
@@ -331,22 +383,21 @@ export function LibraryPanel() {
       {
         onResult: (r) => { pdfBufferRef.current.push(r); },
         onCounts: (counts) => {
-          // Patch hit_count for already-rendered + still-buffered results.
-          pdfBufferRef.current = pdfBufferRef.current.map(r =>
-            counts[r.file_id] != null ? { ...r, hit_count: counts[r.file_id] } : r);
-          setPdfResults(prev => prev.map(r =>
-            counts[r.file_id] != null ? { ...r, hit_count: counts[r.file_id] } : r));
-        },
-        onDone: () => {
+          // Patch hit_count for already-rendered + still-buffered results,
+          // then order by it: the server streams files in the order it finds
+          // them (it no longer ranks pages), so the files with the most
+          // matching pages move to the top once the counts are in.
           stopFlush();
-          if (pdfSearchAbort.current === controller) {
-            pdfSearchAbort.current = null;
-            setPdfSearching(false);
-          }
+          const withCount = (r: SearchResult) =>
+            counts[r.file_id] != null ? { ...r, hit_count: counts[r.file_id] } : r;
+          setPdfResults(prev => prev.map(withCount)
+            .sort((a, b) => (b.hit_count ?? 1) - (a.hit_count ?? 1)));
         },
       },
       controller.signal,
-    ).finally(() => {
+    ).then((outcome) => {
+      if (pdfSearchAbort.current === controller) setPdfOutcome(outcome);
+    }).finally(() => {
       stopFlush();
       // Only the run that still owns the controller clears searching — a
       // superseded run (whose controller was replaced) leaves it to the new run.
@@ -355,6 +406,13 @@ export function LibraryPanel() {
         setPdfSearching(false);
       }
     });
+  }, []);
+
+  const cancelPdfSearch = useCallback(() => {
+    pdfSearchAbort.current?.abort();
+    pdfSearchAbort.current = null;
+    setPdfSearching(false);
+    setPdfOutcome({ kind: 'failed', reason: 'cancelled', code: 'cancelled' });
   }, []);
 
   const runPdfSearch = useCallback((scopeOverride?: 'all' | 'donor') => {
@@ -842,7 +900,9 @@ export function LibraryPanel() {
     : dedupProgress?.running
       ? `Finding duplicates ${dedupProgress.total > 0 ? `${dedupProgress.done}/${dedupProgress.total}` : ''}`
       : pdfIndexProgress?.running
-        ? `Indexing PDFs ${pdfIndexProgress.done}/${pdfIndexProgress.total}`
+        ? (pdfIndexProgress.total === 0 && pdfIndexProgress.done === 0
+          ? 'Indexing PDFs — counting files…'
+          : `Indexing PDFs ${pdfIndexProgress.done}/${pdfIndexProgress.total}`)
         : `${boardCount} boards · ${pdfCount} PDFs${pdfIndexStats ? ` · ${pdfIndexStats.indexed} indexed` : ''}`;
   const statsBar = (
     <div className={`library-statsbar ${statusExpanded ? 'expanded' : 'collapsed'}`}>
@@ -910,10 +970,12 @@ export function LibraryPanel() {
               )}
               {pdfIndexProgress?.running && (
                 <div className="library-indexing">
-                  Indexing {pdfIndexProgress.done}/{pdfIndexProgress.total}
-                  {pdfIndexProgress.workers > 0 ? ` · ${pdfIndexProgress.active_workers}/${pdfIndexProgress.workers} threads` : ''}
-                  {pdfIndexProgress.errors > 0 ? ` (${pdfIndexProgress.errors} err)` : ''}
-                  {fmtIndexEta(pdfIndexProgress) ? ` · ${fmtIndexEta(pdfIndexProgress)}` : ''}
+                  {pdfIndexProgress.total === 0 && pdfIndexProgress.done === 0
+                    ? 'Indexing — counting files…'
+                    : `Indexing ${pdfIndexProgress.done}/${pdfIndexProgress.total}`
+                      + (pdfIndexProgress.workers > 0 ? ` · ${pdfIndexProgress.active_workers}/${pdfIndexProgress.workers} threads` : '')
+                      + (pdfIndexProgress.errors > 0 ? ` (${pdfIndexProgress.errors} err)` : '')
+                      + (fmtIndexEta(pdfIndexProgress) ? ` · ${fmtIndexEta(pdfIndexProgress)}` : '')}
                 </div>
               )}
               {pdfIndexProgress?.running && pdfIndexProgress.current_file && (
@@ -1028,6 +1090,9 @@ export function LibraryPanel() {
                 <div className="library-failed-error">
                   {f.error || '(no error message returned by the indexer — likely a worker crash; check container logs for a panic / SIGSEGV around this file)'}
                 </div>
+                {(f.attempts ?? 0) >= 3 && (
+                  <div className="library-failed-path">Tried {f.attempts} times — no longer retried automatically.</div>
+                )}
               </div>
             ))}
           </div>
@@ -1284,19 +1349,26 @@ export function LibraryPanel() {
               </label>
               <button
                 className="library-search-btn"
-                onClick={() => runPdfSearch()}
-                disabled={pdfSearching}
+                data-testid="pdf-search-btn"
+                onClick={() => (pdfSearching ? cancelPdfSearch() : runPdfSearch())}
               >
-                {pdfSearching ? '…' : 'Search'}
+                {pdfSearching ? 'Cancel' : 'Search'}
               </button>
               {pdfResults.length > 0 && (
                 <button
                   className="library-search-clear"
-                  onClick={() => { setPdfResults([]); setPdfQuery(''); }}
+                  onClick={() => { setPdfResults([]); setPdfQuery(''); setPdfOutcome(null); }}
                   title="Clear"
                 >x</button>
               )}
             </div>
+            <PdfSearchStatus
+              outcome={pdfOutcome}
+              shown={pdfResults.length}
+              indexState={pdfIndexState}
+              indexReason={pdfIndexReason}
+              onRetry={() => runPdfSearch()}
+            />
             <>
               {donorResults.length > 0 && (
                 <details className="library-donor-spoiler" open>
@@ -1324,8 +1396,10 @@ export function LibraryPanel() {
                   Searching… <span className="library-search-spinner" aria-hidden />
                 </div>
               )}
-              {pdfResults.length === 0 && !pdfSearching && pdfQuery.trim() && (
-                <div className="library-empty">No results for "{pdfQuery}"</div>
+              {pdfResults.length === 0 && !pdfSearching && pdfOutcome?.kind === 'done' && (
+                <div className="library-empty" data-testid="pdf-search-empty">
+                  <span>No results for </span><span translate="no">"{pdfQuery}"</span>
+                </div>
               )}
               {pdfResults.length === 0 && !pdfQuery.trim() && (
                 <div className="library-empty">Enter a query and press Search or Enter</div>

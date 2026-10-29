@@ -30,3 +30,16 @@ export function isLiteBuild(): boolean {
 export function isOfflineBuild(): boolean {
   return import.meta.env.MODE === 'offline';
 }
+
+/** True when an HTTP backend serves this origin. False in the lite/offline
+ *  builds, and in the desktop app until its MCP sidecar has taken over the
+ *  page load (file:// origin). This is the implementation behind
+ *  `hasBackend()` in databank-store, kept here, dependency-free, so modules
+ *  that databank-store itself imports (the PDF index client) can use it
+ *  without an import cycle. */
+export function hasHttpBackend(): boolean {
+  if (isLiteBuild()) return false;
+  const electron = typeof window !== 'undefined'
+    && !!(window as unknown as { electronAPI?: { scanLibrary?: unknown } }).electronAPI?.scanLibrary;
+  return !electron || (typeof location !== 'undefined' && location.protocol !== 'file:');
+}
