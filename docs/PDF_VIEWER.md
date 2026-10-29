@@ -498,6 +498,31 @@ The connection DSN sets WAL, `busy_timeout(5000)` and
 `journal_size_limit(64 MiB)`: without the limit a sweep overlapping searches
 grew the WAL by ~27 MB/s and the file never shrank.
 
+### Storage: btrfs copy-on-write and compaction
+
+On btrfs — Synology's default filesystem — a SQLite file written with
+copy-on-write is rewritten out of place page by page and fragments without
+limit. Measured on the NAS dev container (2026-10-29): the 13 GB
+`pdfindex.db` read at **4.3 MB/s**, a freshly written file on the same volume
+at **54.6 MB/s**. Every query paid for it: stats over the ~70k-row status
+table ran past its 30 s deadline, and no search returned a single row in 10 s.
+That, more than the query shapes, is the stall NAS users saw.
+
+- A **new** index file (first boot, `ResetAll`) is created empty with
+  `FS_NOCOW_FL` (`chattr +C`) set (`nocow_linux.go`), so it never fragments.
+  Elsewhere the call is a no-op or fails harmlessly.
+- An **existing** file is fixed with **Compact** (Settings ▸ Library ▸ Compact
+  index file, `POST /api/pdfindex/compact`): `VACUUM INTO` a no-COW copy next
+  to the file, then swap. Every extracted page is kept; nothing is
+  re-extracted. It stops the sweep, needs free space for a second copy (507
+  otherwise), refuses writes while it runs (`ErrCompacting` — a write into the
+  old file would be lost) and refuses sweeps; search reads the old file until
+  the swap. Indexing resumes afterwards when auto-resume is on. Progress
+  carries `compact {running, started_at, finished_at, size_before,
+  size_after, error}`. A copy left by a restart is removed at open.
+- An admin can do the same from DSM's shell with the container stopped:
+  `btrfs filesystem defragment <data>/pdfindex.db`.
+
 ### API
 
 There is no authentication on `/api/*`; non-GET requests pass the CSRF
