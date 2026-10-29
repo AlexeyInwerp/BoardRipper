@@ -1,6 +1,7 @@
 package pdfindex
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -166,6 +167,13 @@ func (e *Engine) deadline(pages int) time.Duration {
 // pages were read it returns those pages and a *PartialError; before the
 // first page it returns a plain error naming where it stopped.
 func (e *Engine) ExtractFile(data []byte) ([]string, error) {
+	return e.ExtractFileContext(context.Background(), data)
+}
+
+// ExtractFileContext is ExtractFile that also stops when ctx is done: the
+// instance is killed and ctx.Err() returned (no partial pages — a stopped
+// sweep puts the file back, it is not this file's failure).
+func (e *Engine) ExtractFileContext(ctx context.Context, data []byte) ([]string, error) {
 	if err := e.Err(); err != nil {
 		return nil, fmt.Errorf("pdfium unavailable: %w", err)
 	}
@@ -194,6 +202,14 @@ func (e *Engine) ExtractFile(data []byte) ([]string, error) {
 		case r := <-done:
 			instance.Close() //nolint:errcheck — pool handles cleanup
 			return r.pages, r.err
+		case <-ctx.Done():
+			st.killed.Store(true)
+			instance.Kill() //nolint:errcheck — best-effort kill
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+			}
+			return nil, ctx.Err()
 		case <-timer.C:
 		}
 		// The page count may have arrived since the timer was set: extend

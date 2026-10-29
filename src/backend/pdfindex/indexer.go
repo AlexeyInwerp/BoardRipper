@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -42,6 +43,13 @@ type Source interface {
 // was cut off by its deadline and the pages before the cut are valid.
 type Extractor interface {
 	ExtractFile(data []byte) ([]string, error)
+}
+
+// contextExtractor is implemented by Engine: ExtractFile that also stops when
+// ctx is cancelled (a stopped sweep), returning ctx.Err(). Without it, Stop
+// waited for every in-flight file — up to the 20-minute per-file deadline.
+type contextExtractor interface {
+	ExtractFileContext(ctx context.Context, data []byte) ([]string, error)
 }
 
 // initErrorer is implemented by Engine: a non-blocking "did init fail?".
@@ -412,7 +420,7 @@ func (ix *Indexer) sweep(ctx context.Context, files []PdfFile) {
 					return
 				case id := <-ix.priority:
 					if f, ok := resolve(id); ok {
-						ix.process(f)
+						ix.process(ctx, f)
 					}
 					continue
 				default:
@@ -423,13 +431,13 @@ func (ix *Indexer) sweep(ctx context.Context, files []PdfFile) {
 					return
 				case id := <-ix.priority:
 					if f, ok := resolve(id); ok {
-						ix.process(f)
+						ix.process(ctx, f)
 					}
 				case f, ok := <-bulk:
 					if !ok {
 						return
 					}
-					ix.process(f)
+					ix.process(ctx, f)
 				}
 			}
 		}()
@@ -450,7 +458,7 @@ finish:
 	// cleanup once this returns — see startScoped.
 }
 
-func (ix *Indexer) process(f PdfFile) {
+func (ix *Indexer) process(ctx context.Context, f PdfFile) {
 	ix.mu.Lock()
 	ix.prog.CurrentFile = f.Path
 	ix.mu.Unlock()
@@ -512,7 +520,19 @@ func (ix *Indexer) process(f PdfFile) {
 	// Logged before the extraction, not only on failure: if this file takes
 	// the process down, this is the last line in docker logs.
 	log.Printf("pdfindex: extracting file_id=%d size=%d path=%q", f.ID, len(data), f.Path)
-	rawPages, err := ix.extract.ExtractFile(data)
+	var rawPages []string
+	if ce, ok := ix.extract.(contextExtractor); ok {
+		rawPages, err = ce.ExtractFileContext(ctx, data)
+	} else {
+		rawPages, err = ix.extract.ExtractFile(data)
+	}
+	if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+		// The sweep was stopped under this file: it is not this file's
+		// failure, so it goes back to 'pending' without the attempt.
+		log.Printf("pdfindex: stopped during file_id=%d, back to pending", f.ID)
+		_ = ix.store.Release(f.ID)
+		return
+	}
 	note := ""
 	var partial *PartialError
 	if errors.As(err, &partial) {
@@ -524,7 +544,14 @@ func (ix *Indexer) process(f PdfFile) {
 	}
 	if err != nil {
 		log.Printf("pdfindex: FAIL extract file_id=%d path=%q size=%d: %v", f.ID, f.Path, len(data), err)
-		ix.fail(f.ID, "extract: "+err.Error())
+		if isPermanentOpenError(err) {
+			// Not a PDF pdfium can read, or password-protected: the same
+			// bytes fail the same way every time, so no sweep retries it
+			// (a changed file does — MarkPending resets the count).
+			ix.failPermanently(f.ID, "extract: "+err.Error())
+		} else {
+			ix.fail(f.ID, "extract: "+err.Error())
+		}
 		return
 	}
 	terms := ix.terms()
@@ -550,6 +577,23 @@ func (ix *Indexer) process(f PdfFile) {
 	if _, err := ix.store.FinalizeWithNote(f.ID, note); err != nil {
 		log.Printf("pdfindex: FAIL finalize file_id=%d path=%q: %v", f.ID, f.Path, err)
 	}
+}
+
+// isPermanentOpenError recognises pdfium's FPDF_GetLastError codes that depend
+// only on the file's bytes: 3 = format (not a PDF, or damaged), 4 = password.
+// On the NAS ~90 of ~100 failures were these, retried at every boot.
+func isPermanentOpenError(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, "open (") &&
+		(strings.Contains(s, "incorrect format") || strings.Contains(s, "invalid password") ||
+			strings.Contains(s, "password required"))
+}
+
+func (ix *Indexer) failPermanently(fileID int64, msg string) {
+	ix.mu.Lock()
+	ix.prog.Errors++
+	ix.mu.Unlock()
+	_ = ix.store.FailPermanently(fileID, msg)
 }
 
 func (ix *Indexer) fail(fileID int64, msg string) {

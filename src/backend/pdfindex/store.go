@@ -200,6 +200,28 @@ func (db *DB) Fail(fileID int64, msg string) error {
 	return err
 }
 
+// FailPermanently marks the file failed and past MaxAttempts, so sweeps leave
+// it alone: for errors that depend only on the bytes (not a PDF, password).
+func (db *DB) FailPermanently(fileID int64, msg string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	_, err := db.writer.Exec(
+		`UPDATE pdf_index_status SET status='failed', error=?, attempted_at=?, attempts=MAX(attempts, ?) WHERE file_id=?`,
+		msg, time.Now().Unix(), MaxAttempts, fileID)
+	return err
+}
+
+// Release hands a claimed file back to 'pending' and takes back the attempt
+// its claim counted: used when a stopped sweep interrupts the extraction.
+func (db *DB) Release(fileID int64) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	_, err := db.writer.Exec(
+		`UPDATE pdf_index_status SET status='pending', attempts=MAX(attempts-1, 0) WHERE file_id=? AND status='indexing'`,
+		fileID)
+	return err
+}
+
 type Stats struct {
 	Indexed  int `json:"indexed"`
 	Empty    int `json:"empty"`

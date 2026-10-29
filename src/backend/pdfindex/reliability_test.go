@@ -323,3 +323,62 @@ func TestEngineDeadlineScalesWithPages(t *testing.T) {
 		}
 	}
 }
+
+// openErrorExtractor fails like pdfium on a file that is not a PDF.
+type openErrorExtractor struct{ calls atomic.Int32 }
+
+func (o *openErrorExtractor) ExtractFile([]byte) ([]string, error) {
+	o.calls.Add(1)
+	return nil, errors.New("open (size 210363 bytes): 3: incorrect format")
+}
+
+// An error that depends only on the bytes is not retried by the next sweep.
+func TestUnreadableFileIsNotRetried(t *testing.T) {
+	db := openTestDB(t)
+	ext := &openErrorExtractor{}
+	ix := NewIndexer(db, ext, countingSource(1), func() []string { return nil }, 1)
+	runAndWait(t, ix)
+	runAndWait(t, ix)
+	if n := ext.calls.Load(); n != 1 {
+		t.Fatalf("extract calls = %d, want 1", n)
+	}
+	if st, _ := db.Status(1); st.Status != "failed" || st.Attempts < MaxAttempts {
+		t.Fatalf("status = %+v, want failed past MaxAttempts", st)
+	}
+}
+
+// ctxExtractor blocks until its context is cancelled.
+type ctxExtractor struct{ started chan struct{} }
+
+func (c *ctxExtractor) ExtractFile(b []byte) ([]string, error) {
+	return c.ExtractFileContext(context.Background(), b)
+}
+func (c *ctxExtractor) ExtractFileContext(ctx context.Context, _ []byte) ([]string, error) {
+	close(c.started)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// Stop interrupts an extraction in flight (it used to wait for the file,
+// up to the 20-minute deadline) and the file goes back to pending with the
+// attempt taken back.
+func TestStopInterruptsExtraction(t *testing.T) {
+	db := openTestDB(t)
+	ext := &ctxExtractor{started: make(chan struct{})}
+	ix := NewIndexer(db, ext, countingSource(1), func() []string { return nil }, 1)
+	if err := ix.Run(); err != nil {
+		t.Fatal(err)
+	}
+	<-ext.started
+	done := make(chan struct{})
+	go func() { ix.StopAndWait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("StopAndWait did not return: the extraction was not interrupted")
+	}
+	st, _ := db.Status(1)
+	if st.Status != "pending" || st.Attempts != 0 {
+		t.Fatalf("status = %+v, want pending with 0 attempts", st)
+	}
+}
