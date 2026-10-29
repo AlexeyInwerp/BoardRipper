@@ -1,0 +1,489 @@
+package pdfindex
+
+import (
+	"database/sql"
+	"strconv"
+	_ "modernc.org/sqlite"
+	"sync"
+	"sort"
+	"math/rand"
+	"strings"
+	"os"
+	"testing"
+	"time"
+	"fmt"
+	"sync/atomic"
+)
+
+func TestZZPoolKill(t *testing.T) {
+	data, _ := os.ReadFile("../../frontend/tests/fixtures/many-page-text.pdf")
+	t0 := time.Now()
+	eng, err := NewEngine(2)
+	if err != nil { t.Fatal(err) }
+	defer eng.Close()
+	fmt.Printf("NewEngine(2): %v\n", time.Since(t0))
+	// baseline normal extracts (instance create+close per file)
+	for i := 0; i < 5; i++ {
+		s := time.Now()
+		p, err := eng.ExtractFile(data)
+		fmt.Printf("normal extract %d: %v pages=%d err=%v\n", i, time.Since(s), len(p), err)
+	}
+	// direct kill rounds
+	for round := 1; round <= 6; round++ {
+		a, e1 := eng.pool.GetInstance(5 * time.Second)
+		b, e2 := eng.pool.GetInstance(5 * time.Second)
+		if e1 != nil || e2 != nil { fmt.Printf("round %d get fail %v %v\n", round, e1, e2); break }
+		a.Kill(); b.Kill()
+		s := time.Now()
+		c, e3 := eng.pool.GetInstance(30 * time.Second)
+		fmt.Printf("kill round %d (2 killed): third GetInstance %v err=%v\n", round, time.Since(s), e3)
+		if c != nil {
+			var pr atomic.Int32
+			s2 := time.Now()
+			pg, e4 := extract(c, data, &pr)
+			fmt.Printf("   extract on replacement: %v pages=%d err=%v\n", time.Since(s2), len(pg), e4)
+			c.Close()
+		}
+	}
+	// ExtractFile with tiny timeout
+	eng.perFileTimeout = 1 * time.Millisecond
+	for i := 0; i < 8; i++ {
+		s := time.Now()
+		_, err := eng.ExtractFile(data)
+		fmt.Printf("ExtractFile timeout %d: %v err=%v\n", i, time.Since(s), err)
+	}
+	eng.perFileTimeout = 2 * time.Minute
+	s := time.Now()
+	p, err := eng.ExtractFile(data)
+	fmt.Printf("after timeouts, normal extract: %v pages=%d err=%v\n", time.Since(s), len(p), err)
+}
+
+var zzDir = zzEnv("ZZ_DIR", "/private/tmp/claude-501/-Users-inwerp-Projects-BoardRipper/f1cf0868-164e-4a28-b00b-7d2de9d881dc/scratchpad/t3")
+func zzEnv(k, d string) string { if v := os.Getenv(k); v != "" { return v }; return d }
+
+func zzGen(r *rand.Rand) string {
+	pre := []string{"C", "R", "U", "L", "Q", "D", "FB", "J", "TP"}
+	vals := []string{"10UF 25V 0402", "100NF 16V 0201", "2.2K 1% 0201", "0.1UF", "4.7UF 6.3V", "22PF", "10K", "1M", "0R", "33OHM 5% 0402"}
+	nets := []string{"PP3V3_S5", "PP1V8_S0", "SMC_RESET_L", "PPBUS_G3H", "I2C_SDA", "USB_DP", "GND", "PCIE_REFCLK_P", "PP5V_S3", "SMC_PM_G2_EN", "AP_PWR_EN", "SPI_MOSI"}
+	words := []string{"the", "of", "power", "supply", "connector", "page", "schematic", "sheet", "rev", "see", "note", "output", "input", "enable", "ground", "signal", "reference", "voltage", "regulator", "sense"}
+	var b strings.Builder
+	for b.Len() < 1500 {
+		switch r.Intn(5) {
+		case 0, 1:
+			fmt.Fprintf(&b, "%s%d ", pre[r.Intn(len(pre))], 1+r.Intn(9999))
+		case 2:
+			b.WriteString(vals[r.Intn(len(vals))] + " ")
+		case 3:
+			b.WriteString(nets[r.Intn(len(nets))] + " ")
+			if r.Intn(3) == 0 { fmt.Fprintf(&b, "%s_%d ", nets[r.Intn(len(nets))], r.Intn(50)) }
+		default:
+			b.WriteString(words[r.Intn(len(words))] + " ")
+		}
+	}
+	return b.String()
+}
+
+func TestZZBuild(t *testing.T) {
+	os.MkdirAll(zzDir, 0o755)
+	p := zzDir + "/pdfindex.db"
+	if _, err := os.Stat(p); err == nil { t.Skip("exists") }
+	if os.Getenv("ZZ_NOPREFIX") != "" {
+		raw, err := sql.Open("sqlite", p+"?_pragma=journal_mode(wal)")
+		if err != nil { t.Fatal(err) }
+		for _, q := range []string{`CREATE TABLE pdf_pages (rowid INTEGER PRIMARY KEY, file_id INTEGER NOT NULL, page_num INTEGER NOT NULL, text_content TEXT NOT NULL, UNIQUE(file_id, page_num))`,
+			`CREATE VIRTUAL TABLE pdf_text USING fts5(text_content, content='pdf_pages', content_rowid='rowid', tokenize='porter unicode61')`} {
+			if _, err := raw.Exec(q); err != nil { t.Fatal(err) }
+		}
+		raw.Close()
+	}
+	db, err := Open(p)
+	if err != nil { t.Fatal(err) }
+	defer db.Close()
+	r := rand.New(rand.NewSource(42))
+	t0 := time.Now()
+	nf, _ := strconv.Atoi(zzEnv("ZZ_FILES", "2000"))
+	for f := int64(1); f <= int64(nf); f++ {
+		db.Claim(f, "x")
+		pages := make([]Page, 100)
+		for i := range pages { pages[i] = Page{Num: i + 1, Text: zzGen(r)} }
+		if err := db.ReplacePages(f, pages); err != nil { t.Fatal(err) }
+		db.Finalize(f)
+		if f%100 == 0 { fmt.Printf("built %d files %v\n", f, time.Since(t0)) }
+	}
+}
+
+func zzSize(p string) int64 { st, err := os.Stat(p); if err != nil { return -1 }; return st.Size() }
+
+func TestZZSearch(t *testing.T) {
+	db, err := Open(zzDir + "/pdfindex.db")
+	if err != nil { t.Fatal(err) }
+	defer db.Close()
+	fmt.Printf("db size %d MB wal %d MB\n", zzSize(zzDir+"/pdfindex.db")>>20, zzSize(zzDir+"/pdfindex.db-wal")>>20)
+	s := time.Now(); st, _ := db.Stats(); fmt.Printf("Stats cold: %v %+v\n", time.Since(s), st)
+	s = time.Now(); db.Stats(); fmt.Printf("Stats warm: %v\n", time.Since(s))
+	s = time.Now(); m, _ := db.DoneOrActiveFileIDs(); fmt.Printf("DoneOrActive: %v n=%d\n", time.Since(s), len(m))
+	for _, q := range []string{"10UF 25V", "PP3V3", "C", "1", "A", "U12", "SMC_RESET_L", "10UF 25V 0402"} {
+		s := time.Now()
+		h, err := db.SearchPages(q, nil, 1000)
+		cold := time.Since(s)
+		var ws []time.Duration
+		for i := 0; i < 3; i++ { s := time.Now(); db.SearchPages(q, nil, 1000); ws = append(ws, time.Since(s)) }
+		fmt.Printf("SEARCH %-16q hits=%d err=%v cold=%v warm=%v\n", q, len(h), err, cold, ws)
+	}
+}
+
+func TestZZConcurrent(t *testing.T) {
+	db, err := Open(zzDir + "/pdfindex.db")
+	if err != nil { t.Fatal(err) }
+	defer db.Close()
+	wal := zzDir + "/pdfindex.db-wal"
+	stop := make(chan struct{})
+	var writes atomic.Int64
+	go func() {
+		r := rand.New(rand.NewSource(7))
+		for f := int64(1); ; f = f%2000 + 1 {
+			select { case <-stop: return; default: }
+			pages := make([]Page, 100)
+			for i := range pages { pages[i] = Page{Num: i + 1, Text: zzGen(r)} }
+			db.ReplacePages(f, pages)
+			writes.Add(1)
+		}
+	}()
+	held := make(chan struct{})
+	go func() {
+		first := true
+		db.SearchPagesStream("PP3V3", nil, 1000, func(h SearchHit) error {
+			if first { first = false; fmt.Println("HELD cursor first row at", time.Now().Format("15:04:05")); time.Sleep(30 * time.Second) }
+			return nil
+		})
+		fmt.Println("HELD cursor released at", time.Now().Format("15:04:05"))
+		close(held)
+	}()
+	t0 := time.Now()
+	qs := []string{"10UF 25V", "PP3V3", "C", "U12", "SMC_RESET_L"}
+	var lat = map[string][]time.Duration{}
+	nextWal := time.Time{}
+	for time.Since(t0) < 60*time.Second {
+		for _, q := range qs {
+			s := time.Now()
+			db.SearchPages(q, nil, 1000)
+			phase := "held"; if time.Since(t0) > 31*time.Second { phase = "after" }
+			lat[q+"/"+phase] = append(lat[q+"/"+phase], time.Since(s))
+			if time.Now().After(nextWal) {
+				fmt.Printf("t=%2.0fs wal=%d MB db=%d MB writes(files)=%d\n", time.Since(t0).Seconds(), zzSize(wal)>>20, zzSize(zzDir+"/pdfindex.db")>>20, writes.Load())
+				nextWal = time.Now().Add(5 * time.Second)
+			}
+		}
+	}
+	close(stop)
+	for k, v := range lat {
+		sort.Slice(v, func(i, j int) bool { return v[i] < v[j] })
+		fmt.Printf("LAT %-24s n=%d min=%v med=%v max=%v\n", k, len(v), v[0], v[len(v)/2], v[len(v)-1])
+	}
+	<-held
+}
+
+func TestZZControl(t *testing.T) {
+	db, err := Open(zzDir + "/pdfindex.db")
+	if err != nil { t.Fatal(err) }
+	defer db.Close()
+	wal := zzDir + "/pdfindex.db-wal"
+	fmt.Printf("start wal=%d MB\n", zzSize(wal)>>20)
+	for _, mode := range []string{"writer-only", "writer+sequential-search"} {
+		stop := make(chan struct{})
+		go func() {
+			r := rand.New(rand.NewSource(9))
+			for f := int64(1); ; f = f%2000 + 1 {
+				select { case <-stop: return; default: }
+				pages := make([]Page, 100)
+				for i := range pages { pages[i] = Page{Num: i + 1, Text: zzGen(r)} }
+				db.ReplacePages(f, pages)
+			}
+		}()
+		t0 := time.Now()
+		for time.Since(t0) < 25*time.Second {
+			if mode != "writer-only" { db.SearchPages("PP3V3", nil, 1000) } else { time.Sleep(500 * time.Millisecond) }
+			fmt.Printf("%s t=%2.0fs wal=%d MB\n", mode, time.Since(t0).Seconds(), zzSize(wal)>>20)
+		}
+		close(stop)
+		time.Sleep(time.Second)
+	}
+}
+
+func TestZZControl2(t *testing.T) {
+	wal := zzDir + "/pdfindex.db-wal"
+	for _, mode := range []string{"writer-only", "writer+seq-search", "writer+held-cursor", "writer+held-cursor+seq-search"} {
+		db, err := Open(zzDir + "/pdfindex.db")
+		if err != nil { t.Fatal(err) }
+		fmt.Printf("[%s] start wal=%d MB\n", mode, zzSize(wal)>>20)
+		stop := make(chan struct{})
+		go func() {
+			r := rand.New(rand.NewSource(9))
+			for f := int64(1); ; f = f%2000 + 1 {
+				select { case <-stop: return; default: }
+				pages := make([]Page, 100)
+				for i := range pages { pages[i] = Page{Num: i + 1, Text: zzGen(r)} }
+				db.ReplacePages(f, pages)
+			}
+		}()
+		rel := make(chan struct{})
+		if strings.Contains(mode, "held") {
+			go db.SearchPagesStream("PP3V3", nil, 1000, func(h SearchHit) error { <-rel; return nil })
+		}
+		t0 := time.Now()
+		last := -5.0
+		for time.Since(t0) < 25*time.Second {
+			if strings.Contains(mode, "seq") { db.SearchPages("PP3V3", nil, 1000) } else { time.Sleep(200 * time.Millisecond) }
+			if e := time.Since(t0).Seconds(); e-last >= 5 { last = e; fmt.Printf("[%s] t=%2.0fs wal=%d MB\n", mode, e, zzSize(wal)>>20) }
+		}
+		close(stop); close(rel)
+		time.Sleep(2 * time.Second)
+		db.Close()
+		fmt.Printf("[%s] after close wal=%d MB\n", mode, zzSize(wal)>>20)
+	}
+}
+
+// ---- T4 / T5 fakes
+type zzSrc struct {
+	mu      sync.Mutex
+	files   map[int64]PdfFile
+	listGate chan struct{} // if non-nil, ListPDFs blocks until closed
+	listIDs []int64
+}
+
+func (s *zzSrc) ListPDFs() ([]PdfFile, error) {
+	if s.listGate != nil { <-s.listGate }
+	s.mu.Lock(); defer s.mu.Unlock()
+	var out []PdfFile
+	for _, id := range s.listIDs { out = append(out, s.files[id]) }
+	return out, nil
+}
+func (s *zzSrc) ListPDFsUnder(string) ([]PdfFile, error) { return s.ListPDFs() }
+func (s *zzSrc) ReadFile(p string) ([]byte, error)        { return []byte("text " + p), nil }
+func (s *zzSrc) CanonicalFor(int64) (int64, bool, error)  { return 0, false, nil }
+func (s *zzSrc) Lookup(id int64) (PdfFile, bool, error) {
+	s.mu.Lock(); defer s.mu.Unlock()
+	f, ok := s.files[id]
+	return f, ok, nil
+}
+
+type zzExt struct {
+	delay time.Duration
+	calls sync.Map // path-text -> *atomic.Int32
+}
+func (e *zzExt) ExtractFile(b []byte) ([]string, error) {
+	v, _ := e.calls.LoadOrStore(string(b), new(atomic.Int32))
+	v.(*atomic.Int32).Add(1)
+	d := e.delay
+	if string(b) != "text a.pdf" && e.delay > 0 { d = 500 * time.Millisecond }
+	time.Sleep(d)
+	return []string{string(b)}, nil
+}
+
+func TestZZLaneA(t *testing.T) {
+	// (a) sweep with 0 pending; file 2 exists in source but not in list.
+	for _, variant := range []string{"enqueue-during-enumeration", "enqueue-after-sweep-ended"} {
+		db := openTestDB(t)
+		src := &zzSrc{files: map[int64]PdfFile{1: {1, "a.pdf"}, 2: {2, "late.pdf"}}, listIDs: []int64{1}, listGate: make(chan struct{})}
+		db.Claim(1, "x"); db.UpsertPages(1, []Page{{1, "a"}}); db.Finalize(1)
+		ext := &zzExt{}
+		ix := NewIndexer(db, ext, src, func() []string { return nil }, 2)
+		ix.Run()
+		waitFor(t, func() bool { return ix.Progress().Running })
+		if variant == "enqueue-during-enumeration" {
+			ix.Enqueue(2)
+			close(src.listGate)
+			time.Sleep(500 * time.Millisecond)
+		} else {
+			close(src.listGate)
+			waitFor(t, func() bool { return !ix.Progress().Running })
+			ix.Enqueue(2)
+			time.Sleep(500 * time.Millisecond)
+		}
+		st, _ := db.Status(2)
+		fmt.Printf("T4a %-28s running=%v status(2)=%q priorityLen=%d\n", variant, ix.Progress().Running, st.Status, len(ix.priority))
+	}
+	// (a2) workers busy, bulk exhausted, Enqueue late while sweep finishing, 1 worker
+	db := openTestDB(t)
+	src := &zzSrc{files: map[int64]PdfFile{1: {1, "a.pdf"}, 2: {2, "late.pdf"}}, listIDs: []int64{1}}
+	ext := &zzExt{delay: 400 * time.Millisecond}
+	ix := NewIndexer(db, ext, src, func() []string { return nil }, 1)
+	ix.Run()
+	waitFor(t, func() bool { return ix.Progress().Running && ix.Progress().Total == 1 })
+	time.Sleep(100 * time.Millisecond)
+	ix.Enqueue(2) // worker busy extracting 1; after it finishes the loop drains priority first
+	waitFor(t, func() bool { return !ix.Progress().Running })
+	st, _ := db.Status(2)
+	fmt.Printf("T4a2 enqueue while worker busy: status(2)=%q\n", st.Status)
+}
+
+func TestZZLaneB(t *testing.T) {
+	db := openTestDB(t)
+	const iters = 300
+	src := &zzSrc{files: map[int64]PdfFile{}}
+	nextID := int64(1000)
+	var lost, total, stuckPriority int
+	for it := 0; it < iters; it++ {
+		// one pending file in the list so a sweep happens
+		base := nextID; nextID++
+		src.mu.Lock(); src.files[base] = PdfFile{base, fmt.Sprintf("b%d.pdf", base)}; src.listIDs = []int64{base}; src.mu.Unlock()
+		ix := NewIndexer(db, &zzExt{}, src, func() []string { return nil }, 2)
+		var ids []int64
+		var wg sync.WaitGroup
+		wg.Add(1)
+		ix.Run()
+		go func() {
+			defer wg.Done()
+			for k := 0; k < 40 && ix.Progress().Running; k++ {
+				id := nextID; nextID++
+				src.mu.Lock(); src.files[id] = PdfFile{id, fmt.Sprintf("s%d.pdf", id)}; src.mu.Unlock()
+				ix.Submit(id)
+				ids = append(ids, id)
+			}
+		}()
+		wg.Wait()
+		for d := 0; d < 200 && ix.Progress().Running; d++ { time.Sleep(10 * time.Millisecond) }
+		time.Sleep(20 * time.Millisecond)
+		for _, id := range ids {
+			st, _ := db.Status(id)
+			total++
+			if st.Status != "indexed" { lost++ }
+		}
+		stuckPriority += len(ix.priority)
+	}
+	fmt.Printf("T4b iterations=%d submitted=%d notIndexed(after Running==false)=%d leftInPriorityChan=%d\n", iters, total, lost, stuckPriority)
+}
+
+func TestZZWatchdog(t *testing.T) {
+	for _, withSecondSweep := range []bool{false, true} {
+		db := openTestDB(t)
+		src := &zzSrc{files: map[int64]PdfFile{1: {1, "a.pdf"}}, listIDs: []int64{1}}
+		ext := &zzExt{delay: 3 * time.Second}
+		ix := NewIndexer(db, ext, src, func() []string { return nil }, 2)
+		stop := ix.StartWatchdog(200*time.Millisecond, 1)
+		ix.Run()
+		var seen []string
+		t0 := time.Now()
+		second := false
+		for time.Since(t0) < 5*time.Second {
+			st, _ := db.Status(1)
+			if len(seen) == 0 || seen[len(seen)-1] != st.Status { seen = append(seen, st.Status); fmt.Printf("  t=%.1fs status=%q\n", time.Since(t0).Seconds(), st.Status) }
+			if withSecondSweep && !second && st.Status == "pending" {
+				second = true
+				// a periodic/manual sweep arrives while job 1 is still live
+				fmt.Printf("  t=%.1fs Submit(1) err=%v (sweep Running=%v)\n", time.Since(t0).Seconds(), ix.Submit(1), ix.Progress().Running)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		close(stop)
+		v, _ := ext.calls.Load("text a.pdf")
+		fmt.Printf("T5 secondSweep=%v statuses=%v extractCalls=%d\n", withSecondSweep, seen, v.(*atomic.Int32).Load())
+	}
+}
+
+func TestZZWatchdog2(t *testing.T) {
+	db := openTestDB(t)
+	src := &zzSrc{files: map[int64]PdfFile{1: {1, "a.pdf"}, 2: {2, "b.pdf"}, 3: {3, "c.pdf"}, 4: {4, "d.pdf"}, 5: {5, "e.pdf"}}, listIDs: []int64{1, 2, 3, 4, 5}}
+	ext := &zzExt{delay: 3 * time.Second}
+	ix := NewIndexer(db, ext, src, func() []string { return nil }, 2)
+	stop := ix.StartWatchdog(200*time.Millisecond, 1)
+	ix.Run()
+	t0 := time.Now(); done := false
+	for time.Since(t0) < 6*time.Second {
+		st, _ := db.Status(1)
+		if !done && st.Status == "pending" { done = true; fmt.Printf("  t=%.1fs file1 pending while live; Submit(1) -> %v\n", time.Since(t0).Seconds(), ix.Submit(1)) }
+		time.Sleep(50 * time.Millisecond)
+	}
+	close(stop)
+	v, _ := ext.calls.Load("text a.pdf")
+	st, _ := db.Status(1)
+	fmt.Printf("T5b (5 files, 2 workers, file1 slow 3s) extractCalls(file1)=%d final status=%q\n", v.(*atomic.Int32).Load(), st.Status)
+}
+
+func zzQ0(db *DB, fts string, limit int, snip bool) (int, error) {
+	sn := ", snippet(pdf_text, 0, '<b>', '</b>', '...', 32) AS snip"
+	sel := "r.snip"
+	if !snip { sn = ""; sel = "''" }
+	q := `WITH ranked AS (
+		SELECT pdf_text.rowid, rank` + sn + `
+		FROM pdf_text WHERE pdf_text MATCH ? ORDER BY rank LIMIT ?
+	)
+	SELECT p.file_id, p.page_num, ` + sel + `
+	FROM ranked r JOIN pdf_pages p ON p.rowid = r.rowid
+	ORDER BY r.rank`
+	rows, err := db.reader.Query(q, fts, limit)
+	if err != nil { return 0, err }
+	defer rows.Close()
+	n := 0
+	for rows.Next() { var a, b int64; var c string; rows.Scan(&a, &b, &c); n++ }
+	return n, rows.Err()
+}
+
+func zzQ1(db *DB, fts string, limit int) (int, error) {
+	rows, err := db.reader.Query(`SELECT rowid, rank FROM pdf_text WHERE pdf_text MATCH ? ORDER BY rank LIMIT ?`, fts, limit)
+	if err != nil { return 0, err }
+	var ids []string
+	for rows.Next() { var id int64; var r float64; rows.Scan(&id, &r); ids = append(ids, strconv.FormatInt(id, 10)) }
+	rows.Close()
+	in := strings.Join(ids, ",")
+	r2, err := db.reader.Query(`SELECT rowid, snippet(pdf_text,0,'<b>','</b>','...',32) FROM pdf_text WHERE pdf_text MATCH ? AND rowid IN (`+in+`)`, fts)
+	if err != nil { return 0, err }
+	n := 0
+	for r2.Next() { var id int64; var s string; r2.Scan(&id, &s); n++ }
+	r2.Close()
+	r3, err := db.reader.Query(`SELECT file_id, page_num FROM pdf_pages WHERE rowid IN (` + in + `)`)
+	if err != nil { return 0, err }
+	for r3.Next() { var a, b int64; r3.Scan(&a, &b) }
+	r3.Close()
+	return n, nil
+}
+
+func TestZZQueries(t *testing.T) {
+	db, err := Open(zzDir + "/pdfindex.db")
+	if err != nil { t.Fatal(err) }
+	defer db.Close()
+	fmt.Printf("DIR %s db=%d MB\n", zzDir, zzSize(zzDir+"/pdfindex.db")>>20)
+	s := time.Now(); st, _ := db.Stats(); fmt.Printf("Stats: %v pages=%d\n", time.Since(s), st.Pages)
+	rows, _ := db.reader.Query(`EXPLAIN QUERY PLAN WITH ranked AS (SELECT pdf_text.rowid, rank, snippet(pdf_text, 0, '<b>', '</b>', '...', 32) AS snip FROM pdf_text WHERE pdf_text MATCH ? ORDER BY rank LIMIT ?) SELECT p.file_id, p.page_num, r.snip FROM ranked r JOIN pdf_pages p ON p.rowid = r.rowid ORDER BY r.rank`, `"PP3V3"*`, 1000)
+	for rows.Next() { var a, b, c int; var d string; rows.Scan(&a, &b, &c, &d); fmt.Printf("PLAN %d %d %s\n", a, b, d) }
+	rows.Close()
+	for _, q := range zzQueries() {
+		fts := buildFTS5Query(q)
+		type v struct{ name string; f func() (int, error) }
+		vs := []v{
+			{"Q0 current", func() (int, error) { return zzQ0(db, fts, 1000, true) }},
+			{"Q1 two-phase", func() (int, error) { return zzQ1(db, fts, 1000) }},
+			{"Q2 no-snippet", func() (int, error) { return zzQ0(db, fts, 1000, false) }},
+			{"Q3 LIMIT100", func() (int, error) { return zzQ0(db, fts, 100, true) }},
+			{"Q4 unranked", func() (int, error) {
+				r, err := db.reader.Query(`SELECT rowid FROM pdf_text WHERE pdf_text MATCH ? LIMIT 1000`, fts)
+				if err != nil { return 0, err }
+				defer r.Close(); n := 0
+				for r.Next() { var id int64; r.Scan(&id); n++ }
+				return n, r.Err() }},
+			{"Q5 COUNT", func() (int, error) {
+				var n int
+				err := db.reader.QueryRow(`SELECT COUNT(*) FROM pdf_text WHERE pdf_text MATCH ?`, fts).Scan(&n)
+				return n, err }},
+			{"Q6 per-file", func() (int, error) {
+				r, err := db.reader.Query(`SELECT p.file_id, MIN(p.page_num) FROM pdf_text t JOIN pdf_pages p ON p.rowid=t.rowid WHERE pdf_text MATCH ? GROUP BY p.file_id LIMIT 200`, fts)
+				if err != nil { return 0, err }
+				defer r.Close(); n := 0
+				for r.Next() { var a, b int64; r.Scan(&a, &b); n++ }
+				return n, r.Err() }},
+		}
+		for _, x := range vs {
+			if os.Getenv("ZZ_SKIPQ1") != "" && (strings.HasPrefix(x.name, "Q1") || strings.HasPrefix(x.name, "Q3") || strings.HasPrefix(x.name, "Q6")) { continue }
+			if strings.HasPrefix(x.name, "Q1") && (q == "C" || q == "1") { fmt.Printf("RES %-10q %-14s SKIPPED (did not finish in >5 min)\n", q, x.name); continue }
+			if strings.HasPrefix(x.name, "Q1") {
+				s := time.Now(); n, err := x.f(); fmt.Printf("RES %-10q %-14s n=%d err=%v single-run=%v\n", q, x.name, n, err, time.Since(s).Round(time.Millisecond)); continue
+			}
+			s := time.Now(); n, err := x.f(); cold := time.Since(s)
+			s = time.Now(); x.f(); w1 := time.Since(s)
+			s = time.Now(); x.f(); w2 := time.Since(s)
+			fmt.Printf("RES %-10q %-14s n=%d err=%v first=%v warm=%v,%v\n", q, x.name, n, err, cold.Round(time.Millisecond), w1.Round(time.Millisecond), w2.Round(time.Millisecond))
+		}
+	}
+}
+
+func zzQueries() []string { if os.Getenv("ZZ_SKIPQ1") != "" { return []string{"10UF 25V", "PP3V3", "C"} }; return []string{"10UF 25V", "PP3V3", "C", "1", "U12", "SMC_RESET_L"} }
