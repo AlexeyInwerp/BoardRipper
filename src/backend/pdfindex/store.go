@@ -229,7 +229,13 @@ func (db *DB) Stats(ctx context.Context) (Stats, error) {
 	if err != nil {
 		return s, err
 	}
-	if err := db.reader.QueryRowContext(ctx, `SELECT COUNT(*) FROM pdf_pages`).Scan(&s.Pages); err != nil {
+	// Pages indexed = the sum of each finished file's page_count (written by
+	// Finalize), read from the small status table. COUNT(*) over pdf_pages
+	// walked an index of every page and took over 100 s on a NAS with a
+	// 1.9 M-page index — on every 1.5 s progress poll. Pages of a file still
+	// being extracted are not counted until it finishes.
+	if err := db.reader.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(page_count),0) FROM pdf_index_status WHERE status = 'indexed'`).Scan(&s.Pages); err != nil {
 		return s, err
 	}
 	return s, nil
