@@ -3,6 +3,7 @@ package pdfindex
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -37,9 +38,20 @@ type Source interface {
 }
 
 // Extractor is satisfied by Engine (real pdfium WASM) and by fakes in tests.
+// ExtractFile may return pages together with a *PartialError: the document
+// was cut off by its deadline and the pages before the cut are valid.
 type Extractor interface {
 	ExtractFile(data []byte) ([]string, error)
 }
+
+// initErrorer is implemented by Engine: a non-blocking "did init fail?".
+type initErrorer interface {
+	InitError() error
+}
+
+// ErrEngineUnavailable is returned by sweep starts when the extractor failed
+// to initialise. Nothing is claimed or read in that state.
+var ErrEngineUnavailable = errors.New("pdfindex: text extractor unavailable")
 
 // Progress is a snapshot of the current sweep's progress.
 type Progress struct {
@@ -51,6 +63,9 @@ type Progress struct {
 	StartedAt     int64  `json:"started_at"`
 	Workers       int    `json:"workers"`        // configured pool size (max parallel extractors)
 	ActiveWorkers int    `json:"active_workers"` // workers currently extracting (live)
+	// EngineError is set when the extractor failed to initialise: indexing
+	// cannot run on this server, and the UI should say so.
+	EngineError string `json:"engine_error,omitempty"`
 }
 
 // Indexer runs autonomous bulk indexing with a priority queue for on-demand
@@ -62,13 +77,20 @@ type Indexer struct {
 	terms   func() []string
 	workers int
 
-	mu       sync.Mutex
-	running  bool
+	mu      sync.Mutex
+	running bool
+	// rerun asks for one more full sweep once the current one ends: set when
+	// a start request (reindex, a scan's changes, a reclaim) arrives while a
+	// sweep is running, whose work list was fixed before those rows existed.
+	rerun    bool
 	cancel   context.CancelFunc
 	done     chan struct{} // closed when the current sweep goroutine exits; nil when idle
 	prog     Progress
 	priority chan int64
 	active   atomic.Int64 // workers currently inside the extract+store path
+	// heartbeat is how often a file being extracted refreshes attempted_at.
+	// Set once at construction; tests shorten it before starting a sweep.
+	heartbeat time.Duration
 }
 
 // NewIndexer creates a new Indexer. workers ≥ 1.
@@ -77,22 +99,34 @@ func NewIndexer(store *DB, e Extractor, src Source, terms func() []string, worke
 		workers = 1
 	}
 	return &Indexer{
-		store:    store,
-		extract:  e,
-		src:      src,
-		terms:    terms,
-		workers:  workers,
-		priority: make(chan int64, 256),
+		store:     store,
+		extract:   e,
+		src:       src,
+		terms:     terms,
+		workers:   workers,
+		priority:  make(chan int64, 256),
+		heartbeat: defaultHeartbeat,
 	}
 }
 
 // Enqueue pushes a single file ID to the front-of-queue priority lane.
-// Non-blocking: drops silently if the 256-slot buffer is full.
+// Non-blocking: drops (and logs) if the 256-slot buffer is full. An id still
+// in the lane when a sweep ends starts another sweep, which drains it.
 func (ix *Indexer) Enqueue(fileID int64) {
 	select {
 	case ix.priority <- fileID:
 	default:
+		log.Printf("pdfindex: priority lane full, file_id=%d left to the next sweep", fileID)
 	}
+}
+
+// RequestRun starts a sweep over all pending files, or — when one is already
+// running — makes sure another follows it. Use it for anything that has just
+// turned rows into 'pending' (reindex, a watermark change, a scan, a
+// reclaim): the running sweep enumerated its list before those rows existed
+// and would never reach them. Run() alone silently did nothing in that case.
+func (ix *Indexer) RequestRun() error {
+	return ix.start(ix.src.ListPDFs, true)
 }
 
 // Submit indexes one file id as soon as possible, regardless of sweep state.
@@ -134,6 +168,9 @@ func (ix *Indexer) Progress() Progress {
 	p := ix.prog
 	p.Workers = ix.workers
 	p.ActiveWorkers = int(ix.active.Load())
+	if err := ix.engineError(); err != nil {
+		p.EngineError = err.Error()
+	}
 	return p
 }
 
@@ -231,8 +268,30 @@ func (ix *Indexer) RunFiles(ids []int64) error {
 // "stop previous index?" prompt in the UI for each. Claiming up front makes
 // concurrent starts fail fast with ErrAlreadyRunning and no wasted enumeration.
 func (ix *Indexer) startScoped(list func() ([]PdfFile, error)) error {
+	return ix.start(list, false)
+}
+
+// engineError reports a failed extractor init (nil while compiling or fine).
+func (ix *Indexer) engineError() error {
+	if ie, ok := ix.extract.(initErrorer); ok {
+		return ie.InitError()
+	}
+	return nil
+}
+
+// start is startScoped with the busy case made explicit: rerunIfBusy records
+// a follow-up sweep instead of only reporting ErrAlreadyRunning.
+func (ix *Indexer) start(list func() ([]PdfFile, error), rerunIfBusy bool) error {
+	if err := ix.engineError(); err != nil {
+		return fmt.Errorf("%w: %v", ErrEngineUnavailable, err)
+	}
 	ix.mu.Lock()
 	if ix.running {
+		if rerunIfBusy {
+			ix.rerun = true
+			ix.mu.Unlock()
+			return nil
+		}
 		ix.mu.Unlock()
 		return ErrAlreadyRunning
 	}
@@ -252,13 +311,29 @@ func (ix *Indexer) startScoped(list func() ([]PdfFile, error)) error {
 		// StopAndWait unblocks. Keeping this in one deferred place is what lets
 		// sweep() no longer touch the running/cancel bookkeeping.
 		defer func() {
+			// A follow-up sweep runs when one was requested meanwhile, or
+			// when ids are still in the priority lane (they arrived after the
+			// workers had left) — unless the sweep was stopped on purpose.
 			ix.mu.Lock()
+			again := ctx.Err() == nil && (ix.rerun || len(ix.priority) > 0)
+			ix.rerun = false
 			ix.prog.Running = false
 			ix.running = false
 			ix.cancel = nil
 			ix.done = nil
 			ix.mu.Unlock()
+			cancel()
+			if err := ix.store.Checkpoint(); err != nil {
+				log.Printf("pdfindex: checkpoint after sweep: %v", err)
+			}
 			close(done)
+			if again {
+				go func() {
+					if err := ix.RequestRun(); err != nil {
+						log.Printf("pdfindex: follow-up sweep: %v", err)
+					}
+				}()
+			}
 		}()
 		pending, err := ix.enumeratePending(list)
 		if err != nil {
@@ -271,7 +346,14 @@ func (ix *Indexer) startScoped(list func() ([]PdfFile, error)) error {
 		ix.mu.Lock()
 		ix.prog.Total = int64(len(pending))
 		ix.mu.Unlock()
+		log.Printf("pdfindex: sweep started — %d file(s) pending", len(pending))
 		ix.sweep(ctx, pending)
+		p := ix.Progress()
+		how := "ended"
+		if ctx.Err() != nil {
+			how = "stopped"
+		}
+		log.Printf("pdfindex: sweep %s — %d/%d done, %d error(s)", how, p.Done, p.Total, p.Errors)
 	}()
 	return nil
 }
@@ -398,11 +480,28 @@ func (ix *Indexer) process(f PdfFile) {
 		return
 	}
 
-	// No per-file heartbeat needed: the engine enforces a 2-minute per-file kill,
-	// well under the 10-minute watchdog reclaim window.
 	// Count this worker as actively extracting (live thread-count for the UI).
 	ix.active.Add(1)
 	defer ix.active.Add(-1)
+
+	// Heartbeat: a large document may extract for up to the engine's maximum
+	// (20 min), past the watchdog's reclaim age; without it the watchdog would
+	// hand a live job back to 'pending' and a second worker would extract it
+	// again.
+	stopBeat := make(chan struct{})
+	defer close(stopBeat)
+	go func() {
+		t := time.NewTicker(ix.heartbeat)
+		defer t.Stop()
+		for {
+			select {
+			case <-stopBeat:
+				return
+			case <-t.C:
+				_ = ix.store.Heartbeat(f.ID)
+			}
+		}
+	}()
 
 	data, err := ix.src.ReadFile(f.Path)
 	if err != nil {
@@ -410,7 +509,19 @@ func (ix *Indexer) process(f PdfFile) {
 		ix.fail(f.ID, "read: "+err.Error())
 		return
 	}
+	// Logged before the extraction, not only on failure: if this file takes
+	// the process down, this is the last line in docker logs.
+	log.Printf("pdfindex: extracting file_id=%d size=%d path=%q", f.ID, len(data), f.Path)
 	rawPages, err := ix.extract.ExtractFile(data)
+	note := ""
+	var partial *PartialError
+	if errors.As(err, &partial) {
+		// Stopped by its deadline part-way: index what was read and say so.
+		// A sweep never retries it (it is 'indexed'); "Re-index" does.
+		log.Printf("pdfindex: PARTIAL file_id=%d path=%q: %v", f.ID, f.Path, err)
+		note = "partial: " + err.Error()
+		err = nil
+	}
 	if err != nil {
 		log.Printf("pdfindex: FAIL extract file_id=%d path=%q size=%d: %v", f.ID, f.Path, len(data), err)
 		ix.fail(f.ID, "extract: "+err.Error())
@@ -436,7 +547,7 @@ func (ix *Indexer) process(f PdfFile) {
 		ix.fail(f.ID, "store: "+err.Error())
 		return
 	}
-	if _, err := ix.store.Finalize(f.ID); err != nil {
+	if _, err := ix.store.FinalizeWithNote(f.ID, note); err != nil {
 		log.Printf("pdfindex: FAIL finalize file_id=%d path=%q: %v", f.ID, f.Path, err)
 	}
 }
@@ -448,11 +559,17 @@ func (ix *Indexer) fail(fileID int64, msg string) {
 	_ = ix.store.Fail(fileID, msg)
 }
 
+// defaultHeartbeat refreshes attempted_at of a file being extracted; it must
+// stay well under the watchdog's reclaim age (600 s in main.go).
+const defaultHeartbeat = time.Minute
+
 // StartWatchdog runs a ticker that reclaims 'indexing' rows whose last
 // heartbeat (attempted_at) is older than maxAgeSeconds, flipping them back to
-// 'pending' so they are retried on the next sweep. Close the returned channel
-// to stop the watchdog.
-func (ix *Indexer) StartWatchdog(interval time.Duration, maxAgeSeconds int64) chan struct{} {
+// 'pending' (or to 'failed' once they have been claimed MaxAttempts times).
+// onReclaim, when non-nil, is called with the count so the caller can start a
+// sweep — a reclaimed row reached nothing on its own before. Close the
+// returned channel to stop the watchdog.
+func (ix *Indexer) StartWatchdog(interval time.Duration, maxAgeSeconds int64, onReclaim func(n int64)) chan struct{} {
 	stop := make(chan struct{})
 	go func() {
 		t := time.NewTicker(interval)
@@ -464,6 +581,9 @@ func (ix *Indexer) StartWatchdog(interval time.Duration, maxAgeSeconds int64) ch
 			case <-t.C:
 				if n, err := ix.store.ReclaimStale(maxAgeSeconds); err == nil && n > 0 {
 					log.Printf("pdfindex watchdog: reclaimed %d stale row(s)", n)
+					if onReclaim != nil {
+						onReclaim(n)
+					}
 				}
 			}
 		}

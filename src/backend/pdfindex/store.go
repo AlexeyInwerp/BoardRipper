@@ -1,11 +1,21 @@
 package pdfindex
 
 import (
+	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"time"
 )
+
+// MaxAttempts is how many times a sweep claims one file before it gives up on
+// it. Counted at Claim, not at Fail, so a file that kills the process (out of
+// memory, container restart) counts too: such a row never reaches 'failed' by
+// itself, and without the count every boot started with the same file.
+// Explicit requests (opening the PDF, Submit, the priority lane) still claim a
+// file past the limit; "Retry failed" and a changed file reset the count.
+const MaxAttempts = 3
 
 // StatusRow mirrors pdf_index_status. ListFailed enriches it with filename
 // + path joined from the files table so the UI can render readable rows
@@ -15,6 +25,7 @@ type StatusRow struct {
 	Status      string `json:"status"` // pending|indexing|indexed|empty|failed
 	Source      string `json:"source"`
 	PageCount   int    `json:"page_count"`
+	Attempts    int    `json:"attempts"`
 	AttemptedAt int64  `json:"attempted_at"`
 	IndexedAt   int64  `json:"indexed_at"`
 	Error       string `json:"error"`
@@ -29,17 +40,18 @@ type Page struct {
 }
 
 // Claim atomically transitions a file to 'indexing' iff it has no row or is
-// pending/failed. Returns true if THIS caller won the claim.
+// pending/failed, and counts the attempt. Returns true if THIS caller won.
 // Uses RowsAffected() from the same Exec — never a separate SELECT changes().
 func (db *DB) Claim(fileID int64, source string) (bool, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	now := time.Now().Unix()
 	res, err := db.writer.Exec(
-		`INSERT INTO pdf_index_status(file_id, status, source, attempted_at)
-		 VALUES(?, 'indexing', ?, ?)
+		`INSERT INTO pdf_index_status(file_id, status, source, attempted_at, attempts)
+		 VALUES(?, 'indexing', ?, ?, 1)
 		 ON CONFLICT(file_id) DO UPDATE SET
-		   status='indexing', source=excluded.source, attempted_at=excluded.attempted_at
+		   status='indexing', source=excluded.source, attempted_at=excluded.attempted_at,
+		   attempts=pdf_index_status.attempts + 1
 		 WHERE pdf_index_status.status IN ('pending','failed')`,
 		fileID, source, now)
 	if err != nil {
@@ -130,8 +142,16 @@ func (db *DB) ReplacePages(fileID int64, pages []Page) error {
 	return tx.Commit()
 }
 
-// Finalize sets terminal status by counting stored pages.
+// Finalize sets terminal status by counting stored pages, clears the error
+// left by any earlier attempt and resets the attempt count.
 func (db *DB) Finalize(fileID int64) (StatusRow, error) {
+	return db.FinalizeWithNote(fileID, "")
+}
+
+// FinalizeWithNote is Finalize with a note kept in the error column — used for
+// a file whose extraction stopped part-way: it is 'indexed' (searchable for
+// the pages that were read, never retried by a sweep) and says so.
+func (db *DB) FinalizeWithNote(fileID int64, note string) (StatusRow, error) {
 	db.mu.Lock()
 	var n int
 	if err := db.writer.QueryRow(
@@ -144,8 +164,8 @@ func (db *DB) Finalize(fileID int64) (StatusRow, error) {
 		status = "empty"
 	}
 	_, err := db.writer.Exec(
-		`UPDATE pdf_index_status SET status = ?, page_count = ?, indexed_at = ? WHERE file_id = ?`,
-		status, n, time.Now().Unix(), fileID)
+		`UPDATE pdf_index_status SET status = ?, page_count = ?, indexed_at = ?, error = ?, attempts = 0 WHERE file_id = ?`,
+		status, n, time.Now().Unix(), note, fileID)
 	db.mu.Unlock()
 	if err != nil {
 		return StatusRow{}, err
@@ -187,23 +207,29 @@ type Stats struct {
 	Pending  int `json:"pending"`
 	Indexing int `json:"indexing"`
 	Pages    int `json:"pages"`
+	// GivenUp counts failed files a sweep no longer retries (attempts ≥
+	// MaxAttempts). They are part of Failed.
+	GivenUp int `json:"given_up"`
 }
 
-func (db *DB) Stats() (Stats, error) {
+// Stats takes the request context: on a busy reader pool a stats call must
+// give up with its caller instead of queueing behind searches.
+func (db *DB) Stats(ctx context.Context) (Stats, error) {
 	var s Stats
-	err := db.reader.QueryRow(`
+	err := db.reader.QueryRowContext(ctx, `
 		SELECT
 			COALESCE(SUM(CASE WHEN status='indexed'  THEN 1 ELSE 0 END),0),
 			COALESCE(SUM(CASE WHEN status='empty'    THEN 1 ELSE 0 END),0),
 			COALESCE(SUM(CASE WHEN status='failed'   THEN 1 ELSE 0 END),0),
 			COALESCE(SUM(CASE WHEN status='pending'  THEN 1 ELSE 0 END),0),
-			COALESCE(SUM(CASE WHEN status='indexing' THEN 1 ELSE 0 END),0)
-		FROM pdf_index_status`).
-		Scan(&s.Indexed, &s.Empty, &s.Failed, &s.Pending, &s.Indexing)
+			COALESCE(SUM(CASE WHEN status='indexing' THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN status='failed' AND attempts >= ? THEN 1 ELSE 0 END),0)
+		FROM pdf_index_status`, MaxAttempts).
+		Scan(&s.Indexed, &s.Empty, &s.Failed, &s.Pending, &s.Indexing, &s.GivenUp)
 	if err != nil {
 		return s, err
 	}
-	if err := db.reader.QueryRow(`SELECT COUNT(*) FROM pdf_pages`).Scan(&s.Pages); err != nil {
+	if err := db.reader.QueryRowContext(ctx, `SELECT COUNT(*) FROM pdf_pages`).Scan(&s.Pages); err != nil {
 		return s, err
 	}
 	return s, nil
@@ -257,7 +283,7 @@ func (db *DB) ListFailed() ([]StatusRow, error) {
 	// Filename/Path are filled in by the handler from the databank — search.go
 	// follows the same "no ATTACH, enrich in Go" pattern.
 	rows, err := db.reader.Query(
-		`SELECT file_id, status, COALESCE(error,'') FROM pdf_index_status WHERE status='failed' ORDER BY file_id`)
+		`SELECT file_id, status, COALESCE(error,''), attempts FROM pdf_index_status WHERE status='failed' ORDER BY file_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +291,7 @@ func (db *DB) ListFailed() ([]StatusRow, error) {
 	var out []StatusRow
 	for rows.Next() {
 		var r StatusRow
-		if err := rows.Scan(&r.FileID, &r.Status, &r.Error); err != nil {
+		if err := rows.Scan(&r.FileID, &r.Status, &r.Error, &r.Attempts); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -277,7 +303,7 @@ func (db *DB) ListFailed() ([]StatusRow, error) {
 func (db *DB) ResetForReindex(scope string) (int64, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	q := `UPDATE pdf_index_status SET status='pending'`
+	q := `UPDATE pdf_index_status SET status='pending', attempts=0`
 	switch scope {
 	case "failed":
 		q += ` WHERE status='failed'`
@@ -308,7 +334,8 @@ func (db *DB) MarkPending(fileID int64) error {
 		ON CONFLICT(file_id) DO UPDATE
 		   SET status='pending',
 		       error='',
-		       indexed_at=0
+		       indexed_at=0,
+		       attempts=0
 		 WHERE pdf_index_status.status != 'pending'
 		   AND pdf_index_status.status != 'indexing'`, fileID)
 	return err
@@ -317,9 +344,14 @@ func (db *DB) MarkPending(fileID int64) error {
 // DoneOrActiveFileIDs returns file_ids whose status is terminal-or-active
 // (indexed|empty|duplicate|indexing) — the set the sweep should SKIP. Used to
 // pre-filter the work list so Progress.Total reflects only pending work.
-// 'duplicate' is terminal (resolved via its canonical), so it is skipped too.
+// 'duplicate' is terminal (resolved via its canonical), so it is skipped too,
+// and so is a failed file the sweeps have given up on (attempts ≥ MaxAttempts):
+// before, every failed file was re-extracted on every sweep start, which on a
+// slow NAS meant two minutes per known-bad file at every boot.
 func (db *DB) DoneOrActiveFileIDs() (map[int64]bool, error) {
-	rows, err := db.reader.Query(`SELECT file_id FROM pdf_index_status WHERE status IN ('indexed','empty','duplicate','indexing')`)
+	rows, err := db.reader.Query(`SELECT file_id FROM pdf_index_status
+		WHERE status IN ('indexed','empty','duplicate','indexing')
+		   OR (status = 'failed' AND attempts >= ?)`, MaxAttempts)
 	if err != nil {
 		return nil, err
 	}
@@ -345,12 +377,23 @@ func (db *DB) DoneOrActiveFileIDs() (map[int64]bool, error) {
 func (db *DB) RequeueIndexing() (int64, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	res, err := db.writer.Exec(`UPDATE pdf_index_status SET status='pending' WHERE status='indexing'`)
+	res, err := db.writer.Exec(`UPDATE pdf_index_status SET `+requeueSet+` WHERE status='indexing'`,
+		MaxAttempts, MaxAttempts, abandonedNote)
 	if err != nil {
 		return 0, err
 	}
 	return res.RowsAffected()
 }
+
+// requeueSet is the SET clause shared by RequeueIndexing and ReclaimStale: an
+// orphaned 'indexing' row goes back to 'pending', unless it has already been
+// claimed MaxAttempts times — then the claim never finished three times over
+// (the process died under it, or it never returns) and it becomes 'failed',
+// where the failed list shows it and sweeps leave it alone.
+const requeueSet = `status = CASE WHEN attempts >= ? THEN 'failed' ELSE 'pending' END,
+	error  = CASE WHEN attempts >= ? THEN ? ELSE error END`
+
+var abandonedNote = fmt.Sprintf("stopped %d times without finishing (process restarted or killed, often out of memory)", MaxAttempts)
 
 // ReclaimStale flips 'indexing' rows whose last heartbeat (attempted_at) is
 // older than maxAgeSeconds back to 'pending'. Returns count reclaimed.
@@ -359,8 +402,8 @@ func (db *DB) ReclaimStale(maxAgeSeconds int64) (int64, error) {
 	defer db.mu.Unlock()
 	cutoff := time.Now().Unix() - maxAgeSeconds
 	res, err := db.writer.Exec(
-		`UPDATE pdf_index_status SET status='pending'
-		 WHERE status='indexing' AND attempted_at < ?`, cutoff)
+		`UPDATE pdf_index_status SET `+requeueSet+`
+		 WHERE status='indexing' AND attempted_at < ?`, MaxAttempts, MaxAttempts, abandonedNote, cutoff)
 	if err != nil {
 		return 0, err
 	}
@@ -369,13 +412,18 @@ func (db *DB) ReclaimStale(maxAgeSeconds int64) (int64, error) {
 
 // Status returns the row, or a zero row with Status="" if absent.
 func (db *DB) Status(fileID int64) (StatusRow, error) {
+	return db.StatusContext(context.Background(), fileID)
+}
+
+// StatusContext is Status bound to a request context.
+func (db *DB) StatusContext(ctx context.Context, fileID int64) (StatusRow, error) {
 	var s StatusRow
 	var indexedAt, attemptedAt *int64
 	var source, errMsg *string
-	err := db.reader.QueryRow(
-		`SELECT file_id, status, source, page_count, attempted_at, indexed_at, error
+	err := db.reader.QueryRowContext(ctx,
+		`SELECT file_id, status, source, page_count, attempted_at, indexed_at, error, attempts
 		 FROM pdf_index_status WHERE file_id = ?`, fileID).
-		Scan(&s.FileID, &s.Status, &source, &s.PageCount, &attemptedAt, &indexedAt, &errMsg)
+		Scan(&s.FileID, &s.Status, &source, &s.PageCount, &attemptedAt, &indexedAt, &errMsg, &s.Attempts)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return StatusRow{FileID: fileID}, nil

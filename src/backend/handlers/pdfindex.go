@@ -35,7 +35,7 @@ func (h *PdfIndexHandler) Status(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
-	st, err := h.db.Status(id)
+	st, err := h.db.StatusContext(r.Context(), id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -49,7 +49,7 @@ func (h *PdfIndexHandler) Status(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/pdfindex/stats
 func (h *PdfIndexHandler) Stats(w http.ResponseWriter, r *http.Request) {
-	s, err := h.db.Stats()
+	s, err := h.db.Stats(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -59,11 +59,22 @@ func (h *PdfIndexHandler) Stats(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/pdfindex/run
 func (h *PdfIndexHandler) Run(w http.ResponseWriter, r *http.Request) {
-	if err := h.ix.Run(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := h.ix.RequestRun(); err != nil {
+		writeRunError(w, err)
 		return
 	}
 	writeJSON(w, h.ix.Progress())
+}
+
+// writeRunError answers a sweep start that could not happen. An extractor
+// that failed to initialise is the server's state, not a bad request: 503
+// with the reason, which the UI shows.
+func writeRunError(w http.ResponseWriter, err error) {
+	if errors.Is(err, pdfindex.ErrEngineUnavailable) {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	http.Error(w, err.Error(), http.StatusInternalServerError)
 }
 
 // POST /api/pdfindex/stop
@@ -82,7 +93,9 @@ func (h *PdfIndexHandler) ProgressEndpoint(w http.ResponseWriter, r *http.Reques
 // the user can re-run extraction. Stops any running sweep first so workers
 // don't write into a just-cleared DB.
 func (h *PdfIndexHandler) ResetPdf(w http.ResponseWriter, r *http.Request) {
-	h.ix.Stop()
+	// StopAndWait, not Stop: a worker still draining its file would write
+	// into the database recreated below.
+	h.ix.StopAndWait()
 	if err := h.db.ResetAll(); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -101,7 +114,12 @@ func (h *PdfIndexHandler) Reindex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	_ = h.ix.Run()
+	// RequestRun, not Run: a running sweep enumerated its list before these
+	// rows were reset and would never reach them; Run() was a silent no-op.
+	if err := h.ix.RequestRun(); err != nil {
+		writeRunError(w, err)
+		return
+	}
 	writeJSON(w, map[string]interface{}{"reset": n, "running": true})
 }
 
@@ -113,7 +131,10 @@ func (h *PdfIndexHandler) ReindexWatermark(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	_ = h.ix.Run()
+	if err := h.ix.RequestRun(); err != nil {
+		writeRunError(w, err)
+		return
+	}
 	writeJSON(w, map[string]interface{}{"reset": n, "running": true})
 }
 
@@ -127,7 +148,10 @@ func (h *PdfIndexHandler) Restart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	_ = h.ix.Run()
+	if err := h.ix.Run(); err != nil {
+		writeRunError(w, err)
+		return
+	}
 	writeJSON(w, h.ix.Progress())
 }
 
@@ -176,7 +200,7 @@ func (h *PdfIndexHandler) SetAutoResume(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if body.Enabled {
-		_ = h.ix.Run() // idempotent — no-op if already running
+		_ = h.ix.RequestRun()
 	}
 	writeJSON(w, map[string]bool{"enabled": body.Enabled})
 }
@@ -188,13 +212,18 @@ func (h *PdfIndexHandler) PriorityIndex(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
-	st, _ := h.db.Status(id)
+	st, _ := h.db.StatusContext(r.Context(), id)
 	if st.Status == "indexing" {
 		http.Error(w, "already indexing", http.StatusConflict)
 		return
 	}
-	_ = h.ix.Run()
-	h.ix.Enqueue(id)
+	// Submit indexes exactly this file: the priority lane when a sweep runs,
+	// a one-file sweep otherwise. It used to start a full-library sweep
+	// (every failed file included) regardless of the auto-resume setting.
+	if err := h.ix.Submit(id); err != nil {
+		writeRunError(w, err)
+		return
+	}
 	writeJSON(w, map[string]string{"status": "queued"})
 }
 
@@ -359,59 +388,64 @@ func (h *PdfIndexHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "deleted"})
 }
 
+// searchRestrict resolves the scope parameter. ok=false means the scope is
+// empty (donor scope with no donors): the answer is "no results" without a
+// query.
+func (h *PdfIndexHandler) searchRestrict(scope string) (ids []int64, ok bool, err error) {
+	if scope != "donor" {
+		return nil, true, nil
+	}
+	ids, err = h.bank.DonorFileIDs()
+	if err != nil {
+		return nil, false, err
+	}
+	return ids, len(ids) > 0, nil
+}
+
 // GET /api/databank/search?q=...&scope=all|donor
+//
+// One row per file (content group), in the order found, with hit_count and
+// the first matching page. `partial` is true when a cap or the deadline
+// stopped the scan (see pdfindex.SearchFiles).
 func (h *PdfIndexHandler) Search(w http.ResponseWriter, r *http.Request) {
+	empty := func(q string) {
+		writeJSON(w, map[string]interface{}{"results": []interface{}{}, "total": 0, "query": q})
+	}
 	if h.bank == nil {
-		writeJSON(w, map[string]interface{}{"results": []interface{}{}, "total": 0, "query": ""})
+		empty("")
 		return
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	scope := r.URL.Query().Get("scope")
 	if q == "" {
-		writeJSON(w, map[string]interface{}{"results": []interface{}{}, "total": 0, "query": q})
+		empty(q)
 		return
 	}
-	var restrict []int64
-	if scope == "donor" {
-		ids, err := h.bank.DonorFileIDs()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if len(ids) == 0 {
-			writeJSON(w, map[string]interface{}{"results": []interface{}{}, "total": 0, "query": q})
-			return
-		}
-		restrict = ids
-	}
-	hits, err := h.db.SearchPages(q, restrict, 1000)
+	restrict, ok, err := h.searchRestrict(r.URL.Query().Get("scope"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	seen := map[int64]bool{}
-	var ids []int64
-	for _, hh := range hits {
-		if !seen[hh.FileID] {
-			seen[hh.FileID] = true
-			ids = append(ids, hh.FileID)
-		}
+	if !ok {
+		empty(q)
+		return
 	}
-	meta, err := h.bank.SearchMeta(ids)
+	var hits []pdfindex.SearchHit
+	sum, err := h.db.SearchFiles(r.Context(), q, restrict, pdfindex.SearchOptions{}, func(hit pdfindex.SearchHit) error {
+		hits = append(hits, hit)
+		return nil
+	})
+	if errors.Is(err, pdfindex.ErrQueryTooShort) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Resolve duplicate copy locations once per distinct file (bounded by the
-	// ≤1000 hit LIMIT). A file with no content hash returns an empty slice.
-	copies := make(map[int64][]string, len(ids))
-	for _, id := range ids {
-		paths, err := h.bank.CopyPathsForFile(id)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		copies[id] = paths
+	meta, err := h.bank.SearchMeta(sum.Order)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	type result struct {
 		pdfindex.SearchHit
@@ -422,14 +456,10 @@ func (h *PdfIndexHandler) Search(w http.ResponseWriter, r *http.Request) {
 		BoardBindings []databank.BoardBinding `json:"board_bindings"`
 		Copies        []string                `json:"copies"`
 	}
-	// Collapse hits to ONE result per file (content group), regardless of how
-	// many pages matched. A PDF that matches on 36 pages becomes a single row
-	// with hit_count = 36, navigating to the lowest matching page. The group key
-	// is FILE-level (content_hash, or "id:<fileID>" for a unique-size singleton)
-	// so byte-identical duplicates also collapse together; the representative is
-	// the lowest file_id in the group (deterministic, and the global canonical
-	// when it is itself a match). Copies on each result list the other paths in
-	// the group. Groups are emitted in first-seen order, preserving FTS rank.
+	// Collapse byte-identical copies (same content_hash) into one row: the
+	// lowest file id represents the group, its copies are listed. Copies hold
+	// the same pages, so the group's count is the largest member count, not
+	// the sum. Groups keep first-found order.
 	fileKey := func(fileID int64) string {
 		if hx := meta[fileID].ContentHash; hx != "" {
 			return hx
@@ -437,48 +467,59 @@ func (h *PdfIndexHandler) Search(w http.ResponseWriter, r *http.Request) {
 		return "id:" + strconv.FormatInt(fileID, 10)
 	}
 	type group struct {
-		repFile int64          // lowest file_id seen in the group
-		pages   map[int]string // distinct matching page -> first snippet seen
-		order   int            // first-seen index (FTS rank)
+		hit   pdfindex.SearchHit
+		count int
 	}
-	groups := make(map[string]*group, len(hits))
-	var groupOrder []string
-	for _, hh := range hits {
-		k := fileKey(hh.FileID)
+	groups := map[string]*group{}
+	var order []string
+	for _, hit := range hits {
+		k := fileKey(hit.FileID)
 		g := groups[k]
 		if g == nil {
-			g = &group{repFile: hh.FileID, pages: make(map[int]string), order: len(groupOrder)}
-			groups[k] = g
-			groupOrder = append(groupOrder, k)
+			groups[k] = &group{hit: hit, count: sum.Counts[hit.FileID]}
+			order = append(order, k)
+			continue
 		}
-		if hh.FileID < g.repFile {
-			g.repFile = hh.FileID
+		if hit.FileID < g.hit.FileID {
+			g.hit.FileID = hit.FileID
 		}
-		if _, ok := g.pages[hh.PageNum]; !ok {
-			g.pages[hh.PageNum] = hh.Snippet // first snippet seen for this page
+		if hit.PageNum < g.hit.PageNum {
+			g.hit.PageNum, g.hit.Snippet = hit.PageNum, hit.Snippet
+		}
+		if c := sum.Counts[hit.FileID]; c > g.count {
+			g.count = c
 		}
 	}
-	results := make([]result, 0, len(groupOrder))
-	for _, k := range groupOrder {
+	results := make([]result, 0, len(order))
+	for _, k := range order {
 		g := groups[k]
-		lowestPage := 0
-		for p := range g.pages {
-			if lowestPage == 0 || p < lowestPage {
-				lowestPage = p
+		m := meta[g.hit.FileID]
+		var copies []string
+		if m.ContentHash != "" {
+			if copies, err = h.bank.CopyPathsForFile(g.hit.FileID); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
 			}
 		}
-		m := meta[g.repFile]
+		if copies == nil {
+			copies = []string{}
+		}
 		results = append(results, result{
-			SearchHit:     pdfindex.SearchHit{FileID: g.repFile, PageNum: lowestPage, Snippet: g.pages[lowestPage]},
-			HitCount:      len(g.pages),
-			Filename:      m.Filename,
-			Path:          m.Path,
-			IsDonor:       m.IsDonor,
-			BoardBindings: m.Bindings,
-			Copies:        copies[g.repFile],
+			SearchHit: g.hit, HitCount: g.count, Filename: m.Filename, Path: m.Path,
+			IsDonor: m.IsDonor, BoardBindings: m.Bindings, Copies: copies,
 		})
 	}
-	writeJSON(w, map[string]interface{}{"results": results, "total": len(results), "query": q})
+	writeJSON(w, map[string]interface{}{
+		"results": results, "total": len(results), "query": q,
+		"partial": sum.Partial, "partial_reason": sum.Reason, "ignored": nonNil(sum.Ignored),
+	})
+}
+
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 // GET /api/databank/search/stream?q=...&scope=all|donor
@@ -487,85 +528,74 @@ func (h *PdfIndexHandler) Search(w http.ResponseWriter, r *http.Request) {
 //
 //	{"type":"result", file_id, page_num, snippet, filename, path, is_donor, board_bindings, copies, hit_count}
 //	{"type":"counts", "counts": {"<file_id>": N, ...}}
-//	{"type":"done",   "total": <distinct file count>}
+//	{"type":"done",   "total": N, "partial": bool, "partial_reason": "files|pages|time", "ignored": [...]}
+//	{"type":"error",  "error": "...", "code": "too_short|search"}   (instead of counts/done)
 //
-// One "result" line is emitted per file the moment the FTS cursor first surfaces
-// it (so the frontend builds the list progressively), carrying that file's
-// best-rank page/snippet for navigation. The terminal "counts" line lets the
-// frontend correct each row's hit_count once the full cursor is drained. The
-// copy-paths query is skipped for files with no content hash (unique-size
-// singletons) — that's the cold-start optimization over Search's per-id N+1.
+// One "result" line per file the moment the scan first meets it; "counts"
+// corrects each row's hit_count once the scan ends. Every stream ends with
+// exactly one "done" or one "error" line, so a client that sees neither knows
+// the stream was cut.
+//
+// The request context bounds the scan: a client that aborts (a superseded
+// search) stops the query on the server too. Before, it ran to the end and
+// held a reader connection the whole time.
 //
 // Registered WITHOUT the read()/write() timeout wrappers so the http.Flusher is
-// reachable and per-row flushes aren't held back by a 30s context deadline.
+// reachable; pdfindex.SearchFiles carries its own deadline.
 func (h *PdfIndexHandler) SearchStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-cache")
+	// Ask nginx-style reverse proxies not to buffer the stream, which would
+	// turn progressive rows into one block at the end.
+	w.Header().Set("X-Accel-Buffering", "no")
 	f, _ := w.(http.Flusher)
 	enc := json.NewEncoder(w)
-	emit := func(obj interface{}) {
-		_ = enc.Encode(obj)
+	emit := func(obj interface{}) error {
+		if err := enc.Encode(obj); err != nil {
+			return err // client gone
+		}
 		if f != nil {
 			f.Flush()
 		}
+		return nil
+	}
+	done := func(total int, sum pdfindex.SearchSummary) {
+		_ = emit(map[string]interface{}{"type": "done", "total": total,
+			"partial": sum.Partial, "partial_reason": sum.Reason, "ignored": nonNil(sum.Ignored)})
 	}
 
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	scope := r.URL.Query().Get("scope")
 	if q == "" || h.bank == nil {
-		emit(map[string]interface{}{"type": "done", "total": 0})
+		done(0, pdfindex.SearchSummary{})
+		return
+	}
+	restrict, ok, err := h.searchRestrict(r.URL.Query().Get("scope"))
+	if err != nil {
+		_ = emit(map[string]interface{}{"type": "error", "code": "search", "error": err.Error()})
+		return
+	}
+	if !ok {
+		done(0, pdfindex.SearchSummary{})
 		return
 	}
 
-	var restrict []int64
-	if scope == "donor" {
-		ids, err := h.bank.DonorFileIDs()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if len(ids) == 0 {
-			emit(map[string]interface{}{"type": "done", "total": 0})
-			return
-		}
-		restrict = ids
-	}
-
-	seen := map[int64]int{}
-	var order []int64
-
-	err := h.db.SearchPagesStream(q, restrict, 1000, func(hit pdfindex.SearchHit) error {
-		if _, ok := seen[hit.FileID]; ok {
-			seen[hit.FileID]++
-			return nil
-		}
-		// First time this file is surfaced: enrich + emit immediately. The
-		// page_num/snippet captured here are the best-rank hit for the file.
-		seen[hit.FileID] = 1
-		order = append(order, hit.FileID)
-
+	sum, err := h.db.SearchFiles(r.Context(), q, restrict, pdfindex.SearchOptions{}, func(hit pdfindex.SearchHit) error {
 		metaMap, merr := h.bank.SearchMeta([]int64{hit.FileID})
 		if merr != nil {
 			// Resilient: don't abort the whole stream on a single enrich hiccup.
 			log.Printf("SearchStream: SearchMeta(%d): %v", hit.FileID, merr)
 		}
 		m := metaMap[hit.FileID]
-
-		var cp []string
+		cp := []string{}
 		if m.ContentHash != "" {
-			paths, cerr := h.bank.CopyPathsForFile(hit.FileID)
-			if cerr != nil {
+			if paths, cerr := h.bank.CopyPathsForFile(hit.FileID); cerr != nil {
 				log.Printf("SearchStream: CopyPathsForFile(%d): %v", hit.FileID, cerr)
-			} else {
+			} else if paths != nil {
 				cp = paths
 			}
 		}
-		if cp == nil {
-			cp = []string{}
-		}
-
-		emit(map[string]interface{}{
+		return emit(map[string]interface{}{
 			"type":           "result",
 			"file_id":        hit.FileID,
 			"page_num":       hit.PageNum,
@@ -577,19 +607,25 @@ func (h *PdfIndexHandler) SearchStream(w http.ResponseWriter, r *http.Request) {
 			"copies":         cp,
 			"hit_count":      1,
 		})
-		return nil
 	})
-	if err != nil {
-		// Surface a hard cursor error as a trailing line; headers/results may
-		// already be on the wire so we can't switch to a clean 5xx.
-		log.Printf("SearchStream: cursor error: %v", err)
-		emit(map[string]interface{}{"type": "error", "error": err.Error()})
+	switch {
+	case r.Context().Err() != nil:
+		return // client gone; nobody to tell
+	case errors.Is(err, pdfindex.ErrQueryTooShort):
+		_ = emit(map[string]interface{}{"type": "error", "code": "too_short", "error": err.Error()})
+		return
+	case err != nil:
+		log.Printf("SearchStream: q=%q: %v", q, err)
+		_ = emit(map[string]interface{}{"type": "error", "code": "search", "error": err.Error()})
+		return
 	}
-
-	counts := make(map[string]int, len(order))
-	for _, id := range order {
-		counts[strconv.FormatInt(id, 10)] = seen[id]
+	if sum.Partial {
+		log.Printf("SearchStream: q=%q partial (%s) after %d pages, %d files", q, sum.Reason, sum.Pages, len(sum.Order))
 	}
-	emit(map[string]interface{}{"type": "counts", "counts": counts})
-	emit(map[string]interface{}{"type": "done", "total": len(order)})
+	counts := make(map[string]int, len(sum.Order))
+	for _, id := range sum.Order {
+		counts[strconv.FormatInt(id, 10)] = sum.Counts[id]
+	}
+	_ = emit(map[string]interface{}{"type": "counts", "counts": counts})
+	done(len(sum.Order), sum)
 }

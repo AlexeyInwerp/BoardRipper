@@ -142,7 +142,7 @@ func TestBridge_PicksMostRecentlyFocused(t *testing.T) {
 
 type fakePDF struct{ hits []pdfindex.SearchHit }
 
-func (f *fakePDF) SearchPages(q string, r []int64, l int) ([]pdfindex.SearchHit, error) {
+func (f *fakePDF) SearchPages(_ context.Context, q string, r []int64, l int) ([]pdfindex.SearchHit, error) {
 	return f.hits, nil
 }
 
@@ -484,7 +484,7 @@ type fakePDFRec struct {
 	fn func(string, []int64, int) ([]pdfindex.SearchHit, error)
 }
 
-func (f *fakePDFRec) SearchPages(q string, r []int64, l int) ([]pdfindex.SearchHit, error) {
+func (f *fakePDFRec) SearchPages(_ context.Context, q string, r []int64, l int) ([]pdfindex.SearchHit, error) {
 	return f.fn(q, r, l)
 }
 

@@ -56,7 +56,7 @@ func binaryResult(mime string, data []byte, meta map[string]any) *mcp.CallToolRe
 
 // PDFSearcher is satisfied by *pdfindex.DB.
 type PDFSearcher interface {
-	SearchPages(query string, restrictTo []int64, limit int) ([]pdfindex.SearchHit, error)
+	SearchPages(ctx context.Context, query string, restrictTo []int64, limit int) ([]pdfindex.SearchHit, error)
 }
 
 // FileStore is satisfied by *databank.DB.
@@ -158,7 +158,7 @@ func registerNativeTools(s *mcp.Server, deps *Deps) {
 			if a.FileID > 0 {
 				restrict = []int64{a.FileID}
 			}
-			hits, err := deps.PDF.SearchPages(a.Query, restrict, limit)
+			hits, err := deps.PDF.SearchPages(ctx, a.Query, restrict, limit)
 			if err != nil {
 				return errResult("pdf search failed: " + err.Error()), pdfSearchResult{}, nil
 			}

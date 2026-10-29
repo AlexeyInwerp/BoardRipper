@@ -341,7 +341,14 @@ func main() {
 	// PDF index API routes — only registered when pdfindex.db is available and
 	// the pdfium WASM engine initialises successfully.
 	if pdfIndex != nil {
+		// Two extractors by default; one when the container has less than
+		// 2 GiB. Each pdfium worker is ~255 MiB compiled plus up to 512 MiB
+		// of wasm memory plus the PDF itself, so two dense schematics at once
+		// do not fit a 1 GiB container (2026-10-14 review, I4).
 		poolMax := 2
+		if limit, ok := cgroupMemoryLimit(); ok && limit < 2<<30 {
+			poolMax = 1
+		}
 		if v := os.Getenv("PDFINDEX_POOL_MAX"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				poolMax = n
@@ -356,7 +363,13 @@ func main() {
 			termsFn := func() []string { return loadWatermarkTerms(db) }
 			source := handlers.NewPdfIndexSource(db, scanner.ScanRoot)
 			indexer := pdfindex.NewIndexer(pdfIndex, engine, source, termsFn, poolMax)
-			defer close(indexer.StartWatchdog(5*time.Minute, 600))
+			// A reclaimed row is 'pending' again; start a sweep for it when
+			// auto-resume is on (before, it waited for the next boot or scan).
+			defer close(indexer.StartWatchdog(5*time.Minute, 600, func(int64) {
+				if handlers.PdfAutoResumeEnabled(db) {
+					_ = indexer.RequestRun()
+				}
+			}))
 
 			// Boot reclaim: no worker can exist yet, so any 'indexing' row is an
 			// orphan from a killed process. Flip them to 'pending' immediately so
@@ -401,7 +414,7 @@ func main() {
 			// auto-resume toggle. Run() is idempotent (no-op if already sweeping).
 			scanner.SetScanCompleteHook(func(added, updated int64) {
 				if (added+updated) > 0 && handlers.PdfAutoResumeEnabled(db) {
-					go func() { _ = indexer.Run() }()
+					go func() { _ = indexer.RequestRun() }()
 				}
 			})
 			// Cascade a full databank wipe (POST /api/databank/reset) to

@@ -1,6 +1,7 @@
 package pdfindex
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"testing"
@@ -8,13 +9,28 @@ import (
 )
 
 type fakeSource struct {
+	mu    sync.Mutex // tests add files while a sweep reads them
 	files []PdfFile
 	data  map[string][]byte
 }
 
-func (f *fakeSource) ListPDFs() ([]PdfFile, error) { return f.files, nil }
+// add registers a file mid-test, under the lock the workers read with.
+func (f *fakeSource) add(file PdfFile, data []byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.files = append(f.files, file)
+	f.data[file.Path] = data
+}
+
+func (f *fakeSource) ListPDFs() ([]PdfFile, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]PdfFile(nil), f.files...), nil
+}
 
 func (f *fakeSource) ListPDFsUnder(prefix string) ([]PdfFile, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	p := strings.Trim(prefix, "/")
 	if p == "" {
 		return f.files, nil
@@ -30,6 +46,8 @@ func (f *fakeSource) ListPDFsUnder(prefix string) ([]PdfFile, error) {
 }
 
 func (f *fakeSource) Lookup(id int64) (PdfFile, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for _, file := range f.files {
 		if file.ID == id {
 			return file, true, nil
@@ -38,7 +56,11 @@ func (f *fakeSource) Lookup(id int64) (PdfFile, bool, error) {
 	return PdfFile{}, false, nil
 }
 
-func (f *fakeSource) ReadFile(p string) ([]byte, error) { return f.data[p], nil }
+func (f *fakeSource) ReadFile(p string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.data[p], nil
+}
 
 func (f *fakeSource) CanonicalFor(fileID int64) (int64, bool, error) { return 0, false, nil }
 
@@ -69,7 +91,7 @@ func TestIndexerRunIndexesAll(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	waitFor(t, func() bool { return !ix.Progress().Running })
-	s, _ := db.Stats()
+	s, _ := db.Stats(context.Background())
 	if s.Indexed != 2 || s.Pages != 2 {
 		t.Errorf("stats after run = %+v, want 2 indexed / 2 pages", s)
 	}
@@ -111,7 +133,7 @@ func TestPendingFilter(t *testing.T) {
 	if p := ix.Progress(); p.Total != 1 {
 		t.Errorf("Progress.Total = %d, want 1 (pending only)", p.Total)
 	}
-	s, _ := db.Stats()
+	s, _ := db.Stats(context.Background())
 	if s.Indexed != 2 {
 		t.Errorf("stats.Indexed = %d, want 2", s.Indexed)
 	}
@@ -127,7 +149,7 @@ func TestRunFolder(t *testing.T) {
 			{ID: 3, Path: "sub/b.pdf"},
 		},
 		data: map[string][]byte{
-			"top.pdf": []byte("top level doc"),
+			"top.pdf":   []byte("top level doc"),
 			"sub/a.pdf": []byte("sub alpha"),
 			"sub/b.pdf": []byte("sub beta"),
 		},
@@ -261,7 +283,7 @@ func TestRunFolderClaimsBeforeEnumeration(t *testing.T) {
 func TestStartWatchdogStops(t *testing.T) {
 	db := openTestDB(t)
 	ix := NewIndexer(db, fakeExtractor{}, &fakeSource{}, func() []string { return nil }, 1)
-	stop := ix.StartWatchdog(50*time.Millisecond, 600)
+	stop := ix.StartWatchdog(50*time.Millisecond, 600, nil)
 	db.Claim(1, "pdfium")
 	db.writer.Exec(`UPDATE pdf_index_status SET attempted_at = 0 WHERE file_id = 1`)
 	waitFor(t, func() bool {
@@ -400,8 +422,7 @@ func TestSubmitMidSweepReachesUnlistedFile(t *testing.T) {
 	// Enumeration is complete once Total is known; the single worker is now
 	// parked inside ExtractFile for file 1. A new row lands now.
 	waitFor(t, func() bool { p := ix.Progress(); return p.Running && p.Total == 1 })
-	src.files = append(src.files, PdfFile{ID: 2, Path: "late.pdf"})
-	src.data["late.pdf"] = []byte("late arrival")
+	src.add(PdfFile{ID: 2, Path: "late.pdf"}, []byte("late arrival"))
 	if err := ix.Submit(2); err != nil {
 		t.Fatalf("Submit mid-sweep: %v", err)
 	}

@@ -1,6 +1,7 @@
 package pdfindex
 
 import (
+	"context"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -150,7 +151,7 @@ func TestStatsAndDelete(t *testing.T) {
 	db.Claim(3, "pdfium")
 	db.Fail(3, "x") // failed
 
-	s, err := db.Stats()
+	s, err := db.Stats(context.Background())
 	if err != nil {
 		t.Fatalf("Stats: %v", err)
 	}
@@ -196,18 +197,18 @@ func TestResetAll(t *testing.T) {
 		t.Fatalf("UpsertPages: %v", err)
 	}
 	db.Finalize(1)
-	if s, _ := db.Stats(); s.Indexed != 1 || s.Pages != 1 {
+	if s, _ := db.Stats(context.Background()); s.Indexed != 1 || s.Pages != 1 {
 		t.Fatalf("precondition: want 1 indexed/1 page, got %+v", s)
 	}
 	if err := db.ResetAll(); err != nil {
 		t.Fatalf("ResetAll: %v", err)
 	}
-	s, _ := db.Stats()
+	s, _ := db.Stats(context.Background())
 	if s.Indexed != 0 || s.Pages != 0 || s.Empty != 0 || s.Failed != 0 {
 		t.Errorf("after reset stats = %+v, want all zero", s)
 	}
 	// FTS must be cleared too — the term no longer matches.
-	hits, err := db.SearchPages("connector", nil, 10)
+	hits, err := db.SearchPages(context.Background(), "connector", nil, 10)
 	if err != nil {
 		t.Fatalf("SearchPages: %v", err)
 	}

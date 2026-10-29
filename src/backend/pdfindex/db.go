@@ -20,7 +20,11 @@ type DB struct {
 
 // openConns opens the writer (single conn) + reader (pooled) handles for path.
 func openConns(path string) (writer, reader *sql.DB, err error) {
-	dsn := path + "?_pragma=journal_mode(wal)&_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)"
+	// journal_size_limit: after a checkpoint resets the WAL, SQLite truncates
+	// the file back to this size. Without it a sweep that overlaps searches
+	// grew the WAL by ~27 MB/s and the file never shrank again (measured
+	// 2026-10-14, docs/specs/2026-10-14-pdf-index-search-review.md S5).
+	dsn := path + "?_pragma=journal_mode(wal)&_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)&_pragma=journal_size_limit(67108864)"
 	writer, err = sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, nil, err
@@ -109,13 +113,33 @@ func (db *DB) createSchema() error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	// Additive: a pdfindex.db created before canonical_file_id existed has the
-	// table without that column. ALTER adds it; ignore the duplicate-column
-	// error when the column is already present (fresh DBs via the CREATE above).
-	if _, err := db.writer.Exec(`ALTER TABLE pdf_index_status ADD COLUMN canonical_file_id INTEGER`); err != nil {
-		if !strings.Contains(err.Error(), "duplicate column name") {
-			return err
+	// Additive columns. A pdfindex.db created before a column existed has the
+	// table without it; ALTER adds it and the duplicate-column error is
+	// ignored when it is already there. Never a rebuild: an index on a NAS is
+	// days of extraction.
+	//   canonical_file_id — dedup (non-canonical copies point at the canonical)
+	//   attempts          — claims since the last success/reset; a file that
+	//                       keeps failing or keeps killing the process stops
+	//                       being retried by sweeps at MaxAttempts.
+	for _, alter := range []string{
+		`ALTER TABLE pdf_index_status ADD COLUMN canonical_file_id INTEGER`,
+		`ALTER TABLE pdf_index_status ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0`,
+	} {
+		if _, err := db.writer.Exec(alter); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+// Checkpoint copies the WAL back into the database and truncates it. Called
+// at the end of a sweep; a reader still open makes it partial, which is fine
+// (the next one finishes the job).
+func (db *DB) Checkpoint() error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	_, err := db.writer.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
+	return err
 }
