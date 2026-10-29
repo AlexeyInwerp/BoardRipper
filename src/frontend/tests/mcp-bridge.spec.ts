@@ -86,9 +86,13 @@ const BOARD_FILE = haveBvr3 ? REAL_BVR3 : TEST_BOARD;
 
 test('bridge ops answer from a loaded board', async ({ page }) => {
   await page.goto('/');
+  // Let Vite finish discovering dependencies before an upload can be lost to a reload.
+  await page.waitForLoadState('networkidle');
 
   const fileInput = page.getByTestId('file-input');
   await fileInput.setInputFiles(BOARD_FILE);
+  await page.waitForLoadState('networkidle');
+  await expect(page.getByTestId('statusbar')).toContainText('Components:');
 
   // Wait for the board to actually be loaded and the dev hook to be present:
   // poll board_overview until it reports a non-null board rather than relying
@@ -137,4 +141,95 @@ test('bridge ops answer from a loaded board', async ({ page }) => {
       description: 'board_snapshot needs WebGL (unavailable headless): ' + JSON.stringify(snap),
     });
   }
+});
+
+type BridgeTestWindow = Window & {
+  __brBridgeDispatch: (op: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  __boardStore: {
+    board: { nets: Map<string, { name: string; pinIndices: never[] }> };
+    selection: { highlightedNet: string | null };
+    focusPart: (name: string) => void;
+    highlightNet: (name: string | null) => void;
+  };
+};
+
+test('drive actions reject missing targets and unapplied state without success toasts', async ({ page }) => {
+  await page.goto('/');
+  // Let Vite finish discovering dependencies before an upload can be lost to a reload.
+  await page.waitForLoadState('networkidle');
+  await page.getByTestId('file-input').setInputFiles(TEST_BOARD);
+  await page.waitForLoadState('networkidle');
+  await expect(page.getByTestId('statusbar')).toContainText('Components:');
+  await page.waitForFunction(async () => {
+    const dispatch = (window as unknown as BridgeTestWindow).__brBridgeDispatch;
+    if (!dispatch) return false;
+    try { return (await dispatch('board_overview', {})).board != null; }
+    catch { return false; }
+  });
+
+  const result = await page.evaluate(async () => {
+    const w = window as unknown as BridgeTestWindow;
+    const dispatch = w.__brBridgeDispatch;
+    const store = w.__boardStore;
+    const parts = (await dispatch('list_parts', { limit: 2 })).parts as { refdes: string }[];
+    const nets = (await dispatch('list_nets', { limit: 100 })).nets as { name: string }[];
+    const connected: string[] = [];
+    for (const net of nets) {
+      if (Number((await dispatch('net_info', { net: net.name })).pin_count) > 0) connected.push(net.name);
+    }
+    if (parts.length < 2 || connected.length < 2) throw new Error('test board needs two parts and connected nets');
+    const attempt = async (op: string, params: Record<string, unknown>) => {
+      try { return { value: await dispatch(op, params), error: '' }; }
+      catch (e) { return { value: null, error: String((e as Error).message) }; }
+    };
+    const selected = await dispatch('select_part', { refdes: parts[0].refdes.toLowerCase() });
+    const positiveState = await dispatch('selected_part', {});
+    const highlight = await dispatch('highlight_net', { net: connected[0] });
+    const missing = await attempt('select_part', { refdes: '__MCP_MISSING_PART__' });
+    const afterMissing = await dispatch('selected_part', {});
+    const unknown = await attempt('highlight_net', { net: '__MCP_MISSING_NET__' });
+    const afterUnknown = store.selection.highlightedNet;
+    if (nets.some(n => n.name === parts[0].refdes)) throw new Error('test component unexpectedly shares a net name');
+    const wrongOperation = await attempt('highlight_net', { net: parts[0].refdes });
+    store.board.nets.set('__MCP_EMPTY_NET__', { name: '__MCP_EMPTY_NET__', pinIndices: [] });
+    const empty = await attempt('highlight_net', { net: '__MCP_EMPTY_NET__' });
+    store.board.nets.delete('__MCP_EMPTY_NET__');
+
+    // A resolved target alone is not proof that its store mutation happened.
+    const focusPart = store.focusPart;
+    const highlightNet = store.highlightNet;
+    let unappliedPart, unappliedNet;
+    try {
+      store.focusPart = () => {};
+      store.highlightNet = () => {};
+      unappliedPart = await attempt('select_part', { refdes: parts[1].refdes });
+      unappliedNet = await attempt('highlight_net', { net: connected[1] });
+    } finally {
+      store.focusPart = focusPart;
+      store.highlightNet = highlightNet;
+    }
+    return {
+      canonicalRef: parts[0].refdes, selected, positiveState, highlight, missing, afterMissing,
+      unknown, afterUnknown, wrongOperation, empty, unappliedPart, unappliedNet,
+      finalPart: await dispatch('selected_part', {}), finalNet: store.selection.highlightedNet,
+      expectedNet: connected[0],
+    };
+  });
+
+  expect.soft(result.selected).toMatchObject({ ok: true, found: true, centered: true, refdes: result.canonicalRef });
+  expect.soft(result.positiveState).toMatchObject({ selected: true, refdes: result.canonicalRef });
+  expect.soft(Number(result.highlight.pins_highlighted)).toBeGreaterThan(0);
+  expect.soft(result.missing.error).toContain('part not found: __MCP_MISSING_PART__');
+  expect.soft(result.afterMissing).toMatchObject({ selected: true, refdes: result.canonicalRef });
+  expect.soft(result.unknown.error).toContain('net not found: __MCP_MISSING_NET__');
+  expect.soft(result.afterUnknown).toBe(result.expectedNet);
+  expect.soft(result.wrongOperation.error).toContain('net not found:');
+  expect.soft(result.empty.error).toContain('net has no connected pins: __MCP_EMPTY_NET__');
+  expect.soft(result.unappliedPart?.error).toContain('part selection was not applied:');
+  expect.soft(result.unappliedNet?.error).toContain('net highlight was not applied:');
+  expect.soft(result.finalPart).toMatchObject({ selected: true, refdes: result.canonicalRef });
+  expect.soft(result.finalNet).toBe(result.expectedNet);
+  await expect(page.locator('.toast', { hasText: 'Agent selected __MCP_MISSING_PART__' })).toHaveCount(0);
+  await expect(page.locator('.toast', { hasText: 'Agent highlighted net __MCP_MISSING_NET__' })).toHaveCount(0);
+  await expect(page.locator('.toast', { hasText: 'Agent highlighted net __MCP_EMPTY_NET__' })).toHaveCount(0);
 });
