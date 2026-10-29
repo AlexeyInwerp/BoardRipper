@@ -416,12 +416,16 @@ reporting ≤ 2 GB RAM.
 
 Backend-driven full-text index for all PDFs in the library. Pdfium (compiled to
 WASM, run via wazero) extracts text from each file and stores it in a separate
-`pdfindex.db` (SQLite FTS5 external-content table, porter + prefix tokenizer).
-A pdf.js on-open fast-path (`ensureIndexed` in `pdf-index-client.ts`) uploads
-the text extracted client-side for the currently-open file so that file is
-searchable immediately, before the background indexer reaches it. The PDF Search
-tab queries the index; results include donor-scoped filtering via the
+`pdfindex.db` (SQLite FTS5 external-content table `pdf_text` over `pdf_pages`,
+porter + unicode61 tokenizer, prefix index `2 3 4`). A pdf.js on-open
+fast-path (`ensureIndexed` in `pdf/pdf-index-client.ts`) uploads the text
+extracted client-side for the currently-open file so that file is searchable
+immediately, before the background indexer reaches it. The PDF Search tab
+queries the index; results include donor-scoped filtering via the
 `pdf_donors` membership table in `databank.db`.
+
+Review, field evidence and the reasoning behind the 2026-10-29 rework:
+`docs/specs/2026-10-14-pdf-index-search-review.md`.
 
 **Dropped PDFs.** A drag-and-drop is opened in memory *before* it has a
 databank id, so both fast-path call sites in `_extractText` skip it. The upload
@@ -433,59 +437,106 @@ databank insert — priority lane if a sweep is running (the worker resolves ids
 that were not in its enumerated list via `Source.Lookup`), or a one-file sweep
 when idle — so the file is indexed within seconds even if the browser tab is
 closed, and regardless of the auto-resume toggle. Whichever side wins `Claim`
-does the work; the other is a no-op. The earlier `index-folder('incoming')`
-call from the client was dropped: it returned 409 whenever any sweep was
-running and the client ignored it, leaving the file unindexed until the next
-scan.
+does the work; the other is a no-op. A library PDF whose pdf.js extraction
+stops part-way is handed to the server the same way (`priorityIndex` →
+`Submit`).
 
 ### Engine
 
 Pdfium compiled to WASM, embedded as a ~5 MB blob in the server binary and
-executed via wazero (pure-Go, `CGO_ENABLED=0`). The pool is configured at
-startup via `PDFINDEX_POOL_MAX` (default: 2). Each pool instance has a
-**2-minute per-file kill** enforced via a `context.WithTimeout` and
-`wazero.NewRuntimeConfig().WithCloseOnContextDone(true)` — a hostile or
-looping PDF cannot permanently wedge a worker. Container memory floor: **1 GB**
-(wazero JIT + pdfium heap; the default 512 MB scratch image is too tight for
-larger corpora).
+executed via wazero (pure-Go, `CGO_ENABLED=0`). The pool size is
+`PDFINDEX_POOL_MAX`; the default is 2, or 1 when the container's cgroup limit is
+below 2 GiB (each worker is ~255 MiB compiled plus up to 512 MiB of wasm
+memory plus the PDF). Every file gets a fresh module (`ReuseWorkers` is off),
+and a killed instance frees its pool slot — measured, not assumed.
+
+**Deadline.** 2 minutes to open the document and count its pages, then that
+plus 1 s per page, capped at 20 minutes (`Engine.deadline`). When it fires
+after some pages were read, `ExtractFile` returns those pages with a
+`*PartialError`; the indexer stores them and finalizes the file `indexed`
+with the note `partial: timed out after … at page N of M` in `error`. A
+partial file is searchable for what was read and is not retried by sweeps
+("Re-index" does). The page loop stops on the first call that finds the
+instance closed (it used to log one `instance is closed` line per remaining
+page). The flat 2-minute kill it replaced stopped every dense schematic past
+page ~400 on a NAS, discarded the pages read, and did it again at every boot.
+
+The wasm compile runs off the boot path (`NewEngineAsync`). If it fails, sweeps
+refuse to start (`ErrEngineUnavailable`, HTTP 503 with the reason) and
+`/api/pdfindex/progress` carries `engine_error`, which the UI shows — before,
+every PDF was read and failed one by one.
+
+### Sweeps and triggers
+
+A sweep enumerates canonical PDFs (`CanonicalPDFs`, `ORDER BY id`) minus the
+skip set (`DoneOrActiveFileIDs`: indexed, empty, duplicate, indexing, and
+failed files with `attempts ≥ 3`), then feeds them to the workers; the
+priority lane (256 ids) is drained first. The file is logged **before**
+extraction, so a file that takes the process down is the last line in
+`docker logs`. Each sweep ends with a WAL checkpoint.
+
+`Run()` is a no-op while a sweep runs. Anything that has just made rows
+`pending` calls `RequestRun()` instead, which records a follow-up sweep when
+one is running: Reindex, Reindex-watermark, enabling auto-resume, a scan with
+changes (if auto-resume is on), a watchdog reclaim (if auto-resume is on).
+An id still in the priority lane when a sweep ends also starts a follow-up.
+A stopped sweep never schedules one. `PriorityIndex` uses `Submit` (this
+file only), not a full-library sweep.
 
 ### Migration
 
 v0→v1 migration drops the legacy `pdf_pages` and `pdf_text` columns from
 `databank.db`, creates the `pdf_donors` membership table, and opens the
-separate `pdfindex.db`. Migration is forward-only. If `pdfindex.db` cannot be
-opened (e.g. missing write permission), the server degrades gracefully — PDF
-search is unavailable but all other features continue normally.
+separate `pdfindex.db`. Columns are only ever **added** to `pdfindex.db`
+(`ALTER … ADD COLUMN`, duplicate-column error ignored): `canonical_file_id`,
+`attempts`. Never a rebuild — on a NAS the index is days of extraction. If
+`pdfindex.db` cannot be opened, the server degrades: PDF search is
+unavailable, everything else works, and the UI says so (an unknown `/api` path
+gets the SPA's `index.html`, which the client recognises as "no index").
+
+The connection DSN sets WAL, `busy_timeout(5000)` and
+`journal_size_limit(64 MiB)`: without the limit a sweep overlapping searches
+grew the WAL by ~27 MB/s and the file never shrank.
 
 ### API
 
-All `/api/pdfindex/*` routes require the standard auth cookie (same as other
-write endpoints). `GET` routes are read-only and accept the read middleware;
-`POST`/`PUT`/`DELETE` accept the write middleware.
+There is no authentication on `/api/*`; non-GET requests pass the CSRF
+origin check (`withCSRFCheck`). `read()` / `write()` are handler timeouts
+(30 s / 10 s) that set a context deadline, which the index queries now honour.
 
 #### Index control
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| `GET` | `/api/pdfindex/stats` | Counts per state (`indexed`, `empty`, `failed`, `pending`, `indexing`) + total pages stored |
-| `GET` | `/api/pdfindex/progress` | Live snapshot of the running sweep (`running`, `total`, `done`, `errors`, `current_file`, `started_at`) |
-| `POST` | `/api/pdfindex/run` | Start (or resume) a background sweep over all pending files; idempotent |
-| `POST` | `/api/pdfindex/stop` | Cancel the running sweep; returns final progress snapshot |
-| `POST` | `/api/pdfindex/reindex` | Reset terminal rows to `pending` (body: `{"scope":"all"\|"failed"\|"empty"}`) then re-run |
-| `POST` | `/api/pdfindex/reindex-watermark` | Same as `reindex` with `scope="all"` — used after watermark-terms change |
-| `GET` | `/api/pdfindex/failed` | List all `StatusRow` records with `status="failed"` |
+| Method | Path | Wrapper | Purpose |
+|--------|------|---------|---------|
+| `GET` | `/api/pdfindex/stats` | read | Counts per state + `given_up` (failed, attempts ≥ 3) + `pages` (sum of indexed files' `page_count`) |
+| `GET` | `/api/pdfindex/progress` | read | Running sweep: `running`, `total` (0 while enumerating), `done`, `errors`, `current_file`, `started_at`, `workers`, `active_workers`, `engine_error` |
+| `POST` | `/api/pdfindex/run` | — | `RequestRun`: start a sweep or schedule one after the running sweep; 503 if the extractor failed |
+| `POST` | `/api/pdfindex/stop` | write | Cancel the running sweep; workers finish their current file |
+| `POST` | `/api/pdfindex/restart` | write | `StopAndWait` + requeue `indexing` rows + `Run` (keeps indexed files) |
+| `POST` | `/api/pdfindex/reindex` | write | Reset rows to `pending` (`{"scope":"all"\|"failed"\|"empty"}`), attempts to 0, then `RequestRun` |
+| `POST` | `/api/pdfindex/reindex-watermark` | write | Same as `reindex` with `scope="all"` — after a watermark-term change |
+| `GET`/`POST` | `/api/pdfindex/auto-resume` | read/write | Read / set `pdf_index_auto_run` (default on); enabling calls `RequestRun` |
+| `POST` | `/api/pdfindex/index-folder` | write | Sweep limited to a library path prefix (`{"path":…}`); 409 if a sweep runs |
+| `GET` | `/api/pdfindex/failed` | read | Failed rows with `error`, `attempts`, `filename`, `path` |
+| `POST` | `/api/databank/reset-pdf` | write | `StopAndWait`, then delete and recreate `pdfindex.db` |
 
 #### Per-file endpoints
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| `GET` | `/api/pdfindex/status/{id}` | Returns `StatusRow` for file `{id}`; 404 if never attempted |
-| `POST` | `/api/pdfindex/files/{id}/index` | Priority-enqueue `{id}` for backend pdfium extraction (fallback path when pdf.js fast-path fails) |
-| `POST` | `/api/pdfindex/files/{id}/begin` | Atomic claim: transitions `{id}` to `indexing` iff currently `pending`/`failed`; 409 if already claimed |
-| `PUT` | `/api/pdfindex/files/{id}/pages` | Batch-upload extracted page texts (body: `{"pages":[{"n":0,"text":"…"},…]}`); 16 MB cap |
-| `POST` | `/api/pdfindex/files/{id}/finalize` | Set terminal state: `indexed` if pages were stored, `empty` if none; returns final `StatusRow` |
-| `POST` | `/api/pdfindex/files/{id}/fail` | Mark `{id}` failed (body: `{"error":"…"}`); retryable on next `run` |
-| `DELETE` | `/api/pdfindex/files/{id}` | Delete all index data for `{id}` (pages + status row) |
+| Method | Path | Wrapper | Purpose |
+|--------|------|---------|---------|
+| `GET` | `/api/pdfindex/status/{id}` | read | `StatusRow` incl. `attempts`; 404 if never attempted |
+| `POST` | `/api/pdfindex/files/{id}/index` | write | `Submit` this file to the server's extractor; 409 if `indexing` |
+| `POST` | `/api/pdfindex/files/{id}/begin` | write | Fast-path claim (`pending`/`failed` → `indexing`, attempts + 1); 409 if claimed or a non-canonical duplicate |
+| `PUT` | `/api/pdfindex/files/{id}/pages` | — | Fast-path batch upload `{"pages":[{"n":1,"text":"…"},…]}`, 16 MB cap |
+| `POST` | `/api/pdfindex/files/{id}/finalize` | write | `indexed` if pages were stored, else `empty`; clears error and attempts. No body |
+| `POST` | `/api/pdfindex/files/{id}/fail` | write | Mark failed (`{"error":"…"}`); claimable again at once |
+| `DELETE` | `/api/pdfindex/files/{id}` | write | Delete the file's pages and status row |
+
+The fast path checks every response and throws on the first failure, so a
+batch that did not land is never followed by `finalize` (which would mark the
+file `indexed` with holes). On `pagehide` it releases its claim with a
+`keepalive` `/fail`, so a closed tab does not leave the row `indexing` for the
+watchdog. Every client call has a timeout (10 s, 60 s for a page batch).
 
 #### Donor endpoints (in `databank.db`)
 
@@ -495,48 +546,81 @@ write endpoints). `GET` routes are read-only and accept the read middleware;
 | `PUT` | `/api/databank/donors/{id}` | Add file `{id}` to the donor set |
 | `DELETE` | `/api/databank/donors/{id}` | Remove file `{id}` from the donor set |
 
-#### Search
-
-The search endpoint is registered on `PdfIndexHandler` but lives under the
-databank path:
+### Search
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/api/databank/search?q=…&scope=all\|donor` | FTS5 search over indexed pages; `scope=donor` restricts results to donor files; returns `{results, total, query}` |
+| `GET` | `/api/databank/search?q=…&scope=all\|donor` | One row per file / content group: `{results, total, query, partial, partial_reason, ignored}`; 400 for a too-short query |
+| `GET` | `/api/databank/search/stream?q=…&scope=all\|donor` | NDJSON: one `result` per file as found, then `counts`, then `done {total, partial, partial_reason, ignored}` — or one `error {code, error}` instead of counts/done (`code` `too_short` \| `search`) |
+
+`pdfindex.SearchFiles` (`search.go`) is the one implementation; MCP
+`pdf_search` uses its page-level sibling `SearchPages`.
+
+- **Unranked.** It walks matches in rowid order — FTS5's native order — and
+  never `ORDER BY rank`: BM25 must score every matching page before the first
+  row, and on schematics `10UF`, `25V` or `PP3V3` match nearly every page (96 s
+  for `10UF 25V` on a 1.9 M-page index). The UI never showed page rank; it
+  orders files by hit count once the `counts` line arrives.
+- **Chunked.** 2,000 rows per statement, resumed with `pdf_text.rowid > last`,
+  on one reader connection. The cursor is closed between chunks, so the
+  snippet lookups run on the same connection and a search never holds two of
+  the pool's four.
+- **Bounded.** 500 files, 50,000 matching pages or 10 s, whichever first; the
+  result says `partial` and why. Past the file cap the scan only refines the
+  counts of files already shown.
+- **Cancelled with its client.** Every query runs with the request context;
+  modernc interrupts the statement when the browser aborts a superseded
+  search (it used to run to the end and hold a connection).
+- **Donor scope** is a filter on `pdf_pages.file_id` *after* the FTS5 scan,
+  through `json_each(?)` (no 32,766-variable ceiling). The plan is
+  `SCAN pdf_text VIRTUAL TABLE … SEARCH p USING INTEGER PRIMARY KEY` with no
+  temp b-tree, asserted by `TestSearchFilesQueryPlan`. The old
+  `pdf_text.rowid IN (SELECT rowid FROM pdf_pages WHERE file_id IN (…))` made
+  FTS5 probe one rowid at a time: 87 s for 2,000 donors.
+- **Terms** are each `"term"*` (prefix, ANDed). A term with fewer than two
+  letters or digits is dropped and reported in `ignored`; a query of only
+  such terms is refused (`too_short`) — a one-character prefix is every token
+  in the index.
+- **Snippets** are built in Go (`makeSnippet`) from the text of the one page
+  shown per file: a 32-token window around the first token that starts with a
+  query token, matches in `<b>…</b>`. The Library renders the delimiters as
+  bold and everything else as plain text. With no literal match (FTS5 matched
+  a stemmed form) the window is the start of the page.
+
+Measured on a seeded 200k-page synthetic index on an M-series Mac, warm cache:
+first row in 3–33 ms (old: after the whole ranked query, 0.2–0.9 s), done in
+35–450 ms within the caps. `BR_SEARCH_BENCH=1 go test ./pdfindex/ -run
+TestSearchScaleMeasure -v` rebuilds and re-times it.
 
 ### State machine
 
-Five states stored in `pdf_index_status.status`:
+Six states stored in `pdf_index_status.status`, plus an `attempts` counter:
 
 ```
-pending ──(Claim)──► indexing ──(Finalize, pages>0)──► indexed
-                         │                         └──(Finalize, pages=0)──► empty
-                         └──(Fail)──► failed
-                                          └──(Claim)──► indexing  (retry)
+pending ──(Claim, attempts+1)──► indexing ──(Finalize, pages>0)──► indexed   (attempts=0, error=note|'')
+                                    │                         └──(Finalize, pages=0)──► empty
+                                    └──(Fail)──► failed ──(Claim, attempts+1)──► indexing   (retry)
 
-pending ◄──(ReclaimStale)── indexing  (watchdog: attempted_at age > 2 min)
-pending ◄──(ResetForReindex)── indexed | empty | failed
+pending / failed ──(MarkDuplicate)──► duplicate      (non-canonical copy; text lives under the canonical)
+indexing ──(RequeueIndexing at boot, ReclaimStale)──► pending,  or failed once attempts ≥ 3
+indexed | empty | failed ──(ResetForReindex)──► pending (attempts=0)
+any ──(MarkPending: file changed on disk)──► pending (attempts=0)
 ```
 
-- **`pending`** — file is known to the library but not yet indexed. All newly
-  scanned PDFs start here.
-- **`indexing`** — exclusively claimed by one worker (pdfium pool instance or
-  pdf.js fast-path). The claimant refreshes `attempted_at` via `Heartbeat`
-  during long extractions.
-- **`indexed`** — at least one page of text was stored; file is searchable.
-- **`empty`** — extraction ran to completion but produced no text (image-only
-  PDF, encrypted, or no text layer).
-- **`failed`** — extraction threw an error. Retryable: next `run` will
-  `Claim` it again.
-
-**Watchdog:** `ReclaimStale` is called periodically (every minute) by the
-indexer sweep. Any row stuck in `indexing` with `attempted_at` older than
-2 minutes is reset to `pending`, so a crashed worker doesn't permanently
-block a file.
-
-**Atomic claim:** `Claim` uses a single `INSERT … ON CONFLICT DO UPDATE … WHERE
-status IN ('pending','failed')` and checks `RowsAffected() == 1`. No
-separate `SELECT` + `UPDATE` race.
+- **`attempts`** counts claims since the last success or reset. It is counted
+  at **Claim**, not at Fail, so a file that kills the process (out of memory)
+  counts too: such a row never reaches `failed` by itself, and without the
+  count every boot started with the same file. At 3, sweeps skip a failed
+  file; an orphaned `indexing` row becomes `failed` with "stopped 3 times
+  without finishing". Explicit requests (opening the PDF, `Submit`, the
+  priority lane) still claim it.
+- **Watchdog:** `StartWatchdog(5 min, 600 s, onReclaim)` in `main.go`. A row
+  in `indexing` whose `attempted_at` is older than 10 minutes is reclaimed.
+  The backend worker heartbeats every minute during extraction (a 20-minute
+  document is legitimate now), so a live job is never reclaimed and
+  extracted twice; `onReclaim` starts a sweep when auto-resume is on.
+- **Atomic claim:** `INSERT … ON CONFLICT DO UPDATE … WHERE status IN
+  ('pending','failed')`, checked with `RowsAffected() == 1`.
 
 ### Watermark lock-step
 
