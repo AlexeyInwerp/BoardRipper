@@ -1629,7 +1629,7 @@ class DatabankStore extends Emitter {
           this._pdfIndexState = 'ok';
           this._pdfIndexReason = '';
         }
-        if (!p.data.running) this._stopPdfIndexPolling();
+        if (!p.data.running && !p.data.compact?.running) this._stopPdfIndexPolling();
       } else {
         this._pdfIndexMisses++;
         // A server that answers without the index (404, or the SPA's HTML
@@ -1681,12 +1681,21 @@ class DatabankStore extends Emitter {
     this._pdfIndexMisses = 0;
     await this._pdfIndexTick();
     // If a sweep is running (started here or by the server), follow it.
-    if (this._pdfIndexProgress?.running && !this._pdfIndexTimer) this.startPdfIndexPolling();
+    const p = this._pdfIndexProgress;
+    if ((p?.running || p?.compact?.running) && !this._pdfIndexTimer) this.startPdfIndexPolling();
   }
 
   /** Start indexing and follow it. Awaits the start before polling: polled
    *  at the same time, the first answer could still say "not running" and
    *  end the poll before the sweep showed. Returns the reason on failure. */
+  /** Start compacting the index file and follow it. Returns the reason when
+   *  it did not start. */
+  async compactPdfIndex(): Promise<string | null> {
+    const r = await pdfIndexClient.compact();
+    this.startPdfIndexPolling();
+    return r.ok ? null : r.reason;
+  }
+
   async runPdfIndex(): Promise<string | null> {
     const r = await pdfIndexClient.run();
     this.startPdfIndexPolling();

@@ -429,6 +429,7 @@ func main() {
 			mux.HandleFunc("POST /api/pdfindex/reindex", write(pdfIdxHandler.Reindex))
 				mux.HandleFunc("POST /api/pdfindex/reindex-watermark", write(pdfIdxHandler.ReindexWatermark))
 			mux.HandleFunc("POST /api/pdfindex/restart", write(pdfIdxHandler.Restart))
+			mux.HandleFunc("POST /api/pdfindex/compact", pdfIdxHandler.Compact) // StopAndWait can exceed write()'s 10 s
 			mux.HandleFunc("GET /api/pdfindex/auto-resume", read(pdfIdxHandler.GetAutoResume))
 			mux.HandleFunc("POST /api/pdfindex/auto-resume", write(pdfIdxHandler.SetAutoResume))
 			mux.HandleFunc("POST /api/pdfindex/files/{id}/index", write(pdfIdxHandler.PriorityIndex))

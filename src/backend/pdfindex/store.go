@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"time"
 )
@@ -43,7 +44,9 @@ type Page struct {
 // pending/failed, and counts the attempt. Returns true if THIS caller won.
 // Uses RowsAffected() from the same Exec — never a separate SELECT changes().
 func (db *DB) Claim(fileID int64, source string) (bool, error) {
-	db.mu.Lock()
+	if err := db.lockWrite(); err != nil {
+		return false, err
+	}
 	defer db.mu.Unlock()
 	now := time.Now().Unix()
 	res, err := db.writer.Exec(
@@ -66,7 +69,9 @@ func (db *DB) Claim(fileID int64, source string) (bool, error) {
 
 // Heartbeat refreshes attempted_at so the watchdog won't reclaim a live job.
 func (db *DB) Heartbeat(fileID int64) error {
-	db.mu.Lock()
+	if err := db.lockWrite(); err != nil {
+		return err
+	}
 	defer db.mu.Unlock()
 	_, err := db.writer.Exec(
 		`UPDATE pdf_index_status SET attempted_at = ? WHERE file_id = ?`,
@@ -77,7 +82,9 @@ func (db *DB) Heartbeat(fileID int64) error {
 // UpsertPages inserts/updates page text. ON CONFLICT DO UPDATE (NOT REPLACE) so
 // the FTS5 _au trigger runs, never _ad+_ai (which can desync external content).
 func (db *DB) UpsertPages(fileID int64, pages []Page) error {
-	db.mu.Lock()
+	if err := db.lockWrite(); err != nil {
+		return err
+	}
 	defer db.mu.Unlock()
 	tx, err := db.writer.Begin()
 	if err != nil {
@@ -114,7 +121,9 @@ func (db *DB) UpsertPages(fileID int64, pages []Page) error {
 // pages carry no FTS content and are skipped. A re-save that dropped its text
 // (image-only) therefore clears its stale rows and Finalize marks it 'empty'.
 func (db *DB) ReplacePages(fileID int64, pages []Page) error {
-	db.mu.Lock()
+	if err := db.lockWrite(); err != nil {
+		return err
+	}
 	defer db.mu.Unlock()
 	tx, err := db.writer.Begin()
 	if err != nil {
@@ -152,7 +161,9 @@ func (db *DB) Finalize(fileID int64) (StatusRow, error) {
 // a file whose extraction stopped part-way: it is 'indexed' (searchable for
 // the pages that were read, never retried by a sweep) and says so.
 func (db *DB) FinalizeWithNote(fileID int64, note string) (StatusRow, error) {
-	db.mu.Lock()
+	if err := db.lockWrite(); err != nil {
+		return StatusRow{}, err
+	}
 	var n int
 	if err := db.writer.QueryRow(
 		`SELECT COUNT(*) FROM pdf_pages WHERE file_id = ?`, fileID).Scan(&n); err != nil {
@@ -177,7 +188,9 @@ func (db *DB) FinalizeWithNote(fileID int64, note string) (StatusRow, error) {
 // terminal status 'duplicate', no pages extracted. Search resolves its hits
 // via the canonical. Works whether or not a row already exists.
 func (db *DB) MarkDuplicate(fileID, canonicalID int64) error {
-	db.mu.Lock()
+	if err := db.lockWrite(); err != nil {
+		return err
+	}
 	defer db.mu.Unlock()
 	now := time.Now().Unix()
 	_, err := db.writer.Exec(
@@ -192,7 +205,9 @@ func (db *DB) MarkDuplicate(fileID, canonicalID int64) error {
 
 // Fail marks the file failed with an error message (retryable on next claim).
 func (db *DB) Fail(fileID int64, msg string) error {
-	db.mu.Lock()
+	if err := db.lockWrite(); err != nil {
+		return err
+	}
 	defer db.mu.Unlock()
 	_, err := db.writer.Exec(
 		`UPDATE pdf_index_status SET status='failed', error=?, attempted_at=? WHERE file_id=?`,
@@ -203,7 +218,9 @@ func (db *DB) Fail(fileID int64, msg string) error {
 // FailPermanently marks the file failed and past MaxAttempts, so sweeps leave
 // it alone: for errors that depend only on the bytes (not a PDF, password).
 func (db *DB) FailPermanently(fileID int64, msg string) error {
-	db.mu.Lock()
+	if err := db.lockWrite(); err != nil {
+		return err
+	}
 	defer db.mu.Unlock()
 	_, err := db.writer.Exec(
 		`UPDATE pdf_index_status SET status='failed', error=?, attempted_at=?, attempts=MAX(attempts, ?) WHERE file_id=?`,
@@ -214,7 +231,9 @@ func (db *DB) FailPermanently(fileID int64, msg string) error {
 // Release hands a claimed file back to 'pending' and takes back the attempt
 // its claim counted: used when a stopped sweep interrupts the extraction.
 func (db *DB) Release(fileID int64) error {
-	db.mu.Lock()
+	if err := db.lockWrite(); err != nil {
+		return err
+	}
 	defer db.mu.Unlock()
 	_, err := db.writer.Exec(
 		`UPDATE pdf_index_status SET status='pending', attempts=MAX(attempts-1, 0) WHERE file_id=? AND status='indexing'`,
@@ -238,7 +257,7 @@ type Stats struct {
 // give up with its caller instead of queueing behind searches.
 func (db *DB) Stats(ctx context.Context) (Stats, error) {
 	var s Stats
-	err := db.reader.QueryRowContext(ctx, `
+	err := db.r().QueryRowContext(ctx, `
 		SELECT
 			COALESCE(SUM(CASE WHEN status='indexed'  THEN 1 ELSE 0 END),0),
 			COALESCE(SUM(CASE WHEN status='empty'    THEN 1 ELSE 0 END),0),
@@ -256,7 +275,7 @@ func (db *DB) Stats(ctx context.Context) (Stats, error) {
 	// walked an index of every page and took over 100 s on a NAS with a
 	// 1.9 M-page index — on every 1.5 s progress poll. Pages of a file still
 	// being extracted are not counted until it finishes.
-	if err := db.reader.QueryRowContext(ctx,
+	if err := db.r().QueryRowContext(ctx,
 		`SELECT COALESCE(SUM(page_count),0) FROM pdf_index_status WHERE status = 'indexed'`).Scan(&s.Pages); err != nil {
 		return s, err
 	}
@@ -264,7 +283,9 @@ func (db *DB) Stats(ctx context.Context) (Stats, error) {
 }
 
 func (db *DB) DeleteFile(fileID int64) error {
-	db.mu.Lock()
+	if err := db.lockWrite(); err != nil {
+		return err
+	}
 	defer db.mu.Unlock()
 	if _, err := db.writer.Exec(`DELETE FROM pdf_pages WHERE file_id = ?`, fileID); err != nil {
 		return err
@@ -284,8 +305,12 @@ func (db *DB) DeleteFile(fileID int64) error {
 // Callers should stop the indexer first. Held under db.mu (serialising
 // writers); the connection pools are closed and reopened on the same path.
 func (db *DB) ResetAll() error {
-	db.mu.Lock()
+	if err := db.lockWrite(); err != nil {
+		return err
+	}
 	defer db.mu.Unlock()
+	db.connMu.Lock()
+	defer db.connMu.Unlock()
 	// Close waits for in-flight queries to finish before returning.
 	db.reader.Close()
 	db.writer.Close()
@@ -299,6 +324,10 @@ func (db *DB) ResetAll() error {
 			return err
 		}
 	}
+	// The recreated file starts empty: create it without copy-on-write.
+	if err := setNoCOW(db.path); err != nil {
+		log.Printf("pdfindex: copy-on-write stays on for %s: %v", db.path, err)
+	}
 	w, r, err := openConns(db.path)
 	if err != nil {
 		return err
@@ -310,7 +339,7 @@ func (db *DB) ResetAll() error {
 func (db *DB) ListFailed() ([]StatusRow, error) {
 	// Filename/Path are filled in by the handler from the databank — search.go
 	// follows the same "no ATTACH, enrich in Go" pattern.
-	rows, err := db.reader.Query(
+	rows, err := db.r().Query(
 		`SELECT file_id, status, COALESCE(error,''), attempts FROM pdf_index_status WHERE status='failed' ORDER BY file_id`)
 	if err != nil {
 		return nil, err
@@ -329,7 +358,9 @@ func (db *DB) ListFailed() ([]StatusRow, error) {
 
 // ResetForReindex sets matching rows to 'pending'. scope ∈ {"all","failed","empty"}.
 func (db *DB) ResetForReindex(scope string) (int64, error) {
-	db.mu.Lock()
+	if err := db.lockWrite(); err != nil {
+		return 0, err
+	}
 	defer db.mu.Unlock()
 	q := `UPDATE pdf_index_status SET status='pending', attempts=0`
 	switch scope {
@@ -354,7 +385,9 @@ func (db *DB) ResetForReindex(scope string) (int64, error) {
 // status table doesn't yet know about — INSERT … ON CONFLICT keeps the
 // row consistent with how Claim creates one.
 func (db *DB) MarkPending(fileID int64) error {
-	db.mu.Lock()
+	if err := db.lockWrite(); err != nil {
+		return err
+	}
 	defer db.mu.Unlock()
 	_, err := db.writer.Exec(`
 		INSERT INTO pdf_index_status (file_id, status, attempted_at, indexed_at)
@@ -377,7 +410,7 @@ func (db *DB) MarkPending(fileID int64) error {
 // before, every failed file was re-extracted on every sweep start, which on a
 // slow NAS meant two minutes per known-bad file at every boot.
 func (db *DB) DoneOrActiveFileIDs() (map[int64]bool, error) {
-	rows, err := db.reader.Query(`SELECT file_id FROM pdf_index_status
+	rows, err := db.r().Query(`SELECT file_id FROM pdf_index_status
 		WHERE status IN ('indexed','empty','duplicate','indexing')
 		   OR (status = 'failed' AND attempts >= ?)`, MaxAttempts)
 	if err != nil {
@@ -403,7 +436,9 @@ func (db *DB) DoneOrActiveFileIDs() (map[int64]bool, error) {
 // orphaned 'indexing' rows are SKIPPED by DoneOrActiveFileIDs and would not
 // resume until the 10-minute watchdog. Returns count requeued.
 func (db *DB) RequeueIndexing() (int64, error) {
-	db.mu.Lock()
+	if err := db.lockWrite(); err != nil {
+		return 0, err
+	}
 	defer db.mu.Unlock()
 	res, err := db.writer.Exec(`UPDATE pdf_index_status SET `+requeueSet+` WHERE status='indexing'`,
 		MaxAttempts, MaxAttempts, abandonedNote)
@@ -426,7 +461,9 @@ var abandonedNote = fmt.Sprintf("stopped %d times without finishing (process res
 // ReclaimStale flips 'indexing' rows whose last heartbeat (attempted_at) is
 // older than maxAgeSeconds back to 'pending'. Returns count reclaimed.
 func (db *DB) ReclaimStale(maxAgeSeconds int64) (int64, error) {
-	db.mu.Lock()
+	if err := db.lockWrite(); err != nil {
+		return 0, err
+	}
 	defer db.mu.Unlock()
 	cutoff := time.Now().Unix() - maxAgeSeconds
 	res, err := db.writer.Exec(
@@ -448,7 +485,7 @@ func (db *DB) StatusContext(ctx context.Context, fileID int64) (StatusRow, error
 	var s StatusRow
 	var indexedAt, attemptedAt *int64
 	var source, errMsg *string
-	err := db.reader.QueryRowContext(ctx,
+	err := db.r().QueryRowContext(ctx,
 		`SELECT file_id, status, source, page_count, attempted_at, indexed_at, error, attempts
 		 FROM pdf_index_status WHERE file_id = ?`, fileID).
 		Scan(&s.FileID, &s.Status, &source, &s.PageCount, &attemptedAt, &indexedAt, &errMsg, &s.Attempts)

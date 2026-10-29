@@ -74,6 +74,8 @@ type Progress struct {
 	// EngineError is set when the extractor failed to initialise: indexing
 	// cannot run on this server, and the UI should say so.
 	EngineError string `json:"engine_error,omitempty"`
+	// Compact is the running or last compaction of the index file.
+	Compact CompactState `json:"compact"`
 }
 
 // Indexer runs autonomous bulk indexing with a priority queue for on-demand
@@ -179,6 +181,7 @@ func (ix *Indexer) Progress() Progress {
 	if err := ix.engineError(); err != nil {
 		p.EngineError = err.Error()
 	}
+	p.Compact = ix.store.CompactStatus()
 	return p
 }
 
@@ -292,6 +295,9 @@ func (ix *Indexer) engineError() error {
 func (ix *Indexer) start(list func() ([]PdfFile, error), rerunIfBusy bool) error {
 	if err := ix.engineError(); err != nil {
 		return fmt.Errorf("%w: %v", ErrEngineUnavailable, err)
+	}
+	if ix.store.Compacting() {
+		return ErrCompacting
 	}
 	ix.mu.Lock()
 	if ix.running {

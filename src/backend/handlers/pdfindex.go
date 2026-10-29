@@ -3,12 +3,16 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"boardripper/databank"
 	"boardripper/pdfindex"
@@ -152,6 +156,38 @@ func (h *PdfIndexHandler) Restart(w http.ResponseWriter, r *http.Request) {
 		writeRunError(w, err)
 		return
 	}
+	writeJSON(w, h.ix.Progress())
+}
+
+// POST /api/pdfindex/compact — rewrite the index file into a fresh,
+// contiguous copy (no re-extraction; see pdfindex.DB.Compact). Stops the
+// sweep, checks there is room for a second copy, and runs in the background;
+// progress reports it under "compact". Resumes indexing afterwards when
+// auto-resume is on.
+func (h *PdfIndexHandler) Compact(w http.ResponseWriter, r *http.Request) {
+	if h.db.Compacting() {
+		http.Error(w, "already compacting", http.StatusConflict)
+		return
+	}
+	size := h.db.FileSize()
+	need := uint64(size) + uint64(size)/20 + 256<<20
+	if free := freeBytes(filepath.Dir(h.db.Path())); free > 0 && free < need {
+		http.Error(w, fmt.Sprintf("compaction needs %.1f GB free next to the index, %.1f GB available",
+			float64(need)/(1<<30), float64(free)/(1<<30)), http.StatusInsufficientStorage)
+		return
+	}
+	h.ix.StopAndWait()
+	go func() {
+		if err := h.db.Compact(context.Background()); err == nil && PdfAutoResumeEnabled(h.bank) {
+			_ = h.ix.RequestRun()
+		}
+	}()
+	// Let the goroutine mark itself running before answering, so the
+	// first progress poll already sees it.
+	for i := 0; i < 50 && !h.db.Compacting() && h.db.CompactStatus().FinishedAt == 0; i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	w.WriteHeader(http.StatusAccepted)
 	writeJSON(w, h.ix.Progress())
 }
 

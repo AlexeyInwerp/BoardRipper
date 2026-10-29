@@ -26,6 +26,15 @@ export interface PdfIndexProgress {
   /** Set when the server's text extractor failed to initialise: nothing can
    *  be indexed on this server until that is fixed. */
   engine_error?: string;
+  /** The running or last compaction of the index file. */
+  compact?: {
+    running: boolean;
+    started_at?: number;
+    finished_at?: number;
+    size_before?: number;
+    size_after?: number;
+    error?: string;
+  };
 }
 
 export interface PdfIndexStats {
@@ -102,6 +111,9 @@ export const pdfIndexClient = {
   run: () => indexCall<PdfIndexProgress>(`/api/pdfindex/run`, { method: 'POST' }),
   /** progress/stats with the reason when there is no answer — the poll needs
    *  it to tell "idle" from "lost contact". */
+  /** Rewrite the index file into a fresh contiguous copy (no re-extraction).
+   *  202 = started; 409 = already running; 507 = not enough free space. */
+  compact: () => indexCall<PdfIndexProgress>(`/api/pdfindex/compact`, { method: 'POST' }, 120_000),
   progressCall: () => indexCall<PdfIndexProgress>(`/api/pdfindex/progress`),
   statsCall: () => indexCall<PdfIndexStats>(`/api/pdfindex/stats`),
   stop: () => jfetch(`/api/pdfindex/stop`, { method: 'POST' }),

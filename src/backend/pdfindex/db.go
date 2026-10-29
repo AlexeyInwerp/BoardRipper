@@ -1,10 +1,15 @@
 package pdfindex
 
 import (
+	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -16,6 +21,44 @@ type DB struct {
 	writer *sql.DB
 	reader *sql.DB
 	mu     sync.Mutex
+	// connMu guards the reader handle against the swap in Compact/ResetAll;
+	// read paths take it through r().
+	connMu sync.RWMutex
+	// compaction state, under mu
+	compacting bool
+	compact    CompactState
+}
+
+// ErrCompacting is returned by every write while Compact rewrites the file:
+// a write landing in the old file during the copy would be lost.
+var ErrCompacting = errors.New("pdfindex: index file is being compacted")
+
+// CompactState reports the running or last compaction.
+type CompactState struct {
+	Running    bool   `json:"running"`
+	StartedAt  int64  `json:"started_at,omitempty"`
+	FinishedAt int64  `json:"finished_at,omitempty"`
+	SizeBefore int64  `json:"size_before,omitempty"`
+	SizeAfter  int64  `json:"size_after,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
+// r returns the reader pool (stable for the duration of one call).
+func (db *DB) r() *sql.DB {
+	db.connMu.RLock()
+	defer db.connMu.RUnlock()
+	return db.reader
+}
+
+// lockWrite takes the writer lock, or refuses while the file is being
+// compacted. Every write method goes through it.
+func (db *DB) lockWrite() error {
+	db.mu.Lock()
+	if db.compacting {
+		db.mu.Unlock()
+		return ErrCompacting
+	}
+	return nil
 }
 
 // openConns opens the writer (single conn) + reader (pooled) handles for path.
@@ -40,6 +83,15 @@ func openConns(path string) (writer, reader *sql.DB, err error) {
 }
 
 func Open(path string) (*DB, error) {
+	// A new index file is created without copy-on-write (btrfs), so it never
+	// fragments; an existing one is left as is — Compact rewrites it.
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if err := setNoCOW(path); err != nil {
+			log.Printf("pdfindex: copy-on-write stays on for %s: %v", path, err)
+		}
+	}
+	// A compaction interrupted by a restart leaves its copy behind.
+	_ = os.Remove(path + compactSuffix)
 	writer, reader, err := openConns(path)
 	if err != nil {
 		return nil, err
@@ -138,8 +190,123 @@ func (db *DB) createSchema() error {
 // at the end of a sweep; a reader still open makes it partial, which is fine
 // (the next one finishes the job).
 func (db *DB) Checkpoint() error {
-	db.mu.Lock()
+	if err := db.lockWrite(); err != nil {
+		return err
+	}
 	defer db.mu.Unlock()
 	_, err := db.writer.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
 	return err
+}
+
+const compactSuffix = ".compact"
+
+// CompactStatus returns the running or last compaction.
+func (db *DB) CompactStatus() CompactState {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	return db.compact
+}
+
+// Compacting reports whether a compaction is running.
+func (db *DB) Compacting() bool {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	return db.compacting
+}
+
+// Path is the database file's path.
+func (db *DB) Path() string { return db.path }
+
+// FileSize is the size of the database file in bytes (0 if unknown).
+func (db *DB) FileSize() int64 {
+	st, err := os.Stat(db.path)
+	if err != nil {
+		return 0
+	}
+	return st.Size()
+}
+
+// Compact rewrites the index into a fresh, contiguous file (VACUUM INTO a
+// copy created without copy-on-write, then swapped in) and keeps every page
+// of extracted text — nothing is re-extracted. It is the cure for a file that
+// btrfs copy-on-write has shredded into fragments: on the NAS such a file
+// read at 4 MB/s and every query, even stats on a 70k-row table, ran past
+// its deadline. Writes are refused (ErrCompacting) while it runs; reads keep
+// working on the old file until the swap. The caller stops the indexer first.
+// It needs free space for a second copy of the file.
+func (db *DB) Compact(ctx context.Context) error {
+	db.mu.Lock()
+	if db.compacting {
+		db.mu.Unlock()
+		return ErrCompacting
+	}
+	db.compacting = true
+	db.compact = CompactState{Running: true, StartedAt: time.Now().Unix(), SizeBefore: db.FileSize()}
+	db.mu.Unlock()
+
+	err := db.compactInto(ctx)
+
+	db.mu.Lock()
+	db.compacting = false
+	db.compact.Running = false
+	db.compact.FinishedAt = time.Now().Unix()
+	if err != nil {
+		db.compact.Error = err.Error()
+	} else {
+		db.compact.SizeAfter = db.FileSize()
+	}
+	st := db.compact
+	db.mu.Unlock()
+	if err != nil {
+		log.Printf("pdfindex: compaction failed: %v", err)
+	} else {
+		log.Printf("pdfindex: compacted %d → %d bytes in %ds", st.SizeBefore, st.SizeAfter, st.FinishedAt-st.StartedAt)
+	}
+	return err
+}
+
+func (db *DB) compactInto(ctx context.Context) error {
+	tmp := db.path + compactSuffix
+	_ = os.Remove(tmp)
+	if err := setNoCOW(tmp); err != nil {
+		log.Printf("pdfindex: compact copy keeps copy-on-write: %v", err)
+	}
+	// Write everything committed so far into the main file first, so the
+	// copy is taken from a settled database.
+	if _, err := db.writer.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		log.Printf("pdfindex: checkpoint before compaction: %v", err)
+	}
+	conn, err := db.r().Conn(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = conn.ExecContext(ctx, `VACUUM INTO ?`, tmp)
+	conn.Close()
+	if err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("copy: %w", err)
+	}
+
+	// Swap: close both pools (waits for in-flight reads), replace the file,
+	// reopen. Under mu (no writer can start) and connMu (no reader can).
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	db.connMu.Lock()
+	defer db.connMu.Unlock()
+	db.reader.Close()
+	db.writer.Close()
+	for _, suffix := range []string{"-wal", "-shm"} {
+		_ = os.Remove(db.path + suffix)
+	}
+	renameErr := os.Rename(tmp, db.path)
+	w, r, err := openConns(db.path)
+	if err != nil {
+		return fmt.Errorf("reopen: %w", err)
+	}
+	db.writer, db.reader = w, r
+	if renameErr != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("swap: %w", renameErr)
+	}
+	return nil
 }

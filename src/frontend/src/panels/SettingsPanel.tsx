@@ -47,6 +47,7 @@ import { RangeControl } from '../components/RangeControl';
 import { AutoBindSection } from './settings/AutoBindSection';
 import { firstRunStore } from '../store/first-run-store';
 import { pdfIndexClient } from '../pdf/pdf-index-client';
+import type { PdfIndexProgress } from '../pdf/pdf-index-client';
 import { fmtIndexEta } from './LibraryPanel';
 import { isElectron, hasBackend } from '../store/databank-store';
 import { isLiteBuild } from '../store/build-mode';
@@ -1056,10 +1057,25 @@ function DatabaseInfoSection() {
 
 // ---- Library settings (auto-pdf, history depth, clear history) ----
 
+/** One line for the index compaction: running, failed, or what it did. */
+function compactLine(c: PdfIndexProgress['compact'], startError: string | null): string {
+  const gb = (n?: number) => `${((n ?? 0) / 2 ** 30).toFixed(1)} GB`;
+  const at = (t?: number) => (t ? new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '');
+  if (startError) return `Could not start: ${startError}`;
+  if (!c) return '';
+  if (c.running) return `Compacting since ${at(c.started_at)} (${gb(c.size_before)}). Search keeps working; indexing resumes afterwards.`;
+  if (c.error) return `Compaction failed: ${c.error}`;
+  const mins = Math.max(1, Math.round(((c.finished_at ?? 0) - (c.started_at ?? 0)) / 60));
+  return `Compacted ${gb(c.size_before)} → ${gb(c.size_after)} in ${mins} min.`;
+}
+
 function LibrarySettingsSection() {
   const { autoPdf, historyDepth, recentItems, scanStatus, pdfIndexProgress, pdfIndexStats, pdfIndexState, pdfIndexReason, libraryLoadMode } = useDatabank();
   // Why the last "Index all / Continue" did not start a sweep, if it didn't.
   const [runError, setRunError] = useState<string | null>(null);
+  const compact = pdfIndexProgress?.compact;
+  const compactRunning = !!compact?.running;
+  const [compactError, setCompactError] = useState<string | null>(null);
   const [depthDraft, setDepthDraft] = useState<string>(String(historyDepth));
   const scanRunning = scanStatus?.running ?? false;
   const pdfIndexRunning = pdfIndexProgress?.running ?? false;
@@ -1269,6 +1285,25 @@ function LibrarySettingsSection() {
           {forcing ? '…' : 'Force re-index'}
         </button>
       </div>
+
+      <div className="settings-row-field">
+        <span title="Rewrites the index file into one fresh, contiguous copy. Keeps every indexed page — nothing is extracted again. Use it when search or the index counters are slow on a NAS: on btrfs (Synology's default) the file fragments over time and every read pays for it. Needs free space for a second copy; indexing pauses meanwhile, search keeps working.">
+          Compact index file
+        </span>
+        <button
+          className="settings-action-btn"
+          data-testid="pdf-index-compact"
+          disabled={compactRunning}
+          onClick={async () => { setCompactError(await databankStore.compactPdfIndex()); }}
+        >
+          {compactRunning ? 'Compacting…' : 'Compact'}
+        </button>
+      </div>
+      {(compactRunning || compactError || compact?.finished_at) && (
+        <div className="settings-pdfindex-stats" data-testid="pdf-index-compact-state">
+          {compactLine(compact, compactError)}
+        </div>
+      )}
 
       <label className="settings-row-toggle">
         <input

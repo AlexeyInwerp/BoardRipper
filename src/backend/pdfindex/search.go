@@ -106,7 +106,7 @@ func (db *DB) SearchFiles(ctx context.Context, query string, restrictTo []int64,
 
 	sctx, cancel := context.WithTimeout(ctx, opt.Deadline)
 	defer cancel()
-	conn, err := db.reader.Conn(sctx)
+	conn, err := db.r().Conn(sctx)
 	if err != nil {
 		return sum, deadlineOr(ctx, sctx, err, &sum)
 	}
@@ -185,7 +185,13 @@ func (db *DB) SearchFiles(ctx context.Context, query string, restrictTo []int64,
 // deadlineOr turns the search's own deadline into a partial result; a
 // cancelled caller (client gone) or any other error is returned as is.
 func deadlineOr(parent, sctx context.Context, err error, sum *SearchSummary) error {
-	if parent.Err() == nil && sctx.Err() != nil {
+	// The driver may report the deadline (context.DeadlineExceeded, or
+	// SQLite's "interrupted") a moment before sctx itself is marked done; on
+	// the NAS every search ended with a raw "context deadline exceeded"
+	// error instead of the partial result.
+	deadline := sctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) ||
+		(err != nil && strings.Contains(err.Error(), "interrupted"))
+	if parent.Err() == nil && deadline {
 		sum.Partial, sum.Reason = true, "time"
 		return nil
 	}
@@ -211,7 +217,7 @@ func (db *DB) SearchPages(ctx context.Context, query string, restrictTo []int64,
 	}
 	sctx, cancel := context.WithTimeout(ctx, SearchOptions{}.withDefaults().Deadline)
 	defer cancel()
-	conn, err := db.reader.Conn(sctx)
+	conn, err := db.r().Conn(sctx)
 	if err != nil {
 		return nil, err
 	}

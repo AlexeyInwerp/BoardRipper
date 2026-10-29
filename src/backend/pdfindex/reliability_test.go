@@ -7,6 +7,7 @@ package pdfindex
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -381,4 +382,64 @@ func TestStopInterruptsExtraction(t *testing.T) {
 	if st.Status != "pending" || st.Attempts != 0 {
 		t.Fatalf("status = %+v, want pending with 0 attempts", st)
 	}
+}
+
+// Compact rewrites the file and keeps every page searchable; space freed by
+// deleted pages is returned; no copy is left behind.
+func TestCompactKeepsDataAndShrinks(t *testing.T) {
+	db := openTestDB(t)
+	big := strings.Repeat("filler text for a page ", 400)
+	for i := int64(1); i <= 60; i++ {
+		db.Claim(i, "pdfium")
+		indexPages(t, db, i, "PP3V3_S5 "+big, "second "+big)
+		db.Finalize(i)
+	}
+	for i := int64(1); i <= 50; i++ {
+		db.DeleteFile(i)
+	}
+	db.Checkpoint()
+	before := db.FileSize()
+	if err := db.Compact(context.Background()); err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	st := db.CompactStatus()
+	if st.Running || st.Error != "" || st.SizeAfter >= before {
+		t.Fatalf("compact state %+v, before %d: want finished, smaller", st, before)
+	}
+	hits, sum := collect(t, db, "pp3v3", nil, SearchOptions{})
+	if len(hits) != 10 || sum.Partial {
+		t.Fatalf("after compaction: %d files, want 10", len(hits))
+	}
+	if s, _ := db.Stats(context.Background()); s.Indexed != 10 {
+		t.Fatalf("stats after compaction: %+v", s)
+	}
+	if _, err := os.Stat(db.Path() + compactSuffix); !os.IsNotExist(err) {
+		t.Fatal("the compaction copy was left behind")
+	}
+	// Writes work again on the new file.
+	if won, err := db.Claim(99, "pdfium"); !won || err != nil {
+		t.Fatalf("claim after compaction: %v %v", won, err)
+	}
+}
+
+// While compacting, writes are refused (they would land in the old file and
+// be lost) and sweeps do not start.
+func TestCompactingRefusesWritesAndSweeps(t *testing.T) {
+	db := openTestDB(t)
+	db.mu.Lock()
+	db.compacting = true
+	db.mu.Unlock()
+	if _, err := db.Claim(1, "pdfium"); !errors.Is(err, ErrCompacting) {
+		t.Fatalf("Claim = %v, want ErrCompacting", err)
+	}
+	if err := db.MarkPending(1); !errors.Is(err, ErrCompacting) {
+		t.Fatalf("MarkPending = %v, want ErrCompacting", err)
+	}
+	ix := NewIndexer(db, fakeExtractor{}, countingSource(1), func() []string { return nil }, 1)
+	if err := ix.RequestRun(); !errors.Is(err, ErrCompacting) {
+		t.Fatalf("RequestRun = %v, want ErrCompacting", err)
+	}
+	db.mu.Lock()
+	db.compacting = false
+	db.mu.Unlock()
 }
