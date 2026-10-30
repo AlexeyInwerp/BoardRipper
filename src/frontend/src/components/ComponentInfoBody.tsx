@@ -43,6 +43,7 @@ import { accentTextColor } from '../store/color-math';
 import { DiagnosisNotes } from './DiagnosisNotes';
 import { NetBranchSection } from './NetBranchSection';
 import { ObdCell } from './ObdCell';
+import { orderPins, PIN_FILTER_MIN_PINS, type PinSortCol } from './pin-order';
 
 // Re-exported so existing `import { ObdCell } from './ComponentInfoBody'`
 // call sites keep working after the cell moved to its own module (it had to,
@@ -76,6 +77,12 @@ export function ComponentInfoBody({
    *  NetBranchSection, because the caret that drives it is now part of the
    *  selected pin row's net cell. */
   const [collapsedNet, setCollapsedNet] = useState<string | null>(null);
+  /** Pin-table filter, keyed by the part it was typed for: picking another
+   *  part starts with the whole table again, with no effect to reset it. */
+  const [pinFilter, setPinFilter] = useState<{ part: number | null; q: string }>({ part: null, q: '' });
+  /** Pin-table sort column; null = file order. Kept across parts — it is a
+   *  way of reading tables, not a property of one. */
+  const [pinSort, setPinSort] = useState<{ col: PinSortCol; dir: 1 | -1 } | null>(null);
 
   // Auto-load matches + cached data when the active board changes. Cheap:
   // hits the backend's match endpoint once per board, and the per-bpath
@@ -159,6 +166,27 @@ export function ComponentInfoBody({
   /** Pin-table column count — the inline net row spans all of it. */
   const pinColumns = 3 + (board.diodeReference ? 1 : 0) + (obd.hasData ? 1 : 0);
 
+  // Filter + sort. Rows are addressed by their index in `pins` throughout, so
+  // selection, the echo marks and the net block are unaffected by the order
+  // they are shown in. The selected pin is always shown: filtering it away
+  // would also fold away the net tree hanging from it.
+  const pinQuery = pinFilter.part === selection.partIndex ? pinFilter.q : '';
+  const showPinFilter = selectedPart.pins.length > PIN_FILTER_MIN_PINS || pinQuery !== '';
+  const pinOrder = orderPins(selectedPart.pins, pinQuery, pinSort, selection.pinIndex);
+  const cycleSort = (col: PinSortCol) => setPinSort(cur =>
+    cur?.col !== col ? { col, dir: 1 } : cur.dir === 1 ? { col, dir: -1 } : null);
+  const sortHeader = (col: PinSortCol, label: string, title: string) => (
+    <th
+      className="pin-th-sort"
+      data-testid={`pin-sort-${col}`}
+      aria-sort={pinSort?.col === col ? (pinSort.dir === 1 ? 'ascending' : 'descending') : 'none'}
+      title={`${title} — click to sort, again to reverse, a third time for file order`}
+      onClick={() => cycleSort(col)}
+    >
+      {label}{pinSort?.col === col && <span className="pin-th-arrow">{pinSort.dir === 1 ? ' ▲' : ' ▼'}</span>}
+    </th>
+  );
+
   const meta = selectedPart.meta;
   const metaRows: Array<[string, string]> = [];
   if (meta?.partType) metaRows.push(['Type', meta.partType]);
@@ -215,19 +243,40 @@ export function ComponentInfoBody({
         />
       )}
 
+      {showPinFilter && (
+        <div className="pin-filter-row">
+          <input
+            type="text"
+            className="pin-filter-input"
+            data-testid="pin-filter"
+            placeholder="Filter pins: number, name or net"
+            value={pinQuery}
+            onChange={(e) => setPinFilter({ part: selection.partIndex, q: e.target.value })}
+            onKeyDown={(e) => { if (e.key === 'Escape' && pinQuery) { e.stopPropagation(); setPinFilter({ part: null, q: '' }); } }}
+            spellCheck={false}
+          />
+          {pinQuery && (
+            <span className="pin-filter-count" data-testid="pin-filter-count">
+              {`${pinOrder.length} of ${selectedPart.pins.length}`}
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="pin-table-container">
         <table className="pin-table">
           <thead>
             <tr>
-              <th>#</th>
-              <th>Name</th>
-              <th>Net</th>
+              {sortHeader('num', '#', 'Pin number')}
+              {sortHeader('name', 'Name', 'Pin name')}
+              {sortHeader('net', 'Net', 'Net')}
               {board.diodeReference && <th title="diode-mode reference reading baked into the board file (volts)">Diode</th>}
               {obd.hasData && <th title="diode / V / Ω from OpenBoardData">OBD</th>}
             </tr>
           </thead>
           <tbody>
-            {selectedPart.pins.map((pin, idx) => {
+            {pinOrder.map((idx, row) => {
+              const pin = selectedPart.pins[idx];
               const isSelected = selection.pinIndex === idx;
               const isNetHighlighted = selection.highlightedNet === pin.net && pin.net !== '';
               const obdNets = obd.hasData ? obd.lookup(pin.net) : [];
@@ -237,7 +286,7 @@ export function ComponentInfoBody({
               const isEcho = branchNet !== null && !isSelected && pin.net === branchNet;
               // The row where the pin list resumes after an inline net block:
               // it takes a hairline so the block's end is unambiguous.
-              const isResume = branchNet !== null && selection.pinIndex === idx - 1;
+              const isResume = branchNet !== null && row > 0 && selection.pinIndex === pinOrder[row - 1];
               return (
                 <Fragment key={idx}>
                 <tr

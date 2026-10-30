@@ -10034,3 +10034,32 @@ body {
 }
 .settings-fine-tune > summary:hover { color: var(--text-primary); }
 .settings-fine-tune[open] > summary { margin-bottom: 4px; }
+
+/* Pin table filter + sortable headers (ComponentInfoBody, pin-order.ts) */
+.pin-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+}
+.pin-filter-input {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  font: inherit;
+  font-size: 0.9em;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.pin-filter-input:focus { outline: none; border-color: var(--accent); }
+.pin-filter-count {
+  flex: 0 0 auto;
+  font-size: 0.85em;
+  color: var(--text-secondary);
+}
+.pin-table th.pin-th-sort { cursor: pointer; user-select: none; }
+.pin-table th.pin-th-sort:hover { color: var(--text-primary); }
+.pin-th-arrow { font-size: 0.8em; }
