@@ -26,7 +26,7 @@ import { createPortal } from 'react-dom';
 import type { ComponentType } from 'react';
 import {
   IconReplace, IconSparkles, IconDroplet, IconBolt, IconAlertTriangle, IconCheck,
-  IconUnlink, IconCircuitDiode, IconSearch, IconChevronRight, IconChevronDown,
+  IconUnlink, IconCircuitDiode, IconSearch, IconChevronLeft, IconChevronRight, IconChevronDown,
   IconX, IconPlus, IconClipboardText, IconList, IconDots,
 } from '@tabler/icons-react';
 import { IconSolderingIron } from '../icons/IconSolderingIron';
@@ -380,7 +380,9 @@ function ActiveWorklistView({ renameOnMount, onRenameHandled }: {
   useEffect(() => {
     if (!selected) return;
     const onDown = (e: PointerEvent) => {
-      if (!(e.target as HTMLElement | null)?.closest?.('.wl-row')) setSelected(null);
+      // The step buttons move the selection themselves; a press on them is
+      // not a click away from it.
+      if (!(e.target as HTMLElement | null)?.closest?.('.wl-row, .wl-step')) setSelected(null);
     };
     document.addEventListener('pointerdown', onDown, true);
     return () => document.removeEventListener('pointerdown', onDown, true);
@@ -390,6 +392,29 @@ function ActiveWorklistView({ renameOnMount, onRenameHandled }: {
   if (!activeWorklist) return null;
   const entryCount = activeWorklist.entries.length;
   const netCount = activeWorklist.netEntries?.length ?? 0;
+
+  // ‹ › — walk the list in order: parts, then nets, as shown. A step does
+  // what a click on the row does (select it, take the board there) and
+  // scrolls it into view; a net row's reading slots open with it, so a run
+  // of measurements is one press and a typed value per row. Rows whose part
+  // or net is missing from this board are skipped — there is nowhere to go.
+  // The list does not wrap: "12 of 12" is the end of the round.
+  const stepKeys = [
+    ...activeWorklist.entries.filter(e => !e.unresolved).map(e => 'p:' + e.refdes),
+    ...(activeWorklist.netEntries ?? []).filter(e => !e.unresolved).map(e => 'n:' + e.netName),
+  ];
+  const stepAt = selected ? stepKeys.indexOf(selected) : -1;
+  const step = (dir: 1 | -1) => {
+    const to = stepAt < 0 ? (dir > 0 ? 0 : stepKeys.length - 1) : stepAt + dir;
+    const key = stepKeys[to];
+    if (!key) return;
+    setSelected(key);
+    const name = key.slice(2);
+    if (key.startsWith('n:')) boardStore.focusNet(name); else boardStore.focusPart(name);
+    requestAnimationFrame(() => {
+      listRef.current?.querySelector(`[data-wl-key="${CSS.escape(key)}"]`)?.scrollIntoView({ block: 'nearest' });
+    });
+  };
 
   const startRename = () => { setRenameDraft(activeWorklist.name); setRenaming(true); };
   const commitRename = () => { worklistStore.renameWorklist(activeWorklist.id, renameDraft); setRenaming(false); };
@@ -420,6 +445,33 @@ function ActiveWorklistView({ renameOnMount, onRenameHandled }: {
           <button type="button" className="wl-name" onClick={startRename} title="Click to rename">
             {activeWorklist.name}
           </button>
+        )}
+        {stepKeys.length > 0 && (
+          <div className="wl-step" role="group" aria-label="Step through the worklist">
+            <button
+              type="button"
+              className="wl-icon-btn"
+              data-testid="worklist-prev"
+              onClick={() => step(-1)}
+              disabled={stepAt === 0}
+              title="Previous row"
+            >
+              <IconChevronLeft size={15} stroke={2} />
+            </button>
+            <span className="wl-step-pos" data-testid="worklist-step-pos">
+              {stepAt < 0 ? `${stepKeys.length}` : `${stepAt + 1}/${stepKeys.length}`}
+            </span>
+            <button
+              type="button"
+              className="wl-icon-btn"
+              data-testid="worklist-next"
+              onClick={() => step(1)}
+              disabled={stepAt === stepKeys.length - 1}
+              title={stepAt < 0 ? 'Start at the first row' : 'Next row'}
+            >
+              <IconChevronRight size={15} stroke={2} />
+            </button>
+          </div>
         )}
         <button
           type="button"
@@ -645,6 +697,7 @@ function WorklistRow({ kind, worklistId, partEntry, netEntry, selected, onSelect
   return (
     <div
       className={`wl-row${unresolved ? ' unresolved' : ''}${selected ? ' sel' : ''}`}
+      data-wl-key={(isNet ? 'n:' : 'p:') + name}
       {...(isNet ? { 'data-testid': 'worklist-net-row' } : { 'data-testid': 'worklist-part-row' })}
     >
       <div className="wl-row-main" onClick={onFocus}>

@@ -9357,6 +9357,14 @@ body {
 }
 .wl-icon-btn:hover { background: var(--surface-hover); color: var(--text-primary); }
 .wl-icon-btn.on { background: var(--surface-active); color: var(--accent); border-color: var(--accent); }
+.wl-icon-btn:disabled { opacity: 0.35; cursor: default; background: transparent; }
+/* ‹ n/N › — step through the worklist rows (WorklistPanel). */
+.wl-step { display: inline-flex; align-items: center; flex: none; }
+.wl-step .wl-icon-btn { width: 22px; }
+.wl-step-pos {
+  min-width: 34px; text-align: center; font-size: 11px; color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
 
 /* Confirm strip — replaces window.confirm for wipe and delete, so the
    question is asked where the thing being destroyed is. */
