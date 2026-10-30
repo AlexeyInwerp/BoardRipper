@@ -10,13 +10,12 @@ import { navHistoryStore } from './nav-history-store';
 import { pdfStore } from './pdf-store';
 import { fileInputRefs } from './file-inputs';
 import { openBoardSearch } from '../panels/board-viewer-bridge';
+import { looseMatcher } from './loose-match';
 
 /**
- * Count substring (case-insensitive) matches of `term` across the given
- * board tab's parts and net names. Returns 0 if tab not found or not loaded.
- *
- * Matches the legacy scan in Toolbar.GlobalSearch so the global dropdown's
- * counts are preserved byte-for-byte.
+ * Count the parts and net names of the given board tab that match `term`
+ * (case-insensitive substring, or the loose rule). Returns 0 if tab not found
+ * or not loaded.
  */
 export function countInBoardTab(term: string, tabId: number): number {
   const t = term.trim().toLowerCase();
@@ -24,12 +23,15 @@ export function countInBoardTab(term: string, tabId: number): number {
   const tab = boardStore.getTab(tabId);
   if (!tab?.board) return 0;
 
+  // Same rule as the board search the hit opens (store/loose-match.ts), so
+  // the count promises what the board will light.
+  const m = looseMatcher(t);
   let count = 0;
   for (const p of tab.board.parts) {
-    if (p.name.toLowerCase().includes(t)) count++;
+    if (m.test(p.name)) count++;
   }
   for (const [name] of tab.board.nets) {
-    if (name.toLowerCase().includes(t)) count++;
+    if (m.test(name)) count++;
   }
   return count;
 }

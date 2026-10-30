@@ -179,6 +179,15 @@ export const shortcuts: Shortcut[] = [
     description: 'Go forward again through the navigation history',
   },
   {
+    id: 'searchStep',
+    label: 'Next / previous result',
+    category: 'navigation',
+    key: 'n',
+    ignoreShift: true,
+    displayLabel: `N / ${SHIFT_LABEL}${isMac ? '' : '+'}N`,
+    description: 'Board: on a lit net, visit each part on it (small parts first); otherwise step through the parts the search found. PDF: next / previous match.',
+  },
+  {
     id: 'pageDown',
     label: 'PDF Next Page',
     category: 'navigation',

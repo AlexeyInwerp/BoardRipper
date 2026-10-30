@@ -22,6 +22,20 @@ import { boardKnowledge } from '../store/board-knowledge';
 import { bomReasonLabel, type BoardData, type Part } from '../parsers';
 import { pinDisplayId } from '../parsers/types';
 import { setActiveSearchInput, getActiveSearchInput } from './BoardSidebar.utils';
+import { looseMatcher } from '../store/loose-match';
+
+/** Rows whose name contains the query, then rows only the loose rule finds;
+ *  each run keeps the input order. */
+function looseOrdered<T>(rows: readonly T[], name: (r: T) => string, query: string): T[] {
+  const m = looseMatcher(query);
+  const direct: T[] = [];
+  const loose: T[] = [];
+  for (const r of rows) {
+    const k = m.classify(name(r));
+    if (k === 'direct') direct.push(r); else if (k === 'loose') loose.push(r);
+  }
+  return direct.concat(loose);
+}
 
 type SidebarTab = 'layers' | 'info' | 'search' | 'revisions' | 'worklist' | 'notes';
 
@@ -1112,12 +1126,14 @@ function SearchTab({ tabId }: { tabId: number }) {
 
   // Compute filtered results (show all when no query)
   const ql = query.toLowerCase();
+  // Substring hits keep their place; names only the loose rule finds
+  // (store/loose-match.ts) follow them, so the ribbon finds and this tab agree.
   const matchedParts = useMemo(
-    () => ql ? sortedParts.filter(p => p.name.toLowerCase().includes(ql)) : sortedParts,
+    () => ql ? looseOrdered(sortedParts, p => p.name, ql) : sortedParts,
     [sortedParts, ql],
   );
   const matchedNets = useMemo(
-    () => ql ? sortedNets.filter(([name]) => name.toLowerCase().includes(ql)) : sortedNets,
+    () => ql ? looseOrdered(sortedNets, ([name]) => name, ql) : sortedNets,
     [sortedNets, ql],
   );
 
@@ -1147,12 +1163,21 @@ function SearchTab({ tabId }: { tabId: number }) {
       return recents;
     }
     const items: { label: string; type: 'component' | 'net' | 'recent' }[] = [];
+    const m = looseMatcher(ql);
     for (const name of allParts) {
-      if (name.toLowerCase().includes(ql)) items.push({ label: name, type: 'component' });
+      if (m.classify(name) === 'direct') items.push({ label: name, type: 'component' });
       if (items.length >= 8) return items;
     }
     for (const name of allNets) {
-      if (name.toLowerCase().includes(ql)) items.push({ label: name, type: 'net' });
+      if (m.classify(name) === 'direct') items.push({ label: name, type: 'net' });
+      if (items.length >= 8) return items;
+    }
+    for (const name of allParts) {
+      if (m.classify(name) === 'loose') items.push({ label: name, type: 'component' });
+      if (items.length >= 8) return items;
+    }
+    for (const name of allNets) {
+      if (m.classify(name) === 'loose') items.push({ label: name, type: 'net' });
       if (items.length >= 8) return items;
     }
     return items;

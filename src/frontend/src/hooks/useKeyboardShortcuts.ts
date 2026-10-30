@@ -13,6 +13,7 @@ import { peekHintStore } from '../store/peek-hint-store';
 import { historyBack, historyForward } from '../store/nav-history-actions';
 import { focusRibbonFind } from '../components/overlay/ribbon-find';
 import { log } from '../store/log-store';
+import { stepBoardResult } from '../store/search-step-actions';
 
 /**
  * Global keyboard shortcut handler — attach once in App.
@@ -319,6 +320,18 @@ export function useKeyboardShortcuts() {
             e.preventDefault();
             fileInputRefs.pdf?.click();
             return;
+
+          case 'searchStep': {
+            const dir = e.shiftKey ? -1 : 1;
+            const kind = activePanelKind();
+            if (kind === 'pdf' && pdfStore.matches.length > 0) {
+              e.preventDefault();
+              if (dir > 0) pdfStore.nextMatch(); else pdfStore.prevMatch();
+              return;
+            }
+            if (kind === 'board' && stepBoardResult(dir)) e.preventDefault();
+            return;
+          }
 
           case 'flipBoard': {
             // Cursor over a PDF panel → fit-to-width; otherwise → flip board.

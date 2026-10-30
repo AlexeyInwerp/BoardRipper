@@ -19,6 +19,7 @@ import { deriveBoardView } from './derive-board-view';
 import { navHistoryStore } from './nav-history-store';
 import type { NavCause } from './nav-history';
 import type { FoldMode } from './derive-board-view';
+import { looseMatcher } from './loose-match';
 
 
 export interface SelectionState {
@@ -626,6 +627,22 @@ export function boardHasCopper(board: BoardData | null | undefined): boolean {
 
 export const BUTTERFLY_COPPER_HIDDEN_MESSAGE =
   'Butterfly shows both sides flat, so traces, vias and copper layers are hidden while it is on.';
+
+/** The board search's part test: the part's name, or the net of any of its
+ *  pins, matches the query (substring, or the loose rule in loose-match.ts).
+ *  Each distinct net name is tested once and remembered — a board's pins
+ *  repeat a few thousand net names tens of thousands of times, and the loose
+ *  rule normalises every name it tests. */
+function searchMatcher(query: string): (p: Part) => boolean {
+  const m = looseMatcher(query);
+  const nets = new Map<string, boolean>();
+  const netHit = (net: string) => {
+    let hit = nets.get(net);
+    if (hit === undefined) { hit = m.test(net); nets.set(net, hit); }
+    return hit;
+  };
+  return (p: Part) => m.test(p.name) || p.pins.some(pin => netHit(pin.net));
+}
 
 class BoardStore extends Emitter {
   private _tabs: BoardTab[] = [];
@@ -2362,13 +2379,12 @@ class BoardStore extends Emitter {
       this._cachedSearchIndices = new Set();
       return;
     }
-    const ql = q.toLowerCase();
     const results: Part[] = [];
     const indices = new Set<number>();
+    const match = searchMatcher(q);
     for (let i = 0; i < board.parts.length; i++) {
       const p = board.parts[i];
-      if (p.name.toLowerCase().includes(ql) ||
-          p.pins.some(pin => pin.net.toLowerCase().includes(ql))) {
+      if (match(p)) {
         results.push(p);
         indices.add(i);
       }
@@ -2392,11 +2408,7 @@ class BoardStore extends Emitter {
   searchForTab(tabId: number): Part[] {
     const tab = this.getTab(tabId);
     if (!tab?.board || !tab.searchQuery) return [];
-    const ql = tab.searchQuery.toLowerCase();
-    return tab.board.parts.filter(p =>
-      p.name.toLowerCase().includes(ql) ||
-      p.pins.some(pin => pin.net.toLowerCase().includes(ql))
-    );
+    return tab.board.parts.filter(searchMatcher(tab.searchQuery));
   }
 
   get focusRequest(): FocusRequest | null { return this._focusRequest; }

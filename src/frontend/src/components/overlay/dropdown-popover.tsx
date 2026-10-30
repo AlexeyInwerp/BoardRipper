@@ -108,7 +108,9 @@ export function SuggestionList({ groups, highlight, onHighlight, onSelect, onClo
   for (let g = 0; g < groups.length; g++) {
     const group = groups[g];
     if (group.rows.length === 0) continue;
-    if (group.header && g > 0) {
+    // A header names its group even when it is the only one: a list made of
+    // nothing but "Similar names" must say so, or it reads as exact hits.
+    if (group.header) {
       rendered.push(
         <div key={`hdr-${g}`} className="overlay-dropdown-group-header">{group.header}</div>
       );
@@ -210,7 +212,9 @@ export function DropdownPopover({ buildGroups, onSelect, onClose, placeholder }:
   for (let g = 0; g < groups.length; g++) {
     const group = groups[g];
     if (group.rows.length === 0) continue;
-    if (group.header && g > 0) {
+    // A header names its group even when it is the only one: a list made of
+    // nothing but "Similar names" must say so, or it reads as exact hits.
+    if (group.header) {
       rendered.push(<div key={`hdr-${g}`} className="overlay-dropdown-group-header">{group.header}</div>);
     }
     for (const r of group.rows) {

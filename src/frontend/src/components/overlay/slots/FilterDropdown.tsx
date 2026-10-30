@@ -19,7 +19,8 @@ import { renderSettingsStore } from '../../../store/render-settings';
 import { useBoardStore } from '../../../hooks/useBoardStore';
 import { useRenderSettings } from '../../../hooks/useRenderSettings';
 import { SuggestionList, type DropdownPopoverGroup } from '../dropdown-popover';
-import { getOverlayIndex } from '../get-overlay-index';
+import { getOverlayIndex, type OverlayIndexRow } from '../get-overlay-index';
+import { looseMatcher } from '../../../store/loose-match';
 import { registerRibbonFind } from '../ribbon-find';
 import type { SlotCtx } from '../slot-ctx';
 
@@ -98,16 +99,40 @@ export function FilterDropdown({ ctx, kind }: { ctx: SlotCtx; kind: Kind }) {
 
   const idx = getOverlayIndex(board, settings.ncNetPatterns);
 
+  // Substring hits first, exactly as before; names only the loose rule finds
+  // (separators ignored, words in any order — store/loose-match.ts) follow
+  // under their own header, so a near miss never pushes an exact hit down.
   const buildGroups = (q: string): DropdownPopoverGroup[] => {
-    if (kind === 'parts') {
-      const rows = q ? idx.parts.filter(p => p.nameLower.includes(q)) : idx.parts;
-      return [{ header: null, rows: rows.map(row => ({ row })) }];
+    if (!q) {
+      if (kind === 'parts') return [{ header: null, rows: idx.parts.map(row => ({ row })) }];
+      const groups: DropdownPopoverGroup[] = [];
+      if (idx.netsNormal.length > 0) groups.push({ header: null, rows: idx.netsNormal.map(row => ({ row })) });
+      if (idx.netsNc.length > 0)     groups.push({ header: 'No connect', rows: idx.netsNc.map(row => ({ row, dimmed: true })) });
+      return groups;
     }
-    const normalRows = (q ? idx.netsNormal.filter(n => n.nameLower.includes(q)) : idx.netsNormal).map(row => ({ row }));
-    const ncRows = (q ? idx.netsNc.filter(n => n.nameLower.includes(q)) : idx.netsNc).map(row => ({ row, dimmed: true }));
+    const m = looseMatcher(q);
+    const split = (rows: OverlayIndexRow[]) => {
+      const direct: OverlayIndexRow[] = [];
+      const loose: OverlayIndexRow[] = [];
+      for (const r of rows) {
+        const k = m.classify(r.name);
+        if (k === 'direct') direct.push(r); else if (k === 'loose') loose.push(r);
+      }
+      return { direct, loose };
+    };
     const groups: DropdownPopoverGroup[] = [];
-    if (normalRows.length > 0) groups.push({ header: null, rows: normalRows });
-    if (ncRows.length > 0)     groups.push({ header: 'No connect', rows: ncRows });
+    if (kind === 'parts') {
+      const { direct, loose } = split(idx.parts);
+      if (direct.length > 0) groups.push({ header: null, rows: direct.map(row => ({ row })) });
+      if (loose.length > 0)  groups.push({ header: 'Similar names', rows: loose.map(row => ({ row })) });
+      return groups;
+    }
+    const normal = split(idx.netsNormal);
+    const nc = split(idx.netsNc);
+    if (normal.direct.length > 0) groups.push({ header: null, rows: normal.direct.map(row => ({ row })) });
+    if (nc.direct.length > 0)     groups.push({ header: 'No connect', rows: nc.direct.map(row => ({ row, dimmed: true })) });
+    const similar = [...normal.loose.map(row => ({ row })), ...nc.loose.map(row => ({ row, dimmed: true }))];
+    if (similar.length > 0) groups.push({ header: 'Similar names', rows: similar });
     return groups;
   };
 
