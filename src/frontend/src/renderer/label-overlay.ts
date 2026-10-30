@@ -102,6 +102,14 @@ function minPxFor(kind: LabelRecord['kind'], th: OverlayThresholds): number {
   }
 }
 
+/** A label's appear-floor in screen px. A slotted diode reading (supplement
+ *  mode) appears with the net names, not with the 3 px floor of the rest:
+ *  it shares the pin with a number and a name, and a reading too small to
+ *  read is only a smudge in the middle of the pin. */
+function floorFor(r: LabelRecord, th: OverlayThresholds): number {
+  return r.slot ? th.circleLabelMinScreenPx : minPxFor(r.kind, th);
+}
+
 /** Screen-px floor for a label drawn in the selected pass. The part name and
  *  the focused pin (selected or hovered) get the full `selectedLabelMinPx`;
  *  every other label of the selected part gets `selectedLabelOtherScale` of
@@ -119,12 +127,92 @@ export function selectedFloorPx(kind: LabelRecord['kind'], isFocusPin: boolean, 
  *  the pin — two labels share the pitch). Infinity when the record carries no pitch. This is the whole
  *  overlap test — per label, one multiply, no pairwise comparison: on a grid
  *  of pins, "fits between centres" is exactly "cannot overlap a neighbour". */
-export function pitchCapPx(r: LabelRecord, scale: number): number {
+export function pitchCapPx(r: LabelRecord, scale: number, rows?: number): number {
   if (!r.pitch) return Infinity;
   const pitchPx = r.pitch * scale;
   const width = (pitchPx * 0.9) / (Math.max(r.text.length, 3) * 0.6);
-  const height = pitchPx * (r.stacked ? 0.45 : 0.9);
+  const height = (pitchPx * 0.9) / (rows ?? (r.stacked ? 2 : 1));
   return Math.min(width, height);
+}
+
+/** Labels that share a pin with a slotted diode reading split the pitch
+ *  three ways: number, reading, net name. */
+const SLOT_ROWS = 3;
+
+/** Whether `r` is the selected part's, and whether it is on the pin being
+ *  pointed at (the selected pin, or the hovered pin on any part). */
+function focusOf(r: LabelRecord, view: OverlayViewState): { isSel: boolean; isFocusPin: boolean } {
+  const isSel = view.selectedPartIndex !== null && r.partIndex === view.selectedPartIndex;
+  const isFocusPin = r.pinIndex !== undefined && r.pinIndex >= 0 && (
+    (isSel && r.pinIndex === view.selectedPinIndex) ||
+    (r.partIndex === view.hoverPartIndex && r.pinIndex === view.hoverPinIndex));
+  return { isSel, isFocusPin };
+}
+
+/** The screen-px size a label is drawn at, and its appear-floor; null when
+ *  fitting it between the pin centres would take it below that floor (it is
+ *  hidden, not shrunk). `rows` overrides how many labels share the pitch. */
+export function labelSizePx(
+  r: LabelRecord, view: OverlayViewState, th: OverlayThresholds,
+  isSel: boolean, isFocusPin: boolean, rows?: number,
+): { px: number; floorPx: number } | null {
+  const onTop = isSel || isFocusPin;
+  let px = r.fontSize * view.scale;
+  if (onTop) px = Math.max(px, selectedFloorPx(r.kind, isFocusPin, th));
+  const floorPx = floorFor(r, th) * (isSel ? th.selectedLabelLodRelax : 1);
+  // Fit to pitch — every pin label except the one being pointed at,
+  // which is one label drawn on top and may cover its neighbours.
+  if (th.fitToPitch !== false && !isFocusPin && r.pitch) {
+    const cap = pitchCapPx(r, view.scale, rows);
+    if (px > cap) {
+      px = cap;
+      // Below the appear-floor it is noise, not a label: hide, don't shrink.
+      if (px < floorPx) return null;
+    }
+  }
+  return { px, floorPx };
+}
+
+const pinKey = (partIndex: number, pinIndex: number) => partIndex * 65536 + pinIndex;
+
+/** A drawn reading's band on screen: its centre line and half its plate. */
+export interface ReadingSlot { cy: number; half: number }
+
+/**
+ * Supplement mode: which pins carry a slotted diode reading that will be
+ * drawn this frame, and where its band is. The reading owns the pin centre;
+ * the pin's number and net name move out of the band and share the pitch
+ * with it (`clearOfReading`). A reading too small to be legible between the
+ * pin centres is not drawn, and then nothing moves — the number and the
+ * name keep their usual places until the zoom makes room for all three.
+ */
+export function readingSlots(
+  sides: ReadonlyArray<readonly [readonly LabelRecord[], OverlayViewState['topMatrix']]>,
+  view: OverlayViewState, th: OverlayThresholds,
+): Map<number, ReadingSlot> {
+  const out = new Map<number, ReadingSlot>();
+  for (const [vis, m] of sides) {
+    for (const r of vis) {
+      if (r.kind !== 'diode' || r.slot !== 'centre' || r.pinIndex === undefined) continue;
+      const { isSel, isFocusPin } = focusOf(r, view);
+      const size = labelSizePx(r, view, th, isSel, isFocusPin, SLOT_ROWS);
+      if (!size) continue;
+      const fontPx = Math.round(size.px * 4) / 4;
+      out.set(pinKey(r.partIndex, r.pinIndex), { cy: m.b * r.x + m.d * r.y + m.ty, half: fontPx * 0.65 });
+    }
+  }
+  return out;
+}
+
+/** Move a pin number or net name (box centre `sy`, height `fontPx`) out of a
+ *  reading's band: one already above the pin centre stays above, one below
+ *  stays below, and a centred one goes up for a number, down for a name. */
+export function clearOfReading(sy: number, fontPx: number, slot: ReadingSlot, kind: LabelRecord['kind']): number {
+  const gap = Math.max(1, slot.half * 0.2);
+  const above = sy < slot.cy - 0.5 || (Math.abs(sy - slot.cy) <= 0.5 && kind === 'circleNum');
+  return above
+    ? Math.min(sy, slot.cy - slot.half - gap - fontPx / 2)
+    : Math.max(sy, slot.cy + slot.half + gap + fontPx / 2);
 }
 
 /** Where a pin number sits at this zoom: centred in its pin while the pin's
@@ -156,7 +244,7 @@ export function selectVisibleLabels(
     const keepAlways = selected && r.kind === 'part';   // selection identity marker
     if (!keepAlways) {
       if (zoomHidden) continue;
-      const min = minPxFor(r.kind, th) * (selected ? th.selectedLabelLodRelax : 1);
+      const min = floorFor(r, th) * (selected ? th.selectedLabelLodRelax : 1);
       if (r.fontSize * view.scale < min) continue;
     }
     const sx = m.a * r.x + m.c * r.y + m.tx;
@@ -241,35 +329,28 @@ export class LabelOverlay {
     const sides: Array<[LabelRecord[], OverlayViewState['topMatrix']]> = [];
     if (view.showTop) sides.push([selectVisibleLabels(model.top, view.topMatrix, view, th), view.topMatrix]);
     if (view.showBottom) sides.push([selectVisibleLabels(model.bottom, view.bottomMatrix, view, th), view.bottomMatrix]);
+    // Pins whose diode reading takes the centre this frame (supplement mode).
+    const slots = readingSlots(sides, view, th);
     let visible = 0;
     for (const pass of ['dim', 'lit', 'selected'] as const) {
       for (const [vis, m] of sides) {
         let lastFontPx = -1;
         for (const r of vis) {
-          const isSel = view.selectedPartIndex !== null && r.partIndex === view.selectedPartIndex;
           // The pin being pointed at: the selected pin, or the hovered pin on
           // any part. Its labels take the full floor and paint on top.
-          const isFocusPin = r.pinIndex !== undefined && r.pinIndex >= 0 && (
-            (isSel && r.pinIndex === view.selectedPinIndex) ||
-            (r.partIndex === view.hoverPartIndex && r.pinIndex === view.hoverPinIndex));
+          const { isSel, isFocusPin } = focusOf(r, view);
           const onTop = isSel || isFocusPin;
           const isLit = !view.dimActive || onTop || (view.litParts?.has(r.partIndex) ?? false);
           const want = pass === 'selected' ? onTop : pass === 'lit' ? (isLit && !onTop) : !isLit;
           if (!want) continue;
           visible += 1;
-          let px = r.fontSize * view.scale;
-          if (onTop) px = Math.max(px, selectedFloorPx(r.kind, isFocusPin, th));
-          const floorPx = minPxFor(r.kind, th) * (isSel ? th.selectedLabelLodRelax : 1);
-          // Fit to pitch — every pin label except the one being pointed at,
-          // which is one label drawn on top and may cover its neighbours.
-          if (th.fitToPitch !== false && !isFocusPin && r.pitch) {
-            const cap = pitchCapPx(r, view.scale);
-            if (px > cap) {
-              px = cap;
-              // Below the appear-floor it is noise, not a label: hide, don't shrink.
-              if (px < floorPx) continue;
-            }
-          }
+          // A number or name on a pin whose reading is drawn shares the pitch
+          // with it and steps out of its band (readingSlots).
+          const slot = r.pinIndex !== undefined && (r.kind === 'circleNum' || r.kind === 'circleNet' || r.slot)
+            ? slots.get(pinKey(r.partIndex, r.pinIndex)) : undefined;
+          const size = labelSizePx(r, view, th, isSel, isFocusPin, slot || r.slot ? SLOT_ROWS : undefined);
+          if (!size) continue;
+          const { px, floorPx } = size;
           const fontPx = Math.round(px * 4) / 4;          // quantize to limit ctx.font churn
           if (fontPx !== lastFontPx) { ctx.font = `${fontPx}px monospace`; lastFontPx = fontPx; }
           const pl = r.kind === 'circleNum' ? pinNumberPlacement(r, view, th, isSel) : r;
@@ -282,7 +363,7 @@ export class LabelOverlay {
           const aw = (0.5 - r.anchorX) * textW;
           const ah = (0.5 - pl.anchorY) * fontPx;
           const sx = sx0 + aw;
-          const sy = sy0 + ah;
+          const sy = slot && r.kind !== 'diode' ? clearOfReading(sy0 + ah, fontPx, slot, r.kind) : sy0 + ah;
           // Diode readings are exempt from ambient dimming: a measurement
           // you are comparing against the meter must not be translucent.
           let alpha = pass === 'dim' && r.kind !== 'diode' ? DIM_ALPHA : 1;

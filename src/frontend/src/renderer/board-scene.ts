@@ -2503,17 +2503,30 @@ export function buildBoardScene(
         // measured: mean size ×1.4 on iPhone16, no neighbour overlap on a
         // 0.35 mm BGA at the zoom where readings are legible at all.
         const fit = (radius * 2 * 0.85) / (text.length * 0.62);
+        // Supplement mode on an IC/BGA pin (text overlay only): the reading
+        // takes the pin's centre, on its plate, and the overlay moves the
+        // pin number and net name out of its band and shares the pitch
+        // three ways (LabelRecord.slot, readingSlots in label-overlay.ts).
+        // It is sized like the other pin labels, from the radius as drawn
+        // (clamped to 45 % of the pitch) — the file's radius made a reading
+        // wider than its pin and laid it over its neighbours' labels.
+        const clamp = pinRadiusClamp.get(dpi);
+        const slotted = !diodeOnly && !!labelModel && part.pins.length > 2 && clamp !== undefined;
+        const rDrawn = slotted ? Math.min(radius, clamp!) : radius;
+        const fitR = slotted ? (rDrawn * 2 * 0.85) / (text.length * 0.62) : fit;
         const fontSize = Math.max(
           3,
-          Math.round(Math.min(diodeOnly ? radius * 0.9 : radius * 0.55, diodeOnly ? fit * 1.5 : fit) * (s.diodeValueScale || 1)),
+          Math.round(Math.min(diodeOnly || slotted ? rDrawn * 0.9 : radius * 0.55, diodeOnly ? fit * 1.5 : fitR) * (s.diodeValueScale || 1)),
         );
-        const ly = diodeOnly ? pin.position.y : pin.position.y - radius * 0.7;
-        const anchorY = diodeOnly ? 0.5 : 1.1;
+        const centred = diodeOnly || slotted;
+        const ly = centred ? pin.position.y : pin.position.y - radius * 0.7;
+        const anchorY = centred ? 0.5 : 1.1;
         if (!(labelModel && pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
           x: pin.position.x, y: ly, text,
           fontSize, color, kind: 'diode', partIndex: dpi, pinIndex: dpni,
           anchorX: 0.5, anchorY,       // mirrors label.anchor.set below
-          bg: diodeOnly,               // dark plate: colour must read over any pin fill
+          bg: centred,                 // dark plate: colour must read over any pin fill
+          ...(slotted ? { slot: 'centre' as const, pitch: clamp! / 0.45 } : {}),
         }))) {
           const label = new BitmapText({
             text,

@@ -53,6 +53,12 @@ export interface LabelRecord {
   /** True when this pin shows a number above AND a name below, so the height
    *  budget per label is half a pitch rather than a whole one. */
   stacked?: boolean;
+  /** Diode readings in supplement mode on an IC/BGA pin: the reading owns
+   *  the pin's centre, and while it is drawn the pin's number and net name
+   *  are moved out of its band and the pitch is shared three ways
+   *  (`readingSlots` in label-overlay.ts). Absent = the reading sits where
+   *  its record says and nothing makes room for it. */
+  slot?: 'centre';
   /** Anchor fractions matching PixiJS `BitmapText.anchor` exactly: the point of
    *  the text's bounding box that sits AT (x, y). 0/0 = top-left, 0.5/0.5 =
    *  centered, 1/1 = bottom-right. The Task 6 overlay compensates at draw time
