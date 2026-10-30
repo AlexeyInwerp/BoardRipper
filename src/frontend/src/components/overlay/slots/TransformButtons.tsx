@@ -6,7 +6,7 @@
  * made; only the button's home changed.
  */
 import { useCallback, useState } from 'react';
-import { IconFlipHorizontal, IconRotate, IconRotateClockwise, IconRoute, IconDots } from '@tabler/icons-react';
+import { IconFlipHorizontal, IconRotate, IconRotateClockwise, IconRoute, IconDots, IconArrowsVertical, IconArrowsHorizontal } from '@tabler/icons-react';
 import { boardStore } from '../../../store/board-store';
 import { formatShortcut } from '../../../store/keyboard-shortcuts';
 import { QuickMenu } from '../../QuickMenu';
@@ -82,8 +82,7 @@ export function TransformMenuButton({ ctx }: { ctx: SlotCtx }) {
   const t = ctx.thisTab;
   // The flip-axis label describes the SCREEN direction. Under 90°/270°
   // rotation board X↔screen Y, so invert to match what the user sees.
-  const axesSwapped = Math.round(t.rotation / 90) % 2 === 1;
-  const screenVertical = (t.flipAxis === 'x') !== axesSwapped;
+  const screenVertical = screenFlipVertical(t);
   return (
     <>
       <button
@@ -122,5 +121,32 @@ export function TransformMenuButton({ ctx }: { ctx: SlotCtx }) {
         />
       )}
     </>
+  );
+}
+
+/** The screen direction the board turns over on, as the user sees it. Under
+ *  90°/270° board X is screen Y, so the stored axis reads the other way. */
+function screenFlipVertical(t: SlotCtx['thisTab']): boolean {
+  const axesSwapped = Math.round(t.rotation / 90) % 2 === 1;
+  return (t.flipAxis === 'x') !== axesSwapped;
+}
+
+/** One-click flip-axis toggle (hidden by default; the ⋯ menu has the same
+ *  choice). The icon shows the current axis: ⇅ the board turns over top to
+ *  bottom, ⇄ left to right. */
+export function FlipAxisButton({ ctx }: { ctx: SlotCtx }) {
+  const vertical = screenFlipVertical(ctx.thisTab);
+  const Icon = vertical ? IconArrowsVertical : IconArrowsHorizontal;
+  return (
+    <button
+      type="button"
+      className="board-netlines-toggle"
+      data-testid="flip-axis-btn"
+      data-axis={vertical ? 'vertical' : 'horizontal'}
+      title={`Flip axis: ${vertical ? 'vertical' : 'horizontal'} — click for ${vertical ? 'horizontal' : 'vertical'}`}
+      onClick={() => boardStore.toggleFlipAxis()}
+    >
+      <Icon size={16} />
+    </button>
   );
 }

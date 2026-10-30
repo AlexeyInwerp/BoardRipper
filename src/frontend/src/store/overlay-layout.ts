@@ -26,7 +26,7 @@ export type NamedSlotId =
   | 'sideSwitch' | 'butterfly' | 'rotateCCW' | 'rotateCW' | 'transformMenu' | 'history'
   | 'pdfFollow' | 'scrollMode' | 'fitBoard' | 'minimap' | 'slides'
   | 'hoverInfo' | 'netDim' | 'netLines' | 'ghosts' | 'diodeValues' | 'traces'
-  | 'partsDropdown' | 'netsDropdown';
+  | 'partsDropdown' | 'netsDropdown' | 'flipAxis' | 'legend';
 
 export type SeparatorSlotId = `sep${number}`;
 export type OverlaySlotId = NamedSlotId | SeparatorSlotId;
@@ -37,7 +37,7 @@ const NAMED_SLOT_IDS: ReadonlySet<NamedSlotId> = new Set([
   'sideSwitch', 'butterfly', 'rotateCCW', 'rotateCW', 'transformMenu', 'history',
   'pdfFollow', 'scrollMode', 'fitBoard', 'minimap', 'slides',
   'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'traces',
-  'partsDropdown', 'netsDropdown',
+  'partsDropdown', 'netsDropdown', 'flipAxis', 'legend',
 ]);
 
 /** Human names, used by the ribbon's right-click menu and the Settings
@@ -63,6 +63,8 @@ export const SLOT_LABELS: Readonly<Record<NamedSlotId, string>> = {
   diodeValues:   'Diode values',
   partsDropdown: 'Find part',
   netsDropdown:  'Find net',
+  flipAxis:      'Flip axis',
+  legend:        'Legend',
 };
 
 export function slotLabel(id: OverlaySlotId): string {
@@ -103,6 +105,10 @@ export const DEFAULT_OVERLAY_LAYOUT: ReadonlyArray<Readonly<OverlaySlot>> = [
   // default-only id — nextSeparatorId() starts at sep1, so no saved layout
   // can already own it.
   { id: 'sideSwitch',    visible: true },
+  // Which screen axis the board turns over on (2026-10-30). Off by default:
+  // the ⋯ menu carries the same choice; this is the one-click button the old
+  // toolbar had between Top and Bottom, for those who switch it often.
+  { id: 'flipAxis',      visible: false },
   { id: 'butterfly',     visible: true },
   { id: 'rotateCCW',     visible: true },
   { id: 'rotateCW',      visible: true },
@@ -123,6 +129,10 @@ export const DEFAULT_OVERLAY_LAYOUT: ReadonlyArray<Readonly<OverlaySlot>> = [
   { id: 'ghosts',        visible: true },
   { id: 'diodeValues',   visible: true },
   { id: 'traces',        visible: true },
+  // "?" — the legend card (components/BoardLegend.tsx), with the other
+  // view aids: it explains what they draw. Off by default. Not at the end of
+  // the row, where a narrow panel puts it under the board-sidebar toggle.
+  { id: 'legend',        visible: false },
   { id: 'sep2',          visible: true },
   { id: 'partsDropdown', visible: true },
   { id: 'netsDropdown',  visible: true },

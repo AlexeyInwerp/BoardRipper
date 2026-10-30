@@ -10071,3 +10071,72 @@ body {
 .pin-table th.pin-th-sort { cursor: pointer; user-select: none; }
 .pin-table th.pin-th-sort:hover { color: var(--text-primary); }
 .pin-th-arrow { font-size: 0.8em; }
+
+/* Board legend card (components/BoardLegend.tsx): half-transparent, lower
+   right of the board panel, under the board sidebar's z-index. */
+.board-legend {
+  position: absolute;
+  right: 8px;
+  bottom: 30px;
+  z-index: 12;
+  width: 290px;
+  max-width: calc(100% - 24px);
+  max-height: calc(100% - 96px);
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--bg-secondary) 58%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 8px;
+  backdrop-filter: blur(2px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.board-legend .lg-head {
+  display: flex; align-items: center; gap: 4px;
+  padding: 5px 5px 5px 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+.board-legend .lg-modes { display: flex; flex-wrap: wrap; gap: 2px; flex: 1; min-width: 0; }
+.board-legend .lg-modes button {
+  padding: 2px 7px; border: 1px solid transparent; border-radius: 5px;
+  background: transparent; color: var(--text-secondary); font: inherit; font-size: 11.5px; cursor: pointer;
+}
+.board-legend .lg-modes button:hover { color: var(--text-primary); }
+.board-legend .lg-modes button.on { color: var(--accent-text, var(--accent)); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.board-legend .lg-close {
+  width: 22px; height: 22px; display: grid; place-items: center; flex: none;
+  border: 0; border-radius: 5px; background: transparent; color: var(--text-secondary); cursor: pointer;
+}
+.board-legend .lg-close:hover { background: var(--surface-hover); color: var(--text-primary); }
+.board-legend .lg-body { overflow: auto; padding: 4px 0 6px; }
+.board-legend .lg-group { padding: 2px 0 4px; }
+.board-legend .lg-cap {
+  padding: 4px 10px 2px; font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.board-legend .lg-row { display: flex; align-items: center; gap: 8px; padding: 2px 10px; min-height: 20px; }
+.board-legend .lg-name { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-wrap: anywhere; }
+.board-legend .lg-sub { color: var(--text-secondary); font-size: 11px; }
+.board-legend .lg-mono { font-family: monospace; font-size: 11.5px; }
+.board-legend .lg-n { color: var(--text-secondary); font-variant-numeric: tabular-nums; font-size: 11.5px; }
+.board-legend .lg-sw { flex: none; background: var(--c); }
+.board-legend .lg-sw-dot { width: 10px; height: 10px; border-radius: 50%; }
+.board-legend .lg-sw-box { width: 12px; height: 9px; border-radius: 2px; }
+.board-legend .lg-sw-line { width: 16px; height: 3px; border-radius: 2px; }
+.board-legend .lg-sw.outline { background: transparent; box-shadow: inset 0 0 0 1.5px var(--c); }
+.board-legend .lg-reading {
+  flex: none; min-width: 40px; padding: 0 4px; border-radius: 3px; text-align: center;
+  font-family: monospace; font-size: 11.5px; font-weight: 600; background: rgba(0, 0, 0, 0.55);
+}
+.board-legend .lg-note { margin: 4px 10px; color: var(--text-secondary); font-size: 11.5px; }
+.board-legend .lg-link {
+  margin: 4px 10px 0; padding: 0; border: 0; background: none; cursor: pointer;
+  color: var(--accent-text, var(--accent)); font: inherit; font-size: 11.5px; text-align: left;
+}
+.board-legend .lg-key kbd {
+  font-family: monospace; font-size: 11px; padding: 1px 5px; border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, var(--text-secondary));
+  background: color-mix(in srgb, var(--bg-tertiary) 70%, transparent); white-space: nowrap;
+}

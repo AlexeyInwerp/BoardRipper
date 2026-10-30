@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback, useSyncExternalStore } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { BoardRenderer } from '../renderer/BoardRenderer';
+import { BoardLegend } from '../components/BoardLegend';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { BoardSidebar } from '../components/BoardSidebar';
@@ -335,6 +336,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
       <ResizeModeBanner />
       <SlideLayer tabId={tabId} renderer={liveRenderer} rootRef={rootRef} hostRef={containerRef} fileName={tabFileName} />
       <BoardMinimap renderer={liveRenderer} mode={slideOn ? 'always' : renderSettings.minimapOnPan ? 'onPan' : 'off'} />
+      <BoardLegend tabId={tabId} sidebarOpen={sidebarOpen} rootRef={rootRef} />
       <div className="board-sidebar-toggle-group">
         <button
           className={`board-sidebar-toggle ${sidebarOpen ? 'active' : ''}`}

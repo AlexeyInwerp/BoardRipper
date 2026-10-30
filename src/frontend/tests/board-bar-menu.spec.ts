@@ -157,9 +157,10 @@ test.describe('board ribbon editing', () => {
     await page.getByTestId('overlay-slot-eye-hoverInfo').click();
     await expect(page.locator(BAR).getByTitle(/Hover info/)).toHaveCount(1);
 
-    // Arrows reorder: move Rotate right up above Rotate left (positions 2,3).
+    // Arrows reorder: move Rotate right up above Rotate left.
+    const ccwAt = (await layoutIds(page)).map(s => s.id).indexOf('rotateCCW');
     await page.getByTestId('overlay-slot-up-rotateCW').click();
-    expect((await layoutIds(page)).map(s => s.id).slice(2, 4)).toEqual(['rotateCW', 'rotateCCW']);
+    expect((await layoutIds(page)).map(s => s.id).slice(ccwAt, ccwAt + 2)).toEqual(['rotateCW', 'rotateCCW']);
     await expect(page.getByTestId('overlay-slot-up-sideSwitch')).toBeDisabled();       // first row
 
     // Separators: add one, remove it.
@@ -175,6 +176,6 @@ test.describe('board ribbon editing', () => {
 
     // Reset layout restores the default order and leaves selection behaviour alone.
     await page.getByTestId('overlay-reset-layout-btn').click();
-    expect((await layoutIds(page)).map(s => s.id).slice(0, 4)).toEqual(['sideSwitch', 'butterfly', 'rotateCCW', 'rotateCW']);
+    expect((await layoutIds(page)).map(s => s.id).slice(0, 5)).toEqual(['sideSwitch', 'flipAxis', 'butterfly', 'rotateCCW', 'rotateCW']);
   });
 });
