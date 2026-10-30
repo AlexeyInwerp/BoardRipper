@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -610,12 +611,21 @@ func main() {
 		fs.ServeHTTP(w, r)
 	})
 
-	log.Printf("BoardRipper server starting on :%s", port)
+	// BIND_HOST limits the listener to one interface. Unset = every interface,
+	// which is what the NAS/Docker install wants. The desktop app's sidecar
+	// passes 127.0.0.1: it serves only its own window, and the file and
+	// library endpoints have no login of their own (the NAS design trusts its
+	// network), so binding them to the LAN would expose the user's library.
+	addr := fmt.Sprintf(":%s", port)
+	if host := os.Getenv("BIND_HOST"); host != "" {
+		addr = net.JoinHostPort(host, port)
+	}
+
+	log.Printf("BoardRipper server starting on %s", addr)
 	log.Printf("Static files: %s", staticDir)
 	log.Printf("Data directory: %s", dataDir)
 	log.Printf("Library scan root: %s", scanner.ScanRoot())
 
-	addr := fmt.Sprintf(":%s", port)
 	// Middleware order (outer → inner):
 	//   securityHeaders → CSRF check → gzip → mux
 	// CSRF check has to see the request before mux dispatches; gzip wraps

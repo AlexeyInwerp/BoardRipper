@@ -148,7 +148,7 @@ STATIC_DIR=../frontend/dist DATA_DIR=../../data LIBRARY_DIR=/path/to/boards go r
 # → http://localhost:8080
 ```
 
-The released artifact is the Docker image (above) — no per-platform standalone binaries are published. If you need a portable binary, build the Go server with `cd src/backend && CGO_ENABLED=0 go build -o boardripper .` and ship it next to the `dist/` directory and a `STATIC_DIR=` env var. Set `LIBRARY_DIR` to the folder to index — without it the server indexes `DATA_DIR`. Self-update only works in Docker (it needs the host's Docker socket).
+The released artifact is the Docker image (above) — no per-platform standalone binaries are published. If you need a portable binary, build the Go server with `cd src/backend && CGO_ENABLED=0 go build -o boardripper .` and ship it next to the `dist/` directory and a `STATIC_DIR=` env var. Set `LIBRARY_DIR` to the folder to index — without it the server indexes `DATA_DIR`. Set `BIND_HOST=127.0.0.1` to listen on this machine only (unset = every interface). Self-update only works in Docker (it needs the host's Docker socket).
 
 ### Development
 

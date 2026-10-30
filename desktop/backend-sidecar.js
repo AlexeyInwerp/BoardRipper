@@ -49,6 +49,9 @@ function startBackend({ dataDir, libraryDir, staticDir, boardDbPath, port }) {
   const env = {
     ...process.env,
     PORT: String(port),
+    // Loopback only: the sidecar serves this app's own window, and the
+    // library/file endpoints carry no auth of their own.
+    BIND_HOST: '127.0.0.1',
     DATA_DIR: dataDir,
     LIBRARY_DIR: libraryDir || '',
     STATIC_DIR: staticDir,
