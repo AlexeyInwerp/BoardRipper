@@ -492,6 +492,10 @@ export interface RenderSettings {
   /** Board minimap: fades in at the top centre while the user keeps panning
    *  (third gesture in a row) and out once panning stops. Ribbon slot `minimap`. */
   minimapOnPan: boolean;
+  /** Minimap shown all the time, not only while panning (the ribbon
+   *  button's third state: off → while panning → always). Wins over
+   *  `minimapOnPan`; slide mode shows it regardless. */
+  minimapAlways: boolean;
   /** Auto-enable selection-dim while a search-driven selection (focusPart /
    *  focusNet) is active, even if the user's showNetDim toggle is off. */
   searchAutoDim: boolean;
@@ -807,6 +811,7 @@ export const DEFAULTS: RenderSettings = {
   overlayFloatX: 8,
   overlayFloatY: 6,
   minimapOnPan: true,
+  minimapAlways: false,
   searchAutoDim: true,
   autoMarkMechanical: true,
 };
@@ -855,6 +860,13 @@ export function computeMultiPinPadding(s: RenderSettings, pinRadii: number[]): n
  *  fewer than two distinct positions. Sorted-axis sweep, O(N log N): sort by
  *  X and stop scanning a pin's neighbours once the X gap alone beats the best
  *  distance so far. */
+export type MinimapMode = 'off' | 'onPan' | 'always';
+
+/** Which of the minimap's three states the settings describe. */
+export function minimapMode(s: Pick<RenderSettings, 'minimapOnPan' | 'minimapAlways'>): MinimapMode {
+  return s.minimapAlways ? 'always' : s.minimapOnPan ? 'onPan' : 'off';
+}
+
 export function computeMinPinSpacing(pins: { position: { x: number; y: number } }[]): number {
   if (pins.length < 2) return Infinity;
   const sorted = pins.slice().sort((a, b) => a.position.x - b.position.x);
@@ -1918,6 +1930,16 @@ class RenderSettingsStore extends Emitter {
   setOverlayOrientation(o: 'horizontal' | 'vertical') {
     if (this._global.overlayOrientation === o) return;
     this._global = { ...this._global, overlayOrientation: o };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  /** The minimap button's three states in one write. */
+  setMinimapMode(mode: MinimapMode) {
+    const onPan = mode !== 'off', always = mode === 'always';
+    if (this._global.minimapOnPan === onPan && this._global.minimapAlways === always) return;
+    this._global = { ...this._global, minimapOnPan: onPan, minimapAlways: always };
     saveToStorage(this._global);
     this.recomputeEffective();
     this.notify();

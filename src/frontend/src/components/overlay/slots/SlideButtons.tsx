@@ -1,21 +1,31 @@
 import { useSyncExternalStore } from 'react';
-import { IconMap2, IconPresentation } from '@tabler/icons-react';
-import { renderSettingsStore } from '../../../store/render-settings';
+import { IconMap, IconMap2, IconPresentation } from '@tabler/icons-react';
+import { renderSettingsStore, minimapMode, type MinimapMode } from '../../../store/render-settings';
 import { useRenderSettings } from '../../../hooks/useRenderSettings';
 import { slideStore } from '../../../store/slide-store';
 
-/** Minimap that fades in while panning (third gesture in a row). */
+const NEXT: Record<MinimapMode, MinimapMode> = { off: 'onPan', onPan: 'always', always: 'off' };
+const TITLE: Record<MinimapMode, string> = {
+  off:    'Minimap: off — click to show it while panning',
+  onPan:  'Minimap: while panning — click to keep it on screen',
+  always: 'Minimap: always on — click to turn it off',
+};
+
+/** Minimap, three states: off → fades in while panning → always on (the map
+ *  with a pin). */
 export function MinimapButton() {
-  const on = useRenderSettings().minimapOnPan;
+  const mode = minimapMode(useRenderSettings());
+  const Icon = mode === 'always' ? IconMap2 : IconMap;
   return (
     <button
-      className={`board-netlines-toggle ${on ? 'active' : ''}`}
+      className={`board-netlines-toggle ${mode !== 'off' ? 'active' : ''}`}
       data-testid="minimap-toggle"
-      aria-pressed={on}
-      onClick={() => renderSettingsStore.setMinimapOnPan(!on)}
-      title={on ? 'Minimap while panning: on (click to turn off)' : 'Minimap while panning: off (click to turn on)'}
+      data-mode={mode}
+      aria-pressed={mode !== 'off'}
+      onClick={() => renderSettingsStore.setMinimapMode(NEXT[mode])}
+      title={TITLE[mode]}
     >
-      <IconMap2 size={16} />
+      <Icon size={16} />
     </button>
   );
 }

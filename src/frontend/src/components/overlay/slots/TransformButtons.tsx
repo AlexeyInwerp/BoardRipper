@@ -131,16 +131,16 @@ function screenFlipVertical(t: SlotCtx['thisTab']): boolean {
   return (t.flipAxis === 'x') !== axesSwapped;
 }
 
-/** One-click flip-axis toggle (hidden by default; the ⋯ menu has the same
- *  choice). The icon shows the current axis: ⇅ the board turns over top to
- *  bottom, ⇄ left to right. */
+/** One-click flip-axis toggle, drawn between Top and Bottom inside the Side
+ *  switch (the ⋯ menu has the same choice). The icon shows the current axis:
+ *  ⇅ the board turns over top to bottom, ⇄ left to right. */
 export function FlipAxisButton({ ctx }: { ctx: SlotCtx }) {
   const vertical = screenFlipVertical(ctx.thisTab);
   const Icon = vertical ? IconArrowsVertical : IconArrowsHorizontal;
   return (
     <button
       type="button"
-      className="board-netlines-toggle"
+      className="overlay-seg-btn overlay-seg-axis"
       data-testid="flip-axis-btn"
       data-axis={vertical ? 'vertical' : 'horizontal'}
       title={`Flip axis: ${vertical ? 'vertical' : 'horizontal'} — click for ${vertical ? 'horizontal' : 'vertical'}`}

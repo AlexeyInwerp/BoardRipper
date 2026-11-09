@@ -1,7 +1,7 @@
 /**
- * Two optional ribbon slots, both hidden on a fresh install: the "?" legend
- * card (components/BoardLegend.tsx) and the one-click flip-axis toggle.
- * Public KiCad sample, no backend.
+ * The "?" legend card (components/BoardLegend.tsx, slot hidden on a fresh
+ * install) and the flip-axis toggle between Top and Bottom (slot
+ * `sideFlipAxis`, on by default). Public KiCad sample, no backend.
  */
 import { test, expect, type Page } from '@playwright/test';
 import path from 'path';
@@ -17,8 +17,8 @@ async function openFixture(page: Page) {
   await expect(page.getByTestId('board-overlay-bar')).toBeVisible();
 }
 
-/** Tick a slot on in the ribbon's right-click menu. */
-async function enableSlot(page: Page, id: string) {
+/** Tick a slot in the ribbon's right-click menu (on if off, off if on). */
+async function toggleSlot(page: Page, id: string) {
   await page.getByTestId('board-overlay-bar').click({ button: 'right', position: { x: 4, y: 4 } });
   await page.getByTestId(`bar-menu-slot-${id}`).click();
   // A check item keeps the menu open for the next tick; close it.
@@ -27,19 +27,26 @@ async function enableSlot(page: Page, id: string) {
 }
 
 test.describe('optional ribbon slots: legend and flip axis', () => {
-  test('both are off by default and can be switched on from the ribbon menu', async ({ page }) => {
+  test('the legend is off by default and can be switched on from the ribbon menu', async ({ page }) => {
     await openFixture(page);
     await expect(page.getByTestId('legend-btn')).toHaveCount(0);
-    await expect(page.getByTestId('flip-axis-btn')).toHaveCount(0);
-    await enableSlot(page, 'legend');
+    await toggleSlot(page, 'legend');
     await expect(page.getByTestId('legend-btn')).toBeVisible();
-    await enableSlot(page, 'flipAxis');
-    await expect(page.getByTestId('flip-axis-btn')).toBeVisible();
+  });
+
+  test('flip axis sits between Top and Bottom by default and can be switched off', async ({ page }) => {
+    await openFixture(page);
+    const order = await page.getByTestId('side-switch').locator('button').evaluateAll(
+      els => els.map(e => e.getAttribute('data-testid')));
+    expect(order).toEqual(['side-top', 'flip-axis-btn', 'side-bottom']);
+    await toggleSlot(page, 'sideFlipAxis');                     // a tick on a lit item turns it off
+    await expect(page.getByTestId('flip-axis-btn')).toHaveCount(0);
+    await expect(page.getByTestId('side-top')).toBeVisible();
   });
 
   test('the legend opens, switches modes, and its pin counts add up to the board', async ({ page }) => {
     await openFixture(page);
-    await enableSlot(page, 'legend');
+    await toggleSlot(page, 'legend');
     await page.getByTestId('legend-btn').click();
     const card = page.getByTestId('board-legend');
     await expect(card).toBeVisible();
@@ -75,7 +82,6 @@ test.describe('optional ribbon slots: legend and flip axis', () => {
 
   test('the flip-axis button toggles the axis and agrees with the ⋯ menu', async ({ page }) => {
     await openFixture(page);
-    await enableSlot(page, 'flipAxis');
     const btn = page.getByTestId('flip-axis-btn');
     const before = await btn.getAttribute('data-axis');
     await btn.click();

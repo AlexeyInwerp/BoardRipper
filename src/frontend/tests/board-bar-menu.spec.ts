@@ -176,6 +176,6 @@ test.describe('board ribbon editing', () => {
 
     // Reset layout restores the default order and leaves selection behaviour alone.
     await page.getByTestId('overlay-reset-layout-btn').click();
-    expect((await layoutIds(page)).map(s => s.id).slice(0, 5)).toEqual(['sideSwitch', 'flipAxis', 'butterfly', 'rotateCCW', 'rotateCW']);
+    expect((await layoutIds(page)).map(s => s.id).slice(0, 5)).toEqual(['sideSwitch', 'sideFlipAxis', 'butterfly', 'rotateCCW', 'rotateCW']);
   });
 });

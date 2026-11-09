@@ -323,11 +323,20 @@ test.describe('pan minimap', () => {
     await expect(map).toHaveAttribute('data-visible', 'false', { timeout: 3000 });
   });
 
-  test('the ribbon toggle turns it off', async ({ page }) => {
+  test('the ribbon button cycles while panning → always on → off', async ({ page }) => {
     await openBoard(page);
-    await page.getByTestId('minimap-toggle').click();
-    await expect(page.getByTestId('board-minimap')).toHaveCount(0);
-    await page.getByTestId('minimap-toggle').click();
-    await expect(page.getByTestId('board-minimap')).toHaveCount(1);
+    const btn = page.getByTestId('minimap-toggle');
+    const map = page.getByTestId('board-minimap');
+    await expect(btn).toHaveAttribute('data-mode', 'onPan');          // the default
+    await expect(map).toHaveAttribute('data-visible', 'false');       // hidden until a pan
+    await btn.click();
+    await expect(btn).toHaveAttribute('data-mode', 'always');
+    await expect(map).toHaveAttribute('data-visible', 'true');        // up with no pan at all
+    await btn.click();
+    await expect(btn).toHaveAttribute('data-mode', 'off');
+    await expect(map).toHaveCount(0);
+    await btn.click();
+    await expect(btn).toHaveAttribute('data-mode', 'onPan');
+    await expect(map).toHaveCount(1);
   });
 });

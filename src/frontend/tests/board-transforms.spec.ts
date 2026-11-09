@@ -189,8 +189,8 @@ test.describe('board transforms in the ribbon', () => {
         { id: 'diodeValues', visible: true }, { id: 'sep2', visible: true }, { id: 'partsDropdown', visible: true }, { id: 'netsDropdown', visible: true },
       ]).map(s => s.id);
     });
-    expect(ids.slice(0, 6)).toEqual(['sideSwitch', 'butterfly', 'rotateCCW', 'rotateCW', 'transformMenu', 'sep0']);
-    expect(ids.slice(6, 9)).toEqual(['fitBoard', 'pdfFollow', 'scrollMode']);   // the user's own order, untouched
+    expect(ids.slice(0, 8)).toEqual(['sideSwitch', 'sideFlipAxis', 'butterfly', 'rotateCCW', 'rotateCW', 'transformMenu', 'history', 'sep0']);
+    expect(ids.slice(8, 11)).toEqual(['fitBoard', 'pdfFollow', 'scrollMode']);   // the user's own order, untouched
     expect(ids.indexOf('traces')).toBe(ids.indexOf('diodeValues') + 1);
   });
 });

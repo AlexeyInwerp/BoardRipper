@@ -5122,7 +5122,7 @@ export class BoardRenderer {
         // floating bar must not rebuild — every rebuild is a chance to leave a
         // destroyed Graphics in the tree (the `_gpuData of null` crash).
         'overlayLayout', 'overlayPosition', 'overlayOrientation', 'overlayFloatX', 'overlayFloatY',
-        'minimapOnPan',
+        'minimapOnPan', 'minimapAlways',
       ]);
       if (prev) {
         let visualChanged = false;

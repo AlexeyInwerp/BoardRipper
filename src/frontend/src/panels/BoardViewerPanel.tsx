@@ -20,7 +20,7 @@ import { isSeparatorId, slotLabel } from '../store/overlay-layout';
 import { showSidebarTab } from '../components/Sidebar.utils';
 import { getFormat } from '../parsers';
 import { useRenderSettings } from '../hooks/useRenderSettings';
-import { renderSettingsStore } from '../store/render-settings';
+import { renderSettingsStore, minimapMode } from '../store/render-settings';
 import type { SlotCtx } from '../components/overlay/slot-ctx';
 import { ResizeModeBanner } from '../components/ResizeModeBanner';
 import { BoardMinimap } from '../components/BoardMinimap';
@@ -335,7 +335,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
       )}
       <ResizeModeBanner />
       <SlideLayer tabId={tabId} renderer={liveRenderer} rootRef={rootRef} hostRef={containerRef} fileName={tabFileName} />
-      <BoardMinimap renderer={liveRenderer} mode={slideOn ? 'always' : renderSettings.minimapOnPan ? 'onPan' : 'off'} />
+      <BoardMinimap renderer={liveRenderer} mode={slideOn ? 'always' : minimapMode(renderSettings)} />
       <BoardLegend tabId={tabId} sidebarOpen={sidebarOpen} rootRef={rootRef} />
       <div className="board-sidebar-toggle-group">
         <button

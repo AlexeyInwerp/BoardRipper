@@ -8,6 +8,8 @@ import { IconStackFront, IconStackBack } from '@tabler/icons-react';
 import { boardStore } from '../../../store/board-store';
 import { formatShortcut } from '../../../store/keyboard-shortcuts';
 import type { SlotCtx } from '../slot-ctx';
+import { useRenderSettings } from '../../../hooks/useRenderSettings';
+import { FlipAxisButton } from './TransformButtons';
 
 export function SideSwitch({ ctx }: { ctx: SlotCtx }) {
   const t = ctx.thisTab;
@@ -16,6 +18,8 @@ export function SideSwitch({ ctx }: { ctx: SlotCtx }) {
   const uiTop    = t.primarySide === 'bottom' ? t.showBottom : t.showTop;
   const uiBottom = t.primarySide === 'bottom' ? t.showTop    : t.showBottom;
   const tip = `${formatShortcut('flipBoard')} flips · hold it to peek · Shift-click for both sides`;
+  // The flip-axis toggle sits between the halves while its slot is on.
+  const showAxis = useRenderSettings().overlayLayout.some(s => s.id === 'sideFlipAxis' && s.visible);
   return (
     <div className="overlay-seg" role="group" aria-label="Board side" data-testid="side-switch">
       <button
@@ -28,6 +32,7 @@ export function SideSwitch({ ctx }: { ctx: SlotCtx }) {
       >
         <IconStackFront size={15} stroke={1.9} /><span className="overlay-seg-lbl">Top</span>
       </button>
+      {showAxis && <FlipAxisButton ctx={ctx} />}
       <button
         type="button"
         className={`overlay-seg-btn${uiBottom ? ' active' : ''}`}
