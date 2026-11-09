@@ -331,6 +331,18 @@ BoardRipper exists because of the reverse-engineering work already done by the b
   [XZZPCB-Layer-Viewer](https://github.com/sjohnson1021/XZZPCB-Layer-Viewer)
   and an ImHex pattern for the format.
 
+- **Roger Barbara and Rogério Pires, 2R Tools**
+  ([@reparomac](https://github.com/reparomac)) — run a customised BoardRipper
+  inside their Scanner Diagnostic Suite and published it under the AGPL in
+  [boardripper-2r](https://github.com/reparomac/boardripper-2r). Reviewed
+  from it and re-implemented in v0.51.0: loose name search, N / Shift+N
+  result stepping, the pin-table filter and sort, the pin colour legend, the
+  supplement-mode diode-reading declutter and the loopback-only desktop
+  backend.
+- **[@pigeon-labs-stack](https://github.com/pigeon-labs-stack)** — MCP board
+  actions that report a missing part or net instead of claiming success
+  ([#44](https://github.com/AlexeyInwerp/BoardRipper/pull/44)).
+
 **Parser references**
 
 - [KiCad](https://gitlab.com/kicad/code/kicad) *(GPL-3.0 / GPL-2.0+)* — Cadence Allegro BRD and Altium PcbDoc readers, transliterated to TypeScript. The reason BoardRipper as a whole is AGPL-3.0.

@@ -1,5 +1,84 @@
 # BoardRipper changelog
 
+## v0.51.0 — 2026-11-09
+
+Several of the board changes in this release come from **Roger Barbara and
+Rogério Pires of 2R Tools ([@reparomac](https://github.com/reparomac))**, who
+ship a customised BoardRipper inside their Scanner Diagnostic Suite and
+published their changes under the AGPL in
+[reparomac/boardripper-2r](https://github.com/reparomac/boardripper-2r). The
+ideas below marked *from 2R Tools* were reviewed from that fork and
+re-implemented here. Thank you, Roger, for the requests behind them and for
+giving the work back.
+
+### Added
+
+- **Loose name search.** The ribbon's *Find part* and *Find net*, the board
+  sidebar's Search tab, the board highlight and the global search's board
+  count ignore case and the separators `_ - . /`, and accept several words in
+  any order: `pp_1v25`, `1v25 nand` and `1v25nand` all find
+  `PP1V25_AWAKE_NAND`. Exact matches keep their place; names only the loose
+  rule finds follow under *Similar names*. *From 2R Tools.*
+- **N / Shift+N steps through results.** On a lit net, N visits each part on
+  it, at its pin on the net, parts with up to three pins first — the easy
+  probe points. Otherwise it steps through the parts the search found. On a
+  PDF it steps through the matches. *From 2R Tools.*
+- **Pin table filter and sort.** Parts with more than 12 pins get a filter
+  field above the pin table in the Info tab (pin number, name or net).
+  Clicking *#*, *Name* or *Net* sorts the column; again reverses it; a third
+  time restores file order. *From 2R Tools.*
+- **Worklist ‹ ›.** The worklist header steps through its rows in order,
+  parts then nets: each step selects the row and takes the board there, and a
+  net row opens its reading fields.
+- **Legend (?).** A new ribbon button opens a half-transparent card that says
+  what the board is showing, in five modes: pin colours with this board's
+  pin count per rule (including the colour no rule claims, per side), part
+  type colours, diode reading colours, net line and selection colours, and
+  the board keys. Drag it by its header; double-click the header to put it
+  back. The pin colour legend idea is *from 2R Tools*.
+- **Minimap: always on.** The minimap button now cycles off → while panning
+  → always on; the always state is the map with a pin.
+
+### Changed
+
+- **Flip axis is back between Top and Bottom.** The one-click ⇅/⇄ toggle the
+  toolbar had before v0.39 sits inside the Side switch again. The ⋯ menu
+  keeps the same choice. Switch it off from the ribbon's right-click menu.
+- **Diode readings next to pin numbers and net names (supplement mode)** get
+  their own place on IC and BGA pins: the reading sits in the pin centre on a
+  plate, with the pin number above and the net name below, and the three
+  share the pin spacing. A reading appears once it is as legible as a net
+  name, instead of as a smudge over its neighbours. Diode-only mode is
+  unchanged. The declutter idea is *from 2R Tools*.
+
+### Fixed
+
+- **Desktop app: the MCP backend listens on this machine only.** With MCP
+  turned on, the desktop app's built-in server listened on every network
+  interface, so other machines on the network could reach the library and
+  file endpoints. It now binds to 127.0.0.1. A new `BIND_HOST` setting does
+  the same for any server install; unset keeps today's behaviour. *From 2R
+  Tools.*
+- **MCP board actions report failure honestly.** `select_part` and
+  `highlight_net` said they had succeeded for a part or net that does not
+  exist, or a selection that did not take. Contributed by
+  **[@pigeon-labs-stack](https://github.com/pigeon-labs-stack)** in
+  [#44](https://github.com/AlexeyInwerp/BoardRipper/pull/44).
+- **The PDF text index finishes on large libraries, and search answers in
+  seconds.** A file that crashed or timed out the extractor was retried at
+  every start; it is now given up after three attempts, a long document cut
+  off part-way keeps the pages read, and Stop interrupts the file in
+  progress. Search reads the index in bounded chunks and says when results
+  are partial. The Library tells a failed or cut-off search from "no
+  results" and offers Retry.
+- **NAS installs: a fragmented index file is compacted.** On btrfs (the
+  Synology default) the index file was shredded by copy-on-write until every
+  query ran past its deadline. New index files are created without
+  copy-on-write, and Settings ▸ Library ▸ *Compact index file* rewrites an
+  existing one in place, keeping every extracted page.
+- **Index stats no longer take minutes** on a large index; the Library polls
+  them during a sweep.
+
 ## v0.50.2 — 2026-10-23
 
 ### Added
