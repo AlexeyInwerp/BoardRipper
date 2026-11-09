@@ -183,7 +183,7 @@ export function ComponentInfoBody({
       title={`${title} — click to sort, again to reverse, a third time for file order`}
       onClick={() => cycleSort(col)}
     >
-      {label}{pinSort?.col === col && <span className="pin-th-arrow">{pinSort.dir === 1 ? ' ▲' : ' ▼'}</span>}
+      {label}{pinSort?.col === col && <span className="pin-th-arrow" aria-hidden>{pinSort.dir === 1 ? '▲' : '▼'}</span>}
     </th>
   );
 

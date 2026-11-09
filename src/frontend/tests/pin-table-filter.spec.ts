@@ -73,4 +73,16 @@ test.describe('pin table filter and sort', () => {
     await head.click();
     expect(await nets()).toEqual(fileOrder);
   });
+
+  test('sorting keeps every header on one line and its column width unchanged', async ({ page }) => {
+    await openBiggestPart(page);
+    const box = (id: string) => page.getByTestId(id).boundingBox();
+    for (const id of ['pin-sort-num', 'pin-sort-name', 'pin-sort-net']) {
+      const before = (await box(id))!;
+      await page.getByTestId(id).click();
+      const after = (await box(id))!;
+      expect(after.height).toBeCloseTo(before.height, 0);
+      expect(Math.abs(after.width - before.width)).toBeLessThan(1);
+    }
+  });
 });

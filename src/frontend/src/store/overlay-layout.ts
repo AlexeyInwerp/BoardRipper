@@ -26,7 +26,7 @@ export type NamedSlotId =
   | 'sideSwitch' | 'butterfly' | 'rotateCCW' | 'rotateCW' | 'transformMenu' | 'history'
   | 'pdfFollow' | 'scrollMode' | 'fitBoard' | 'minimap' | 'slides'
   | 'hoverInfo' | 'netDim' | 'netLines' | 'ghosts' | 'diodeValues' | 'traces'
-  | 'partsDropdown' | 'netsDropdown' | 'sideFlipAxis' | 'legend';
+  | 'partsDropdown' | 'netsDropdown' | 'sideFlipAxis' | 'legendHelp';
 
 export type SeparatorSlotId = `sep${number}`;
 export type OverlaySlotId = NamedSlotId | SeparatorSlotId;
@@ -37,7 +37,7 @@ const NAMED_SLOT_IDS: ReadonlySet<NamedSlotId> = new Set([
   'sideSwitch', 'butterfly', 'rotateCCW', 'rotateCW', 'transformMenu', 'history',
   'pdfFollow', 'scrollMode', 'fitBoard', 'minimap', 'slides',
   'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'traces',
-  'partsDropdown', 'netsDropdown', 'sideFlipAxis', 'legend',
+  'partsDropdown', 'netsDropdown', 'sideFlipAxis', 'legendHelp',
 ]);
 
 /** Human names, used by the ribbon's right-click menu and the Settings
@@ -64,7 +64,7 @@ export const SLOT_LABELS: Readonly<Record<NamedSlotId, string>> = {
   partsDropdown: 'Find part',
   netsDropdown:  'Find net',
   sideFlipAxis:  'Flip axis',
-  legend:        'Legend',
+  legendHelp:    'Legend',
 };
 
 export function slotLabel(id: OverlaySlotId): string {
@@ -133,9 +133,10 @@ export const DEFAULT_OVERLAY_LAYOUT: ReadonlyArray<Readonly<OverlaySlot>> = [
   { id: 'diodeValues',   visible: true },
   { id: 'traces',        visible: true },
   // "?" — the legend card (components/BoardLegend.tsx), with the other
-  // view aids: it explains what they draw. Off by default. Not at the end of
-  // the row, where a narrow panel puts it under the board-sidebar toggle.
-  { id: 'legend',        visible: false },
+  // view aids: it explains what they draw. Not at the end of the row, where a
+  // narrow panel puts it under the board-sidebar toggle. (Was `legend`,
+  // hidden, for one pre-flight build; renamed so layouts saved then show it.)
+  { id: 'legendHelp',    visible: true },
   { id: 'sep2',          visible: true },
   { id: 'partsDropdown', visible: true },
   { id: 'netsDropdown',  visible: true },

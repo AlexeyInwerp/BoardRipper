@@ -1,7 +1,7 @@
 /**
- * "?" — opens the board legend card (components/BoardLegend.tsx). Hidden by
- * default; switched on from the ribbon's right-click menu or Settings ▸
- * Board overlay.
+ * "?" — opens the board legend card (components/BoardLegend.tsx). Shown by
+ * default; switched off from the ribbon's right-click menu or Settings ▸
+ * Board overlay (slot `legendHelp`).
  */
 import { IconQuestionMark } from '@tabler/icons-react';
 import { boardLegendStore, useBoardLegend } from '../../../store/board-legend-store';

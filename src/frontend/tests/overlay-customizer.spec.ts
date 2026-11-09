@@ -38,11 +38,10 @@ test.describe('Overlay layout reconciliation', () => {
     expect(result.map(s => s.id)).toEqual([
       'sideSwitch', 'sideFlipAxis', 'butterfly', 'rotateCCW', 'rotateCW', 'transformMenu', 'history', 'sep0',
       'pdfFollow', 'scrollMode', 'fitBoard', 'minimap', 'slides', 'sep1',
-      'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'traces', 'legend', 'sep2',
+      'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'traces', 'legendHelp', 'sep2',
       'partsDropdown', 'netsDropdown',
     ]);
-    // Every slot is on except the optional legend.
-    expect(result.filter(s => !s.visible).map(s => s.id)).toEqual(['legend']);
+    expect(result.every(s => s.visible)).toBe(true);
   });
 
   test('drops unknown slot ids and preserves saved order', async ({ page }) => {
@@ -92,7 +91,7 @@ test.describe('Overlay layout reconciliation', () => {
     expect(ids).toEqual([
       'sideSwitch', 'sideFlipAxis', 'butterfly', 'rotateCCW', 'rotateCW', 'transformMenu', 'history', 'sep0',
       'pdfFollow', 'scrollMode', 'fitBoard', 'minimap', 'slides', 'sep1',
-      'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'traces', 'legend', 'sep2',
+      'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'traces', 'legendHelp', 'sep2',
       'partsDropdown', 'netsDropdown',
     ]);
   });
@@ -243,11 +242,11 @@ test.describe('Overlay customizer DnD', () => {
       return win.__renderSettings!.settings.overlayLayout;
     });
     expect(layout.length).toBe(24);
-    expect(layout.filter(s => !s.visible).map(s => s.id)).toEqual(['legend']);
+    expect(layout.every(s => s.visible)).toBe(true);
     expect(layout.map(s => s.id)).toEqual([
       'sideSwitch', 'sideFlipAxis', 'butterfly', 'rotateCCW', 'rotateCW', 'transformMenu', 'history', 'sep0',
       'pdfFollow', 'scrollMode', 'fitBoard', 'minimap', 'slides', 'sep1',
-      'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'traces', 'legend', 'sep2',
+      'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'traces', 'legendHelp', 'sep2',
       'partsDropdown', 'netsDropdown',
     ]);
   });

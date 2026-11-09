@@ -47,7 +47,7 @@ export function renderOverlaySlot(id: OverlaySlotId, ctx: SlotCtx): ReactNode {
     case 'partsDropdown': return <PartsDropdown ctx={ctx} />;
     case 'netsDropdown':  return <NetsDropdown ctx={ctx} />;
     case 'sideFlipAxis':  return null;               // drawn inside SideSwitch
-    case 'legend':        return <LegendButton />;
+    case 'legendHelp':    return <LegendButton />;
   }
 }
 

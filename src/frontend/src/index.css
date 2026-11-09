@@ -10070,9 +10070,12 @@ body {
   font-size: 0.85em;
   color: var(--text-secondary);
 }
-.pin-table th.pin-th-sort { cursor: pointer; user-select: none; }
+/* The arrow sits in room the header always keeps (padding-right), never in
+   the text flow: in the flow it wrapped "#" onto a second line on a narrow
+   column, and widened the column the moment a sort was picked. */
+.pin-table th.pin-th-sort { cursor: pointer; user-select: none; white-space: nowrap; padding-right: 14px; }
 .pin-table th.pin-th-sort:hover { color: var(--text-primary); }
-.pin-th-arrow { font-size: 0.8em; }
+.pin-th-arrow { position: absolute; right: 3px; top: 50%; transform: translateY(-50%); font-size: 0.75em; line-height: 1; }
 
 /* Board legend card (components/BoardLegend.tsx): half-transparent, lower
    right of the board panel, under the board sidebar's z-index. */
@@ -10081,7 +10084,7 @@ body {
   right: 8px;
   bottom: 30px;
   z-index: 12;
-  width: 290px;
+  width: 300px;
   max-width: calc(100% - 24px);
   max-height: calc(100% - 96px);
   display: flex;
@@ -10099,10 +10102,15 @@ body {
   display: flex; align-items: center; gap: 4px;
   padding: 5px 5px 5px 6px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
-.board-legend .lg-modes { display: flex; flex-wrap: wrap; gap: 2px; flex: 1; min-width: 0; }
+.board-legend.dragging .lg-head { cursor: grabbing; }
+.board-legend .lg-grip { flex: none; color: var(--text-secondary); opacity: 0.7; }
+.board-legend .lg-modes { display: flex; flex-wrap: nowrap; gap: 1px; flex: 1; min-width: 0; }
 .board-legend .lg-modes button {
-  padding: 2px 7px; border: 1px solid transparent; border-radius: 5px;
+  padding: 2px 5px; border: 1px solid transparent; border-radius: 5px; white-space: nowrap;
   background: transparent; color: var(--text-secondary); font: inherit; font-size: 11.5px; cursor: pointer;
 }
 .board-legend .lg-modes button:hover { color: var(--text-primary); }
