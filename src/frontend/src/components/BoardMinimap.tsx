@@ -22,7 +22,13 @@ import { renderSettingsStore, minimapMode, type MinimapMode, type MinimapPositio
 import { useRenderSettings } from '../hooks/useRenderSettings';
 import { uiZoom } from '../store/ui-zoom';
 import { QuickMenu } from './QuickMenu';
-import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
+import { IconChevronLeft, IconChevronRight, IconHistory, IconChecklist, IconExternalLink } from '@tabler/icons-react';
+import { worklistStore, MARK_COLOR_CSS, type Worklist } from '../store/worklist-store';
+import { useWorklist } from '../hooks/useWorklist';
+import { useBoardStore } from '../hooks/useBoardStore';
+import { worklistStepKeys, currentWorklistKey, worklistStep } from '../store/minimap-worklist';
+import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
+import { showSidebarTab } from './Sidebar.utils';
 import { navHistoryStore } from '../store/nav-history-store';
 import { historyBack, historyForward } from '../store/nav-history-actions';
 import { useNavHistory } from '../hooks/useNavHistory';
@@ -32,6 +38,13 @@ import type { BoardData } from '../parsers/types';
 const MAX_W = 220;
 const MAX_H = 150;
 const ACTIVE_HOLD_MS = 700;
+/** The header strip above the map: history ‹ › and the History tab. */
+const HEAD_H = 20;
+/** Narrowest the map gets, so the header's buttons always fit; a tall
+ *  board (or one turned 90°) is centred in the extra width. */
+const MIN_W = 180;
+/** The frame's 1px border on each side (box-sizing is border-box). */
+const FRAME = 2;
 
 type Model = NonNullable<ReturnType<BoardRenderer['getViewModel']>>;
 type Mat = Model['roots'][number]['m'];
@@ -163,19 +176,20 @@ function parseHex(h: string): [number, number, number] | null {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 /** Newest visit in the selection colour, oldest in the accent, fading. */
-function trailColor(rank: number, n: number): string {
+function trailColor(rank: number, n: number, alphaScale = 1): string {
   const hot = parseHex(css('--board-selection', '#ffff44')) ?? [255, 255, 68];
   const cold = parseHex(css('--accent', '#4a9eff')) ?? [74, 158, 255];
   const t = n <= 1 ? 0 : rank / (n - 1);
   const c = hot.map((v, i) => Math.round(v + (cold[i] - v) * t));
-  const a = 0.95 - 0.6 * t;
+  const a = (0.95 - 0.6 * t) * alphaScale;
   return `rgba(${c[0]},${c[1]},${c[2]},${a.toFixed(3)})`;
 }
 
 /** Draw the trail in map css px: `k`/`ox`/`oy` map world to the map. */
 function paintTrail(ctx: CanvasRenderingContext2D, model: Model, tabId: number | null,
   k: number, ox: number, oy: number, mapW: number, mapH: number, viewSize: { width: number; height: number }) {
-  const trail = minimapTrail(navHistoryStore.entries, navHistoryStore.cursor, tabId);
+  const steps = renderSettingsStore.settings.minimapHistorySteps ?? MINIMAP_TRAIL_LIMIT;
+  const trail = minimapTrail(navHistoryStore.entries, navHistoryStore.cursor, tabId, { limit: steps });
   // For tests and the curious: how many visits the map marks.
   const host = ctx.canvas.parentElement;
   if (host) host.dataset.trail = String(trail.length);
@@ -184,7 +198,7 @@ function paintTrail(ctx: CanvasRenderingContext2D, model: Model, tabId: number |
   const idx = partIndexByName(board);
   const primaryBottom = board.primarySide === 'bottom';
   const top = boardStore.showTop, bottom = boardStore.showBottom;
-  const n = Math.min(trail.length, MINIMAP_TRAIL_LIMIT);
+  const n = trail.length;
   const cb = contentBounds(model);
   // Oldest first, so the newest is drawn on top.
   const ordered = [...trail].reverse();
@@ -240,17 +254,61 @@ function paintTrail(ctx: CanvasRenderingContext2D, model: Model, tabId: number |
       break;
     }
   }
-  // A thin line through the parts, oldest to newest: the order of the work.
+  // A faint line through the parts, oldest to newest: the order of the work.
+  // Kept well below the boxes — it is a hint of sequence, not a mark.
   if (centres.length > 1) {
     const dpr = window.devicePixelRatio || 1;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 0.75;
     for (let i = 1; i < centres.length; i++) {
-      ctx.strokeStyle = trailColor(centres[i].rank, n);
+      ctx.strokeStyle = trailColor(centres[i].rank, n, 0.32);
       ctx.beginPath();
       ctx.moveTo(centres[i - 1].x, centres[i - 1].y);
       ctx.lineTo(centres[i].x, centres[i].y);
       ctx.stroke();
+    }
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+
+/** The loaded worklist's parts in their mark colours; the current row ringed. */
+function paintWorklist(ctx: CanvasRenderingContext2D, model: Model, wl: Worklist | null, k: number, ox: number, oy: number) {
+  const host = ctx.canvas.parentElement;
+  const rows = (wl?.entries ?? []).filter(e => !e.unresolved && e.partIndex >= 0);
+  if (host) host.dataset.wlMarks = String(rows.length);
+  if (rows.length === 0) return;
+  const { board } = model;
+  const primaryBottom = board.primarySide === 'bottom';
+  const top = boardStore.showTop, bottom = boardStore.showBottom;
+  const sel = boardStore.selection.partIndex;
+  const ring = css('--board-selection', '#ffff44');
+  const dpr = window.devicePixelRatio || 1;
+  for (const e of rows) {
+    const part = board.parts[e.partIndex];
+    if (!part) continue;
+    const isTop = part.side === 'both' || (part.side === 'top') !== primaryBottom;
+    const isBottom = part.side === 'both' || !isTop;
+    for (const r of model.roots) {
+      if (r.side === 'top' && !isTop) continue;
+      if (r.side === 'bottom' && !isBottom) continue;
+      if (r.side === 'all' && !((top && isTop) || (bottom && isBottom))) continue;
+      const [a, b, c, d, tx, ty] = r.m;
+      ctx.setTransform(a * k * dpr, b * k * dpr, c * k * dpr, d * k * dpr, (tx * k + ox) * dpr, (ty * k + oy) * dpr);
+      const px = 1 / (Math.hypot(a, b) * k);
+      const pb = part.bounds;
+      const w = Math.max(px * 4, pb.maxX - pb.minX), h = Math.max(px * 4, pb.maxY - pb.minY);
+      const cx = (pb.minX + pb.maxX) / 2, cy = (pb.minY + pb.maxY) / 2;
+      const col = MARK_COLOR_CSS[e.mark] ?? MARK_COLOR_CSS.none;
+      ctx.globalAlpha = 0.6;
+      ctx.fillStyle = col;
+      ctx.fillRect(cx - w / 2, cy - h / 2, w, h);
+      ctx.globalAlpha = 1;
+      const current = e.partIndex === sel;
+      ctx.strokeStyle = current ? ring : col;
+      ctx.lineWidth = px * (current ? 2.2 : 1);
+      const pad = current ? px * 2 : 0;
+      ctx.strokeRect(cx - w / 2 - pad, cy - h / 2 - pad, w + 2 * pad, h + 2 * pad);
+      break;
     }
   }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -320,9 +378,16 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, cv.width, cv.height);
     ctx.drawImage(base.canvas, 0, 0);
-    if (renderSettingsStore.settings.minimapShowHistory !== false) {
-      paintTrail(ctx, model, tabId, base.k, base.ox, base.oy, base.w, base.h, renderer!.viewSize());
-    } else if (cv.parentElement) cv.parentElement.dataset.trail = '0';
+    const nav = renderSettingsStore.settings.minimapNav ?? 'history';
+    if (nav === 'worklist') {
+      if (cv.parentElement) cv.parentElement.dataset.trail = '0';
+      paintWorklist(ctx, model, worklistStore.worklistForTab(tabId), base.k, base.ox, base.oy);
+    } else {
+      if (cv.parentElement) cv.parentElement.dataset.wlMarks = '0';
+      if (renderSettingsStore.settings.minimapShowHistory !== false) {
+        paintTrail(ctx, model, tabId, base.k, base.ox, base.oy, base.w, base.h, renderer!.viewSize());
+      } else if (cv.parentElement) cv.parentElement.dataset.trail = '0';
+    }
     // The view box, clipped to the map so a zoomed-out view still draws sanely.
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const v = model.view;
@@ -378,9 +443,28 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
   useEffect(() => boardStore.subscribe(() => { if (visible) paint(); }), [visible, paint]);
   // Hooks stay above the early return below.
   const history = useNavHistory();
+  const nav = settings.minimapNav ?? 'history';
+  const wl = nav === 'worklist' ? worklistStore.worklistForTab(tabId) : null;
+  const wlKeys = worklistStepKeys(wl);
+  const selPart = boardStore.selection.partIndex;
+  const wlCur = currentWorklistKey(wlKeys,
+    selPart !== null ? (renderer?.getViewModel()?.board.parts[selPart]?.name ?? null) : null,
+    boardStore.selection.highlightedNet);
+  const wlAt = wlCur ? wlKeys.indexOf(wlCur) : -1;
+  const wlPrev = worklistStep(wlKeys, wlCur, -1);
+  const wlNext = worklistStep(wlKeys, wlCur, 1);
+  const goWl = (key: string | null) => {
+    if (!key) return;
+    const name = key.slice(2);
+    if (key.startsWith('n:')) boardStore.focusNet(name); else boardStore.focusPart(name);
+  };
   // Repaint when the trail switch flips (paint reads the store directly).
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (visible) paint(); }, [settings.minimapShowHistory]);
+  useEffect(() => { if (visible) paint(); }, [settings.minimapShowHistory, settings.minimapHistorySteps, settings.minimapNav]);
+  // Worklist mode: re-render the header (position) and repaint on edits.
+  useWorklist();
+  useBoardStore();
+  useEffect(() => worklistStore.subscribe(() => { if (visible) paint(); }), [visible, paint]);
   // A new visit (or a step back/forward) moves the trail.
   useEffect(() => navHistoryStore.subscribe(() => { if (visible) paint(); }), [visible, paint]);
   // A scheme switch repaints it in the new colours.
@@ -449,7 +533,7 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
   const at = placing ?? (position === 'floating' ? { x: settings.minimapFloatX, y: settings.minimapFloatY } : null);
   const placeStyle: React.CSSProperties = at
     // Clamped in CSS as well: a panel made smaller later cannot carry it off.
-    ? { left: `clamp(0px, ${at.x}px, calc(100% - ${size.w}px))`, top: `clamp(0px, ${at.y}px, calc(100% - ${size.h}px))` }
+    ? { left: `clamp(0px, ${at.x}px, calc(100% - ${Math.max(size.w, MIN_W) + FRAME}px))`, top: `clamp(0px, ${at.y}px, calc(100% - ${size.h + HEAD_H + FRAME}px))` }
     : {};
   const pick = (p: MinimapPosition) => () => {
     setMenu(null);
@@ -467,7 +551,7 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
       data-visible={visible ? 'true' : 'false'}
       data-position={position}
       data-placing={placing ? 'true' : 'false'}
-      style={{ width: size.w, height: size.h, ...placeStyle, ['--mm-opacity' as string]: String(settings.minimapOpacity ?? 1) }}
+      style={{ width: Math.max(size.w, MIN_W) + FRAME, height: size.h + HEAD_H + FRAME, ...placeStyle, ['--mm-opacity' as string]: String(settings.minimapOpacity ?? 1) }}
       onContextMenu={e => { e.preventDefault(); e.stopPropagation(); if (!placing) setMenu({ x: e.clientX, y: e.clientY }); }}
       onPointerEnter={() => { hovering.current = true; }}
       onPointerLeave={() => { hovering.current = false; }}
@@ -488,17 +572,45 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
       onPointerCancel={() => { dragging.current = false; markActive(); }}
       onLostPointerCapture={() => { dragging.current = false; markActive(); }}
     >
-      <canvas ref={canvasRef} style={{ width: size.w, height: size.h }} />
-      <div className="minimap-history" onPointerDown={e => e.stopPropagation()}>
-        <button type="button" data-testid="minimap-history-back" aria-label="Back" title="Back"
-          disabled={!history.canBack} onClick={() => historyBack()}>
+      <div className="minimap-head" data-testid="minimap-head" data-nav={nav}
+        onPointerDown={e => e.stopPropagation()}>
+        <button type="button" data-testid="minimap-history-back" aria-label={nav === 'worklist' ? 'Previous row' : 'Back'}
+          title={nav === 'worklist' ? 'Previous worklist row' : 'Back'}
+          disabled={nav === 'worklist' ? !wlPrev : !history.canBack}
+          onClick={() => nav === 'worklist' ? goWl(wlPrev) : historyBack()}>
           <IconChevronLeft size={13} stroke={2.2} />
         </button>
-        <button type="button" data-testid="minimap-history-forward" aria-label="Forward" title="Forward"
-          disabled={!history.canForward} onClick={() => historyForward()}>
+        <button type="button" data-testid="minimap-history-forward" aria-label={nav === 'worklist' ? 'Next row' : 'Forward'}
+          title={nav === 'worklist' ? (wlAt < 0 ? 'Start at the first worklist row' : 'Next worklist row') : 'Forward'}
+          disabled={nav === 'worklist' ? !wlNext : !history.canForward}
+          onClick={() => nav === 'worklist' ? goWl(wlNext) : historyForward()}>
           <IconChevronRight size={13} stroke={2.2} />
         </button>
+        {nav === 'worklist' && (
+          <span className="minimap-head-pos" data-testid="minimap-wl-pos" translate="no">
+            {wlKeys.length === 0 ? (wl ? 'empty' : 'none') : wlAt < 0 ? String(wlKeys.length) : `${wlAt + 1}/${wlKeys.length}`}
+          </span>
+        )}
+        <span className="minimap-head-fill" />
+        <span className="minimap-head-seg" role="group" aria-label="Map shows">
+          <button type="button" data-testid="minimap-nav-history" aria-pressed={nav === 'history'}
+            className={nav === 'history' ? 'on' : ''} title="History: back / forward and recent visits"
+            onClick={() => renderSettingsStore.setMinimapNav('history')}>
+            <IconHistory size={13} stroke={2} />
+          </button>
+          <button type="button" data-testid="minimap-nav-worklist" aria-pressed={nav === 'worklist'}
+            className={nav === 'worklist' ? 'on' : ''} title={wl ? `Worklist: step through “${wl.name}”` : 'Worklist: none loaded on this board'}
+            onClick={() => renderSettingsStore.setMinimapNav('worklist')}>
+            <IconChecklist size={13} stroke={2} />
+          </button>
+        </span>
+        <button type="button" data-testid="minimap-open-tab" aria-label={nav === 'worklist' ? 'Open the Worklist tab' : 'Open the History tab'}
+          title={nav === 'worklist' ? 'Open the Worklist tab' : 'Open the History tab'}
+          onClick={() => nav === 'worklist' ? openBoardSidebarTab('worklist', tabId ?? undefined) : showSidebarTab('history')}>
+          <IconExternalLink size={12} stroke={2} />
+        </button>
       </div>
+      <canvas ref={canvasRef} style={{ width: size.w, height: size.h, margin: '0 auto' }} />
     </div>
     {menu && (
       <QuickMenu
@@ -524,6 +636,11 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
             hint: 'The parts and views you visited on this board in this session, newest strongest',
             checked: settings.minimapShowHistory !== false,
             onSelect: () => renderSettingsStore.setMinimapShowHistory(settings.minimapShowHistory === false),
+          },
+          {
+            kind: 'range', label: 'Steps', testId: 'minimap-history-steps',
+            value: settings.minimapHistorySteps ?? 8, min: 2, max: 20, step: 1,
+            onChange: v => renderSettingsStore.setMinimapHistorySteps(v),
           },
           { kind: 'sep' },
           {

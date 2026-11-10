@@ -81,9 +81,11 @@ test('a board drag that crosses the minimap does not jump to the map point; a wh
   const p1 = await pose(page);
   expect(Math.hypot(p1.x - p0.x, p1.y - p0.y)).toBeGreaterThan(50);
 
-  // A click on the map still recentres.
+  // A click on the map still recentres (on the map image — the strip above
+  // it holds the history buttons).
   const q0 = await pose(page);
-  await page.mouse.click(m.x + 4, m.y + 4);
+  const c = (await map.locator('canvas').boundingBox())!;
+  await page.mouse.click(c.x + 4, c.y + 4);
   await page.waitForTimeout(300);
   const q1 = await pose(page);
   expect(Math.hypot(q1.x - q0.x, q1.y - q0.y)).toBeGreaterThan(20);

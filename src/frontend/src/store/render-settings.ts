@@ -518,6 +518,11 @@ export interface RenderSettings {
   /** Mark this session's recent visits on the minimap — parts picked and the
    *  views left — newest strongest (right-click ▸ Show history). */
   minimapShowHistory: boolean;
+  /** How many recent places the minimap marks, 2–20 (right-click ▸ Steps). */
+  minimapHistorySteps: number;
+  /** What the minimap's header steps through and the map marks: the
+   *  navigation history, or the worklist loaded on this board. */
+  minimapNav: 'history' | 'worklist';
   /** Auto-enable selection-dim while a search-driven selection (focusPart /
    *  focusNet) is active, even if the user's showNetDim toggle is off. */
   searchAutoDim: boolean;
@@ -841,6 +846,8 @@ export const DEFAULTS: RenderSettings = {
   minimapOpacity: 0.6,
   minimapOpaqueWhileActive: true,
   minimapShowHistory: true,
+  minimapHistorySteps: 8,
+  minimapNav: 'history',
   searchAutoDim: true,
   autoMarkMechanical: true,
 };
@@ -2006,6 +2013,23 @@ class RenderSettingsStore extends Emitter {
     const o = Math.round(Math.min(1, Math.max(0.2, Number.isFinite(v) ? v : 1)) * 100) / 100;
     if (this._global.minimapOpacity === o) return;
     this._global = { ...this._global, minimapOpacity: o };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  setMinimapHistorySteps(v: number) {
+    const n = Math.round(Math.min(20, Math.max(2, Number.isFinite(v) ? v : 8)));
+    if (this._global.minimapHistorySteps === n) return;
+    this._global = { ...this._global, minimapHistorySteps: n };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  setMinimapNav(v: 'history' | 'worklist') {
+    if (this._global.minimapNav === v) return;
+    this._global = { ...this._global, minimapNav: v };
     saveToStorage(this._global);
     this.recomputeEffective();
     this.notify();

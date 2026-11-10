@@ -16,6 +16,7 @@
  */
 import type { NavEntry, BoardCamera } from './nav-history';
 
+/** Default number of places marked (setting `minimapHistorySteps`). */
 export const MINIMAP_TRAIL_LIMIT = 8;
 /** When this module loaded: the start of the running session. */
 export const SESSION_START = Date.now();

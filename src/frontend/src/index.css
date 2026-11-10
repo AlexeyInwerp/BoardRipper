@@ -9737,17 +9737,23 @@ body {
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 .board-minimap canvas { display: block; }
-/* History ‹ › in the map's lower-left corner. */
-.minimap-history {
-  position: absolute; left: 3px; bottom: 3px; display: flex; gap: 1px;
-  border-radius: 5px; background: var(--chip-bg); padding: 1px;
+/* Header strip above the map: history ‹ ›, then the History tab. */
+.minimap-head {
+  height: 20px; display: flex; align-items: center; gap: 1px; padding: 0 2px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: var(--chip-bg);
 }
-.minimap-history button {
-  width: 20px; height: 18px; display: grid; place-items: center; padding: 0;
+.minimap-head-fill { flex: 1; }
+.minimap-head-pos { font-size: 10.5px; color: var(--text-secondary); padding: 0 3px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.minimap-head-seg { display: inline-flex; gap: 0; border: 1px solid color-mix(in srgb, var(--border) 80%, transparent); border-radius: 5px; margin-right: 2px; }
+.minimap-head-seg button { width: 20px; height: 16px; border-radius: 4px; color: var(--text-secondary); }
+.minimap-head-seg button.on { color: var(--accent-text, var(--accent)); background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.minimap-head button {
+  width: 22px; height: 18px; display: grid; place-items: center; padding: 0;
   border: 0; border-radius: 4px; background: transparent; color: var(--text-primary); cursor: pointer;
 }
-.minimap-history button:hover:not(:disabled) { background: var(--surface-active); }
-.minimap-history button:disabled { opacity: 0.3; cursor: default; }
+.minimap-head button:hover:not(:disabled) { background: var(--surface-active); }
+.minimap-head button:disabled { opacity: 0.3; cursor: default; }
 /* A faded map comes up to full strength under the pointer, while the board
    is panned or the map dragged (.active, set by BoardMinimap), and while it
    is being placed. */
