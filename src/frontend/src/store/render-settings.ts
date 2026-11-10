@@ -509,6 +509,9 @@ export interface RenderSettings {
   minimapPosition: MinimapPosition;
   minimapFloatX: number;
   minimapFloatY: number;
+  /** Minimap opacity while shown, 0.2–1 (right-click the map ▸ Opacity).
+   *  Hovering the map shows it at full strength. */
+  minimapOpacity: number;
   /** Auto-enable selection-dim while a search-driven selection (focusPart /
    *  focusNet) is active, even if the user's showNetDim toggle is off. */
   searchAutoDim: boolean;
@@ -829,6 +832,7 @@ export const DEFAULTS: RenderSettings = {
   minimapPosition: 'center',
   minimapFloatX: 16,
   minimapFloatY: 56,
+  minimapOpacity: 1,
   searchAutoDim: true,
   autoMarkMechanical: true,
 };
@@ -1970,6 +1974,16 @@ class RenderSettingsStore extends Emitter {
     const g = this._global;
     if (g.minimapPosition === position && g.minimapFloatX === x && g.minimapFloatY === y) return;
     this._global = { ...g, minimapPosition: position, minimapFloatX: x, minimapFloatY: y };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  /** Minimap opacity, clamped to 0.2–1 so the map can never vanish. */
+  setMinimapOpacity(v: number) {
+    const o = Math.round(Math.min(1, Math.max(0.2, Number.isFinite(v) ? v : 1)) * 100) / 100;
+    if (this._global.minimapOpacity === o) return;
+    this._global = { ...this._global, minimapOpacity: o };
     saveToStorage(this._global);
     this.recomputeEffective();
     this.notify();

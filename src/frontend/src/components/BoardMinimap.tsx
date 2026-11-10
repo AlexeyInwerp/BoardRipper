@@ -322,7 +322,7 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
       data-visible={visible ? 'true' : 'false'}
       data-position={position}
       data-placing={placing ? 'true' : 'false'}
-      style={{ width: size.w, height: size.h, ...placeStyle }}
+      style={{ width: size.w, height: size.h, ...placeStyle, ['--mm-opacity' as string]: String(settings.minimapOpacity ?? 1) }}
       onContextMenu={e => { e.preventDefault(); e.stopPropagation(); if (!placing) setMenu({ x: e.clientX, y: e.clientY }); }}
       onPointerEnter={() => { hovering.current = true; }}
       onPointerLeave={() => { hovering.current = false; }}
@@ -362,6 +362,13 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
           { kind: 'check', label: 'While panning', checked: curMode === 'onPan', testId: 'minimap-show-onPan', onSelect: show('onPan') },
           { kind: 'check', label: 'Always', checked: curMode === 'always', testId: 'minimap-show-always', onSelect: show('always') },
           { kind: 'check', label: 'Off', checked: curMode === 'off', testId: 'minimap-show-off', onSelect: show('off') },
+          { kind: 'sep' },
+          {
+            kind: 'range', label: 'Opacity', testId: 'minimap-opacity',
+            value: Math.round((settings.minimapOpacity ?? 1) * 100), min: 20, max: 100, step: 5,
+            format: v => `${v} %`,
+            onChange: v => renderSettingsStore.setMinimapOpacity(v / 100),
+          },
         ]}
       />
     )}

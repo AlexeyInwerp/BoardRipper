@@ -16,7 +16,9 @@ export type QuickMenuItem =
   | { kind: 'header'; label: string }
   | { kind: 'sep' }
   | { kind?: 'item'; label: string; onSelect: () => void; disabled?: boolean; testId?: string; hint?: string }
-  | { kind: 'check'; label: string; checked: boolean; onSelect: () => void; disabled?: boolean; testId?: string; hint?: string };
+  | { kind: 'check'; label: string; checked: boolean; onSelect: () => void; disabled?: boolean; testId?: string; hint?: string }
+  /** A slider that stays open while it is dragged and applies live. */
+  | { kind: 'range'; label: string; value: number; min: number; max: number; step: number; onChange: (v: number) => void; format?: (v: number) => string; testId?: string };
 
 interface Props {
   x: number;
@@ -70,6 +72,19 @@ export function QuickMenu({ x, y, items, onClose, ariaLabel, testId }: Props) {
       {items.map((it, i) => {
         if (it.kind === 'sep') return <div key={i} className="quick-menu-sep" role="separator" />;
         if (it.kind === 'header') return <div key={i} className="quick-menu-header">{it.label}</div>;
+        if (it.kind === 'range') {
+          return (
+            <label key={i} className="quick-menu-range">
+              <span className="quick-menu-range-label">{it.label}</span>
+              <input
+                type="range" min={it.min} max={it.max} step={it.step} value={it.value}
+                aria-label={it.label} data-testid={it.testId}
+                onChange={e => it.onChange(Number(e.target.value))}
+              />
+              <span className="quick-menu-range-value">{it.format ? it.format(it.value) : String(it.value)}</span>
+            </label>
+          );
+        }
         const check = it.kind === 'check';
         return (
           <button

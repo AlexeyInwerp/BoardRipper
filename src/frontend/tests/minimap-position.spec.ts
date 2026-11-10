@@ -49,6 +49,32 @@ test.describe('minimap placement', () => {
     await expect(map).toHaveAttribute('data-position', 'center');
   });
 
+  test('opacity from the right-click menu: live, kept open, full under the pointer, survives a reload', async ({ page }) => {
+    const map = await openBoardWithMap(page);
+    const opacity = () => map.evaluate(el => Number(getComputedStyle(el).opacity));
+    await expect.poll(opacity).toBe(1);
+    await map.click({ button: 'right' });
+    const slider = page.getByTestId('minimap-opacity');
+    await slider.fill('40');
+    // The menu stays open while the slider is used, and the map follows live.
+    await expect(page.getByTestId('minimap-menu')).toBeVisible();
+    await expect(page.getByTestId('minimap-menu')).toContainText('40 %');
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('minimap-menu')).toHaveCount(0);
+    await page.mouse.move(5, 5);
+    await expect.poll(opacity).toBeCloseTo(0.4, 2);
+    await map.hover();
+    await expect.poll(opacity).toBe(1);
+    await page.mouse.move(5, 5);
+
+    await page.reload();
+    const discard = page.getByTestId('session-discard');
+    await discard.waitFor({ timeout: 5000 }).then(() => discard.click(), () => {});
+    await page.setInputFiles('[data-testid="file-input"]', BOARD);
+    await expect(map).toHaveAttribute('data-visible', 'true');
+    await expect.poll(opacity).toBeCloseTo(0.4, 2);
+  });
+
   test('float follows the pointer, a click puts it down, and the place survives a reload', async ({ page }) => {
     const map = await openBoardWithMap(page);
     const panel = (await page.locator('.board-panel-root').first().boundingBox())!;
