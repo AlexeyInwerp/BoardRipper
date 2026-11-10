@@ -336,8 +336,5 @@ The clipboard format does not change.
   with a count, a spoiler, Open per worklist and + New. Nothing auto-loads.
 - Tags on library boards: later. Worklist tags are set by hand and are the
   only source of truth until then.
-
-## Open
-
-1. **Files in `<dataDir>/worklists/`** rather than a table, for the desktop
-   reasons in §2. Fine for the NAS backup you run?
+- Storage is one JSON file per worklist in `<dataDir>/worklists/` (§2),
+  including on the NAS.
