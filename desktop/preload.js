@@ -54,4 +54,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     put: (doc) => ipcRenderer.invoke('worklist:put', doc),
     delete: (id, rev) => ipcRenderer.invoke('worklist:delete', id, rev),
   },
+
+  // Self-update (updater.js). onState returns an unsubscribe function.
+  updates: {
+    getState: () => ipcRenderer.invoke('update:get-state'),
+    check: () => ipcRenderer.invoke('update:check'),
+    skip: () => ipcRenderer.invoke('update:skip'),
+    install: () => ipcRenderer.invoke('update:install'),
+    restart: () => ipcRenderer.invoke('update:restart'),
+    openNotes: () => ipcRenderer.invoke('update:open-notes'),
+    reveal: () => ipcRenderer.invoke('update:reveal'),
+    onState: (callback) => {
+      const listener = (_event, state) => callback(state);
+      ipcRenderer.on('update:state', listener);
+      return () => ipcRenderer.removeListener('update:state', listener);
+    },
+  },
 });

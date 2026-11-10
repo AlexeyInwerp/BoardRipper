@@ -111,10 +111,10 @@ fi
 : "${MINISIGN_KEY:=$CONFIG_DIR/release.minisign}"
 : "${MINISIGN_PUB:=$CONFIG_DIR/release.pub}"
 
-if [ "$IS_DESKTOP_ONLY" = "false" ]; then
-  if [ ! -f "$MINISIGN_KEY" ]; then echo "missing $MINISIGN_KEY" >&2; exit 1; fi
-  if [ ! -f "$MINISIGN_PUB" ]; then echo "missing $MINISIGN_PUB" >&2; exit 1; fi
-fi
+# Every path signs something now: the Docker manifest, or the desktop update
+# feed (desktop.json), or both.
+if [ ! -f "$MINISIGN_KEY" ]; then echo "missing $MINISIGN_KEY" >&2; exit 1; fi
+if [ ! -f "$MINISIGN_PUB" ]; then echo "missing $MINISIGN_PUB" >&2; exit 1; fi
 
 # --- Tailscale relay (--via-tailscale) ---
 # When this machine's public IP is blocked by the FTP host (2026-09-03: a
@@ -167,9 +167,9 @@ ftp_reachable() {
 }
 
 # --- Preflight: tool presence ---
-REQUIRED_CMDS=(git jq gh)
+REQUIRED_CMDS=(git jq gh minisign lftp)
 if [ "$IS_DESKTOP_ONLY" = "false" ]; then
-  REQUIRED_CMDS+=(docker minisign lftp gzip)
+  REQUIRED_CMDS+=(docker gzip)
 fi
 if [ "$DESKTOP_MODE" != "off" ]; then
   # node needed for `ask` (might say yes), `on`, and `only`
@@ -301,19 +301,39 @@ fi
 # ════════════════════════════════════════════════════════════════════════
 #   DOCKER PIPELINE (skipped in --desktop-only)
 # ════════════════════════════════════════════════════════════════════════
-if [ "$IS_DESKTOP_ONLY" = "false" ]; then
-  PUBKEY_B64="$(grep -v '^untrusted' "$MINISIGN_PUB" | tr -d '\n')"
-  # Additional keys this build should ALSO trust, one base64 key per line in
-  # $CONFIG_DIR/release.pub.extra (comment lines and blanks ignored). Used only
-  # during a rotation overlap: put the OUTGOING key here while releases are
-  # already signed with the new one, so installs on either side keep updating.
-  # Delete the file once every install has rolled past the overlap.
-  EXTRA_PUB_FILE="${EXTRA_PUB_FILE:-$CONFIG_DIR/release.pub.extra}"
-  PUBKEYS_B64=""
-  if [ -f "$EXTRA_PUB_FILE" ]; then
-    PUBKEYS_B64="$(grep -v '^untrusted' "$EXTRA_PUB_FILE" | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$' | paste -sd, -)"
-    [ -n "$PUBKEYS_B64" ] && echo ">>> Rotation overlap: also trusting $(echo "$PUBKEYS_B64" | tr ',' '\n' | wc -l | tr -d ' ') extra key(s) from $EXTRA_PUB_FILE"
+# Trusted signing keys, compiled into the Docker image (PUBKEY/PUBKEYS
+# build-args) and written into the desktop apps' build-info.json alike.
+PUBKEY_B64="$(grep -v '^untrusted' "$MINISIGN_PUB" | tr -d '\n')"
+# Additional keys this build should ALSO trust, one base64 key per line in
+# $CONFIG_DIR/release.pub.extra (comment lines and blanks ignored). Used only
+# during a rotation overlap: put the OUTGOING key here while releases are
+# already signed with the new one, so installs on either side keep updating.
+# Delete the file once every install has rolled past the overlap.
+EXTRA_PUB_FILE="${EXTRA_PUB_FILE:-$CONFIG_DIR/release.pub.extra}"
+PUBKEYS_B64=""
+if [ -f "$EXTRA_PUB_FILE" ]; then
+  PUBKEYS_B64="$(grep -v '^untrusted' "$EXTRA_PUB_FILE" | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$' | paste -sd, -)"
+  [ -n "$PUBKEYS_B64" ] && echo ">>> Rotation overlap: also trusting $(echo "$PUBKEYS_B64" | tr ',' '\n' | wc -l | tr -d ' ') extra key(s) from $EXTRA_PUB_FILE"
+fi
+
+# minisign reads the password from stdin when stdin isn't a tty. Set
+# MINISIGN_PASSWORD in ~/.config/boardripper/release.env to drive it
+# non-interactively. Signs $1, writes $1.minisig, then self-verifies it
+# against the public key clients trust.
+sign_and_verify() {
+  if [ -n "${MINISIGN_PASSWORD:-}" ]; then
+    printf '%s\n' "$MINISIGN_PASSWORD" | minisign -S -s "$MINISIGN_KEY" -m "$1"
+  else
+    minisign -S -s "$MINISIGN_KEY" -m "$1"
   fi
+  if ! minisign -V -p "$MINISIGN_PUB" -m "$1" >/dev/null; then
+    echo "ERROR: signature self-verification FAILED for $1 — signed with a key that" >&2
+    echo "       does not match $MINISIGN_PUB. Aborting before upload." >&2
+    exit 1
+  fi
+}
+
+if [ "$IS_DESKTOP_ONLY" = "false" ]; then
   # ripperdoc.de is the only manifest source. The image at GHCR
   # (ghcr.io/alexeyinwerp/boardripper@<digest>) is still used during Apply for
   # pull-by-digest — that's an OCI Distribution v2 endpoint, totally different
@@ -640,7 +660,7 @@ if [ "$DESKTOP_MODE" = "on" ] || [ "$IS_DESKTOP_ONLY" = "true" ]; then
     echo ">>> Building Electron desktop apps (log: $DESKTOP_BUILD_LOG) — node $(node -v); if this dies with exit 13, brew install node@22"
     DESKTOP_NODE_BIN=""
   fi
-  (cd "$REPO_ROOT/desktop" && PATH="${DESKTOP_NODE_BIN:+$DESKTOP_NODE_BIN:}$PATH" node build-all.mjs > "$DESKTOP_BUILD_LOG" 2>&1) || {
+  (cd "$REPO_ROOT/desktop" && PUBKEY="$PUBKEY_B64" PUBKEYS="$PUBKEYS_B64" PATH="${DESKTOP_NODE_BIN:+$DESKTOP_NODE_BIN:}$PATH" node build-all.mjs > "$DESKTOP_BUILD_LOG" 2>&1) || {
     echo "ERROR: desktop build failed; tail of log:" >&2
     tail -30 "$DESKTOP_BUILD_LOG" >&2
     exit 1
@@ -665,6 +685,36 @@ if [ "$DESKTOP_MODE" = "on" ] || [ "$IS_DESKTOP_ONLY" = "true" ]; then
   DESKTOP_ZIPS=("$MAC_ZIP" "$LEG_ZIP" "$WIN_ZIP")
   echo "    desktop builds verified ✓"
 
+  # --- Desktop update feed (desktop.json + .minisig) ---
+  # What the desktop apps check (desktop/updater.js). Its own file, not a block
+  # in manifest.json: point releases rebuild the manifest without desktop
+  # builds, while only a desktop release touches this one.
+  mkdir -p "$REPO_ROOT/out"
+  DESKTOP_FEED="$REPO_ROOT/out/desktop.json"
+  feed_build() { # <zip> → JSON object for builds{}
+    local zip="$1" name sha size
+    name="$(basename "$zip")"
+    sha="$(sha256sum "$zip" | awk '{print $1}')"
+    size="$(stat -f %z "$zip" 2>/dev/null || stat -c %s "$zip")"
+    jq -n --arg p "https://github.com/AlexeyInwerp/BoardRipper/releases/download/$VERSION/$name" \
+          --arg m "https://www.ripperdoc.de/boardripper/desktop/$name" \
+          --arg sha "$sha" --argjson size "$size" \
+      '{url_primary: $p, url_mirrors: [$m], sha256: $sha, size_bytes: $size}'
+  }
+  jq -n --arg version "$VERSION" \
+        --arg released_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --arg notes_url "https://www.ripperdoc.de/boardripper/changelog.html#$VERSION" \
+        --rawfile notes "$NOTES_FILE" \
+        --argjson mac "$(feed_build "$MAC_ZIP")" \
+        --argjson legacy "$(feed_build "$LEG_ZIP")" \
+        --argjson win "$(feed_build "$WIN_ZIP")" \
+    '{version: $version, released_at: $released_at, notes_url: $notes_url, notes: $notes,
+      builds: {"darwin-universal": $mac, "darwin-x64-legacy": $legacy, "win32-x64": $win}}' \
+    > "$DESKTOP_FEED"
+  echo ">>> Signing desktop update feed"
+  sign_and_verify "$DESKTOP_FEED"
+  echo "    desktop.json signed and verifies ✓"
+
   # --- Upload desktop zips to ripperdoc.de as a mirror ---
   # GitHub Releases is the primary host (visible in-app, indexed by gh CLI);
   # this is the failover for when github.com or its release-asset CDN is down.
@@ -683,6 +733,9 @@ if [ "$DESKTOP_MODE" = "on" ] || [ "$IS_DESKTOP_ONLY" = "true" ]; then
     cp "$MAC_ZIP" "$STAGE_D/boardripper/desktop/BoardRipper-macOS-universal-latest.zip.new"
     cp "$LEG_ZIP" "$STAGE_D/boardripper/desktop/BoardRipper-Legacy-macOS-x64-latest.zip.new"
     cp "$WIN_ZIP" "$STAGE_D/boardripper/desktop/BoardRipper-Windows-x64-latest.zip.new"
+    # The feed goes live last, after every zip it points at is in place.
+    cp "$DESKTOP_FEED"         "$STAGE_D/boardripper/desktop/desktop.json.new"
+    cp "$DESKTOP_FEED.minisig" "$STAGE_D/boardripper/desktop/desktop.json.minisig.new"
 
     ftp_reachable || exit 1
     lftp -u "$FTP_USER,$FTP_PASSWORD" "ftp.ripperdoc.de" <<LFTP_EOF
@@ -701,6 +754,10 @@ rm -f BoardRipper-Legacy-macOS-x64-latest.zip
 mv BoardRipper-Legacy-macOS-x64-latest.zip.new BoardRipper-Legacy-macOS-x64-latest.zip
 rm -f BoardRipper-Windows-x64-latest.zip
 mv BoardRipper-Windows-x64-latest.zip.new BoardRipper-Windows-x64-latest.zip
+rm -f desktop.json.minisig
+rm -f desktop.json
+mv desktop.json.minisig.new desktop.json.minisig
+mv desktop.json.new desktop.json
 bye
 LFTP_EOF
     echo "    desktop zips uploaded ✓"
@@ -770,7 +827,22 @@ else
     GH_ARGS+=(--latest)
   fi
   if [ ${#DESKTOP_ZIPS[@]} -gt 0 ]; then
-    GH_ARGS+=("${DESKTOP_ZIPS[@]}")
+    GH_ARGS+=("${DESKTOP_ZIPS[@]}" "$DESKTOP_FEED" "$DESKTOP_FEED.minisig")
+  else
+    # The desktop apps' fallback feed is releases/LATEST/download/desktop.json,
+    # and a point release becomes "latest" without desktop builds. Carry the
+    # live feed forward (it still points at the last desktop release's zips),
+    # after checking its signature, so that fallback never 404s.
+    CARRY_DIR="$(mktemp -d)"
+    if curl -sf -o "$CARRY_DIR/desktop.json" https://www.ripperdoc.de/boardripper/desktop/desktop.json \
+       && curl -sf -o "$CARRY_DIR/desktop.json.minisig" https://www.ripperdoc.de/boardripper/desktop/desktop.json.minisig \
+       && minisign -V -p "$MINISIGN_PUB" -m "$CARRY_DIR/desktop.json" >/dev/null 2>&1; then
+      echo "    carrying desktop.json ($(jq -r .version "$CARRY_DIR/desktop.json")) forward onto this release"
+      GH_ARGS+=("$CARRY_DIR/desktop.json" "$CARRY_DIR/desktop.json.minisig")
+    else
+      echo "WARN: no verifiable desktop.json at ripperdoc.de to carry forward; the desktop" >&2
+      echo "      apps' GitHub fallback feed will 404 until the next desktop release." >&2
+    fi
   fi
   # The update fallback source is this release's assets. Without these three
   # files the GitHub entry in SOURCES_CSV 404s and the fallback is decorative.

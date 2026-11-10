@@ -33,9 +33,37 @@ interface ElectronAPI {
   // MCP server sidecar toggle (see desktop/main.js)
   getMcpEnabled: () => Promise<boolean>;
   setMcpEnabled: (on: boolean) => Promise<boolean>;
+
+  // Self-update (see desktop/updater.js)
+  updates?: {
+    getState: () => Promise<DesktopUpdateStateShape>;
+    check: () => Promise<DesktopUpdateStateShape>;
+    skip: () => Promise<DesktopUpdateStateShape>;
+    install: () => Promise<DesktopUpdateStateShape>;
+    restart: () => Promise<boolean>;
+    openNotes: () => Promise<void>;
+    reveal: () => Promise<void>;
+    onState: (callback: (state: DesktopUpdateStateShape) => void) => () => void;
+  };
+}
+
+/** desktop/updater.js state, pushed over `update:state`. */
+interface DesktopUpdateStateShape {
+  current: string;
+  build: string;
+  enabled: boolean;
+  phase: 'idle' | 'checking' | 'available' | 'downloading' | 'staging' | 'ready' | 'manual' | 'error';
+  latest: { version: string; released_at: string | null; notes_url: string | null; notes: string } | null;
+  progress: { received: number; total: number } | null;
+  error: string | null;
+  manualPath: string | null;
+  manualReason: string | null;
+  checkedAt: number;
+  skipped: string | null;
 }
 
 declare global {
+  type DesktopUpdateState = DesktopUpdateStateShape;
   interface Window {
     electronAPI?: ElectronAPI;
   }

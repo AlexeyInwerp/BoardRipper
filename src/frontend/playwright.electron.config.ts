@@ -7,7 +7,7 @@ import { defineConfig } from '@playwright/test';
 // release. Skips itself when desktop/webapp has not been built.
 export default defineConfig({
   testDir: './tests',
-  testMatch: /electron-smoke\.spec\.ts/,
+  testMatch: /electron-(smoke|update)\.spec\.ts/,
   timeout: 120000,
   retries: 0,
   workers: 1,

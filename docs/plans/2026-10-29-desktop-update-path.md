@@ -1,5 +1,15 @@
 # Desktop app — update path (issue #42)
 
+**Status 2026-11-10: phases 0–2 built** (`desktop/updater.js`, `desktop/update-verify.js`,
+`components/DesktopUpdateBadge.tsx`, `scripts/release.sh`). Measured on this Mac with
+packaged bundles: download → verify → quit → swap → relaunch works, the swapped bundle
+carries no quarantine flag and launches without right-click ▸ Open. Two corrections to
+the plan below: `app.getVersion()` in a packaged app is **1.0.0** (it reads
+`desktop/package.json`), so the version travels in `build-info.json`; and Electron's
+BoringSSL has **no BLAKE2b-512**, so `update-verify.js` implements it. Not measured:
+Windows (the cmd helper), the legacy Electron 22 build, and whether TCC folder grants
+survive the swap.
+
 Issue: [#42](https://github.com/AlexeyInwerp/BoardRipper/issues/42) — "the update
 feature doesn't work, had to be downloaded manually each time and overwritten"
 (macOS). Three phases; the first two need no code signing and reuse the signing

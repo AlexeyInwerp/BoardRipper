@@ -132,9 +132,10 @@ test.describe('desktop app', () => {
     expect(errors).toEqual([]);
   });
 
-  test('no update UI in the desktop build, and 2-window mode toggles', async () => {
-    // The bundled backend carries no update ldflags, so the Docker self-update
-    // UI must not appear here.
+  test('no update badge without a trusted key, and 2-window mode toggles', async () => {
+    // The Docker self-update UI never appears on desktop, and the desktop
+    // updater's badge only with a signing key (build-info.json, absent in a
+    // dev run). electron-update.spec.ts covers the badge with one.
     await expect(page.getByTestId('update-badge')).toHaveCount(0);
 
     // 2-window mode is offered on desktop (it is hidden only in the single-file

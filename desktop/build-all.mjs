@@ -15,7 +15,8 @@
  *   node build-all.mjs --mac --win  # macOS + Windows
  */
 import { execSync } from 'child_process';
-import { cpSync, rmSync, mkdirSync, existsSync, readFileSync } from 'fs';
+import { cpSync, rmSync, mkdirSync, existsSync, readFileSync, writeFileSync } from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -151,6 +152,36 @@ if (buildWin) {
 console.log('\n=== Copying Board Database → desktop/bin/boards.db ===');
 cpSync(path.join(ROOT, 'Board Database', 'boards.db'), path.join(BIN_DIR, 'boards.db'));
 
+// ═══════════════════════════════════════════════════════════════
+// Update identity: build-info.json tells the app its release version
+// (app.getVersion() reads desktop/package.json, which says 1.0.0), which zip it came from
+// (macOS universal and legacy are both `darwin`) and which minisign keys
+// sign its update feed — the PUBKEY / PUBKEYS the Docker build gets from
+// release.sh, else the maintainer's release.pub. No key ⇒ the app never
+// checks for updates. BOARDRIPPER_UPDATE_FEEDS (comma-separated) replaces
+// the feed sources, for testing a packaged build against a local feed.
+// ═══════════════════════════════════════════════════════════════
+const BUILD_INFO = path.join(DESKTOP, 'build-info.json');
+function trustedKeys() {
+  const keys = [process.env.PUBKEY, ...(process.env.PUBKEYS || '').split(',')]
+    .map(k => (k || '').trim()).filter(Boolean);
+  if (keys.length) return keys;
+  const pub = path.join(os.homedir(), '.config', 'boardripper', 'release.pub');
+  if (existsSync(pub)) {
+    const line = readFileSync(pub, 'utf8').split(/\r?\n/).find(l => l.trim() && !l.startsWith('untrusted'));
+    if (line) return [line.trim()];
+  }
+  return [];
+}
+const PUB_KEYS = trustedKeys();
+const FEEDS = (process.env.BOARDRIPPER_UPDATE_FEEDS || '').split(',').map(s => s.trim()).filter(Boolean);
+if (PUB_KEYS.length === 0) {
+  console.warn('\n!!! No update signing key (PUBKEY env or ~/.config/boardripper/release.pub): these builds will never check for updates.\n');
+}
+function writeBuildInfo(build) {
+  writeFileSync(BUILD_INFO, JSON.stringify({ build, version: APP_VERSION, pubKeys: PUB_KEYS, ...(FEEDS.length ? { feeds: FEEDS } : {}) }, null, 2));
+}
+
 const packager = (await import('@electron/packager')).default;
 const results = [];
 
@@ -178,6 +209,7 @@ if (buildMac) {
     ignore: [...IGNORE_PATTERNS, /^\/bin\/win32($|\/)/],
   };
 
+  writeBuildInfo('darwin-universal');
   console.log('  --- arm64 ---');
   const [arm64Path] = await packager({ ...commonOpts, arch: 'arm64' });
   console.log('  --- x64 ---');
@@ -216,6 +248,7 @@ if (buildLegacy) {
   if (existsSync(OUT_DIR)) rmSync(OUT_DIR, { recursive: true });
 
   console.log(`\n=== Packaging macOS legacy (Electron ${LEGACY_ELECTRON_VERSION}, x64) ===`);
+  writeBuildInfo('darwin-x64-legacy');
 
   const [appPath] = await packager({
     dir: DESKTOP,
@@ -251,6 +284,7 @@ if (buildWin) {
   if (existsSync(OUT_DIR)) rmSync(OUT_DIR, { recursive: true });
 
   console.log('\n=== Packaging Windows (x64) ===');
+  writeBuildInfo('win32-x64');
 
   const [appPath] = await packager({
     dir: DESKTOP,
@@ -278,6 +312,8 @@ if (buildWin) {
 
   results.push({ target: 'Windows (x64)', path: zipPath, time: elapsed(t3) });
 }
+
+rmSync(BUILD_INFO, { force: true });
 
 // ═══════════════════════════════════════════════════════════════
 // Summary

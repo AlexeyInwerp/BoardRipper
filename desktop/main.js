@@ -1,6 +1,8 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, shell, net } = require('electron');
 const path = require('path');
+const os = require('os');
 const { registerWorklistIpc } = require('./worklist-files');
+const { createUpdater, DEFAULT_FEEDS } = require('./updater');
 const fs = require('fs');
 const {
   pickFreePort,
@@ -272,6 +274,7 @@ function createWindow() {
   });
 
   boot();
+  scheduleUpdateChecks();
 
   // Build a platform-aware native menu
   const isMac = process.platform === 'darwin';
@@ -280,6 +283,7 @@ function createWindow() {
       label: app.name,
       submenu: [
         { role: 'about' },
+        { label: 'Check for Updates…', click: () => checkForUpdatesFromMenu() },
         { type: 'separator' },
         { role: 'hide' },
         { role: 'hideOthers' },
@@ -335,6 +339,12 @@ function createWindow() {
         { role: 'front' },
       ],
     },
+    ...(isMac ? [] : [{
+      label: 'Help',
+      submenu: [
+        { label: 'Check for Updates…', click: () => checkForUpdatesFromMenu() },
+      ],
+    }]),
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
@@ -634,6 +644,189 @@ ipcMain.handle('read-library-file', async (_event, relativePath) => {
       buffer.byteOffset + buffer.byteLength,
     ),
   };
+});
+
+// ── Self-update (updater.js; plan docs/plans/2026-10-29-desktop-update-path.md) ──
+//
+// build-info.json is written by build-all.mjs: which zip this app came from
+// and the minisign keys it trusts. A packaged app takes no override; a dev
+// run (`electron .`) reads BOARDRIPPER_UPDATE_* from the environment, which
+// is what tests/electron-update.spec.ts uses.
+function readBuildInfo() {
+  try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'build-info.json'), 'utf8')); }
+  catch { return {}; }
+}
+const buildInfo = readBuildInfo();
+const devEnv = app.isPackaged ? {} : process.env;
+const splitList = (v) => String(v).split(',').map(x => x.trim()).filter(Boolean);
+// app.getVersion() reads desktop/package.json (1.0.0, never bumped), so the
+// release version comes from build-info.json.
+const UPDATE_VERSION = devEnv.BOARDRIPPER_APP_VERSION || buildInfo.version || app.getVersion();
+
+/** GET over Electron's net stack (system proxy, follows redirects). The body
+ *  is capped at maxBytes; with `file` it streams there instead of memory. */
+function netRequest(url, { maxBytes, timeoutMs, file, onProgress }) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const finish = (err, value) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (err) { try { req.abort(); } catch {} reject(err); } else resolve(value);
+    };
+    const req = net.request({ url, redirect: 'follow' });
+    req.setHeader('User-Agent', `BoardRipper-Desktop/${UPDATE_VERSION}`);
+    req.setHeader('Cache-Control', 'no-cache');
+    const timer = setTimeout(() => finish(new Error('timed out')), timeoutMs);
+    req.on('response', (res) => {
+      if (res.statusCode !== 200) return finish(new Error(`HTTP ${res.statusCode}`));
+      const out = file ? fs.createWriteStream(file) : null;
+      const chunks = [];
+      let received = 0;
+      let lastProgress = 0;
+      res.on('data', (chunk) => {
+        if (done) return;
+        received += chunk.length;
+        if (received > maxBytes) { out?.destroy(); return finish(new Error(`larger than ${maxBytes} bytes`)); }
+        if (out) out.write(chunk); else chunks.push(chunk);
+        const now = Date.now();
+        if (onProgress && now - lastProgress > 200) { lastProgress = now; onProgress(received); }
+      });
+      res.on('end', () => {
+        if (done) return;
+        if (!out) return finish(null, Buffer.concat(chunks));
+        out.end(() => { onProgress?.(received); finish(null); });
+      });
+      res.on('error', (err) => { out?.destroy(); finish(err); });
+    });
+    req.on('error', (err) => finish(err));
+    req.end();
+  });
+}
+
+const updater = createUpdater({
+  currentVersion: UPDATE_VERSION,
+  build: devEnv.BOARDRIPPER_UPDATE_BUILD || buildInfo.build
+    || (process.platform === 'win32' ? 'win32-x64' : process.platform === 'darwin' ? 'darwin-universal' : `${process.platform}-${process.arch}`),
+  pubKeys: devEnv.BOARDRIPPER_UPDATE_PUBKEY ? splitList(devEnv.BOARDRIPPER_UPDATE_PUBKEY) : (buildInfo.pubKeys || []),
+  feeds: devEnv.BOARDRIPPER_UPDATE_FEEDS ? splitList(devEnv.BOARDRIPPER_UPDATE_FEEDS)
+    : (buildInfo.feeds && buildInfo.feeds.length ? buildInfo.feeds : DEFAULT_FEEDS),
+  request: netRequest,
+  loadSettings,
+  saveSettings,
+  log,
+  userData: app.getPath('userData'),
+  logDir: LOG_DIR,
+  tmpDir: os.tmpdir(),
+  execPath: process.execPath,
+  platform: process.platform,
+  isPackaged: app.isPackaged,
+  pid: process.pid,
+  revealFile: (p) => { if (!devEnv.BOARDRIPPER_UPDATE_NO_REVEAL) shell.showItemInFolder(p); },
+  onState: (state) => {
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send('update:state', state);
+    }
+  },
+});
+if (!updater.getState().enabled) log('INFO', 'Update checks off: this build trusts no signing key');
+updater.cleanupOnLaunch();
+
+const UPDATE_FIRST_CHECK_MS = 10_000;
+const UPDATE_INTERVAL_MS = 6 * 60 * 60_000;
+const UPDATE_FOCUS_STALE_MS = 60 * 60_000;
+let relaunchAfterQuit = false;
+let updateChecksScheduled = false;
+
+function scheduleUpdateChecks() {
+  if (updateChecksScheduled || !updater.getState().enabled) return;
+  updateChecksScheduled = true;
+  setTimeout(() => updater.check(), UPDATE_FIRST_CHECK_MS);
+  setInterval(() => updater.check(), UPDATE_INTERVAL_MS).unref?.();
+  mainWindow.on('focus', () => {
+    if (Date.now() - updater.getState().checkedAt > UPDATE_FOCUS_STALE_MS) updater.check();
+  });
+}
+
+function restartToUpdate() {
+  relaunchAfterQuit = true;
+  app.quit();
+}
+
+async function offerRestart() {
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'info',
+    message: 'The update is ready',
+    detail: 'BoardRipper installs it when it quits. Restart now?',
+    buttons: ['Restart Now', 'Later'],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  if (response === 0) restartToUpdate();
+}
+
+/** The menu item: a check the user asked for, answered in a dialog. */
+async function checkForUpdatesFromMenu() {
+  if (!updater.getState().enabled) {
+    await dialog.showMessageBox(mainWindow, { type: 'info', message: 'Updates are not available in this build', detail: 'It was built without a trusted signing key.' });
+    return;
+  }
+  let st = updater.getState();
+  if (st.phase === 'ready') return offerRestart();
+  if (st.phase === 'downloading' || st.phase === 'staging') {
+    await dialog.showMessageBox(mainWindow, { type: 'info', message: 'An update is downloading', detail: 'Its progress shows on the version badge in the toolbar.' });
+    return;
+  }
+  st = await updater.check({ manual: true });
+  if (st.phase === 'error') {
+    await dialog.showMessageBox(mainWindow, { type: 'warning', message: 'Could not check for updates', detail: st.error || '' });
+    return;
+  }
+  if (st.phase !== 'available') {
+    await dialog.showMessageBox(mainWindow, { type: 'info', message: 'BoardRipper is up to date', detail: `You are running ${st.current}.` });
+    return;
+  }
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'info',
+    message: `BoardRipper ${st.latest.version} is available`,
+    detail: `You are running ${st.current}.`,
+    buttons: ['Download and Install', 'Release Notes', 'Later'],
+    defaultId: 0,
+    cancelId: 2,
+  });
+  if (response === 1) openNotes();
+  if (response !== 0) return;
+  st = await updater.install();
+  if (st.phase === 'ready') return offerRestart();
+  if (st.phase === 'error') {
+    await dialog.showMessageBox(mainWindow, { type: 'warning', message: 'The update failed', detail: st.error || '' });
+  } else if (st.phase === 'manual') {
+    await dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      message: 'The update was downloaded',
+      detail: `It cannot be installed automatically because ${st.manualReason}. The verified zip is shown in ${process.platform === 'darwin' ? 'Finder' : 'Explorer'}.`,
+    });
+  }
+}
+
+function openNotes() {
+  const url = updater.getState().latest?.notes_url;
+  if (typeof url === 'string' && /^https:\/\//.test(url)) shell.openExternal(url);
+}
+
+ipcMain.handle('update:get-state', () => updater.getState());
+ipcMain.handle('update:check', () => updater.check({ manual: true }));
+ipcMain.handle('update:skip', () => { updater.skip(); return updater.getState(); });
+ipcMain.handle('update:install', () => updater.install());
+ipcMain.handle('update:restart', () => { if (updater.hasStaged()) restartToUpdate(); return false; });
+ipcMain.handle('update:open-notes', () => openNotes());
+ipcMain.handle('update:reveal', () => {
+  const p = updater.getState().manualPath;
+  if (p && fs.existsSync(p)) shell.showItemInFolder(p);
+});
+
+app.on('will-quit', () => {
+  updater.applyOnQuit({ relaunch: relaunchAfterQuit });
 });
 
 app.whenReady().then(() => {

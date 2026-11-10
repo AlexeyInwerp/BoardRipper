@@ -11,6 +11,7 @@ import { fileInputRefs } from '../store/file-inputs';
 import { openLibraryFileById, openPdfFiles } from '../store/file-actions';
 import { updateStore, fmtVersion } from '../store/update-store';
 import { ReleaseNotes } from './ReleaseNotes';
+import { DesktopUpdateBadge } from './DesktopUpdateBadge';
 import { pdfStore } from '../store/pdf-store';
 import { databankStore, isElectron, type DatabankFile } from '../store/databank-store';
 import { log } from '../store/log-store';
@@ -709,6 +710,7 @@ export function Toolbar() {
 
       <InfoBadge />
       {!isElectron() && !isLiteBuild() && <UpdateBadge update={update} />}
+      {isElectron() && <DesktopUpdateBadge />}
       {isLiteBuild() && !isOfflineBuild() && <DownloadOfflineButton />}
     </div>
   );

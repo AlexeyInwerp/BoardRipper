@@ -10294,3 +10294,17 @@ button.wl-tag:hover { color: var(--text-primary); }
 .wlnav-load, .wlnav-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 11.5px; color: var(--text-secondary); }
 .wlnav-load .wl-hl { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wlnav-rows { border-top: 1px solid var(--border); margin-top: 2px; }
+
+/* Desktop update download meter (DesktopUpdateBadge) */
+.update-dropdown-meter {
+  height: 4px;
+  margin: 6px 0 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+.update-dropdown-meter > div {
+  height: 100%;
+  background: #2d7d46;
+  transition: width 0.2s linear;
+}
