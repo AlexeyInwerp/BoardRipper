@@ -1,5 +1,6 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, shell } = require('electron');
 const path = require('path');
+const { registerWorklistIpc } = require('./worklist-files');
 const fs = require('fs');
 const {
   pickFreePort,
@@ -520,6 +521,12 @@ ipcMain.handle('show-item-in-folder', (_event, relativePath) => {
 
 // Return process.platform — used by the renderer for label formatting.
 ipcMain.handle('platform', () => process.platform);
+
+// Worklists: <userData>/worklists/<id>.json — the same directory and format
+// the backend sidecar serves (its DATA_DIR is userData), so worklists are the
+// same with MCP on or off. The renderer only calls these when no backend
+// answers. See worklist-files.js.
+registerWorklistIpc(ipcMain, path.join(app.getPath('userData'), 'worklists'));
 
 // MCP server sidecar toggle. Persisted in settings.json; gates whether the Go
 // backend child process is spawned. Enabling spawns + health-checks + reloads

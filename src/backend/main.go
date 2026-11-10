@@ -26,6 +26,7 @@ import (
 	"boardripper/obd"
 	"boardripper/pdfindex"
 	"boardripper/updater"
+	"boardripper/worklists"
 )
 
 // configureMemoryLimit sets Go's soft memory limit (GOMEMLIMIT) from the
@@ -210,6 +211,20 @@ func main() {
 	ready := func() bool { return true }
 	healthHandler := handlers.NewHealthHandler(ready)
 	mux.HandleFunc("GET /api/health", healthHandler.Serve)
+
+	// Worklists: one JSON document per worklist under <dataDir>/worklists/
+	// (docs/specs/2026-11-10-worklist-storage-redesign.md). Shared by every
+	// browser on this install; the desktop app's Electron main writes the
+	// same directory when no backend runs.
+	wlStore, err := worklists.Open(filepath.Join(dataDir, "worklists"))
+	if err != nil {
+		log.Fatalf("worklists: %v", err)
+	}
+	wlHandler := &worklists.Handler{Store: wlStore}
+	mux.HandleFunc("GET /api/worklists", read(wlHandler.List))
+	mux.HandleFunc("GET /api/worklists/{id}", read(wlHandler.Get))
+	mux.HandleFunc("PUT /api/worklists/{id}", write(wlHandler.Put))
+	mux.HandleFunc("DELETE /api/worklists/{id}", write(wlHandler.Delete))
 
 	// File API routes (existing)
 	fileHandler := handlers.NewFileHandler(dataDir, scanner.ScanRoot, scanner.ExtractMetadata, scanner.IndexFile)

@@ -45,4 +45,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // failed to become healthy).
   getMcpEnabled: () => ipcRenderer.invoke('get-mcp-enabled'),
   setMcpEnabled: (on) => ipcRenderer.invoke('set-mcp-enabled', on),
+
+  // Worklist documents in <userData>/worklists/ (worklist-files.js). Used by
+  // the renderer only while no backend answers.
+  worklists: {
+    list: (since) => ipcRenderer.invoke('worklist:list', since),
+    get: (id) => ipcRenderer.invoke('worklist:get', id),
+    put: (doc) => ipcRenderer.invoke('worklist:put', doc),
+    delete: (id, rev) => ipcRenderer.invoke('worklist:delete', id, rev),
+  },
 });
