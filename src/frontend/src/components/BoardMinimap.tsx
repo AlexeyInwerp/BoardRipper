@@ -41,6 +41,8 @@ const MAX_H = 150;
 const ACTIVE_HOLD_MS = 700;
 /** The header strip above the map: history ‹ › and the History tab. */
 const HEAD_H = 20;
+/** Movement before a press on the header becomes a drag of the map. */
+const HEAD_DRAG_SLOP_PX = 4;
 /** Narrowest the map gets, so the header's buttons always fit; a tall
  *  board (or one turned 90°) is centred in the extra width. */
 const MIN_W = 180;
@@ -576,6 +578,58 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
     window.addEventListener('keydown', key, true);
   }, []);
 
+  // Drag the header to move the map: a press that travels past the slop is
+  // a drag (even one that began on a header button — its click is then
+  // swallowed), a press that stays put is a click. Puts the map down as
+  // Float where it is let go.
+  const onHeadPointerDown = useCallback((e: React.PointerEvent) => {
+    e.stopPropagation();                       // never the map's own drag
+    if (e.button !== 0) return;
+    const el = rootRef.current;
+    const panel = el?.offsetParent as HTMLElement | null;
+    if (!el || !panel) return;
+    const sx = e.clientX, sy = e.clientY, id = e.pointerId;
+    let dragging = false;
+    let at = { x: 0, y: 0 };
+    let geo: { originX: number; originY: number; z: number; grabX: number; grabY: number; w: number; h: number } | null = null;
+    const move = (ev: PointerEvent) => {
+      if (ev.pointerId !== id) return;
+      if (!dragging) {
+        if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < HEAD_DRAG_SLOP_PX) return;
+        dragging = true;
+        const z = uiZoom();
+        const pr = panel.getBoundingClientRect(), er = el.getBoundingClientRect();
+        // Origin from the panel, never the map's rect (it may be mid-slide).
+        geo = {
+          originX: pr.left + panel.clientLeft * z, originY: pr.top + panel.clientTop * z, z,
+          grabX: (sx - er.left) / z, grabY: (sy - er.top) / z, w: el.offsetWidth, h: el.offsetHeight,
+        };
+      }
+      const g = geo!;
+      at = {
+        x: Math.min(Math.max(0, (ev.clientX - g.originX) / g.z - g.grabX), Math.max(0, panel.clientWidth - g.w)),
+        y: Math.min(Math.max(0, (ev.clientY - g.originY) / g.z - g.grabY), Math.max(0, panel.clientHeight - g.h)),
+      };
+      setPlacing(at);
+    };
+    const swallow = (ev: Event) => { ev.stopPropagation(); ev.preventDefault(); };
+    const up = (ev: PointerEvent) => {
+      if (ev.pointerId !== id) return;
+      window.removeEventListener('pointermove', move, true);
+      window.removeEventListener('pointerup', up, true);
+      window.removeEventListener('pointercancel', up, true);
+      if (!dragging) return;
+      if (ev.type === 'pointerup') renderSettingsStore.setMinimapPosition('floating', at);
+      setPlacing(null);
+      // The release would otherwise click the button the drag began on.
+      window.addEventListener('click', swallow, { capture: true, once: true });
+      setTimeout(() => window.removeEventListener('click', swallow, true), 0);
+    };
+    window.addEventListener('pointermove', move, true);
+    window.addEventListener('pointerup', up, true);
+    window.addEventListener('pointercancel', up, true);
+  }, []);
+
   if (mode === 'off' || !renderer) return null;
 
   const at = placing ?? (position === 'floating' ? { x: settings.minimapFloatX, y: settings.minimapFloatY } : null);
@@ -621,7 +675,7 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
       onLostPointerCapture={() => { dragging.current = false; markActive(); }}
     >
       <div className="minimap-head" data-testid="minimap-head" data-nav={nav}
-        onPointerDown={e => e.stopPropagation()}>
+        title="Drag to move the map" onPointerDown={onHeadPointerDown}>
         <button type="button" data-testid="minimap-history-back" aria-label={nav === 'worklist' ? 'Previous row' : 'Back'}
           title={nav === 'worklist' ? 'Previous worklist row' : 'Back · history of all boards and PDFs'}
           disabled={nav === 'worklist' ? !wlPrev : !history.canBack}

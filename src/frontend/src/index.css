@@ -9751,6 +9751,8 @@ body {
   border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   background: var(--chip-bg);
 }
+.minimap-head { cursor: grab; }
+.board-minimap.placing .minimap-head { cursor: grabbing; }
 .minimap-head-fill { flex: 1; }
 .minimap-head-pos { font-size: 10.5px; color: var(--text-secondary); padding: 0 3px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .minimap-head-seg { display: inline-flex; gap: 0; border: 1px solid color-mix(in srgb, var(--border) 80%, transparent); border-radius: 5px; margin-right: 2px; }

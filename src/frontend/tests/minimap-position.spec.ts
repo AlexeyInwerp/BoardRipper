@@ -115,6 +115,42 @@ test.describe('minimap placement', () => {
     expect(await page.getByTestId('minimap-head').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
   });
 
+  test('dragging the header moves the map; a drag from a button does not press it; a still click does not move it', async ({ page }) => {
+    const map = await openBoardWithMap(page);
+    await page.waitForTimeout(400);
+    const head = page.getByTestId('minimap-head');
+    const fill = (await head.locator('.minimap-head-fill').boundingBox())!;
+    const b0 = (await map.boundingBox())!;
+
+    // A still click on the header leaves it where it is.
+    await page.mouse.click(fill.x + fill.width / 2, fill.y + fill.height / 2);
+    await page.waitForTimeout(200);
+    expect((await map.boundingBox())!.x).toBeCloseTo(b0.x, 0);
+    await expect(map).toHaveAttribute('data-position', 'center');
+
+    // A drag moves it by the pointer's travel and puts it down as Float.
+    const x = fill.x + fill.width / 2, y = fill.y + fill.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x - 120, y + 140, { steps: 8 });
+    await page.mouse.up();
+    await expect(map).toHaveAttribute('data-position', 'floating');
+    await expect.poll(async () => { const b = (await map.boundingBox())!; return Math.abs(b.x - (b0.x - 120)) + Math.abs(b.y - (b0.y + 140)); }).toBeLessThan(3);
+
+    // A drag that starts on Back moves the map and does not step back.
+    for (const i of [0, 10]) { await page.evaluate(n => (window as any).__boardStore.selectPart(n), i); await page.waitForTimeout(150); }
+    const sel = () => page.evaluate(() => (window as any).__boardStore.selection.partIndex);
+    const back = (await page.getByTestId('minimap-history-back').boundingBox())!;
+    const b1 = (await map.boundingBox())!;
+    await page.mouse.move(back.x + back.width / 2, back.y + back.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(back.x + 80, back.y - 60, { steps: 6 });
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+    expect(await sel()).toBe(10);
+    expect(Math.abs((await map.boundingBox())!.x - b1.x)).toBeGreaterThan(40);
+  });
+
   test('float follows the pointer, a click puts it down, and the place survives a reload', async ({ page }) => {
     const map = await openBoardWithMap(page);
     const panel = (await page.locator('.board-panel-root').first().boundingBox())!;
