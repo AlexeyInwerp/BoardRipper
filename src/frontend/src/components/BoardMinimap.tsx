@@ -22,6 +22,7 @@ import { renderSettingsStore, minimapMode, type MinimapMode, type MinimapPositio
 import { useRenderSettings } from '../hooks/useRenderSettings';
 import { uiZoom } from '../store/ui-zoom';
 import { QuickMenu } from './QuickMenu';
+import { isTouchPrimary } from '../device-profile';
 import { IconChevronLeft, IconChevronRight, IconHistory, IconChecklist, IconExternalLink } from '@tabler/icons-react';
 import { worklistStore, MARK_COLOR_CSS, type Worklist } from '../store/worklist-store';
 import { useWorklist } from '../hooks/useWorklist';
@@ -32,7 +33,7 @@ import { showSidebarTab } from './Sidebar.utils';
 import { navHistoryStore } from '../store/nav-history-store';
 import { historyBack, historyForward } from '../store/nav-history-actions';
 import { useNavHistory } from '../hooks/useNavHistory';
-import { minimapTrail, MINIMAP_TRAIL_LIMIT } from '../store/minimap-trail';
+import { minimapTrail, MINIMAP_TRAIL_LIMIT, type TrailItem } from '../store/minimap-trail';
 import type { BoardData } from '../parsers/types';
 
 /** The map's box at Size 100 %; `minimapScale` multiplies it. */
@@ -40,12 +41,16 @@ const MAX_W = 220;
 const MAX_H = 150;
 const ACTIVE_HOLD_MS = 700;
 /** The header strip above the map: history ‹ › and the History tab. */
-const HEAD_H = 20;
+/** Touch screens get finger-sized header buttons (the app-wide rule:
+ *  coarse pointer, or iPadOS with a keyboard attached). */
+const TOUCH = isTouchPrimary();
+const HEAD_H = TOUCH ? 34 : 20;
+const ICON = TOUCH ? 18 : 13;
 /** Movement before a press on the header becomes a drag of the map. */
 const HEAD_DRAG_SLOP_PX = 4;
 /** Narrowest the map gets, so the header's buttons always fit; a tall
  *  board (or one turned 90°) is centred in the extra width. */
-const MIN_W = 180;
+const MIN_W = TOUCH ? 250 : 180;
 /** The frame's 1px border on each side (box-sizing is border-box). */
 const FRAME = 2;
 
@@ -275,40 +280,59 @@ function paintTrail(ctx: CanvasRenderingContext2D, model: Model, tabId: number |
   const trail = minimapTrail(navHistoryStore.entries, navHistoryStore.cursor, tabId, { limit: steps });
   // For tests and the curious: how many visits the map marks.
   setData(mapRoot(ctx.canvas), 'trail', String(trail.length));
+  setData(mapRoot(ctx.canvas), 'trailCurrent', trail.find(t => t.current)?.part ?? '');
   if (trail.length === 0) return;
   const { board } = model;
   const idx = partIndexByName(board);
   const primaryBottom = board.primarySide === 'bottom';
-  const n = trail.length;
-  const centres: Array<{ x: number; y: number; rank: number }> = [];
-  // Oldest first, so the newest is drawn on top.
-  for (let i = trail.length - 1; i >= 0; i--) {
-    const it = trail[i];
-    const pi = it.part ? idx.get(it.part.toUpperCase()) : undefined;
+  const behind = trail.filter(t => !t.ahead);
+  const ahead = trail.filter(t => t.ahead);
+  const n = behind.length;
+  const place = (it: TrailItem, col: string, outline: string, hollow: boolean) => {
+    const pi = idx.get(it.part.toUpperCase());
     const part = pi === undefined ? null : board.parts[pi];
-    if (!part || part.hidden) continue;
-    const col = trailColor(pc.hot, it.rank, n);
+    if (!part || part.hidden) return null;
     for (const r of model.roots) {
       const how = partOnRoot(part, r, primaryBottom, pc);
       if (!how) continue;
-      const c = markPart(ctx, part, r.m, k, ox, oy, pc, col, col, how, it.current);
-      centres.push({ ...c, rank: it.rank });
-      break;
+      return markPart(ctx, part, r.m, k, ox, oy, pc, col, outline, hollow ? 'hollow' : how, it.current);
     }
-  }
-  // A faint line through the parts, oldest to newest: the order of the work.
-  // Kept well below the boxes — it is a hint of sequence, not a mark.
-  if (centres.length > 1) {
+    return null;
+  };
+  const line = (pts: Array<{ x: number; y: number; col: string }>, dash: number[]) => {
+    if (pts.length < 2) return;
     ctx.setTransform(pc.dpr, 0, 0, pc.dpr, 0, 0);
     ctx.lineWidth = 0.75;
-    for (let i = 1; i < centres.length; i++) {
-      ctx.strokeStyle = trailColor(pc.hot, centres[i].rank, n, 0.32);
+    ctx.setLineDash(dash);
+    for (let i = 1; i < pts.length; i++) {
+      ctx.strokeStyle = pts[i].col;
       ctx.beginPath();
-      ctx.moveTo(centres[i - 1].x, centres[i - 1].y);
-      ctx.lineTo(centres[i].x, centres[i].y);
+      ctx.moveTo(pts[i - 1].x, pts[i - 1].y);
+      ctx.lineTo(pts[i].x, pts[i].y);
       ctx.stroke();
     }
+    ctx.setLineDash([]);
+  };
+  // Behind the cursor, oldest first so the cursor's place is drawn on top.
+  const back: Array<{ x: number; y: number; col: string }> = [];
+  for (let i = behind.length - 1; i >= 0; i--) {
+    const it = behind[i];
+    const col = trailColor(pc.hot, it.rank, n);
+    const c = place(it, col, col, false);
+    if (c) back.push({ ...c, col: trailColor(pc.hot, it.rank, n, 0.32) });
   }
+  // Ahead — where Forward goes: hollow, nearest strongest, so the way back
+  // to the newest visit stays visible after a few Backs.
+  const fwd: Array<{ x: number; y: number; col: string }> = back.length ? [back[back.length - 1]] : [];
+  for (const it of ahead) {
+    const t = ahead.length <= 1 ? 0 : (it.rank - 1) / (ahead.length - 1);
+    const col = `rgba(${pc.hot.join(',')},${(0.9 - 0.45 * t).toFixed(3)})`;
+    const c = place(it, col, col, true);
+    if (c) fwd.push({ ...c, col: `rgba(${pc.hot.join(',')},0.25)` });
+  }
+  // Faint lines: the order of the work behind, dashed for the way forward.
+  line(back, []);
+  line(fwd, [2, 2]);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
@@ -648,7 +672,7 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
     <>
     <div
       ref={rootRef}
-      className={`board-minimap pos-${at ? 'floating' : position}${visible ? ' visible' : ''}${placing ? ' placing' : ''}${settings.minimapOpaqueWhileActive === false ? ' keep-opacity' : ''}`}
+      className={`board-minimap${TOUCH ? ' touch' : ''} pos-${at ? 'floating' : position}${visible ? ' visible' : ''}${placing ? ' placing' : ''}${settings.minimapOpaqueWhileActive === false ? ' keep-opacity' : ''}`}
       data-testid="board-minimap"
       data-visible={visible ? 'true' : 'false'}
       data-position={position}
@@ -680,13 +704,13 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
           title={nav === 'worklist' ? 'Previous worklist row' : 'Back · history of all boards and PDFs'}
           disabled={nav === 'worklist' ? !wlPrev : !history.canBack}
           onClick={() => nav === 'worklist' ? goWl(wlPrev) : historyBack()}>
-          <IconChevronLeft size={13} stroke={2.2} />
+          <IconChevronLeft size={ICON} stroke={2.2} />
         </button>
         <button type="button" data-testid="minimap-history-forward" aria-label={nav === 'worklist' ? 'Next row' : 'Forward'}
           title={nav === 'worklist' ? (wlAt < 0 ? 'Start at the first worklist row' : 'Next worklist row') : 'Forward · history of all boards and PDFs'}
           disabled={nav === 'worklist' ? !wlNext : !history.canForward}
           onClick={() => nav === 'worklist' ? goWl(wlNext) : historyForward()}>
-          <IconChevronRight size={13} stroke={2.2} />
+          <IconChevronRight size={ICON} stroke={2.2} />
         </button>
         {nav === 'worklist' && (
           <span className="minimap-head-pos" data-testid="minimap-wl-pos" translate="no">
@@ -698,18 +722,18 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
           <button type="button" data-testid="minimap-nav-history" aria-pressed={nav === 'history'}
             className={nav === 'history' ? 'on' : ''} title="History: back / forward and recent visits"
             onClick={() => renderSettingsStore.setMinimapNav('history')}>
-            <IconHistory size={13} stroke={2} />
+            <IconHistory size={ICON} stroke={2} />
           </button>
           <button type="button" data-testid="minimap-nav-worklist" aria-pressed={nav === 'worklist'}
             className={nav === 'worklist' ? 'on' : ''} title={wl ? `Worklist: step through “${wl.name}”` : 'Worklist: none loaded on this board'}
             onClick={() => renderSettingsStore.setMinimapNav('worklist')}>
-            <IconChecklist size={13} stroke={2} />
+            <IconChecklist size={ICON} stroke={2} />
           </button>
         </span>
         <button type="button" data-testid="minimap-open-tab" aria-label={nav === 'worklist' ? 'Open the Worklist tab' : 'Open the History tab'}
           title={nav === 'worklist' ? 'Open the Worklist tab' : 'Open the History tab'}
           onClick={() => nav === 'worklist' ? openBoardSidebarTab('worklist', tabId ?? undefined) : showSidebarTab('history')}>
-          <IconExternalLink size={12} stroke={2} />
+          <IconExternalLink size={ICON - 1} stroke={2} />
         </button>
       </div>
       <div className="minimap-body" style={{ width: size.w, height: size.h }}>

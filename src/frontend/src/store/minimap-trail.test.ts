@@ -18,6 +18,16 @@ describe('minimapTrail', () => {
     expect(t.map(x => x.rank)).toEqual([0, 1, 2]);
     expect(minimapTrail(list, 4, 1, { since: 0, limit: 2 }).map(x => x.part)).toEqual(['Q3', 'U1']);
   });
+  it('follows the cursor: after Back the cursor place is rank 0, Forward places are ahead', () => {
+    const list = [e({ part: 'A1' }), e({ part: 'B2' }), e({ part: 'C3' }), e({ part: 'D4' }), e({ part: 'E5' })];
+    // Back twice: the cursor is on C3.
+    const t = minimapTrail(list, 2, 1, { since: 0, limit: 2 });
+    expect(t.filter(x => !x.ahead).map(x => [x.part, x.rank])).toEqual([['C3', 0], ['B2', 1]]);
+    expect(t.find(x => x.current)?.part).toBe('C3');
+    expect(t.filter(x => x.ahead).map(x => [x.part, x.rank])).toEqual([['D4', 1], ['E5', 2]]);
+    // Far back, past the old window: the trail still sits on the cursor.
+    expect(minimapTrail(list, 0, 1, { since: 0, limit: 2 }).filter(x => !x.ahead).map(x => x.part)).toEqual(['A1']);
+  });
   it('skips entries from before the session and other places', () => {
     const list = [e({ part: 'U1', at: 5 }), { ...e({}), place: { kind: 'pdf', fileName: 'x.pdf', page: 1 } } as NavEntry, e({ part: 'C2', at: 200 })];
     expect(minimapTrail(list, 2, 1, { since: 100 }).map(x => x.part)).toEqual(['C2']);

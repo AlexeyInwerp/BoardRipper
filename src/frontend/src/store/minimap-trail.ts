@@ -23,31 +23,59 @@ export const SESSION_START = Date.now();
 
 export interface TrailItem {
   id: number;
+  /** Steps from where the history cursor stands: 0 is the cursor's own
+   *  place, 1 the one before it (or after it, for `ahead`), and so on. */
   rank: number;
   part: string;
   /** The entry under the history cursor (where Back/Forward left you). */
   current: boolean;
+  /** A place Forward would go to — after the cursor in the timeline. */
+  ahead: boolean;
 }
 
+/**
+ * The trail follows the history cursor, not the newest entry: after a few
+ * Backs the strongest mark is where Back took you, older places fade from
+ * there, and the places Forward would return to are listed as `ahead`.
+ * At the end of the history (no Back taken) that is simply the newest N.
+ */
 export function minimapTrail(
   entries: readonly NavEntry[], cursor: number, tabId: number | null,
   opts: { since?: number; limit?: number } = {},
 ): TrailItem[] {
-  if (tabId === null) return [];
+  if (tabId === null || entries.length === 0) return [];
   const since = opts.since ?? SESSION_START;
   const limit = opts.limit ?? MINIMAP_TRAIL_LIMIT;
+  const anchor = cursor >= 0 && cursor < entries.length ? cursor : entries.length - 1;
   const out: TrailItem[] = [];
   const seen = new Map<string, TrailItem>();
-  for (let i = entries.length - 1; i >= 0 && out.length < limit; i--) {
-    const e = entries[i];
+  const partOf = (e: NavEntry): string | null => {
     const p = e.place;
+    return p && p.kind === 'board' && p.tabId === tabId && p.part ? p.part : null;
+  };
+  // Behind: the cursor and before it.
+  let behind = 0;
+  for (let i = anchor; i >= 0 && behind < limit; i--) {
+    const e = entries[i];
     // Entries are in time order: everything before this one is older still.
     if (e.at < since) break;
-    if (!p || p.kind !== 'board' || p.tabId !== tabId || !p.part) continue;
-    const key = p.part.toUpperCase();
+    const part = partOf(e);
+    if (!part) continue;
+    const key = part.toUpperCase();
     const had = seen.get(key);
     if (had) { if (i === cursor) had.current = true; continue; }
-    const item: TrailItem = { id: e.id, rank: out.length, part: p.part, current: i === cursor };
+    const item: TrailItem = { id: e.id, rank: behind++, part, current: i === cursor, ahead: false };
+    seen.set(key, item);
+    out.push(item);
+  }
+  // Ahead: where Forward goes, nearest first.
+  let fwd = 0;
+  for (let i = anchor + 1; i < entries.length && fwd < limit; i++) {
+    const part = partOf(entries[i]);
+    if (!part) continue;
+    const key = part.toUpperCase();
+    if (seen.has(key)) continue;
+    const item: TrailItem = { id: entries[i].id, rank: ++fwd, part, current: false, ahead: true };
     seen.set(key, item);
     out.push(item);
   }

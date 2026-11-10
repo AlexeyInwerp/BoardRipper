@@ -135,3 +135,38 @@ test('switches to the loaded worklist: marks its parts and steps through its row
   await page.getByTestId('minimap-nav-history').click();
   await expect(map).toHaveAttribute('data-wl-marks', '0');
 });
+
+test('the trail follows Back past the shown steps, and shows the way Forward', async ({ page }) => {
+  const map = await open(page);
+  await map.click({ button: 'right' });
+  await page.getByTestId('minimap-history-steps').fill('2');
+  await page.keyboard.press('Escape');
+  const picks = [0, 6, 12, 18, 24];
+  for (const i of picks) { await page.evaluate(n => (window as unknown as W).__boardStore.selectPart(n), i); await page.waitForTimeout(150); }
+  const name = (i: number) => page.evaluate(n => (window as unknown as W).__boardStore.board.parts[n].name, i);
+  await expect(map).toHaveAttribute('data-trail-current', await name(24));
+  // Three Backs: past the two places the trail showed at the end.
+  for (let k = 0; k < 3; k++) await page.getByTestId('minimap-history-back').click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as W).__boardStore.selection.partIndex)).toBe(6);
+  await expect(map).toHaveAttribute('data-trail-current', await name(6));
+  // Steps limits both ways: two behind (the cursor and the one before) and
+  // the nearest two that Forward goes to.
+  await expect(map).toHaveAttribute('data-trail', '4');
+});
+
+test.describe('on a touch screen', () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 1180, height: 820 } });
+  test('the header buttons are finger-sized and a tap works', async ({ page }) => {
+    const map = await open(page);
+    for (const id of ['minimap-history-back', 'minimap-history-forward', 'minimap-nav-history', 'minimap-nav-worklist', 'minimap-open-tab']) {
+      const b = (await page.getByTestId(id).boundingBox())!;
+      expect(b.width, id).toBeGreaterThanOrEqual(36);
+      expect(b.height, id).toBeGreaterThanOrEqual(28);
+    }
+    expect(await page.getByTestId('minimap-head').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    for (const i of [0, 15]) { await page.evaluate(n => (window as unknown as W).__boardStore.selectPart(n), i); await page.waitForTimeout(150); }
+    await page.getByTestId('minimap-history-back').tap();
+    await expect.poll(() => page.evaluate(() => (window as unknown as W).__boardStore.selection.partIndex)).toBe(0);
+    await expect(map).toHaveAttribute('data-trail-current', await page.evaluate(() => (window as unknown as W).__boardStore.board.parts[0].name));
+  });
+});
