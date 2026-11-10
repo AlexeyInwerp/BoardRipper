@@ -25,6 +25,7 @@ import { QuickMenu } from './QuickMenu';
 
 const MAX_W = 220;
 const MAX_H = 150;
+const ACTIVE_HOLD_MS = 700;
 
 type Model = NonNullable<ReturnType<BoardRenderer['getViewModel']>>;
 type Mat = Model['roots'][number]['m'];
@@ -143,11 +144,23 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
   const [shown, setShown] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hovering = useRef(false);
+  const dragging = useRef(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  /** Full strength while the board is panned or the map is being used; the
+   *  chosen opacity comes back ACTIVE_HOLD_MS after the last movement. Set
+   *  on the element, not in React state: it changes on every pan frame. */
+  const activeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const markActive = useCallback((hold = true) => {
+    const el = rootRef.current;
+    if (!el) return;
+    el.classList.add('active');
+    if (activeTimer.current) clearTimeout(activeTimer.current);
+    activeTimer.current = hold ? setTimeout(() => { if (!dragging.current) el.classList.remove('active'); }, ACTIVE_HOLD_MS) : null;
+  }, []);
   const [size, setSize] = useState({ w: MAX_W, h: MAX_H });
 
   const settings = useRenderSettings();
   const position: MinimapPosition = settings.minimapPosition ?? 'center';
-  const rootRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   /** Float placement in progress: where the map is under the pointer, px from
    *  the board panel's top-left. The map stays up the whole time. */
@@ -207,6 +220,7 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
   useEffect(() => {
     if (!renderer || mode === 'off') return;
     return renderer.onViewChange(({ userPan, dx, dy }) => {
+      if (userPan) markActive();
       if (mode === 'onPan' && userPan) {
         const now = performance.now();
         const model = renderer.getViewModel();
@@ -232,16 +246,18 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
       }
       if (canvasRef.current && (mode === 'always' || activity.current.hideAt() !== null)) paint();
     });
-  }, [renderer, mode, paint]);
+  }, [renderer, mode, paint, markActive]);
 
-  useEffect(() => () => { if (hideTimer.current) clearTimeout(hideTimer.current); }, []);
+  useEffect(() => () => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    if (activeTimer.current) clearTimeout(activeTimer.current);
+  }, []);
   // Selection / side changes repaint the board picture.
   useEffect(() => boardStore.subscribe(() => { if (visible) paint(); }), [visible, paint]);
   // A scheme switch repaints it in the new colours.
   useEffect(() => themeStore.subscribe(() => { if (visible) paint(); }), [visible, paint]);
   useEffect(() => { if (visible) paint(); }, [visible, paint]);
 
-  const dragging = useRef(false);
   const goTo = useCallback((e: React.PointerEvent) => {
     const base = baseRef.current, cv = canvasRef.current;
     if (!base || !cv || !renderer) return;
@@ -317,7 +333,7 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
     <>
     <div
       ref={rootRef}
-      className={`board-minimap pos-${at ? 'floating' : position}${visible ? ' visible' : ''}${placing ? ' placing' : ''}`}
+      className={`board-minimap pos-${at ? 'floating' : position}${visible ? ' visible' : ''}${placing ? ' placing' : ''}${settings.minimapOpaqueWhileActive === false ? ' keep-opacity' : ''}`}
       data-testid="board-minimap"
       data-visible={visible ? 'true' : 'false'}
       data-position={position}
@@ -331,6 +347,7 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
         e.stopPropagation();
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
         dragging.current = true;
+        markActive(false);
         goTo(e);
       }}
       // Only a press that began on the map drags the view. A board drag that
@@ -338,9 +355,9 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
       // being made — must not recentre on the map point (2026-10-22, "jumps
       // as if the map were being used").
       onPointerMove={e => { if (dragging.current && e.buttons & 1 && visible) goTo(e); }}
-      onPointerUp={() => { dragging.current = false; }}
-      onPointerCancel={() => { dragging.current = false; }}
-      onLostPointerCapture={() => { dragging.current = false; }}
+      onPointerUp={() => { dragging.current = false; markActive(); }}
+      onPointerCancel={() => { dragging.current = false; markActive(); }}
+      onLostPointerCapture={() => { dragging.current = false; markActive(); }}
     >
       <canvas ref={canvasRef} style={{ width: size.w, height: size.h }} />
     </div>
@@ -368,6 +385,12 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
             value: Math.round((settings.minimapOpacity ?? 1) * 100), min: 20, max: 100, step: 5,
             format: v => `${v} %`,
             onChange: v => renderSettingsStore.setMinimapOpacity(v / 100),
+          },
+          {
+            kind: 'check', label: 'Full strength while in use', testId: 'minimap-opaque-active',
+            hint: 'While the board is panned or the map is dragged',
+            checked: settings.minimapOpaqueWhileActive !== false,
+            onSelect: () => renderSettingsStore.setMinimapOpaqueWhileActive(settings.minimapOpaqueWhileActive === false),
           },
         ]}
       />

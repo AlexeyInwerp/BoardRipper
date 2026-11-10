@@ -512,6 +512,9 @@ export interface RenderSettings {
   /** Minimap opacity while shown, 0.2–1 (right-click the map ▸ Opacity).
    *  Hovering the map shows it at full strength. */
   minimapOpacity: number;
+  /** Show the minimap at full strength while the board is panned or the map
+   *  is dragged, whatever `minimapOpacity` says (right-click ▸ check box). */
+  minimapOpaqueWhileActive: boolean;
   /** Auto-enable selection-dim while a search-driven selection (focusPart /
    *  focusNet) is active, even if the user's showNetDim toggle is off. */
   searchAutoDim: boolean;
@@ -833,6 +836,7 @@ export const DEFAULTS: RenderSettings = {
   minimapFloatX: 16,
   minimapFloatY: 56,
   minimapOpacity: 1,
+  minimapOpaqueWhileActive: true,
   searchAutoDim: true,
   autoMarkMechanical: true,
 };
@@ -1984,6 +1988,14 @@ class RenderSettingsStore extends Emitter {
     const o = Math.round(Math.min(1, Math.max(0.2, Number.isFinite(v) ? v : 1)) * 100) / 100;
     if (this._global.minimapOpacity === o) return;
     this._global = { ...this._global, minimapOpacity: o };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  setMinimapOpaqueWhileActive(v: boolean) {
+    if (this._global.minimapOpaqueWhileActive === v) return;
+    this._global = { ...this._global, minimapOpaqueWhileActive: v };
     saveToStorage(this._global);
     this.recomputeEffective();
     this.notify();

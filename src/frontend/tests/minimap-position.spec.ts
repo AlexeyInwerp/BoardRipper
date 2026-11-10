@@ -49,7 +49,7 @@ test.describe('minimap placement', () => {
     await expect(map).toHaveAttribute('data-position', 'center');
   });
 
-  test('opacity from the right-click menu: live, kept open, full under the pointer, survives a reload', async ({ page }) => {
+  test('opacity from the right-click menu: live, full under the pointer and while panning (unless unticked), survives a reload', async ({ page }) => {
     const map = await openBoardWithMap(page);
     const opacity = () => map.evaluate(el => Number(getComputedStyle(el).opacity));
     await expect.poll(opacity).toBe(1);
@@ -65,6 +65,31 @@ test.describe('minimap placement', () => {
     await expect.poll(opacity).toBeCloseTo(0.4, 2);
     await map.hover();
     await expect.poll(opacity).toBe(1);
+    await page.mouse.move(5, 5);
+    await expect.poll(opacity).toBeCloseTo(0.4, 2);
+
+    // Panning the board brings it to full strength, and it fades back after.
+    const panel = (await page.locator('.board-panel-root').first().boundingBox())!;
+    const panBoard = async () => {
+      const x = panel.x + panel.width * 0.3, y = panel.y + panel.height * 0.7;
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      for (let i = 1; i <= 8; i++) await page.mouse.move(x + i * 12, y - i * 6);
+    };
+    await panBoard();
+    await expect.poll(opacity).toBe(1);
+    await page.mouse.up();
+    await page.mouse.move(5, 5);
+    await expect.poll(opacity, { timeout: 4000 }).toBeCloseTo(0.4, 2);
+
+    // Unticked, the chosen opacity holds while panning.
+    await map.click({ button: 'right' });
+    await page.getByTestId('minimap-opaque-active').click();
+    await page.mouse.move(5, 5);
+    await panBoard();
+    await page.waitForTimeout(300);
+    expect(await opacity()).toBeCloseTo(0.4, 2);
+    await page.mouse.up();
     await page.mouse.move(5, 5);
 
     await page.reload();

@@ -9737,9 +9737,10 @@ body {
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 .board-minimap canvas { display: block; }
-/* A faded map comes up to full strength under the pointer, and while it is
-   being placed. */
-.board-minimap.visible:hover, .board-minimap.placing { opacity: 1; }
+/* A faded map comes up to full strength under the pointer, while the board
+   is panned or the map dragged (.active, set by BoardMinimap), and while it
+   is being placed. */
+.board-minimap.visible:hover, .board-minimap.visible.active:not(.keep-opacity), .board-minimap.placing { opacity: 1; }
 /* Placement (right-click the map). Centre is the rule above. */
 .board-minimap.pos-left { left: 8px; transform: translateY(-4px); }
 .board-minimap.pos-right { left: auto; right: 8px; transform: translateY(-4px); }
