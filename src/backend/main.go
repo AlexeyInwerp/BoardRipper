@@ -534,6 +534,7 @@ func main() {
 	if pdfIndex != nil {
 		mcpDeps.PDF = pdfIndex // avoid typed-nil in the PDFSearcher interface
 	}
+	mcpDeps.Worklists = wlStore
 	mcpSrv := mcpserver.New(mcpDeps)
 	mcpOAuth := mcpserver.NewOAuth()
 	mcpPairings, err := mcpserver.LoadPairings(dataDir)

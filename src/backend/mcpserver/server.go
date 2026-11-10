@@ -59,7 +59,7 @@ Teach as you fix. Explain your reasoning and the circuit in plain terms, calibra
 // boardripperInstructions is the server-level orientation sent in the MCP
 // initialize response so every client (not just Claude Code users) understands
 // the available workflow and how to drive the worklist loop.
-const boardripperInstructions = `BoardRipper exposes the PCB board open in the user's browser, plus a shared repair "worklist". Tools act on the most-recently-focused browser tab (list tabs with board_sessions; every live tool takes an optional session). Many read tools work with no board too (pdf_search, obd_match/obd_data, board_resolve, file_list/file_get).
+const boardripperInstructions = `BoardRipper exposes the PCB board open in the user's browser, plus a shared repair "worklist". Tools act on the most-recently-focused browser tab (list tabs with board_sessions; every live tool takes an optional session). Many read tools work with no board too (pdf_search, obd_match/obd_data, board_resolve, file_list/file_get, worklist_list/worklist_read).
 
 Token scope: a per-browser pairing token (Settings > Integrations, "This browser's agent") reaches ONLY that browser's pages — its default target is that browser's focused page, so you can normally omit session. The shared install token reaches every connected page install-wide; with it, when more than one page is open, pick the right entry from board_sessions (each carries client_label + focused_at_ms) and pass its session explicitly on every live call so you never act on another user's screen.
 
@@ -87,6 +87,8 @@ type Deps struct {
 	// FileBytes reads a library file's bytes by id (path-sandboxed eager read).
 	// Left nil disables file_download. Returns filename + MIME alongside bytes.
 	FileBytes func(ctx context.Context, id int64) (data []byte, name, mime string, err error)
+	// Worklists, when set, registers worklist_list / worklist_read.
+	Worklists WorklistStore
 }
 
 // Server wraps the SDK MCP server plus its Streamable HTTP handler.
@@ -129,6 +131,9 @@ func New(deps *Deps) *Server {
 	})
 
 	registerNativeTools(s.mcp, deps)
+	if deps.Worklists != nil {
+		registerWorklistTools(s.mcp, deps.Worklists)
+	}
 	registerLiveTools(s.mcp, deps)
 
 	if chunks := loadKB(); len(chunks) > 0 {
