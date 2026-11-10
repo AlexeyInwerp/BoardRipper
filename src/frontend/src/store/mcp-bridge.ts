@@ -450,6 +450,8 @@ async function dispatch(op: string, p: any): Promise<any> {
         fileId: t.fileId ?? null,
         parts: t.board ? t.board.parts.length : 0,
         nets: t.board ? t.board.nets.size : 0,
+        // The worklist loaded on this tab, so an agent knows which list it writes to.
+        worklist: (() => { const w = worklistStore.worklistForTab(t.id); return w ? { id: w.id, name: w.name, board: w.board } : null; })(),
       }));
       return { tabs, active_id: boardStore.activeTabId };
     }

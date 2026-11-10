@@ -9,7 +9,7 @@
  * so nothing in here goes stale when the same worklist is loaded onto
  * another board.
  */
-import type { WorklistMark, NetWorklistMark, NetMeasurements, WorklistMessage } from './worklist-store';
+import type { WorklistMark, NetWorklistMark, NetMeasurements, WorklistMessage, MeasurementEntry } from './worklist-store';
 
 export interface StoredPart {
   refdes: string;
@@ -186,6 +186,8 @@ export interface LegacyBoardRecord {
     netEntries?: Array<{ netName: string; mark: NetWorklistMark; note: string; surge?: boolean; measurements?: NetMeasurements }>;
     messages?: WorklistMessage[];
     aiOrigin?: Record<string, true>;
+    /** v0.31.24-era: agent-requested readings kept on the worklist. */
+    measurements?: MeasurementEntry[];
   }>;
 }
 
@@ -219,8 +221,31 @@ export function docsFromLegacy(rec: LegacyBoardRecord, boardOf: (fileName: strin
       }),
     };
     if (w.note) doc.note = w.note;
-    if (w.messages?.length) doc.messages = w.messages;
+    if (w.messages?.length) doc.messages = [...w.messages];
     if (w.aiOrigin) doc.aiOrigin = w.aiOrigin;
+    // v0.31.24-era readings: one on a net moves onto that net's row (newest
+    // per kind); one on a part, pin or other kind becomes a relay message.
+    for (const m of w.measurements ?? []) {
+      if (m.status === 'skipped') continue;
+      const net = doc.netEntries.find(n => n.netName.toUpperCase() === m.target.toUpperCase());
+      const kind = m.kind === 'voltage' || m.kind === 'diode' || m.kind === 'resistance' ? m.kind : null;
+      if (net && kind) {
+        const at = m.answeredAt ?? m.requestedAt ?? t;
+        const slot = (net.measurements ??= {});
+        if (!slot[kind] || (slot[kind]!.at ?? 0) < at) {
+          slot[kind] = {
+            kind, value: m.value, unit: m.unit ?? (kind === 'resistance' ? 'Ω' : 'V'),
+            status: m.status === 'answered' ? 'recorded' : 'requested',
+            prompt: m.prompt || undefined, expected: m.expected, source: m.source ?? 'agent', at,
+          };
+        }
+      } else {
+        (doc.messages ??= []).push({
+          id: `mig_${m.id}`, role: 'agent', at: m.requestedAt ?? t,
+          text: `Measurement (${m.kind}) on ${m.target}: ${m.value ? `${m.value} ${m.unit ?? ''}`.trim() : m.prompt}`,
+        });
+      }
+    }
     return doc;
   });
 }

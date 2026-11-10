@@ -32,9 +32,13 @@ import {
 import { IconSolderingIron } from '../icons/IconSolderingIron';
 import { worklistStore, MARK_COLOR_CSS, NET_MARK_COLOR_CSS, MEAS_KINDS } from '../store/worklist-store';
 import type {
-  WorklistEntry, WorklistMark, NetWorklistEntry, NetWorklistMark, Worklist,
-  NetMeasurement, BoardWorklistes,
+  WorklistEntry, WorklistMark, NetWorklistEntry, NetWorklistMark,
+  NetMeasurement, WorklistSummary, Worklist,
 } from '../store/worklist-store';
+import { boardKeysForTab, ensureBoardFacts } from '../store/worklist-board-keys';
+import { suggestWorklists, looseTextMatch } from '../store/worklist-match';
+import { defaultBoardName } from '../store/worklist-doc';
+import { obdBoardNumberFor } from '../store/obd-store';
 import { NoteBody } from '../components/DiagnosisNotes';
 import { QuickMenu } from '../components/QuickMenu';
 import { selectionSetStore } from '../store/selection-set-store';
@@ -46,6 +50,7 @@ import { useWorklist } from '../hooks/useWorklist';
 import { useSelectionSet } from '../hooks/useSelectionSet';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { copyText } from '../clipboard';
+import { looseMatcher } from '../store/loose-match';
 
 // ── Mark tables. Cycling order: none → replaced → reworked → cleaned → none.
 //    The same colours the canvas highlight uses (MARK_COLOR_HEX in the store).
@@ -130,7 +135,7 @@ async function importFromClipboard(): Promise<void> {
 }
 
 export function WorklistPanel() {
-  const { current, activeWorklist, hasBoard } = useWorklist();
+  const { activeWorklist, summaries, hasBoard } = useWorklist();
   const sel = useSelectionSet();
   const { activeTabId } = useBoardStore();
   // Set when a worklist is created without a name, so the header opens in edit
@@ -140,7 +145,7 @@ export function WorklistPanel() {
   useEffect(() => { void worklistStore.syncToActiveTab(); }, [activeTabId]);
 
   if (!hasBoard) {
-    return <div className="wl-empty">Open a board to begin worklisting.</div>;
+    return <div className="wl-empty">Open a board to begin worklisting. Worklists themselves are in Tools ▸ Worklists.</div>;
   }
 
   return (
@@ -166,53 +171,150 @@ export function WorklistPanel() {
         </section>
       )}
 
-      <WorklistFinder
-        current={current}
+      <WorklistSuggestions
+        tabId={activeTabId}
+        summaries={summaries}
+        loadedId={activeWorklist?.id ?? null}
         onCreated={id => setRenameOnMount(id)}
       />
 
-      {!activeWorklist
-        ? <div className="wl-empty">No worklist yet. Use the line above to make one.</div>
-        : (
-          <ActiveWorklistView
-            key={activeWorklist.id}
-            renameOnMount={renameOnMount === activeWorklist.id}
-            onRenameHandled={() => setRenameOnMount(null)}
-          />
-        )}
+      <WorklistFinder
+        summaries={summaries}
+        loadedId={activeWorklist?.id ?? null}
+        onCreated={id => setRenameOnMount(id)}
+      />
+
+      {activeWorklist && (
+        <ActiveWorklistView
+          key={activeWorklist.id}
+          renameOnMount={renameOnMount === activeWorklist.id}
+          onRenameHandled={() => setRenameOnMount(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Suggestions: the worklists that match this board ─────────────────────
+
+/** How long ago, in the words a row has room for. */
+function age(ms: number): string {
+  const d = Date.now() - ms;
+  if (d < 60_000) return 'now';
+  if (d < 3_600_000) return `${Math.round(d / 60_000)} min ago`;
+  if (d < 86_400_000) return `${Math.round(d / 3_600_000)} h ago`;
+  if (d < 30 * 86_400_000) return `${Math.round(d / 86_400_000)} d ago`;
+  return `${Math.round(d / (30 * 86_400_000))} mo ago`;
+}
+
+function sizeLine(w: WorklistSummary): string {
+  const p = w.parts ? `${w.parts} part${w.parts === 1 ? '' : 's'}` : '';
+  const n = w.nets ? `${w.nets} net${w.nets === 1 ? '' : 's'}` : '';
+  return [p, n].filter(Boolean).join(' · ') || 'empty';
+}
+
+/**
+ * Worklists that match this board by name (partial names included) or tag —
+ * suggestions only: nothing loads by itself. Open while no worklist is
+ * loaded; folded to one line once one is, so the others stay one click away.
+ * docs/specs/2026-11-10-worklist-storage-redesign.md §4.
+ */
+function WorklistSuggestions({ tabId, summaries, loadedId, onCreated }: {
+  tabId: number | null;
+  summaries: WorklistSummary[];
+  loadedId: string | null;
+  onCreated: (id: string) => void;
+}) {
+  const tab = boardStore.tabs.find(t => t.id === tabId) ?? null;
+  useEffect(() => { if (tab) ensureBoardFacts(tab); }, [tab]);
+  const suggestions = useMemo(
+    () => (tab ? suggestWorklists(boardKeysForTab(tab), summaries) : []),
+    // boardKeysForTab reads facts that arrive later; useWorklist re-renders on them.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tab, summaries, tab && boardKeysForTab(tab).length],
+  );
+  const [open, setOpen] = useState<boolean | null>(null);
+  const expanded = open ?? loadedId === null;
+
+  const create = () => {
+    const made = worklistStore.createWorklist();
+    if (made) onCreated(made.id);
+  };
+
+  if (suggestions.length === 0) {
+    return (
+      <div className="wl-sugg empty" data-testid="worklist-suggestions" data-count="0">
+        <span className="wl-sugg-title">{loadedId ? 'No other worklists for this board' : 'No worklists for this board yet'}</span>
+        <button type="button" className="wl-act" data-testid="worklist-suggest-new" onClick={create}>
+          <IconPlus size={13} stroke={1.9} />New worklist
+        </button>
+      </div>
+    );
+  }
+
+  const n = suggestions.length;
+  return (
+    <div className={`wl-sugg${expanded ? ' open' : ''}`} data-testid="worklist-suggestions" data-count={n}>
+      <div className="wl-sugg-head">
+        <button type="button" className="wl-sugg-toggle" data-testid="worklist-suggest-toggle"
+          aria-expanded={expanded} onClick={() => setOpen(!expanded)}>
+          {expanded ? <IconChevronDown size={13} stroke={2} /> : <IconChevronRight size={13} stroke={2} />}
+          <span className="wl-sugg-title">{`${n} matching worklist${n === 1 ? '' : 's'}`}</span>
+        </button>
+        <button type="button" className="wl-act" data-testid="worklist-suggest-new" onClick={create}>
+          <IconPlus size={13} stroke={1.9} />New
+        </button>
+      </div>
+      {expanded && (
+        <div className="wl-sugg-list">
+          {suggestions.map(s => {
+            const w = s.worklist;
+            const here = w.id === loadedId;
+            return (
+              <div key={w.id} className={`wl-sugg-row${here ? ' cur' : ''}`} data-testid="worklist-suggestion" data-id={w.id}>
+                <div className="wl-sugg-main">
+                  <div className="wl-sugg-name">
+                    <span className="bd" translate="no">{w.board || '—'}</span>
+                    <span className="nm">{w.name}</span>
+                  </div>
+                  <div className="wl-sugg-sub">
+                    {`${sizeLine(w)} · ${age(w.updatedAt)}`}
+                    {s.byTag && <span className="why">{` · tag “${s.via}”`}</span>}
+                    {!s.byTag && s.weight < 3 && <span className="why">{` · ${s.key.what}`}</span>}
+                  </div>
+                </div>
+                {here
+                  ? <span className="wl-sugg-here">open</span>
+                  : (
+                    <button type="button" className="wl-hl" data-testid="worklist-suggestion-open"
+                      onClick={() => worklistStore.loadOnTab(tabId, w.id)}
+                      title="Load this worklist on this board (for this session; it stays attributed to its own board name)">
+                      Open
+                    </button>
+                  )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
 
 // ── The finder: one line that becomes a search ────────────────────────────
 
-interface Hit { id: string; name: string; count: number; board?: string; current: boolean }
-
-function WorklistFinder({ current, onCreated }: {
-  current: BoardWorklistes | null;
+function WorklistFinder({ summaries, loadedId, onCreated }: {
+  summaries: WorklistSummary[];
+  loadedId: string | null;
   onCreated: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
-  const [others, setOthers] = useState<BoardWorklistes[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
-
-  const mine = useMemo(() => current?.worklistes ?? [], [current?.worklistes]);
-  const active = mine.find(w => w.id === current?.activeWorklistId) ?? null;
+  const active = summaries.find(w => w.id === loadedId) ?? null;
 
   useEffect(() => { if (open) inputRef.current?.focus(); }, [open]);
-
-  // Other boards' worklists are only needed once the finder is open, and only
-  // to search across them — load them then, not on every panel mount.
-  useEffect(() => {
-    if (!open) return;
-    let live = true;
-    void worklistStore.listAllStored().then(all => {
-      if (live) setOthers(all.filter(b => b.key !== current?.key));
-    });
-    return () => { live = false; };
-  }, [open, current?.key]);
 
   // Dismiss on an outside pointer press, like the other popovers in the app.
   useEffect(() => {
@@ -224,42 +326,23 @@ function WorklistFinder({ current, onCreated }: {
     return () => document.removeEventListener('pointerdown', onDown, true);
   }, [open]);
 
-  const hits: Hit[] = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    const size = (w: Worklist) => w.entries.length + (w.netEntries?.length ?? 0);
-    const own: Hit[] = [...mine]
-      .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
-      .filter(w => !needle || w.name.toLowerCase().includes(needle))
-      .map(w => ({ id: w.id, name: w.name, count: size(w), current: w.id === current?.activeWorklistId }));
-    if (!needle) return own;
-    // Typing searches every board; a hit elsewhere says which board it is on.
-    const far: Hit[] = others.flatMap(b =>
-      (b.worklistes ?? [])
-        .filter(w => w.name.toLowerCase().includes(needle))
-        .map(w => ({ id: `${b.key}::${w.id}`, name: w.name, count: size(w), board: b.fileName, current: false })),
-    );
-    return [...own, ...far];
-  }, [q, mine, others, current?.activeWorklistId]);
+  // Every worklist, searched by name, board name and tags (loose rule).
+  const hits = useMemo(() => {
+    const m = looseMatcher(q.trim());
+    return summaries.filter(w => !q.trim() || m.test(w.name) || m.test(w.board) || w.tags.some(t => m.test(t)));
+  }, [q, summaries]);
 
   const close = useCallback(() => { setOpen(false); setQ(''); }, []);
 
-  const pick = (hit: Hit) => {
-    if (hit.board) {
-      // Another board's worklist: that board has to be open first. Send the
-      // user to the catalog, which knows how to say so.
-      showSidebarTab('tools');
-      setActiveTool('worklists');
-      close();
-      return;
-    }
-    worklistStore.setActiveWorklist(hit.id);
+  const pick = (hit: WorklistSummary) => {
+    worklistStore.loadOnTab(boardStore.activeTabId, hit.id);
     close();
   };
 
   const create = () => {
     const name = q.trim();
     const made = worklistStore.createWorklist(name || undefined);
-    if (!made) { boardStore.addToast('Could not create worklist — open a board first.', 'error'); return; }
+    if (!made) { boardStore.addToast('Could not create worklist.', 'error'); return; }
     if (!name) onCreated(made.id);   // no name typed → open the header in edit
     close();
   };
@@ -274,9 +357,9 @@ function WorklistFinder({ current, onCreated }: {
         title="Find or switch worklist"
       >
         <IconSearch size={13} stroke={1.9} />
-        <span className="cur">{active ? active.name : 'No worklist'}</span>
-        {active && <span className="n">{active.entries.length + (active.netEntries?.length ?? 0)}</span>}
-        {mine.length > 1 && <span className="more">{mine.length - 1} more</span>}
+        <span className="cur">{active ? active.name : 'All worklists'}</span>
+        {active && <span className="n">{active.parts + active.nets}</span>}
+        <span className="more">{summaries.length > (active ? 1 : 0) ? `search ${summaries.length}` : ''}</span>
       </button>
     );
   }
@@ -289,7 +372,7 @@ function WorklistFinder({ current, onCreated }: {
           ref={inputRef}
           className="wl-find-input"
           data-testid="worklist-find-input"
-          placeholder="Search worklists"
+          placeholder="Search worklists — name, board or tag"
           value={q}
           onChange={e => setQ(e.target.value)}
           onKeyDown={e => {
@@ -299,18 +382,18 @@ function WorklistFinder({ current, onCreated }: {
         />
       </div>
       <div className="wl-results" data-testid="worklist-results">
-        {hits.length === 0 && <div className="wl-nohit">{`No worklist matches “${q.trim()}”.`}</div>}
+        {hits.length === 0 && <div className="wl-nohit">{q.trim() ? `No worklist matches “${q.trim()}”.` : 'No worklists yet.'}</div>}
         {hits.map(h => (
           <button
             key={h.id}
             type="button"
-            className={`wl-hit${h.current ? ' cur' : ''}`}
+            className={`wl-hit${h.id === loadedId ? ' cur' : ''}`}
             data-testid="worklist-hit"
             onClick={() => pick(h)}
           >
             <span className="nm">{highlight(h.name, q.trim())}</span>
-            {h.board && <span className="bd">{h.board}</span>}
-            <span className="n">{h.count}</span>
+            {h.board && <span className="bd" translate="no">{h.board}</span>}
+            <span className="n">{h.parts + h.nets}</span>
           </button>
         ))}
       </div>
@@ -349,7 +432,13 @@ function ActiveWorklistView({ renameOnMount, onRenameHandled }: {
   renameOnMount: boolean; onRenameHandled: () => void;
 }) {
   const { activeWorklist } = useWorklist();
-  const { connectionHighlight } = useBoardStore();
+  const { connectionHighlight, activeTabId, tabs } = useBoardStore();
+  // Which board the worklist is attributed to, and whether that is this one.
+  const tab = tabs.find(t => t.id === activeTabId) ?? null;
+  const here = tab ? defaultBoardName(tab.fileName, obdBoardNumberFor(tab)) : '';
+  const foreign = !!activeWorklist && !!here && !looseTextMatch(activeWorklist.board, here)
+    && !looseTextMatch(activeWorklist.board, tab?.fileName ?? '');
+  const otherTabs = activeWorklist ? worklistStore.tabsShowing(activeWorklist.id).filter(t => t !== activeTabId) : [];
   const listRef = useRef<HTMLDivElement>(null);
   const [renaming, setRenaming] = useState(renameOnMount);
   const [renameDraft, setRenameDraft] = useState(activeWorklist?.name ?? '');
@@ -512,12 +601,28 @@ function ActiveWorklistView({ renameOnMount, onRenameHandled }: {
               { label: 'Copy to clipboard', testId: 'worklist-menu-copy', onSelect: onCopyAll },
               { label: ticketOpen ? 'Hide ticket note' : 'Ticket note…', onSelect: () => setTicketOpen(x => !x) },
               { kind: 'sep' },
+              ...(foreign ? [{ label: `Attribute to this board (${here})`, testId: 'worklist-menu-attribute',
+                  onSelect: () => worklistStore.attributeToActiveBoard(activeWorklist.id) }] : []),
+              { label: 'Duplicate', testId: 'worklist-menu-duplicate', onSelect: () => {
+                  const d = worklistStore.duplicateWorklist(activeWorklist.id);
+                  if (d) { worklistStore.loadOnTab(boardStore.activeTabId, d.id); boardStore.addToast(`Loaded “${d.name}”.`, 'info'); }
+                } },
+              { label: 'Close on this board', testId: 'worklist-menu-unload',
+                onSelect: () => worklistStore.loadOnTab(boardStore.activeTabId, null) },
+              { label: 'Edit in Tools ▸ Worklists', onSelect: () => { showSidebarTab('tools'); setActiveTool('worklists'); } },
+              { kind: 'sep' },
               { label: 'Clear all entries', testId: 'worklist-menu-wipe', onSelect: () => setConfirm('wipe') },
               { label: 'Delete worklist', testId: 'worklist-menu-delete', onSelect: () => setConfirm('delete') },
             ]}
           />
         )}
       </header>
+      <div className={`wl-origin${foreign ? ' foreign' : ''}`} data-testid="worklist-origin">
+        <span translate="no">{activeWorklist.board || 'No board name'}</span>
+        {foreign && <span className="note"> · another board's worklist, shown here for this session</span>}
+        {otherTabs.length > 0 && <span className="note">{` · also open on ${otherTabs.length} other tab${otherTabs.length === 1 ? '' : 's'}`}</span>}
+        {activeWorklist.tags.length > 0 && <span className="tags">{activeWorklist.tags.map(t => <span key={t} className="wl-tag" translate="no">{t}</span>)}</span>}
+      </div>
 
       {/* Asked here, not through a browser confirm, so the question sits with
           the thing it is about. */}
@@ -526,7 +631,7 @@ function ActiveWorklistView({ renameOnMount, onRenameHandled }: {
           <span className="q">
             {confirm === 'wipe'
               ? `Clear all ${entryCount + netCount} entries from “${activeWorklist.name}”?`
-              : `Delete “${activeWorklist.name}”? This cannot be undone.`}
+              : `Delete “${activeWorklist.name}”? This cannot be undone.${otherTabs.length ? ` It is also open on ${otherTabs.length} other board tab${otherTabs.length === 1 ? '' : 's'}.` : ''}`}
           </span>
           <button type="button" onClick={() => setConfirm(null)} data-testid="worklist-confirm-no">Cancel</button>
           <button
@@ -622,14 +727,17 @@ interface RowProps {
   netEntry?: NetWorklistEntry;
   selected: boolean;
   onSelect: () => void;
+  /** Shown with no board (Tools ▸ Worklists): nothing to resolve against, so
+   *  no "not on this board" dimming and no board to take a click to. */
+  boardless?: boolean;
 }
 
-function WorklistRow({ kind, worklistId, partEntry, netEntry, selected, onSelect }: RowProps) {
+export function WorklistRow({ kind, worklistId, partEntry, netEntry, selected, onSelect, boardless }: RowProps) {
   const isNet = kind === 'net';
   const name = isNet ? netEntry!.netName : partEntry!.refdes;
   const mark = isNet ? netEntry!.mark : partEntry!.mark;
   const note = (isNet ? netEntry!.note : partEntry!.note) ?? '';
-  const unresolved = (isNet ? netEntry!.unresolved : partEntry!.unresolved) === true;
+  const unresolved = !boardless && (isNet ? netEntry!.unresolved : partEntry!.unresolved) === true;
   const flagOn = (isNet ? netEntry!.surge : partEntry!.waterdamage) === true;
 
   const [expanded, setExpanded] = useState(false);
@@ -647,7 +755,7 @@ function WorklistRow({ kind, worklistId, partEntry, netEntry, selected, onSelect
 
   const onFocus = () => {
     onSelect();
-    if (unresolved) return;
+    if (unresolved || boardless) return;
     if (isNet) boardStore.focusNet(name); else boardStore.focusPart(name);
   };
 
@@ -730,7 +838,7 @@ function WorklistRow({ kind, worklistId, partEntry, netEntry, selected, onSelect
         </button>
         <span className="wl-ref">
           <span translate="no">{name}</span>
-          {unresolved && <span className="missing">(missing)</span>}
+          {unresolved && <span className="missing">(not on this board)</span>}
         </span>
         <button
           type="button"

@@ -31,8 +31,8 @@ test('migration: legacy net-targeted measurement moves onto the net row; part ta
         { id: 'm2', target: 'D4200', kind: 'diode', prompt: 'diode drop?', status: 'pending', source: 'agent', requestedAt: 1 },
       ],
     };
-    ws.MIGRATE_PROBE(w);
-    return { net: w.netEntries[0].measurements?.voltage, msgs: (w.messages ?? []).length, hasArray: 'measurements' in w };
+    const d = ws.LEGACY_PROBE(w);
+    return { net: d.netEntries[0].measurements?.voltage, msgs: (d.messages ?? []).length, hasArray: 'measurements' in d };
   });
   expect(out.net).toMatchObject({ kind: 'voltage', value: '12.4', unit: 'V', status: 'recorded', source: 'agent' });
   expect(out.msgs).toBe(1);        // D4200 (part) → relay message

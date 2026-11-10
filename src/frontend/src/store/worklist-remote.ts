@@ -152,3 +152,37 @@ export async function cachePut(items: CachedDoc[]): Promise<void> {
     });
   } catch { /* cache is best effort */ }
 }
+
+export async function cacheDelete(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  try {
+    const db = await cacheDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(CACHE_STORE, 'readwrite');
+      const st = tx.objectStore(CACHE_STORE);
+      for (const id of ids) st.delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch { /* best effort */ }
+}
+
+/** Read every record of the old (v1) per-file store, for the one-time
+ *  migration. [] when it does not exist. */
+export async function legacyLoadAll(): Promise<unknown[]> {
+  try {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const req = indexedDB.open('boardripper-worklist', 1);
+      req.onupgradeneeded = () => {
+        if (!req.result.objectStoreNames.contains('boards')) req.result.createObjectStore('boards', { keyPath: 'key' });
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return await new Promise((resolve, reject) => {
+      const req = db.transaction('boards', 'readonly').objectStore('boards').getAll();
+      req.onsuccess = () => { resolve(req.result ?? []); db.close(); };
+      req.onerror = () => reject(req.error);
+    });
+  } catch { return []; }
+}

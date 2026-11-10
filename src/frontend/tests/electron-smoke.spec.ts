@@ -115,6 +115,23 @@ test.describe('desktop app', () => {
     expect(errors).toEqual([]);
   });
 
+  test('worklists go to the app\'s own worklists folder over IPC (no backend)', async () => {
+    // The board from the first test is open. Make a worklist from the
+    // Worklist tab; with no backend the store writes through Electron main.
+    const board = page.locator('.board-sidebar-toggle').first();
+    if (!(await page.getByTestId('worklist-panel').count())) {
+      await board.click();
+      await page.locator('[data-board-tab="worklist"]').click();
+    }
+    await page.getByTestId('worklist-suggest-new').click();
+    const dir = path.join(userDataDir, 'worklists');
+    await expect.poll(() => (fs.existsSync(dir) ? fs.readdirSync(dir).filter(f => f.endsWith('.json')).length : 0), { timeout: 10000 }).toBe(1);
+    const file = fs.readdirSync(dir).find(f => f.endsWith('.json'))!;
+    const doc = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+    expect(doc).toMatchObject({ board: 'test-board', rev: 1 });
+    expect(errors).toEqual([]);
+  });
+
   test('no update UI in the desktop build, and 2-window mode toggles', async () => {
     // The bundled backend carries no update ldflags, so the Docker self-update
     // UI must not appear here.

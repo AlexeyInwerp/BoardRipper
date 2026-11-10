@@ -6548,9 +6548,15 @@ export class BoardRenderer {
    *  so fold-mode / sub-board changes don't stale-index. Same exclusion rules
    *  as the former selection-set glow (GND / outline-only filtered out). Returns
    *  [] when the worklist has fewer than 2 resolved parts. */
+  /** The worklist loaded on THIS renderer's tab, resolved on its board —
+   *  never the active tab's: with two boards on screen each draws its own. */
+  private tabWorklist() {
+    return worklistStore.worklistForTab(this.tabId ?? boardStore.activeTabId);
+  }
+
   private computeSharedWorklistNets(): string[] {
     if (!this.board) return [];
-    const worklist = worklistStore.activeWorklist;
+    const worklist = this.tabWorklist();
     if (!worklist || worklist.entries.length < 2) return [];
     const s = renderSettingsStore.settings;
     // O(1) refdes lookup instead of a findIndex per entry (was O(entries × parts)).
@@ -7698,7 +7704,7 @@ export class BoardRenderer {
    *  ever shown). Note text is HTML-escaped; the icon SVGs are trusted. Null
    *  when the part isn't on the active worklist. */
   private formatWorklistForPart(refdes: string): string | null {
-    const wl = worklistStore.activeWorklist;
+    const wl = this.tabWorklist();
     if (!wl || !refdes) return null;
     const e = wl.entries.find(x => x.refdes === refdes);
     if (!e) return null;
@@ -7715,7 +7721,7 @@ export class BoardRenderer {
    *  recorded reading (kind icon/letter + value, V→diode→Ω), and the note —
    *  no worklist name. Independent of the OBD line. Null when not on the list. */
   private formatWorklistForNet(net: string): string | null {
-    const wl = worklistStore.activeWorklist;
+    const wl = this.tabWorklist();
     if (!wl || !net) return null;
     const e = wl.netEntries?.find(x => x.netName === net);
     if (!e) return null;
@@ -8010,14 +8016,14 @@ export class BoardRenderer {
   private shiftClickToWorklist(partIndex: number) {
     const refdes = boardStore.board?.parts[partIndex]?.name;
     if (!refdes) return;
-    const wl = worklistStore.activeWorklist;
+    const wl = this.tabWorklist();
     if (wl && wl.entries.some(e => e.refdes === refdes)) {
       worklistStore.removeEntry(wl.id, refdes);
       boardStore.addToast(`Removed '${refdes}' from ${wl.name}`, 'info');
     } else {
       const firstUse = !wl;
       worklistStore.pushRefdesToActive(refdes);
-      const name = worklistStore.activeWorklist?.name ?? 'worklist';
+      const name = this.tabWorklist()?.name ?? 'worklist';
       boardStore.addToast(`Added '${refdes}' to ${name}`, 'info');
       if (firstUse) openBoardSidebarTab('worklist');
     }
@@ -8095,7 +8101,7 @@ export class BoardRenderer {
     // board is uncluttered by default. Mark colours are preserved (no cyan
     // override). Ephemeral selection drawn over the top so a part in both
     // retains the brighter cyan cue.
-    const worklist = worklistStore.activeWorklist;
+    const worklist = this.tabWorklist();
     if (worklist && boardStore.connectionHighlight) {
       // Build refdes → partIndex only inside this branch (the Highlight toggle
       // is off by default) so we can re-resolve stored worklist entries whose

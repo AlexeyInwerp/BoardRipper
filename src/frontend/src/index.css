@@ -10180,3 +10180,68 @@ body {
   border: 1px solid color-mix(in srgb, var(--border) 80%, var(--text-secondary));
   background: color-mix(in srgb, var(--bg-tertiary) 70%, transparent); white-space: nowrap;
 }
+
+/* Worklist suggestions in the board's Worklist tab (WorklistPanel). */
+.wl-sugg { flex: none; border-bottom: 1px solid var(--border); padding: 6px 8px 6px 10px; }
+.wl-sugg.empty { display: flex; align-items: center; gap: 8px; }
+.wl-sugg-head { display: flex; align-items: center; gap: 6px; }
+.wl-sugg-toggle {
+  flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 4px; padding: 2px 0;
+  border: 0; background: none; color: var(--text-primary); font: inherit; cursor: pointer; text-align: left;
+}
+.wl-sugg-title { font-size: 12px; font-weight: 600; flex: 1; min-width: 0; }
+.wl-sugg.empty .wl-sugg-title { font-weight: 400; color: var(--text-secondary); }
+.wl-sugg-list { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+.wl-sugg-row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 5px; }
+.wl-sugg-row:hover { background: var(--surface-hover); }
+.wl-sugg-row.cur { box-shadow: inset 2px 0 0 var(--accent); }
+.wl-sugg-main { flex: 1; min-width: 0; }
+.wl-sugg-name { display: flex; gap: 6px; font-size: 12px; min-width: 0; }
+.wl-sugg-name .bd { flex: none; font-family: ui-monospace, monospace; color: var(--text-secondary); }
+.wl-sugg-name .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-sugg-sub { font-size: 11px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-sugg-sub .why { color: var(--accent-text, var(--accent)); }
+.wl-sugg-here { font-size: 11px; color: var(--text-secondary); padding: 0 6px; }
+
+/* The board name a worklist is attributed to, under its header. */
+.wl-origin {
+  flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+  padding: 0 10px 6px; font-size: 11px; color: var(--text-secondary);
+}
+.wl-origin > span:first-child { font-family: ui-monospace, monospace; }
+.wl-origin.foreign > span:first-child { color: var(--accent-text, var(--accent)); }
+.wl-origin .tags { display: inline-flex; flex-wrap: wrap; gap: 3px; }
+.wl-tag {
+  display: inline-flex; align-items: center; padding: 0 6px; height: 18px; border-radius: 9px;
+  border: 1px solid var(--border); background: transparent; color: var(--text-secondary);
+  font: inherit; font-size: 11px; cursor: default;
+}
+button.wl-tag { cursor: pointer; }
+button.wl-tag:hover { color: var(--text-primary); }
+.wl-tag.on { border-color: var(--accent); color: var(--accent-text, var(--accent)); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+/* Worklist navigator (Tools ▸ Worklists). */
+.wlnav-head { display: flex; align-items: center; gap: 6px; }
+.wlnav-head .tools-group-label { flex: 1; }
+.wlnav-search {
+  width: 100%; box-sizing: border-box; height: 26px; margin: 4px 0 6px; padding: 0 8px;
+  border: 1px solid var(--border); border-radius: 5px; background: var(--bg-primary); color: var(--text-primary); font: inherit; font-size: 12px;
+}
+.wlnav-search:focus { outline: none; border-color: var(--accent); }
+.wlnav-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.wlnav-group + .wlnav-group { margin-top: 6px; }
+.wlcat-row { gap: 6px; }
+.wlnav-editor {
+  display: flex; flex-direction: column; gap: 6px; margin: 2px 0 8px 18px; padding: 8px;
+  border: 1px solid var(--border); border-radius: 6px;
+}
+.wlnav-field { display: grid; grid-template-columns: 52px 1fr; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-secondary); }
+.wlnav-field input {
+  min-width: 0; height: 24px; padding: 0 6px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg-primary); color: var(--text-primary); font: inherit; font-size: 12px;
+}
+.wlnav-field input:focus { outline: none; border-color: var(--accent); }
+.wlnav-origin { font-size: 11px; color: var(--text-secondary); }
+.wlnav-load, .wlnav-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 11.5px; color: var(--text-secondary); }
+.wlnav-load .wl-hl { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wlnav-rows { border-top: 1px solid var(--border); margin-top: 2px; }

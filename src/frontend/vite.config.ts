@@ -195,6 +195,15 @@ export default defineConfig(({ mode }) => {
           // own proxy logger sits above that and spams the terminal.
           configure: (proxy) => {
             proxy.on('error', () => { /* suppress */ });
+            // changeOrigin rewrites Host to the backend but leaves Origin as
+            // the dev server's, so the backend's same-origin (CSRF) check
+            // refused every PUT/POST/DELETE made through the dev server. In a
+            // real install page and API share one origin; make the dev proxy
+            // look the same. Dev server only.
+            proxy.on('proxyReq', (req) => {
+              if (req.getHeader('origin')) req.setHeader('origin', `http://localhost:${BACKEND_PORT}`);
+              req.removeHeader('referer');
+            });
           },
         },
       },

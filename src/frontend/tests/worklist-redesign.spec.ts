@@ -54,9 +54,12 @@ test.describe('worklist panel', () => {
 
   test('the finder lists worklists and filters as you type', async ({ page }) => {
     await openWorklist(page);
+    // Worklists are shared through the server now, so other runs' lists may
+    // be listed too: names carry this run's tag, and the checks use it.
+    const run = Math.random().toString(36).slice(2, 7);
     // Created a beat apart so "most recently touched" is a real ordering and
     // not three identical timestamps.
-    for (const name of ['No power', 'Backlight', 'USB-C not charging']) {
+    for (const name of [`No power ${run}`, `Backlight ${run}`, `USB-C not charging ${run}`]) {
       await page.evaluate(n => {
         (window as unknown as { __worklistStore: { createWorklist: (n: string) => unknown } }).__worklistStore.createWorklist(n);
       }, name);
@@ -64,11 +67,12 @@ test.describe('worklist panel', () => {
     }
 
     await page.getByTestId('worklist-find').click();
+    await page.getByTestId('worklist-find-input').fill(run);
     await expect(page.getByTestId('worklist-hit')).toHaveCount(3);
     // Most recently touched first.
     await expect(page.getByTestId('worklist-hit').first()).toContainText('USB-C not charging');
 
-    await page.getByTestId('worklist-find-input').fill('back');
+    await page.getByTestId('worklist-find-input').fill(`back ${run}`);
     await expect(page.getByTestId('worklist-hit')).toHaveCount(1);
     await expect(page.getByTestId('worklist-hit').first()).toContainText('Backlight');
 
