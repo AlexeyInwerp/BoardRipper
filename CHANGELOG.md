@@ -1,5 +1,68 @@
 # BoardRipper changelog
 
+## v0.52.0 — 2026-11-11
+
+### Added
+
+- **Desktop app updates itself.** The desktop app checks for a new version
+  at start, every few hours and from *Check for Updates…* in the app menu.
+  It downloads the new build, checks it against a feed signed with the
+  release key, and swaps it in when you quit or press *Restart Now*. This
+  release is the first one with the updater, so it has to be installed by
+  hand once; later releases arrive by themselves. Measured on macOS; Windows
+  and the legacy macOS build are not yet tested.
+  ([#42](https://github.com/AlexeyInwerp/BoardRipper/issues/42))
+- **Worklists are stored on the server.** Each worklist is its own document
+  on the BoardRipper server, or in the desktop app's own folder, instead of
+  being tied to one browser and one board file. The same worklist can be
+  open on two boards at once, and an edit made while the server is
+  unreachable is kept and sent later. Existing worklists are copied over
+  the first time the app opens in a browser that has them.
+- **Worklists have a board name and tags.** Every worklist is attributed to
+  a board name, such as `820-02016`, and can carry tags, such as `A2337` or
+  `water`. Both are edited in Tools ▸ Worklists, which now lists every
+  worklist grouped by board name, with search, a tag filter and the rows
+  themselves editable without a board open.
+- **Matching worklists are suggested.** The board's Worklist tab shows how
+  many worklists match this board by board number, file name, model or tag,
+  with *Open* on each and *+ New*. Nothing is loaded automatically, and
+  loading one on a board lasts for that session only.
+- **MCP: `worklist_list` and `worklist_read`.** An agent can read every
+  stored worklist without a browser open.
+- **Minimap header.** A strip above the minimap holds ‹ › for history Back
+  and Forward, a switch between *History* and *Worklist*, and a button that
+  opens the matching tab. Drag the header to move the map. On a touch
+  screen the header buttons are finger-sized.
+- **History on the minimap.** The parts you visited on this board in this
+  session are marked on the map. The place Back has taken you to is the
+  strongest; older places fade, and the places Forward would return to
+  show as outlines. *Show history* and *Steps* in the map's right-click menu
+  switch it off or set how many places it marks.
+- **Worklist on the minimap.** In *Worklist* mode the map marks the loaded
+  worklist's parts in their mark colours, and ‹ › step through its rows, as
+  the worklist's own ‹ › do.
+- **Minimap placement, size and opacity.** Right-click the map to put it
+  left, centre or right, or let it float where you click. *Size* and
+  *Opacity* sliders sit in the same menu. The opacity fades only the board
+  picture, so the marks keep their contrast, and the map comes to full
+  strength while you pan or drag it.
+
+### Changed
+
+- **The minimap is on by default**, centred at the top at 60 % opacity.
+  Installs still on the old defaults (shown while panning, at full opacity)
+  are moved to the new ones once. A minimap switched off stays off.
+- **The PDF page scrubber is off by default.** Switch it on in Settings ▸
+  PDF Viewer ▸ Navigation.
+
+### Fixed
+
+- **Top and Bottom badges in the board Search tab** were dark blocks on the
+  light colour schemes. They now follow the scheme and line up in one
+  column.
+- **The minimap's board picture lost its right and bottom edge pixel**, and
+  on a tall or rotated board the map was too narrow for its controls.
+
 ## v0.51.0 — 2026-11-09
 
 Several of the board changes in this release come from **Roger Barbara and
