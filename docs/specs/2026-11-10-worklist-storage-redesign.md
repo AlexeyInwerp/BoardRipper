@@ -1,14 +1,18 @@
 # Worklist storage: review and redesign
 
-2026-11-10, revised the same day after review. Asked for:
+2026-11-10, revised twice the same day after review. Asked for:
 
 - Worklists stored on the server, with a story for the desktop app.
 - A worklist attributed to a **board name**, editable in the worklist
   navigator (Tools ▸ Worklists).
 - A worklist can be **loaded** into any open board without binding it
-  there, or **auto-matched** to a board by name, partial names included.
-- Matching by **tag**, after checking what the board database stores
-  and whether a tag system exists.
+  there. Matches by name (partial names included) and by tag are
+  **suggestions only**: the board's Worklist tab says how many worklists
+  match, lists them under a spoiler to open one, or offers a new one. Nothing
+  loads by itself.
+- Check what the board database stores and whether a tag system exists.
+  Tags on library boards come later; for now the worklist tags are set by
+  hand and are the only source of truth.
 
 ## Today
 
@@ -188,22 +192,40 @@ is at least 5 characters (`82002016` and `02016` match
 `820-02016-07_MacBook Air (M1, A2337)`; `M1` alone does not match
 anything). A match takes the weight of the board key it hit.
 
-- **Auto-load** happens when the tab has no worklist and there is **exactly
-  one** strong match. It is a load, not a binding. An info toast says which
-  worklist and offers Unload.
-- **Several strong matches, or only medium/weak ones:** the Worklist tab shows
-  a chip, "3 worklists for 820-02016". The chip opens the finder filtered to
-  them, strongest first and most recent first within a weight.
-- A setting turns auto-load off; the chip remains.
-- Without a server only the file name keys exist: board number and stem.
-  Matching still works on them.
+Matches are **suggestions only**. Nothing loads by itself, whatever the
+weight.
 
-**Tags.** A worklist's tags are matched like its board name. A tag "A2337"
-reaches every board of that model and "MacBook Air" reaches the family, both
-as weak or medium matches that are offered rather than auto-loaded. Tags
-also filter the navigator: "water", "no power". Boards get no tag editor in
-this design; their side of the match is the board database facets above.
-User-defined tags on library boards are a possible later step (§7).
+**The Worklist tab of an open board** always starts with a suggestions
+block:
+
+```
+3 matching worklists ▸                          + New worklist
+   ▾ (spoiler open)
+   820-02016 · No power — ticket 4411     12 parts · 4 nets · 2 d ago   [Open]
+   820-02016 · Water, keyboard side        7 parts          · 3 w ago   [Open]
+   A2337     · Known PMU readings          — · 18 nets      · 2 mo ago  [Open]
+```
+
+- The count is the number of matching worklists. The spoiler lists them,
+  strongest first and most recent first within a weight. Each row shows its
+  board name, name, size and age, and the tag that matched when the match
+  came through a tag.
+- **Open** loads that worklist onto this tab (§3).
+- **+ New worklist** creates one, attributed to this board's identity.
+- With a worklist already loaded, the block folds into one line above it
+  ("3 matching · switch"), so the suggestions stay one click away.
+- No matches: "No worklists for this board yet" and the New button.
+- The full finder (every worklist, search by name, board or tag) stays
+  available below for anything the matching does not reach.
+- Without a server only the file name keys exist: board number and stem.
+  Suggestions still work on them.
+
+**Tags.** A worklist's tags are matched like its board name: a tag "A2337"
+suggests the worklist on every board of that model, "MacBook Air" on the
+family. Tags also filter the navigator: "water", "no power". Worklist tags
+are set by hand and are the source of truth. Boards get no tag editor in this
+design; their side of the match is the board-database facets above. Tags on
+library boards come later (§7).
 
 ### 5. Two benches, one worklist
 
@@ -235,13 +257,13 @@ the rest. Picking one loads it onto this tab. The header shows the
 worklist's board name when it differs from this tab's board, and says when
 another open tab has the same worklist loaded.
 
-### 7. Optional later: tags on library boards
+### 7. Later: tags on library boards
 
 A `tags(entity_type, entity_key, tag)` table in `databank.db` would let a
 user tag library boards and files ("customer stock", "bad BGA"). The
 Library could filter on them, and worklist matching would treat them as
-medium keys. It is not needed for the request as stated, because worklist
-tags against board-database facets cover "matchable by tag".
+medium keys. Wanted later, not now: until then the worklist tags, set by
+hand, are the only tags.
 
 ### MCP
 
@@ -295,23 +317,27 @@ The clipboard format does not change.
 
    E2E: two tabs with different worklists each draw their own; one worklist
    on two tabs shows a mark on both.
-4. **Matching:**
+4. **Suggestions:**
    - board keys from the library row and the board database;
    - the containment rule and weights;
-   - auto-load of a single strong match, and the chip.
+   - the Worklist tab's block: count, spoiler, Open, + New, and the folded
+     line while a worklist is loaded.
 
    Unit tests on the rule (partial numbers, `M1` not matching, weights). E2E
-   on the public KiCad sample with a worklist whose board name is part of the
-   file name.
+   on the public KiCad sample: a worklist whose board name is part of the
+   file name is counted and listed, Open loads it, and nothing loads by itself.
 5. **Navigator:** grouping, search, tag chips, board-free editing, Load
    into…, Export/Import.
 6. Later: tags on library boards (§7).
 
-## Decisions for you
+## Decided
 
-1. **Auto-load threshold.** Only a single strong (board-number-level) match
-   loads by itself; everything else is offered. Agree, or should a tag match
-   ever auto-load?
-2. **Files in `<dataDir>/worklists/`** rather than a table, for the desktop
-   reasons above. Fine for the NAS backup you run?
-3. **Board tags (§7):** wanted now, later, or not at all?
+- Matches by name and tag are suggestions only, shown in the Worklist tab
+  with a count, a spoiler, Open per worklist and + New. Nothing auto-loads.
+- Tags on library boards: later. Worklist tags are set by hand and are the
+  only source of truth until then.
+
+## Open
+
+1. **Files in `<dataDir>/worklists/`** rather than a table, for the desktop
+   reasons in §2. Fine for the NAS backup you run?
