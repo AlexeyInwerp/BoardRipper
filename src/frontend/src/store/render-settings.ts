@@ -515,6 +515,9 @@ export interface RenderSettings {
   /** Show the minimap at full strength while the board is panned or the map
    *  is dragged, whatever `minimapOpacity` says (right-click ▸ check box). */
   minimapOpaqueWhileActive: boolean;
+  /** Mark this session's recent visits on the minimap — parts picked and the
+   *  views left — newest strongest (right-click ▸ Show history). */
+  minimapShowHistory: boolean;
   /** Auto-enable selection-dim while a search-driven selection (focusPart /
    *  focusNet) is active, even if the user's showNetDim toggle is off. */
   searchAutoDim: boolean;
@@ -837,6 +840,7 @@ export const DEFAULTS: RenderSettings = {
   minimapFloatY: 56,
   minimapOpacity: 0.6,
   minimapOpaqueWhileActive: true,
+  minimapShowHistory: true,
   searchAutoDim: true,
   autoMarkMechanical: true,
 };
@@ -2002,6 +2006,14 @@ class RenderSettingsStore extends Emitter {
     const o = Math.round(Math.min(1, Math.max(0.2, Number.isFinite(v) ? v : 1)) * 100) / 100;
     if (this._global.minimapOpacity === o) return;
     this._global = { ...this._global, minimapOpacity: o };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  setMinimapShowHistory(v: boolean) {
+    if (this._global.minimapShowHistory === v) return;
+    this._global = { ...this._global, minimapShowHistory: v };
     saveToStorage(this._global);
     this.recomputeEffective();
     this.notify();

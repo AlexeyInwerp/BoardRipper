@@ -22,6 +22,12 @@ import { renderSettingsStore, minimapMode, type MinimapMode, type MinimapPositio
 import { useRenderSettings } from '../hooks/useRenderSettings';
 import { uiZoom } from '../store/ui-zoom';
 import { QuickMenu } from './QuickMenu';
+import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
+import { navHistoryStore } from '../store/nav-history-store';
+import { historyBack, historyForward } from '../store/nav-history-actions';
+import { useNavHistory } from '../hooks/useNavHistory';
+import { minimapTrail, MINIMAP_TRAIL_LIMIT } from '../store/minimap-trail';
+import type { BoardData } from '../parsers/types';
 
 const MAX_W = 220;
 const MAX_H = 150;
@@ -137,7 +143,120 @@ function paintBoard(ctx: CanvasRenderingContext2D, model: Model, k: number, ox: 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
-export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | null; mode: 'always' | 'onPan' | 'off' }) {
+// ── History trail ───────────────────────────────────────────────────────
+
+const partIndexCache = new WeakMap<BoardData, Map<string, number>>();
+function partIndexByName(board: BoardData): Map<string, number> {
+  let m = partIndexCache.get(board);
+  if (!m) {
+    m = new Map();
+    board.parts.forEach((p, i) => { if (!m!.has(p.name.toUpperCase())) m!.set(p.name.toUpperCase(), i); });
+    partIndexCache.set(board, m);
+  }
+  return m;
+}
+
+function parseHex(h: string): [number, number, number] | null {
+  const m = /^#?([0-9a-f]{6})$/i.exec(h.trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+/** Newest visit in the selection colour, oldest in the accent, fading. */
+function trailColor(rank: number, n: number): string {
+  const hot = parseHex(css('--board-selection', '#ffff44')) ?? [255, 255, 68];
+  const cold = parseHex(css('--accent', '#4a9eff')) ?? [74, 158, 255];
+  const t = n <= 1 ? 0 : rank / (n - 1);
+  const c = hot.map((v, i) => Math.round(v + (cold[i] - v) * t));
+  const a = 0.95 - 0.6 * t;
+  return `rgba(${c[0]},${c[1]},${c[2]},${a.toFixed(3)})`;
+}
+
+/** Draw the trail in map css px: `k`/`ox`/`oy` map world to the map. */
+function paintTrail(ctx: CanvasRenderingContext2D, model: Model, tabId: number | null,
+  k: number, ox: number, oy: number, mapW: number, mapH: number, viewSize: { width: number; height: number }) {
+  const trail = minimapTrail(navHistoryStore.entries, navHistoryStore.cursor, tabId);
+  // For tests and the curious: how many visits the map marks.
+  const host = ctx.canvas.parentElement;
+  if (host) host.dataset.trail = String(trail.length);
+  if (trail.length === 0) return;
+  const { board } = model;
+  const idx = partIndexByName(board);
+  const primaryBottom = board.primarySide === 'bottom';
+  const top = boardStore.showTop, bottom = boardStore.showBottom;
+  const n = Math.min(trail.length, MINIMAP_TRAIL_LIMIT);
+  const cb = contentBounds(model);
+  // Oldest first, so the newest is drawn on top.
+  const ordered = [...trail].reverse();
+  const centres: Array<{ x: number; y: number; rank: number }> = [];
+
+  for (const it of ordered) {
+    const col = trailColor(it.rank, n);
+    if (it.camera && !it.part) {
+      // A view left behind: its rectangle, dashed. Skip fit-the-board views.
+      const c = it.camera;
+      const w = viewSize.width / c.scaleX, h = viewSize.height / c.scaleY;
+      if (w >= cb.w * 0.85 && h >= cb.h * 0.85) continue;
+      const x = -c.x / c.scaleX, y = -c.y / c.scaleY;
+      const rx = Math.max(1, x * k + ox), ry = Math.max(1, y * k + oy);
+      const rx1 = Math.min(mapW - 1, (x + w) * k + ox), ry1 = Math.min(mapH - 1, (y + h) * k + oy);
+      if (rx1 <= rx || ry1 <= ry) continue;
+      ctx.setTransform(window.devicePixelRatio || 1, 0, 0, window.devicePixelRatio || 1, 0, 0);
+      ctx.setLineDash([3, 2]);
+      ctx.strokeStyle = col;
+      ctx.lineWidth = it.current ? 1.6 : 1;
+      ctx.strokeRect(rx, ry, rx1 - rx, ry1 - ry);
+      ctx.setLineDash([]);
+      continue;
+    }
+    if (!it.part) continue;
+    const pi = idx.get(it.part.toUpperCase());
+    if (pi === undefined) continue;
+    const part = board.parts[pi];
+    const isTop = part.side === 'both' || (part.side === 'top') !== primaryBottom;
+    const isBottom = part.side === 'both' || !isTop;
+    for (const r of model.roots) {
+      if (r.side === 'top' && !isTop) continue;
+      if (r.side === 'bottom' && !isBottom) continue;
+      if (r.side === 'all' && !((top && isTop) || (bottom && isBottom))) continue;
+      const dpr = window.devicePixelRatio || 1;
+      const [a, b, c, d, tx, ty] = r.m;
+      ctx.setTransform(a * k * dpr, b * k * dpr, c * k * dpr, d * k * dpr, (tx * k + ox) * dpr, (ty * k + oy) * dpr);
+      const px = 1 / (Math.hypot(a, b) * k);
+      const pb = part.bounds;
+      // At least 4 map px, so a passive the size of a dot still shows.
+      const minS = px * 4;
+      const w = Math.max(minS, pb.maxX - pb.minX), h = Math.max(minS, pb.maxY - pb.minY);
+      const cx = (pb.minX + pb.maxX) / 2, cy = (pb.minY + pb.maxY) / 2;
+      ctx.fillStyle = col;
+      ctx.globalAlpha = 0.55;
+      ctx.fillRect(cx - w / 2, cy - h / 2, w, h);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = col;
+      ctx.lineWidth = px * (it.current ? 2 : 1.2);
+      ctx.strokeRect(cx - w / 2, cy - h / 2, w, h);
+      // Centre in map css px, for the connecting line.
+      centres.push({ x: (a * cx + c * cy + tx) * k + ox, y: (b * cx + d * cy + ty) * k + oy, rank: it.rank });
+      break;
+    }
+  }
+  // A thin line through the parts, oldest to newest: the order of the work.
+  if (centres.length > 1) {
+    const dpr = window.devicePixelRatio || 1;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.lineWidth = 1;
+    for (let i = 1; i < centres.length; i++) {
+      ctx.strokeStyle = trailColor(centres[i].rank, n);
+      ctx.beginPath();
+      ctx.moveTo(centres[i - 1].x, centres[i - 1].y);
+      ctx.lineTo(centres[i].x, centres[i].y);
+      ctx.stroke();
+    }
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+
+export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: BoardRenderer | null; tabId?: number | null; mode: 'always' | 'onPan' | 'off' }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const baseRef = useRef<{ sig: string; canvas: HTMLCanvasElement; k: number; ox: number; oy: number; w: number; h: number } | null>(null);
   const activity = useRef(new PanActivity());
@@ -201,6 +320,9 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, cv.width, cv.height);
     ctx.drawImage(base.canvas, 0, 0);
+    if (renderSettingsStore.settings.minimapShowHistory !== false) {
+      paintTrail(ctx, model, tabId, base.k, base.ox, base.oy, base.w, base.h, renderer!.viewSize());
+    } else if (cv.parentElement) cv.parentElement.dataset.trail = '0';
     // The view box, clipped to the map so a zoomed-out view still draws sanely.
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const v = model.view;
@@ -214,7 +336,7 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
       ctx.lineWidth = 1.5;
       ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
     }
-  }, [renderer, size.w, size.h]);
+  }, [renderer, size.w, size.h, tabId]);
 
   // Follow the view; in onPan mode, feed the gesture counter.
   useEffect(() => {
@@ -254,6 +376,13 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
   }, []);
   // Selection / side changes repaint the board picture.
   useEffect(() => boardStore.subscribe(() => { if (visible) paint(); }), [visible, paint]);
+  // Hooks stay above the early return below.
+  const history = useNavHistory();
+  // Repaint when the trail switch flips (paint reads the store directly).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (visible) paint(); }, [settings.minimapShowHistory]);
+  // A new visit (or a step back/forward) moves the trail.
+  useEffect(() => navHistoryStore.subscribe(() => { if (visible) paint(); }), [visible, paint]);
   // A scheme switch repaints it in the new colours.
   useEffect(() => themeStore.subscribe(() => { if (visible) paint(); }), [visible, paint]);
   useEffect(() => { if (visible) paint(); }, [visible, paint]);
@@ -360,6 +489,16 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
       onLostPointerCapture={() => { dragging.current = false; markActive(); }}
     >
       <canvas ref={canvasRef} style={{ width: size.w, height: size.h }} />
+      <div className="minimap-history" onPointerDown={e => e.stopPropagation()}>
+        <button type="button" data-testid="minimap-history-back" aria-label="Back" title="Back"
+          disabled={!history.canBack} onClick={() => historyBack()}>
+          <IconChevronLeft size={13} stroke={2.2} />
+        </button>
+        <button type="button" data-testid="minimap-history-forward" aria-label="Forward" title="Forward"
+          disabled={!history.canForward} onClick={() => historyForward()}>
+          <IconChevronRight size={13} stroke={2.2} />
+        </button>
+      </div>
     </div>
     {menu && (
       <QuickMenu
@@ -379,6 +518,13 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
           { kind: 'check', label: 'While panning', checked: curMode === 'onPan', testId: 'minimap-show-onPan', onSelect: show('onPan') },
           { kind: 'check', label: 'Always', checked: curMode === 'always', testId: 'minimap-show-always', onSelect: show('always') },
           { kind: 'check', label: 'Off', checked: curMode === 'off', testId: 'minimap-show-off', onSelect: show('off') },
+          { kind: 'sep' },
+          {
+            kind: 'check', label: 'Show history', testId: 'minimap-show-history',
+            hint: 'The parts and views you visited on this board in this session, newest strongest',
+            checked: settings.minimapShowHistory !== false,
+            onSelect: () => renderSettingsStore.setMinimapShowHistory(settings.minimapShowHistory === false),
+          },
           { kind: 'sep' },
           {
             kind: 'range', label: 'Opacity', testId: 'minimap-opacity',

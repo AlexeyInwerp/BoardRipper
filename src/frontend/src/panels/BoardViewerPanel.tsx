@@ -351,7 +351,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
       )}
       <ResizeModeBanner />
       <SlideLayer tabId={tabId} renderer={liveRenderer} rootRef={rootRef} hostRef={containerRef} fileName={tabFileName} />
-      <BoardMinimap renderer={liveRenderer} mode={slideOn ? 'always' : minimapMode(renderSettings)} />
+      <BoardMinimap renderer={liveRenderer} tabId={tabId} mode={slideOn ? 'always' : minimapMode(renderSettings)} />
       <BoardLegend tabId={tabId} sidebarOpen={sidebarOpen} rootRef={rootRef} />
       <div className="board-sidebar-toggle-group">
         <button

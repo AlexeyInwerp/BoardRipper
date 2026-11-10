@@ -9737,6 +9737,17 @@ body {
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 .board-minimap canvas { display: block; }
+/* History ‹ › in the map's lower-left corner. */
+.minimap-history {
+  position: absolute; left: 3px; bottom: 3px; display: flex; gap: 1px;
+  border-radius: 5px; background: var(--chip-bg); padding: 1px;
+}
+.minimap-history button {
+  width: 20px; height: 18px; display: grid; place-items: center; padding: 0;
+  border: 0; border-radius: 4px; background: transparent; color: var(--text-primary); cursor: pointer;
+}
+.minimap-history button:hover:not(:disabled) { background: var(--surface-active); }
+.minimap-history button:disabled { opacity: 0.3; cursor: default; }
 /* A faded map comes up to full strength under the pointer, while the board
    is panned or the map dragged (.active, set by BoardMinimap), and while it
    is being placed. */
