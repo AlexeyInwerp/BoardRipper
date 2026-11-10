@@ -38,7 +38,7 @@ function Swatch({ color, outline, shape = 'dot' }: { color: string; outline?: bo
 
 function Row({ swatch, name, sub, count, testId }: { swatch: ReactNode; name: ReactNode; sub?: ReactNode; count?: number; testId?: string }) {
   return (
-    <div className="lg-row" data-testid={testId}>
+    <div className={`lg-row${count === 0 ? " none" : ""}`} data-testid={testId}>
       {swatch}
       <span className="lg-name">{name}{sub && <span className="lg-sub">{sub}</span>}</span>
       {count !== undefined && <span className="lg-n">{num(count)}</span>}

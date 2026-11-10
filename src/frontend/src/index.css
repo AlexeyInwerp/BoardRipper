@@ -1462,9 +1462,32 @@ body {
   line-height: 1;
 }
 
-.badge-top { background: #1a3a1a; color: var(--green); }
-.badge-bottom { background: #3a1a1a; color: var(--red); }
-.badge-both { background: #2a2a1a; color: var(--orange); }
+/* Side badges: a light tint of the side colour, text shaded toward the body
+   text so it stays legible on dark and light chrome alike (fixed dark fills
+   used to sit as black slabs on the light schemes). */
+.badge-top, .badge-bottom, .badge-both {
+  --side: var(--text-secondary);
+  background: color-mix(in srgb, var(--side) 14%, transparent);
+  color: color-mix(in srgb, var(--side) 72%, var(--text-primary));
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+.badge-top { --side: var(--green); }
+.badge-bottom { --side: var(--red); }
+.badge-both { --side: var(--orange); }
+
+/* In result lists the side and pin count form one right-hand column, so the
+   badges line up whatever the name's length. */
+.part-item .badge, .search-result-sub .badge {
+  margin-left: auto;
+  min-width: 52px;
+  justify-content: center;
+}
+.part-item .badge + .result-pins, .search-result-sub .badge + .result-pins {
+  margin-left: 0;
+  min-width: 44px;
+  text-align: right;
+}
 
 /* Part metadata table (BOM value, package, type, etc. — surfaced from
    format-specific data like TVW). Compact two-column layout above the pin list. */
@@ -2128,6 +2151,7 @@ body {
   font-size: 0.7em;
   padding: 1px 4px;
   height: 15px;
+  min-width: 44px;
 }
 
 .result-name {
@@ -10119,10 +10143,10 @@ body {
   max-height: calc(100% - 96px);
   display: flex;
   flex-direction: column;
-  background: color-mix(in srgb, var(--bg-secondary) 58%, transparent);
+  background: color-mix(in srgb, var(--bg-secondary) 72%, transparent);
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   border-radius: 8px;
-  backdrop-filter: blur(2px);
+  backdrop-filter: blur(6px);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
   color: var(--text-primary);
   font-size: 12px;
@@ -10157,6 +10181,9 @@ body {
   color: var(--text-secondary);
 }
 .board-legend .lg-row { display: flex; align-items: center; gap: 8px; padding: 2px 10px; min-height: 20px; }
+/* A rule nothing on this board matches stays listed (it is still a rule)
+   but recedes, so the rows that colour this board stand out. */
+.board-legend .lg-row.none { opacity: 0.42; }
 .board-legend .lg-name { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-wrap: anywhere; }
 .board-legend .lg-sub { color: var(--text-secondary); font-size: 11px; }
 .board-legend .lg-mono { font-family: monospace; font-size: 11.5px; }
@@ -10191,7 +10218,13 @@ body {
 }
 .wl-sugg-title { font-size: 12px; font-weight: 600; flex: 1; min-width: 0; }
 .wl-sugg.empty .wl-sugg-title { font-weight: 400; color: var(--text-secondary); }
-.wl-sugg-list { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+/* .wl-act is a full-width menu row; inside a header line it is a compact
+   button that keeps its words on one line. */
+.wl-sugg .wl-act, .wlnav-head .wl-act, .wlnav-actions .wl-act {
+  width: auto; flex: none; white-space: nowrap; gap: 4px; padding: 3px 7px;
+}
+.wlnav-actions .wl-act { border: 1px solid var(--border); border-radius: 5px; height: 24px; }
+.wl-sugg-list { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; max-height: min(40vh, 260px); overflow-y: auto; }
 .wl-sugg-row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 5px; }
 .wl-sugg-row:hover { background: var(--surface-hover); }
 .wl-sugg-row.cur { box-shadow: inset 2px 0 0 var(--accent); }
@@ -10200,7 +10233,7 @@ body {
 .wl-sugg-name .bd { flex: none; font-family: ui-monospace, monospace; color: var(--text-secondary); }
 .wl-sugg-name .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wl-sugg-sub { font-size: 11px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wl-sugg-sub .why { color: var(--accent-text, var(--accent)); }
+.wl-sugg-sub .why { font-style: italic; }
 .wl-sugg-here { font-size: 11px; color: var(--text-secondary); padding: 0 6px; }
 
 /* The board name a worklist is attributed to, under its header. */
@@ -10213,7 +10246,8 @@ body {
 .wl-origin .tags { display: inline-flex; flex-wrap: wrap; gap: 3px; }
 .wl-tag {
   display: inline-flex; align-items: center; padding: 0 6px; height: 18px; border-radius: 9px;
-  border: 1px solid var(--border); background: transparent; color: var(--text-secondary);
+  border: 1px solid color-mix(in srgb, var(--text-secondary) 28%, transparent);
+  background: color-mix(in srgb, var(--text-secondary) 10%, transparent); color: var(--text-secondary);
   font: inherit; font-size: 11px; cursor: default;
 }
 button.wl-tag { cursor: pointer; }
@@ -10231,6 +10265,11 @@ button.wl-tag:hover { color: var(--text-primary); }
 .wlnav-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
 .wlnav-group + .wlnav-group { margin-top: 6px; }
 .wlcat-row { gap: 6px; }
+/* Name over meta: both are spans in a button, so they need block display. */
+.wlnav .wlcat-name, .wlnav .wlcat-meta { display: block; }
+.wlnav .wlcat-meta { font-family: inherit; margin-top: 1px; }
+/* Board names are identifiers: shown as written, not upper-cased. */
+.wlnav-group > .tools-group-label { text-transform: none; letter-spacing: 0; font-size: 10.5px; font-family: ui-monospace, monospace; }
 .wlnav-editor {
   display: flex; flex-direction: column; gap: 6px; margin: 2px 0 8px 18px; padding: 8px;
   border: 1px solid var(--border); border-radius: 6px;

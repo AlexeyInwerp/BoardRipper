@@ -280,7 +280,7 @@ function WorklistSuggestions({ tabId, summaries, loadedId, onCreated }: {
                   <div className="wl-sugg-sub">
                     {`${sizeLine(w)} · ${age(w.updatedAt)}`}
                     {s.byTag && <span className="why">{` · tag “${s.via}”`}</span>}
-                    {!s.byTag && s.weight < 3 && <span className="why">{` · ${s.key.what}`}</span>}
+                    {!s.byTag && s.weight < 3 && <span className="why">{` · matches ${s.key.what}`}</span>}
                   </div>
                 </div>
                 {here
