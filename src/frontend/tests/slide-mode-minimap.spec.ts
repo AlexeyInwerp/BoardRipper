@@ -293,7 +293,9 @@ test.describe('pan minimap', () => {
       try {
         const raw = localStorage.getItem('boardripper-render-settings');
         const s = raw ? JSON.parse(raw) : {};
-        localStorage.setItem('boardripper-render-settings', JSON.stringify({ ...s, disableInertia: true }));
+        // The while-panning mode is what this test measures (the default is always on).
+        localStorage.setItem('boardripper-render-settings', JSON.stringify({ ...s, disableInertia: true, minimapOnPan: true, minimapAlways: false }));
+        localStorage.setItem('boardripper-minimap-defaults-v2', '1');
       } catch { /* ignore */ }
     });
     await openBoard(page);
@@ -325,20 +327,44 @@ test.describe('pan minimap', () => {
     await expect(map).toHaveAttribute('data-visible', 'false', { timeout: 3000 });
   });
 
-  test('the ribbon button cycles while panning → always on → off', async ({ page }) => {
+  test('always on by default; the ribbon button cycles off → while panning → always on', async ({ page }) => {
     await openBoard(page);
     const btn = page.getByTestId('minimap-toggle');
     const map = page.getByTestId('board-minimap');
-    await expect(btn).toHaveAttribute('data-mode', 'onPan');          // the default
-    await expect(map).toHaveAttribute('data-visible', 'false');       // hidden until a pan
-    await btn.click();
-    await expect(btn).toHaveAttribute('data-mode', 'always');
+    await expect(btn).toHaveAttribute('data-mode', 'always');         // the default
     await expect(map).toHaveAttribute('data-visible', 'true');        // up with no pan at all
+    await expect(map).toHaveAttribute('data-position', 'center');
+    await expect.poll(() => map.evaluate(el => Number(getComputedStyle(el).opacity))).toBeCloseTo(0.6, 2);
     await btn.click();
     await expect(btn).toHaveAttribute('data-mode', 'off');
     await expect(map).toHaveCount(0);
     await btn.click();
     await expect(btn).toHaveAttribute('data-mode', 'onPan');
-    await expect(map).toHaveCount(1);
+    await expect(map).toHaveAttribute('data-visible', 'false');       // hidden until a pan
+    await btn.click();
+    await expect(btn).toHaveAttribute('data-mode', 'always');
+    await expect(map).toHaveAttribute('data-visible', 'true');
+  });
+
+  test('an install still on the old defaults is moved to always on at 60 %, once; a chosen Off stays', async ({ page }) => {
+    await page.addInitScript(() => {
+      if (sessionStorage.getItem('mm-seeded')) return;
+      sessionStorage.setItem('mm-seeded', '1');
+      localStorage.removeItem('boardripper-minimap-defaults-v2');
+      localStorage.setItem('boardripper-render-settings', JSON.stringify({ minimapOnPan: true, minimapAlways: false, minimapOpacity: 1 }));
+    });
+    await openBoard(page);
+    await expect(page.getByTestId('minimap-toggle')).toHaveAttribute('data-mode', 'always');
+    const s = await page.evaluate(() => JSON.parse(localStorage.getItem('boardripper-render-settings') || '{}'));
+    expect(s.minimapOpacity).toBeCloseTo(0.6, 2);
+
+    // Off, chosen after the move, survives a reload: the move runs once.
+    await page.getByTestId('minimap-toggle').click();
+    await expect(page.getByTestId('minimap-toggle')).toHaveAttribute('data-mode', 'off');
+    await page.reload();
+    const discard = page.getByTestId('session-discard');
+    await discard.waitFor({ timeout: 5000 }).then(() => discard.click(), () => {});
+    await page.setInputFiles('[data-testid="file-input"]', FIXTURE);
+    await expect(page.getByTestId('minimap-toggle')).toHaveAttribute('data-mode', 'off');
   });
 });

@@ -17,8 +17,7 @@ async function openBoardWithMap(page: Page) {
   await page.setInputFiles('[data-testid="file-input"]', BOARD);
   const btn = page.getByTestId('minimap-toggle');
   await expect(btn).toBeVisible();
-  await btn.click();                                   // while panning → always on
-  await expect(btn).toHaveAttribute('data-mode', 'always');
+  await expect(btn).toHaveAttribute('data-mode', 'always');   // the default
   const map = page.getByTestId('board-minimap');
   await expect(map).toHaveAttribute('data-visible', 'true');
   return map;
@@ -52,7 +51,8 @@ test.describe('minimap placement', () => {
   test('opacity from the right-click menu: live, full under the pointer and while panning (unless unticked), survives a reload', async ({ page }) => {
     const map = await openBoardWithMap(page);
     const opacity = () => map.evaluate(el => Number(getComputedStyle(el).opacity));
-    await expect.poll(opacity).toBe(1);
+    await page.mouse.move(5, 5);
+    await expect.poll(opacity).toBeCloseTo(0.6, 2);           // the default
     await map.click({ button: 'right' });
     const slider = page.getByTestId('minimap-opacity');
     await slider.fill('40');

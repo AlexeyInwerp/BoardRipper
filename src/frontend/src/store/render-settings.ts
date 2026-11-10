@@ -831,11 +831,11 @@ export const DEFAULTS: RenderSettings = {
   overlayFloatX: 8,
   overlayFloatY: 6,
   minimapOnPan: true,
-  minimapAlways: false,
+  minimapAlways: true,
   minimapPosition: 'center',
   minimapFloatX: 16,
   minimapFloatY: 56,
-  minimapOpacity: 1,
+  minimapOpacity: 0.6,
   minimapOpaqueWhileActive: true,
   searchAutoDim: true,
   autoMarkMechanical: true,
@@ -1456,6 +1456,9 @@ const SCROLL_SLOTS_V2_KEY = 'boardripper-scroll-slots-v2';
  *  same reason as the pin-label floor — a changed default alone never
  *  reaches an install that has stored settings. */
 const ROTATE_UNLOCK_BUMPED_KEY = 'boardripper-rotate-unlock-24';
+/** 2026-11-10: the minimap defaults to always on at 60 %. An install still on
+ *  the old defaults (while panning, full opacity) is moved once. */
+const MINIMAP_DEFAULTS_BUMPED_KEY = 'boardripper-minimap-defaults-v2';
 let pendingTextFastGraduationNotice = false;
 /** True exactly once, on the first boot where the graduation migration ran
  *  against a pre-existing installation — drives the one-time "text rendering
@@ -1533,6 +1536,17 @@ function loadFromStorage(): RenderSettings {
             parsed.rotateUnlockDeg = DEFAULTS.rotateUnlockDeg;
             localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
           }
+        }
+        if (!localStorage.getItem(MINIMAP_DEFAULTS_BUMPED_KEY)) {
+          localStorage.setItem(MINIMAP_DEFAULTS_BUMPED_KEY, '1');
+          let changed = false;
+          if (parsed.minimapOnPan !== false && parsed.minimapAlways !== true) {
+            parsed.minimapOnPan = true; parsed.minimapAlways = true; changed = true;
+          }
+          if (parsed.minimapOpacity === undefined || parsed.minimapOpacity === 1) {
+            parsed.minimapOpacity = DEFAULTS.minimapOpacity; changed = true;
+          }
+          if (changed) localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
         }
         if (!localStorage.getItem(PIN_LABEL_FLOOR_BUMPED_KEY)) {
           localStorage.setItem(PIN_LABEL_FLOOR_BUMPED_KEY, '1');
