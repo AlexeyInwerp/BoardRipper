@@ -556,6 +556,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   // page is on screen.
   const load = useSyncExternalStore(subscribePdfStore, () => pdfStore.loads.byName[pdfFileName]);
   const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, rotation, pageMode, mirror, searchQuery, matches, activeMatchIndex, matchNavSeq, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, parseGen, lookupHint, crossProbeHint } = usePdfDoc(pdfFileName);
+  /** The page scrubber rail is opt-in (Settings ▸ PDF Viewer ▸ Navigation). */
+  const showScrubber = useSyncExternalStore(
+    cb => renderSettingsStore.subscribe(cb), () => renderSettingsStore.settings.pdfPageScrubber);
   /** Effective single-page layout: explicit single mode OR forced while rotated. */
   const singlePageMode = pageMode === 'single' || rotation !== 0;
   /** Current user rotation, read imperatively inside render callbacks. */
@@ -4343,7 +4346,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             <span ref={clickTooltipElRef} className="pdf-click-tooltip" style={{ transform: 'translateX(-50%)' }} />
           </div>
         </div>
-        {pageCount > 1 && (
+        {pageCount > 1 && showScrubber && (
           <PageScrubber
             currentPage={currentPage}
             pageCount={pageCount}

@@ -5122,7 +5122,9 @@ export class BoardRenderer {
         // floating bar must not rebuild — every rebuild is a chance to leave a
         // destroyed Graphics in the tree (the `_gpuData of null` crash).
         'overlayLayout', 'overlayPosition', 'overlayOrientation', 'overlayFloatX', 'overlayFloatY',
-        'minimapOnPan', 'minimapAlways',
+        'minimapOnPan', 'minimapAlways', 'minimapPosition', 'minimapFloatX', 'minimapFloatY',
+        // PDF panel only.
+        'pdfPageScrubber',
       ]);
       if (prev) {
         let visualChanged = false;

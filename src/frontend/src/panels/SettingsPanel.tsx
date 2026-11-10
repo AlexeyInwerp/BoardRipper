@@ -2526,6 +2526,8 @@ export function SettingsPanel() {
         <PdfInertiaToggle />
         <Toggle label="Pan Boundaries" value={draft.pdfEnableBoundaries} field="pdfEnableBoundaries" onUpdate={updateGlobal}
           title="Clamp PDF pan to page edges: prevents scrolling off the document at the first/last page and centers horizontally when the page fits the viewport. Page-flip thresholds still fire as you cross them either way. Zoom range stays at 0.5×–10× regardless." />
+        <Toggle label="Page scrubber" value={draft.pdfPageScrubber} field="pdfPageScrubber" onUpdate={updateGlobal}
+          title="A thin rail on the PDF's right edge: click or drag along it to jump to a page, with the page number shown as you go." />
         <div className="settings-subsection-label">Shortcuts (when PDF panel is active)</div>
         <div className="pdf-shortcuts-list">
           {shortcuts.filter(s => s.category === 'pdf').map(s => (

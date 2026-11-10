@@ -101,6 +101,22 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   // A wheel over the panel's overlays — ribbon, minimap, slide sheet, the
   // sidebar toggle — goes to the board. The sidebar keeps its own (its lists
   // scroll), as does any scrollable element and any text field.
+  // Where the ribbon ends, for the minimap (and anything else anchored
+  // under it): a narrow panel wraps the ribbon onto a second row, and a map
+  // at a fixed top would sit under that row. Only a horizontal ribbon in its
+  // usual row counts; a vertical or floating one leaves the top free.
+  const ribbonInRow = renderSettings.overlayOrientation !== 'vertical' && renderSettings.overlayPosition !== 'floating';
+  useEffect(() => {
+    const root = rootRef.current, bar = barRef.current;
+    if (!root) return;
+    if (!bar || !ribbonInRow) { root.style.removeProperty('--ribbon-bottom'); return; }
+    const set = () => root.style.setProperty('--ribbon-bottom', `${bar.offsetTop + bar.offsetHeight}px`);
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, [ribbonInRow, tabId]);
+
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;

@@ -361,6 +361,12 @@ export interface RenderSettings {
    *  so this is an escape hatch, not a look. Applies on (re)load. */
   pdfPruneInvisible: boolean;
 
+  /** The page scrubber: a thin rail on the PDF's right edge that jumps to a
+   *  page by position, with a page-number tip. Off by default (2026-11-10):
+   *  on a schematic it was more often hit by accident than used.
+   *  Settings ▸ PDF Viewer ▸ Navigation. */
+  pdfPageScrubber: boolean;
+
   /** PDF render mode.
    *  - 'auto': tile above 1.05× zoom, full-page below — crisp at deep zoom.
    *  - 'standard' (default since 1b50386, 2026-05-27): always full-page, never
@@ -496,6 +502,13 @@ export interface RenderSettings {
    *  button's third state: off → while panning → always). Wins over
    *  `minimapOnPan`; slide mode shows it regardless. */
   minimapAlways: boolean;
+  /** Where the minimap sits: top centre (the default), top left, top right,
+   *  or floating at `minimapFloatX/Y` (px from the board panel's top-left).
+   *  Set from the minimap's right-click menu; Float lets the map follow the
+   *  pointer until a click puts it down. */
+  minimapPosition: MinimapPosition;
+  minimapFloatX: number;
+  minimapFloatY: number;
   /** Auto-enable selection-dim while a search-driven selection (focusPart /
    *  focusNet) is active, even if the user's showNetDim toggle is off. */
   searchAutoDim: boolean;
@@ -755,6 +768,7 @@ export const DEFAULTS: RenderSettings = {
   pdfWatermarkFilterEnabled: true,
   pdfStripWatermarkImages: false,
   pdfPruneInvisible: true,
+  pdfPageScrubber: false,
 
   pdfRenderMode: 'standard',
   pdfEnableBoundaries: true,
@@ -812,6 +826,9 @@ export const DEFAULTS: RenderSettings = {
   overlayFloatY: 6,
   minimapOnPan: true,
   minimapAlways: false,
+  minimapPosition: 'center',
+  minimapFloatX: 16,
+  minimapFloatY: 56,
   searchAutoDim: true,
   autoMarkMechanical: true,
 };
@@ -861,6 +878,7 @@ export function computeMultiPinPadding(s: RenderSettings, pinRadii: number[]): n
  *  X and stop scanning a pin's neighbours once the X gap alone beats the best
  *  distance so far. */
 export type MinimapMode = 'off' | 'onPan' | 'always';
+export type MinimapPosition = 'center' | 'left' | 'right' | 'floating';
 
 /** Which of the minimap's three states the settings describe. */
 export function minimapMode(s: Pick<RenderSettings, 'minimapOnPan' | 'minimapAlways'>): MinimapMode {
@@ -1940,6 +1958,18 @@ class RenderSettingsStore extends Emitter {
     const onPan = mode !== 'off', always = mode === 'always';
     if (this._global.minimapOnPan === onPan && this._global.minimapAlways === always) return;
     this._global = { ...this._global, minimapOnPan: onPan, minimapAlways: always };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  /** Minimap placement; `floating` takes the panel-relative px it was put at. */
+  setMinimapPosition(position: MinimapPosition, at?: { x: number; y: number }) {
+    const x = at ? Math.round(at.x) : this._global.minimapFloatX;
+    const y = at ? Math.round(at.y) : this._global.minimapFloatY;
+    const g = this._global;
+    if (g.minimapPosition === position && g.minimapFloatX === x && g.minimapFloatY === y) return;
+    this._global = { ...g, minimapPosition: position, minimapFloatX: x, minimapFloatY: y };
     saveToStorage(this._global);
     this.recomputeEffective();
     this.notify();

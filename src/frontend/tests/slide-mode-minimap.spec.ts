@@ -194,9 +194,11 @@ test.describe('slide mode: parts, readings, text and pen', () => {
 
     // Pen: a freehand stroke keeps its samples.
     await page.getByTestId('slide-tool-pen').click();
-    await page.mouse.move(cx + 100, cy - 100);
+    // Below the centre: the minimap (always up in slide mode) sits under the
+    // ribbon at the top, lower still when a narrow panel wraps the ribbon.
+    await page.mouse.move(cx + 100, cy + 100);
     await page.mouse.down();
-    for (let i = 1; i <= 20; i++) await page.mouse.move(cx + 100 + i * 6, cy - 100 + Math.sin(i / 3) * 30);
+    for (let i = 1; i <= 20; i++) await page.mouse.move(cx + 100 + i * 6, cy + 100 + Math.sin(i / 3) * 30);
     await page.mouse.up();
     const ink = await page.evaluate(() => {
       const w = window as unknown as { __slideStore: { list(t: number): Array<{ kind: string; points?: unknown[] }> }; __boardStore: { activeTabId: number } };

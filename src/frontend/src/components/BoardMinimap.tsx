@@ -7,12 +7,21 @@
  *  Drawn from BoardData (outline + part boxes) through the board roots'
  *  transforms, so rotation, mirror and Butterfly come for free. The board is
  *  cached in an offscreen canvas and only the view box is redrawn per frame.
- *  Click or drag on it to move the view there. */
+ *  Click or drag on it to move the view there.
+ *
+ *  Placement (right-click the map): top centre, top left, top right, or
+ *  Float — the map then follows the pointer around the board panel and the
+ *  next click puts it down there (Escape keeps it where it was). Settings
+ *  `minimapPosition` / `minimapFloatX/Y`, global. */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BoardRenderer } from '../renderer/BoardRenderer';
 import { PanActivity } from '../store/pan-activity';
 import { boardStore } from '../store/board-store';
 import { themeStore } from '../store/themes';
+import { renderSettingsStore, minimapMode, type MinimapMode, type MinimapPosition } from '../store/render-settings';
+import { useRenderSettings } from '../hooks/useRenderSettings';
+import { uiZoom } from '../store/ui-zoom';
+import { QuickMenu } from './QuickMenu';
 
 const MAX_W = 220;
 const MAX_H = 150;
@@ -136,7 +145,15 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
   const hovering = useRef(false);
   const [size, setSize] = useState({ w: MAX_W, h: MAX_H });
 
-  const visible = mode === 'always' || (mode === 'onPan' && shown);
+  const settings = useRenderSettings();
+  const position: MinimapPosition = settings.minimapPosition ?? 'center';
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  /** Float placement in progress: where the map is under the pointer, px from
+   *  the board panel's top-left. The map stays up the whole time. */
+  const [placing, setPlacing] = useState<{ x: number; y: number } | null>(null);
+
+  const visible = mode === 'always' || (mode === 'onPan' && shown) || placing !== null;
 
   const paint = useCallback(() => {
     const cv = canvasRef.current;
@@ -233,18 +250,84 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
     renderer.centerOnWorld((mx - base.ox) / base.k, (my - base.oy) / base.k);
   }, [renderer]);
 
+  // Float: follow the pointer inside the board panel until a click settles
+  // it. Window capture listeners, so the settling press never reaches the
+  // board (and its click is swallowed); Escape restores the old place.
+  const startPlacing = useCallback(() => {
+    const el = rootRef.current;
+    const panel = el?.offsetParent as HTMLElement | null;
+    if (!el || !panel) return;
+    const z = uiZoom();
+    const w = el.offsetWidth, h = el.offsetHeight;
+    // Where left/top 0 is on screen: the panel's padding box. Taken from the
+    // panel, never from the map's own rect — the map may be mid-transition
+    // (its show/hide slide animates a transform), and that would offset
+    // where it is put down by however far the animation had got.
+    const pr = panel.getBoundingClientRect();
+    const er = el.getBoundingClientRect();
+    const originX = pr.left + panel.clientLeft * z, originY = pr.top + panel.clientTop * z;
+    const clamp = (cx: number, cy: number) => ({
+      x: Math.min(Math.max(0, cx), Math.max(0, panel.clientWidth - w)),
+      y: Math.min(Math.max(0, cy), Math.max(0, panel.clientHeight - h)),
+    });
+    let at = clamp((er.left - originX) / z, (er.top - originY) / z);
+    setPlacing(at);
+    const move = (e: PointerEvent) => {
+      at = clamp((e.clientX - originX) / z - w / 2, (e.clientY - originY) / z - h / 2);
+      setPlacing(at);
+    };
+    const swallow = (e: Event) => { e.stopPropagation(); e.preventDefault(); };
+    const end = () => {
+      window.removeEventListener('pointermove', move, true);
+      window.removeEventListener('pointerdown', down, true);
+      window.removeEventListener('keydown', key, true);
+      setPlacing(null);
+    };
+    const down = (e: PointerEvent) => {
+      swallow(e);
+      if (e.button === 0) {
+        move(e);
+        renderSettingsStore.setMinimapPosition('floating', at);
+        window.addEventListener('click', swallow, { capture: true, once: true });
+        setTimeout(() => window.removeEventListener('click', swallow, true), 0);
+      }
+      end();
+    };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { swallow(e); end(); } };
+    window.addEventListener('pointermove', move, true);
+    window.addEventListener('pointerdown', down, true);
+    window.addEventListener('keydown', key, true);
+  }, []);
+
   if (mode === 'off' || !renderer) return null;
 
+  const at = placing ?? (position === 'floating' ? { x: settings.minimapFloatX, y: settings.minimapFloatY } : null);
+  const placeStyle: React.CSSProperties = at
+    // Clamped in CSS as well: a panel made smaller later cannot carry it off.
+    ? { left: `clamp(0px, ${at.x}px, calc(100% - ${size.w}px))`, top: `clamp(0px, ${at.y}px, calc(100% - ${size.h}px))` }
+    : {};
+  const pick = (p: MinimapPosition) => () => {
+    setMenu(null);
+    if (p === 'floating') startPlacing(); else renderSettingsStore.setMinimapPosition(p);
+  };
+  const show = (m: MinimapMode) => () => { setMenu(null); renderSettingsStore.setMinimapMode(m); };
+  const curMode = minimapMode(settings);
+
   return (
+    <>
     <div
-      className={`board-minimap${visible ? ' visible' : ''}`}
+      ref={rootRef}
+      className={`board-minimap pos-${at ? 'floating' : position}${visible ? ' visible' : ''}${placing ? ' placing' : ''}`}
       data-testid="board-minimap"
       data-visible={visible ? 'true' : 'false'}
-      style={{ width: size.w, height: size.h }}
+      data-position={position}
+      data-placing={placing ? 'true' : 'false'}
+      style={{ width: size.w, height: size.h, ...placeStyle }}
+      onContextMenu={e => { e.preventDefault(); e.stopPropagation(); if (!placing) setMenu({ x: e.clientX, y: e.clientY }); }}
       onPointerEnter={() => { hovering.current = true; }}
       onPointerLeave={() => { hovering.current = false; }}
       onPointerDown={e => {
-        if (!visible || e.button !== 0) return;
+        if (!visible || e.button !== 0 || placing) return;
         e.stopPropagation();
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
         dragging.current = true;
@@ -261,5 +344,27 @@ export function BoardMinimap({ renderer, mode }: { renderer: BoardRenderer | nul
     >
       <canvas ref={canvasRef} style={{ width: size.w, height: size.h }} />
     </div>
+    {menu && (
+      <QuickMenu
+        x={menu.x}
+        y={menu.y}
+        onClose={() => setMenu(null)}
+        ariaLabel="Minimap"
+        testId="minimap-menu"
+        items={[
+          { kind: 'header', label: 'Position' },
+          { kind: 'check', label: 'Left', checked: position === 'left', testId: 'minimap-pos-left', onSelect: pick('left') },
+          { kind: 'check', label: 'Centre', checked: position === 'center', testId: 'minimap-pos-center', onSelect: pick('center') },
+          { kind: 'check', label: 'Right', checked: position === 'right', testId: 'minimap-pos-right', onSelect: pick('right') },
+          { kind: 'check', label: 'Float · click to put it down', checked: position === 'floating', testId: 'minimap-pos-floating', onSelect: pick('floating') },
+          { kind: 'sep' },
+          { kind: 'header', label: 'Show' },
+          { kind: 'check', label: 'While panning', checked: curMode === 'onPan', testId: 'minimap-show-onPan', onSelect: show('onPan') },
+          { kind: 'check', label: 'Always', checked: curMode === 'always', testId: 'minimap-show-always', onSelect: show('always') },
+          { kind: 'check', label: 'Off', checked: curMode === 'off', testId: 'minimap-show-off', onSelect: show('off') },
+        ]}
+      />
+    )}
+    </>
   );
 }

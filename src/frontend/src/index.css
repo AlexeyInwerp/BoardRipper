@@ -3242,6 +3242,12 @@ body {
   width: 100%;
   height: 100%;
   overflow: hidden;
+  /* clip, not just hidden: a hidden box can still be scrolled — by focus, or
+     by a click that scrolls its target into view — and anything that sticks
+     out (a long ribbon) then shifts every overlay in the panel sideways, the
+     minimap's float placement included. clip cannot be scrolled at all.
+     Engines without it (the legacy build's floor) keep `hidden`. */
+  overflow: clip;
   position: relative;
 }
 
@@ -3352,6 +3358,14 @@ body {
   border-radius: 8px;
   backdrop-filter: blur(4px);
 }
+/* A ribbon longer than the panel wraps onto a second row instead of running
+   past the edge (where it hid its own fold handle under the board-sidebar
+   toggle). The right margin keeps that toggle clear. */
+.board-status-indicators:not(.vertical) {
+  flex-wrap: wrap;
+  max-width: calc(100% - 64px);
+}
+.board-status-indicators.center:not(.vertical) { max-width: calc(100% - 112px); }
 
 /* Centered variant — toggled by overlayPosition: 'center' setting */
 .board-status-indicators.center {
@@ -9668,7 +9682,9 @@ body {
    slide mode) and never catches a pointer while faded out. */
 .board-minimap {
   position: absolute;
-  top: 44px;
+  /* Under the ribbon, however many rows it wraps to (BoardViewerPanel sets
+     --ribbon-bottom); 44px when the ribbon is not in its row. */
+  top: calc(var(--ribbon-bottom, 38px) + 6px);
   left: 50%;
   transform: translateX(-50%) translateY(-4px);
   z-index: 9;
@@ -9691,6 +9707,20 @@ body {
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 .board-minimap canvas { display: block; }
+/* Placement (right-click the map). Centre is the rule above. */
+.board-minimap.pos-left { left: 8px; transform: translateY(-4px); }
+.board-minimap.pos-right { left: auto; right: 8px; transform: translateY(-4px); }
+.board-minimap.pos-floating { transform: translateY(-4px); }
+.board-minimap.pos-left.visible,
+.board-minimap.pos-right.visible,
+.board-minimap.pos-floating.visible { transform: none; }
+/* Float: follows the pointer until a click puts it down. */
+.board-minimap.placing {
+  transition: none;
+  cursor: move;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 @media (prefers-reduced-motion: reduce) {
   .board-minimap, .board-minimap.visible { transition: none; }
 }
