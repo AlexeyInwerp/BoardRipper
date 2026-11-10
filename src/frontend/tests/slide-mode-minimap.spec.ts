@@ -221,6 +221,12 @@ async function partCenter(page: Page, name: string, fx = 0.5, fy = 0.5) {
 async function focusU9(page: Page) {
   await page.evaluate(() => (window as unknown as { __boardStore: { focusPart(n: string): void } }).__boardStore.focusPart('U9'));
   await expect(page.getByTestId('slide-readings-U9')).toBeVisible({ timeout: 5000 });
+  // The focus animates the view: measure parts only once it holds still.
+  let last = '';
+  await expect.poll(async () => {
+    const now = await page.evaluate(() => { const v = (window as unknown as { __boardRenderer: { viewport: { x: number; y: number; scale: { x: number } } } }).__boardRenderer.viewport; return `${Math.round(v.x)}:${Math.round(v.y)}:${v.scale.x.toFixed(4)}`; });
+    const still = now === last; last = now; return still;
+  }, { intervals: [150], timeout: 5000 }).toBe(true);
 }
 
 test.describe('slide mode on Windows and on a touch screen', () => {

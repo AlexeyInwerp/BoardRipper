@@ -56,6 +56,15 @@ test('marks this session\'s visits and walks the history from the map', async ({
   // Drawing and walking the trail adds nothing to the history.
   await page.waitForTimeout(400);
   expect(await historyLength(page)).toBeLessThanOrEqual(before + 2);   // back/forward may re-anchor, never per paint
+  // Repaints alone add nothing: a pan and a Steps change leave the length as it is.
+  const steady = await historyLength(page);
+  const cv = (await page.locator('.board-panel-canvas').boundingBox())!;
+  await page.mouse.move(cv.x + cv.width * 0.3, cv.y + cv.height * 0.8);
+  await page.mouse.down();
+  for (let i = 1; i <= 6; i++) await page.mouse.move(cv.x + cv.width * 0.3 + i * 15, cv.y + cv.height * 0.8);
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+  expect(await historyLength(page)).toBe(steady);
 
   // Fewer steps mark fewer places; the menu stays open while adjusting.
   await map.click({ button: 'right' });
@@ -69,10 +78,18 @@ test('marks this session\'s visits and walks the history from the map', async ({
   await page.getByTestId('minimap-open-tab').click();
   await expect(page.locator('[data-sidebar-tab="history"]').first()).toHaveClass(/active/);
 
+  // Drawn, not just counted: the marks layer carries more ink with the trail.
+  const ink = () => map.locator('canvas.minimap-marks').evaluate((c: HTMLCanvasElement) => {
+    const d = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+    let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 40) n++; return n;
+  });
+  const withTrail = await ink();
+
   // Unticked, the trail goes; ticked, it comes back.
   await map.click({ button: 'right' });
   await page.getByTestId('minimap-show-history').click();
   await expect(map).toHaveAttribute('data-trail', '0');
+  expect(withTrail).toBeGreaterThan((await ink()) + 20);
   await map.click({ button: 'right' });
   await page.getByTestId('minimap-show-history').click();
   await expect(map).toHaveAttribute('data-trail', '3');

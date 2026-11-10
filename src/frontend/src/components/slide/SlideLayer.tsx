@@ -62,6 +62,21 @@ function minimapCanvas(root: HTMLElement | null): HTMLCanvasElement | null {
   return root?.querySelector<HTMLCanvasElement>('[data-testid="board-minimap"][data-visible="true"] canvas.minimap-base') ?? null;
 }
 
+/** The minimap's map plus the header strip above it: what captions keep
+ *  clear of. Measured from the map canvas (steady while the frame animates)
+ *  and extended up by the header's own height. */
+function minimapAvoidRect(root: HTMLElement | null, host: HTMLElement | null): Rect | null {
+  const mm = minimapCanvas(root);
+  const r = minimapRect(mm, host);
+  if (!r || !mm || !host) return r;
+  const head = mm.closest('[data-testid="board-minimap"]')?.querySelector('.minimap-head');
+  if (!head) return r;
+  const hr = host.getBoundingClientRect();
+  const k = hr.width ? host.clientWidth / hr.width : 1;
+  const hh = head.getBoundingClientRect().height * k;
+  return { x: r.x, y: r.y - hh, w: r.w, h: r.h + hh };
+}
+
 /** A DOM element's rect in renderer px. The minimap and the guide live
  *  outside the board canvas's counter-zoom (UI scale), so their client rects
  *  are mapped through it. */
@@ -109,7 +124,11 @@ function paintMinimap(ctx: CanvasRenderingContext2D, mm: HTMLCanvasElement, rect
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.4)';
   ctx.shadowBlur = 10;
-  ctx.fillStyle = 'rgba(28,30,36,0.9)';
+  // The frame in the map's own colour (scheme background or the chip), so a
+  // light scheme does not export a dark slab.
+  const frame = mm.closest('[data-testid="board-minimap"]');
+  const bg = frame ? getComputedStyle(frame).backgroundColor : '';
+  ctx.fillStyle = bg && bg !== 'rgba(0, 0, 0, 0)' ? bg : 'rgba(28,30,36,0.9)';
   ctx.beginPath();
   ctx.roundRect(x, y, w, h, 8);
   ctx.fill();
@@ -246,7 +265,7 @@ export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Prop
     const list = slideStore.list(tabId).filter(a => !(ed && a.id === ed.id));
     // Live labels keep clear of the minimap and the guide card (DOM, on top).
     const guide = rootRef.current?.querySelector('[data-testid="slide-guide"]') ?? null;
-    const placed = paintCaptions(ctx, renderer, tabId, [minimapRect(minimapCanvas(rootRef.current), host), minimapRect(guide, host)], true);
+    const placed = paintCaptions(ctx, renderer, tabId, [minimapAvoidRect(rootRef.current, host), minimapRect(guide, host)], true);
     paintAnnotations(ctx, list, renderer, slideStore.selectedId);
     const slots = placed.filter(p => p.key === slideStore.focusPart).map(p => ({ key: p.key, x: Math.round(p.block.x), y: Math.round(p.pill.y + p.pill.h + 4), w: Math.round(p.block.w) }));
     const sig = JSON.stringify(slots);
@@ -469,7 +488,7 @@ export function SlideLayer({ tabId, renderer, rootRef, hostRef, fileName }: Prop
     const view = renderer.captureView(ctx => {
       const mm = minimapCanvas(rootRef.current);
       const mr = minimapRect(mm, hostRef.current);
-      paintCaptions(ctx, renderer, tabId, [mr], false);
+      paintCaptions(ctx, renderer, tabId, [minimapAvoidRect(rootRef.current, hostRef.current)], false);
       paintAnnotations(ctx, slideStore.list(tabId), renderer, null);
       if (mm && mr) paintMinimap(ctx, mm, mr);
     });

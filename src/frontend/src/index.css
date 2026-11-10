@@ -9765,7 +9765,12 @@ body {
 /* A faded map comes up to full strength under the pointer, while the board
    is panned or the map dragged (.active, set by BoardMinimap), and while it
    is being placed. */
-.board-minimap.visible:hover, .board-minimap.visible.active:not(.keep-opacity), .board-minimap.placing { --mm-opacity: 1; }
+.board-minimap.visible:hover:not(.keep-opacity), .board-minimap.visible.active:not(.keep-opacity), .board-minimap.placing { --mm-opacity: 1; }
+/* A finger drags the map (and presses its buttons) without the browser
+   taking the gesture for a scroll and cancelling the pointer. */
+.board-minimap { touch-action: none; }
+/* iPad: a tap leaves :hover stuck on — strength follows use there, not hover. */
+@media (hover: none) { .board-minimap.visible:hover:not(.active):not(.placing) { --mm-opacity: var(--mm-user, 1); } }
 /* Placement (right-click the map). Centre is the rule above. */
 .board-minimap.pos-left { left: 8px; transform: translateY(-4px); }
 .board-minimap.pos-right { left: auto; right: 8px; transform: translateY(-4px); }

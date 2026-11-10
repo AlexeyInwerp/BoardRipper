@@ -19,14 +19,14 @@ describe('minimapTrail', () => {
     expect(minimapTrail(list, 4, 1, { since: 0, limit: 2 }).map(x => x.part)).toEqual(['Q3', 'U1']);
   });
   it('skips entries from before the session and other places', () => {
-    const list = [e({ part: 'U1', at: 5 }), { ...e({}), place: { kind: 'pdf', fileName: 'x.pdf', page: 1 } } as NavEntry, e({ part: 'C2' })];
+    const list = [e({ part: 'U1', at: 5 }), { ...e({}), place: { kind: 'pdf', fileName: 'x.pdf', page: 1 } } as NavEntry, e({ part: 'C2', at: 200 })];
     expect(minimapTrail(list, 2, 1, { since: 100 }).map(x => x.part)).toEqual(['C2']);
   });
-  it('a view without a part is a place of its own; the cursor entry is marked', () => {
-    const list = [e({ cam: 0 }), e({ cam: 400 }), e({ cam: 0 }), e({ part: 'U1' })];
+  it('visits without a part are not marked; the cursor entry is', () => {
+    const list = [e({ cam: 0 }), e({ part: 'U1' }), e({ cam: 400 }), e({ part: 'C2' }), e({ part: 'U1' })];
     const t = minimapTrail(list, 1, 1, { since: 0 });
-    expect(t.length).toBe(3);
-    expect(t.filter(x => x.current).map(x => x.camera?.x)).toEqual([400]);
+    expect(t.map(x => x.part)).toEqual(['U1', 'C2']);
+    expect(t.filter(x => x.current).map(x => x.part)).toEqual(['U1']);
   });
   it('no tab, no trail', () => {
     expect(minimapTrail([e({ part: 'U1' })], 0, null, { since: 0 })).toEqual([]);

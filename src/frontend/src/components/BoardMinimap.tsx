@@ -90,8 +90,7 @@ function mapColors(): MapColors {
 }
 /** The cached board picture's colour key: the colours paintBoard reads, not
  *  just the scheme id — editing the custom scheme keeps the id 'custom'. */
-function mapSig(): string {
-  const c = mapColors();
+function mapSig(c: MapColors = mapColors()): string {
   return `${c.sheet}|${c.edge}|${c.parts}|${c.selected}|${c.bg ?? ''}`;
 }
 function hexA(hex: string, a: number): string {
@@ -100,11 +99,10 @@ function hexA(hex: string, a: number): string {
 }
 
 /** Paint the board itself (outline + part boxes) into `ctx`, world→minimap via `k, ox, oy`. */
-function paintBoard(ctx: CanvasRenderingContext2D, model: Model, k: number, ox: number, oy: number) {
-  const mc = mapColors();
+function paintBoard(ctx: CanvasRenderingContext2D, model: Model, k: number, ox: number, oy: number, pc: PaintCtx, mc: MapColors) {
   const accent = mc.selected;
   const { board } = model;
-  const top = boardStore.showTop, bottom = boardStore.showBottom;
+  const top = pc.showTop, bottom = pc.showBottom;
   const primaryBottom = board.primarySide === 'bottom';
   for (const r of model.roots) {
     const [a, b, c, d, tx, ty] = r.m;
@@ -139,7 +137,7 @@ function paintBoard(ctx: CanvasRenderingContext2D, model: Model, k: number, ox: 
     }
     ctx.globalAlpha = 1;
     // The selected part stands out, so the map also says where the work is.
-    const sel = boardStore.selection.partIndex;
+    const sel = pc.selPart;
     if (sel !== null && board.parts[sel]) {
       const pb = board.parts[sel].bounds;
       const pad = px * 2;
@@ -157,6 +155,39 @@ function paintBoard(ctx: CanvasRenderingContext2D, model: Model, k: number, ox: 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
+/** What one paint needs about its own board tab — never the active tab's,
+ *  which is another board in a split view — read once per paint. */
+interface PaintCtx {
+  dpr: number;
+  selPart: number | null;
+  showTop: boolean;
+  showBottom: boolean;
+  /** `--board-selection`, as rgb. */
+  hot: [number, number, number];
+}
+function tabState(tabId: number | null) {
+  const tab = tabId === null ? null : boardStore.tabs.find(t => t.id === tabId) ?? null;
+  return {
+    tab,
+    selection: tab?.selection ?? boardStore.selection,
+    showTop: tab?.showTop ?? boardStore.showTop,
+    showBottom: tab?.showBottom ?? boardStore.showBottom,
+  };
+}
+/** Set a data attribute only when it changes (each write invalidates style). */
+function setData(el: HTMLElement | null, key: string, v: string) {
+  if (el && el.dataset[key] !== v) el.dataset[key] = v;
+}
+/** Which way a part shows on a root: drawn, hollow (its side is switched
+ *  off — still on the list, so still marked) or not at all. */
+function partOnRoot(part: { side: string }, root: { side: 'top' | 'bottom' | 'all' }, primaryBottom: boolean, pc: PaintCtx): 'full' | 'hollow' | null {
+  const isTop = part.side === 'both' || (part.side === 'top') !== primaryBottom;
+  const isBottom = part.side === 'both' || !isTop;
+  if (root.side === 'top') return isTop ? 'full' : null;
+  if (root.side === 'bottom') return isBottom ? 'full' : null;
+  return (pc.showTop && isTop) || (pc.showBottom && isBottom) ? 'full' : 'hollow';
+}
+
 /** The minimap element a canvas of it sits in (data attributes live there). */
 function mapRoot(el: HTMLElement): HTMLElement | null {
   return el.closest<HTMLElement>('[data-testid="board-minimap"]');
@@ -165,6 +196,16 @@ function mapRoot(el: HTMLElement): HTMLElement | null {
 // ── History trail ───────────────────────────────────────────────────────
 
 const partIndexCache = new WeakMap<BoardData, Map<string, number>>();
+/** A stable id per BoardData object, for the board picture's cache key: a
+ *  new parse, revision or Swap-sides view is a new object with the same
+ *  roots and part count. */
+const boardIds = new WeakMap<BoardData, number>();
+let nextBoardId = 1;
+function boardId(b: BoardData): number {
+  let id = boardIds.get(b);
+  if (id === undefined) { id = nextBoardId++; boardIds.set(b, id); }
+  return id;
+}
 function partIndexByName(board: BoardData): Map<string, number> {
   let m = partIndexCache.get(board);
   if (!m) {
@@ -186,8 +227,7 @@ function parseHex(h: string): [number, number, number] | null {
  *  that blue disappeared into the map. The alpha floor stays high because
  *  the whole map is already faded by its opacity setting. */
 const TRAIL_COLD: [number, number, number] = [255, 64, 170];
-function trailColor(rank: number, n: number, alphaScale = 1): string {
-  const hot = parseHex(css('--board-selection', '#ffff44')) ?? [255, 255, 68];
+function trailColor(hot: [number, number, number], rank: number, n: number, alphaScale = 1): string {
   const cold = TRAIL_COLD;
   const t = n <= 1 ? 0 : rank / (n - 1);
   const c = hot.map((v, i) => Math.round(v + (cold[i] - v) * t));
@@ -195,88 +235,72 @@ function trailColor(rank: number, n: number, alphaScale = 1): string {
   return `rgba(${c[0]},${c[1]},${c[2]},${a.toFixed(3)})`;
 }
 
+/** One part's mark: a dark rim, a fill, an outline; hollow = rim and
+ *  outline only (its side is switched off). Returns its centre in map px. */
+function markPart(ctx: CanvasRenderingContext2D, part: BoardData['parts'][number], m: Mat, k: number, ox: number, oy: number,
+  pc: PaintCtx, col: string, outline: string, style: 'full' | 'hollow', thick: boolean): { x: number; y: number } {
+  const [a, b, c, d, tx, ty] = m;
+  const dpr = pc.dpr;
+  ctx.setTransform(a * k * dpr, b * k * dpr, c * k * dpr, d * k * dpr, (tx * k + ox) * dpr, (ty * k + oy) * dpr);
+  const px = 1 / (Math.hypot(a, b) * k);
+  const pb = part.bounds;
+  // At least 6 map px, so a passive the size of a dot still reads.
+  const w = Math.max(px * 6, pb.maxX - pb.minX), h = Math.max(px * 6, pb.maxY - pb.minY);
+  const cx = (pb.minX + pb.maxX) / 2, cy = (pb.minY + pb.maxY) / 2;
+  const pad = thick ? px * 2 : 0;
+  const x0 = cx - w / 2 - pad, y0 = cy - h / 2 - pad, ww = w + 2 * pad, hh = h + 2 * pad;
+  // A dark rim first: it separates the mark from the board under it on light
+  // and dark schemes alike.
+  ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+  ctx.lineWidth = px * 3;
+  ctx.strokeRect(x0, y0, ww, hh);
+  if (style === 'full') {
+    ctx.fillStyle = col;
+    ctx.globalAlpha = 0.85;
+    ctx.fillRect(cx - w / 2, cy - h / 2, w, h);
+    ctx.globalAlpha = 1;
+  }
+  ctx.strokeStyle = outline;
+  ctx.lineWidth = px * (thick ? 2.2 : style === 'hollow' ? 1.5 : 1.2);
+  ctx.strokeRect(x0, y0, ww, hh);
+  return { x: (a * cx + c * cy + tx) * k + ox, y: (b * cx + d * cy + ty) * k + oy };
+}
+
 /** Draw the trail in map css px: `k`/`ox`/`oy` map world to the map. */
 function paintTrail(ctx: CanvasRenderingContext2D, model: Model, tabId: number | null,
-  k: number, ox: number, oy: number, mapW: number, mapH: number, viewSize: { width: number; height: number }) {
+  k: number, ox: number, oy: number, pc: PaintCtx) {
   const steps = renderSettingsStore.settings.minimapHistorySteps ?? MINIMAP_TRAIL_LIMIT;
   const trail = minimapTrail(navHistoryStore.entries, navHistoryStore.cursor, tabId, { limit: steps });
   // For tests and the curious: how many visits the map marks.
-  const host = mapRoot(ctx.canvas);
-  if (host) host.dataset.trail = String(trail.length);
+  setData(mapRoot(ctx.canvas), 'trail', String(trail.length));
   if (trail.length === 0) return;
   const { board } = model;
   const idx = partIndexByName(board);
   const primaryBottom = board.primarySide === 'bottom';
-  const top = boardStore.showTop, bottom = boardStore.showBottom;
   const n = trail.length;
-  const cb = contentBounds(model);
-  // Oldest first, so the newest is drawn on top.
-  const ordered = [...trail].reverse();
   const centres: Array<{ x: number; y: number; rank: number }> = [];
-
-  for (const it of ordered) {
-    const col = trailColor(it.rank, n);
-    if (it.camera && !it.part) {
-      // A view left behind: its rectangle, dashed. Skip fit-the-board views.
-      const c = it.camera;
-      const w = viewSize.width / c.scaleX, h = viewSize.height / c.scaleY;
-      if (w >= cb.w * 0.85 && h >= cb.h * 0.85) continue;
-      const x = -c.x / c.scaleX, y = -c.y / c.scaleY;
-      const rx = Math.max(1, x * k + ox), ry = Math.max(1, y * k + oy);
-      const rx1 = Math.min(mapW - 1, (x + w) * k + ox), ry1 = Math.min(mapH - 1, (y + h) * k + oy);
-      if (rx1 <= rx || ry1 <= ry) continue;
-      ctx.setTransform(window.devicePixelRatio || 1, 0, 0, window.devicePixelRatio || 1, 0, 0);
-      ctx.setLineDash([3, 2]);
-      ctx.strokeStyle = col;
-      ctx.lineWidth = it.current ? 1.6 : 1;
-      ctx.strokeRect(rx, ry, rx1 - rx, ry1 - ry);
-      ctx.setLineDash([]);
-      continue;
-    }
-    if (!it.part) continue;
-    const pi = idx.get(it.part.toUpperCase());
-    if (pi === undefined) continue;
-    const part = board.parts[pi];
-    const isTop = part.side === 'both' || (part.side === 'top') !== primaryBottom;
-    const isBottom = part.side === 'both' || !isTop;
+  // Oldest first, so the newest is drawn on top.
+  for (let i = trail.length - 1; i >= 0; i--) {
+    const it = trail[i];
+    const pi = it.part ? idx.get(it.part.toUpperCase()) : undefined;
+    const part = pi === undefined ? null : board.parts[pi];
+    if (!part || part.hidden) continue;
+    const col = trailColor(pc.hot, it.rank, n);
     for (const r of model.roots) {
-      if (r.side === 'top' && !isTop) continue;
-      if (r.side === 'bottom' && !isBottom) continue;
-      if (r.side === 'all' && !((top && isTop) || (bottom && isBottom))) continue;
-      const dpr = window.devicePixelRatio || 1;
-      const [a, b, c, d, tx, ty] = r.m;
-      ctx.setTransform(a * k * dpr, b * k * dpr, c * k * dpr, d * k * dpr, (tx * k + ox) * dpr, (ty * k + oy) * dpr);
-      const px = 1 / (Math.hypot(a, b) * k);
-      const pb = part.bounds;
-      // At least 6 map px, so a passive the size of a dot still reads.
-      const minS = px * 6;
-      const w = Math.max(minS, pb.maxX - pb.minX), h = Math.max(minS, pb.maxY - pb.minY);
-      const cx = (pb.minX + pb.maxX) / 2, cy = (pb.minY + pb.maxY) / 2;
-      // A dark rim first: it separates the mark from the board under it on
-      // light and dark schemes alike.
-      ctx.strokeStyle = 'rgba(0,0,0,0.7)';
-      ctx.lineWidth = px * 3;
-      ctx.strokeRect(cx - w / 2, cy - h / 2, w, h);
-      ctx.fillStyle = col;
-      ctx.globalAlpha = 0.85;
-      ctx.fillRect(cx - w / 2, cy - h / 2, w, h);
-      ctx.globalAlpha = 1;
-      ctx.strokeStyle = col;
-      ctx.lineWidth = px * (it.current ? 2 : 1.2);
-      ctx.strokeRect(cx - w / 2, cy - h / 2, w, h);
-      // Centre in map css px, for the connecting line.
-      centres.push({ x: (a * cx + c * cy + tx) * k + ox, y: (b * cx + d * cy + ty) * k + oy, rank: it.rank });
+      const how = partOnRoot(part, r, primaryBottom, pc);
+      if (!how) continue;
+      const c = markPart(ctx, part, r.m, k, ox, oy, pc, col, col, how, it.current);
+      centres.push({ ...c, rank: it.rank });
       break;
     }
   }
   // A faint line through the parts, oldest to newest: the order of the work.
   // Kept well below the boxes — it is a hint of sequence, not a mark.
   if (centres.length > 1) {
-    const dpr = window.devicePixelRatio || 1;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.setTransform(pc.dpr, 0, 0, pc.dpr, 0, 0);
     ctx.lineWidth = 0.75;
     for (let i = 1; i < centres.length; i++) {
-      ctx.strokeStyle = trailColor(centres[i].rank, n, 0.32);
+      ctx.strokeStyle = trailColor(pc.hot, centres[i].rank, n, 0.32);
       ctx.beginPath();
       ctx.moveTo(centres[i - 1].x, centres[i - 1].y);
       ctx.lineTo(centres[i].x, centres[i].y);
@@ -286,43 +310,24 @@ function paintTrail(ctx: CanvasRenderingContext2D, model: Model, tabId: number |
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
-/** The loaded worklist's parts in their mark colours; the current row ringed. */
-function paintWorklist(ctx: CanvasRenderingContext2D, model: Model, wl: Worklist | null, k: number, ox: number, oy: number) {
-  const host = mapRoot(ctx.canvas);
+/** The loaded worklist's parts in their mark colours; the current row ringed
+ *  in the selection colour. */
+function paintWorklist(ctx: CanvasRenderingContext2D, model: Model, wl: Worklist | null, k: number, ox: number, oy: number, pc: PaintCtx) {
   const rows = (wl?.entries ?? []).filter(e => !e.unresolved && e.partIndex >= 0);
-  if (host) host.dataset.wlMarks = String(rows.length);
+  setData(mapRoot(ctx.canvas), 'wlMarks', String(rows.length));
   if (rows.length === 0) return;
   const { board } = model;
   const primaryBottom = board.primarySide === 'bottom';
-  const top = boardStore.showTop, bottom = boardStore.showBottom;
-  const sel = boardStore.selection.partIndex;
-  const ring = css('--board-selection', '#ffff44');
-  const dpr = window.devicePixelRatio || 1;
+  const ring = `rgb(${pc.hot.join(',')})`;
   for (const e of rows) {
     const part = board.parts[e.partIndex];
-    if (!part) continue;
-    const isTop = part.side === 'both' || (part.side === 'top') !== primaryBottom;
-    const isBottom = part.side === 'both' || !isTop;
+    if (!part || part.hidden) continue;
+    const col = MARK_COLOR_CSS[e.mark] ?? MARK_COLOR_CSS.none;
+    const current = e.partIndex === pc.selPart;
     for (const r of model.roots) {
-      if (r.side === 'top' && !isTop) continue;
-      if (r.side === 'bottom' && !isBottom) continue;
-      if (r.side === 'all' && !((top && isTop) || (bottom && isBottom))) continue;
-      const [a, b, c, d, tx, ty] = r.m;
-      ctx.setTransform(a * k * dpr, b * k * dpr, c * k * dpr, d * k * dpr, (tx * k + ox) * dpr, (ty * k + oy) * dpr);
-      const px = 1 / (Math.hypot(a, b) * k);
-      const pb = part.bounds;
-      const w = Math.max(px * 4, pb.maxX - pb.minX), h = Math.max(px * 4, pb.maxY - pb.minY);
-      const cx = (pb.minX + pb.maxX) / 2, cy = (pb.minY + pb.maxY) / 2;
-      const col = MARK_COLOR_CSS[e.mark] ?? MARK_COLOR_CSS.none;
-      ctx.globalAlpha = 0.6;
-      ctx.fillStyle = col;
-      ctx.fillRect(cx - w / 2, cy - h / 2, w, h);
-      ctx.globalAlpha = 1;
-      const current = e.partIndex === sel;
-      ctx.strokeStyle = current ? ring : col;
-      ctx.lineWidth = px * (current ? 2.2 : 1);
-      const pad = current ? px * 2 : 0;
-      ctx.strokeRect(cx - w / 2 - pad, cy - h / 2 - pad, w + 2 * pad, h + 2 * pad);
+      const how = partOnRoot(part, r, primaryBottom, pc);
+      if (!how) continue;
+      markPart(ctx, part, r.m, k, ox, oy, pc, col, current ? ring : col, how, current);
       break;
     }
   }
@@ -368,10 +373,17 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
     const cv = canvasRef.current;
     const model = renderer?.getViewModel();
     if (!cv || !model) return;
+    // One pixel ratio for the whole paint (and in the cache key: a window
+    // moved to a screen with another ratio must rebuild the board picture).
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     const cb = contentBounds(model);
-    const sel = boardStore.selection.partIndex;
-    const sig = `${model.roots.map(r => r.m.join(',')).join('|')}|${model.board.parts.length}|${boardStore.showTop}${boardStore.showBottom}|${sel}|${mapSig()}|${renderSettingsStore.settings.minimapScale ?? 1}`;
+    const st = tabState(tabId);
+    const mc = mapColors();                        // once per paint
+    const pc: PaintCtx = {
+      dpr, selPart: st.selection.partIndex, showTop: st.showTop, showBottom: st.showBottom,
+      hot: parseHex(css('--board-selection', '#ffff44')) ?? [255, 255, 68],
+    };
+    const sig = `${boardId(model.board)}|${model.roots.map(r => r.m.join(',')).join('|')}|${model.board.parts.length}|${pc.showTop}${pc.showBottom}|${pc.selPart}|${mapSig(mc)}|${renderSettingsStore.settings.minimapScale ?? 1}|${dpr}`;
     let base = baseRef.current;
     if (!base || base.sig !== sig) {
       // Fit the board into the (scaled) MAX_W × MAX_H box, keeping its aspect.
@@ -384,10 +396,17 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
       octx.setTransform(1, 0, 0, 1, 0, 0);
       octx.clearRect(0, 0, off.width, off.height);
       const ox = (4 - cb.minX * k) * dpr, oy = (4 - cb.minY * k) * dpr;
-      paintBoard(octx, model, k * dpr, ox, oy);
+      paintBoard(octx, model, k * dpr, ox, oy, pc, mc);
       base = { sig, canvas: off, k, ox: ox / dpr, oy: oy / dpr, w, h };
       baseRef.current = base;
       if (size.w !== w || size.h !== h) setSize({ w, h });
+      // Scheme background on the frame (palette schemes), faded with the
+      // map; '' falls back to the CSS chip. Written only on a rebuild.
+      const root = mapRoot(cv);
+      if (root) {
+        root.style.setProperty('--mm-bg', mc.bg ?? '');
+        root.classList.toggle('scheme-bg', !!mc.bg);
+      }
     }
     const mk = marksRef.current;
     for (const c of [cv, mk]) {
@@ -396,13 +415,6 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
       }
     }
     const root = mapRoot(cv);
-    // Scheme background on the frame (palette schemes), faded with the map;
-    // '' falls back to the CSS chip.
-    if (root) {
-      const bg = mapColors().bg;
-      root.style.setProperty('--mm-bg', bg ?? '');
-      root.classList.toggle('scheme-bg', !!bg);
-    }
     const bctx = cv.getContext('2d')!;
     bctx.setTransform(1, 0, 0, 1, 0, 0);
     bctx.clearRect(0, 0, cv.width, cv.height);
@@ -413,13 +425,13 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
     ctx.clearRect(0, 0, mk.width, mk.height);
     const nav = renderSettingsStore.settings.minimapNav ?? 'history';
     if (nav === 'worklist') {
-      if (root) root.dataset.trail = '0';
-      paintWorklist(ctx, model, worklistStore.worklistForTab(tabId), base.k, base.ox, base.oy);
+      setData(root, 'trail', '0');
+      paintWorklist(ctx, model, worklistStore.worklistForTab(tabId), base.k, base.ox, base.oy, pc);
     } else {
-      if (root) root.dataset.wlMarks = '0';
+      setData(root, 'wlMarks', '0');
       if (renderSettingsStore.settings.minimapShowHistory !== false) {
-        paintTrail(ctx, model, tabId, base.k, base.ox, base.oy, base.w, base.h, renderer!.viewSize());
-      } else if (root) root.dataset.trail = '0';
+        paintTrail(ctx, model, tabId, base.k, base.ox, base.oy, pc);
+      } else setData(root, 'trail', '0');
     }
     // The view box, clipped to the map so a zoomed-out view still draws sanely.
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -427,7 +439,6 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
     const x0 = Math.max(1, v.x * base.k + base.ox), y0 = Math.max(1, v.y * base.k + base.oy);
     const x1 = Math.min(base.w - 1, (v.x + v.w) * base.k + base.ox), y1 = Math.min(base.h - 1, (v.y + v.h) * base.k + base.oy);
     if (x1 > x0 && y1 > y0) {
-      const mc = mapColors();
       ctx.fillStyle = mc.viewFill;
       ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
       ctx.strokeStyle = mc.view;
@@ -479,15 +490,19 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
   const nav = settings.minimapNav ?? 'history';
   const wl = nav === 'worklist' ? worklistStore.worklistForTab(tabId) : null;
   const wlKeys = worklistStepKeys(wl);
-  const selPart = boardStore.selection.partIndex;
+  const own = tabState(tabId);
+  const selPart = own.selection.partIndex;
   const wlCur = currentWorklistKey(wlKeys,
-    selPart !== null ? (renderer?.getViewModel()?.board.parts[selPart]?.name ?? null) : null,
-    boardStore.selection.highlightedNet);
+    selPart !== null ? (own.tab?.board?.parts[selPart]?.name ?? null) : null,
+    own.selection.highlightedNet);
   const wlAt = wlCur ? wlKeys.indexOf(wlCur) : -1;
   const wlPrev = worklistStep(wlKeys, wlCur, -1);
   const wlNext = worklistStep(wlKeys, wlCur, 1);
   const goWl = (key: string | null) => {
     if (!key) return;
+    // The store acts on the active tab: make it this map's board first
+    // (in a split view the other board may be the active one).
+    if (tabId !== null && boardStore.activeTabId !== tabId) boardStore.switchTab(tabId);
     const name = key.slice(2);
     if (key.startsWith('n:')) boardStore.focusNet(name); else boardStore.focusPart(name);
   };
@@ -608,13 +623,13 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
       <div className="minimap-head" data-testid="minimap-head" data-nav={nav}
         onPointerDown={e => e.stopPropagation()}>
         <button type="button" data-testid="minimap-history-back" aria-label={nav === 'worklist' ? 'Previous row' : 'Back'}
-          title={nav === 'worklist' ? 'Previous worklist row' : 'Back'}
+          title={nav === 'worklist' ? 'Previous worklist row' : 'Back · history of all boards and PDFs'}
           disabled={nav === 'worklist' ? !wlPrev : !history.canBack}
           onClick={() => nav === 'worklist' ? goWl(wlPrev) : historyBack()}>
           <IconChevronLeft size={13} stroke={2.2} />
         </button>
         <button type="button" data-testid="minimap-history-forward" aria-label={nav === 'worklist' ? 'Next row' : 'Forward'}
-          title={nav === 'worklist' ? (wlAt < 0 ? 'Start at the first worklist row' : 'Next worklist row') : 'Forward'}
+          title={nav === 'worklist' ? (wlAt < 0 ? 'Start at the first worklist row' : 'Next worklist row') : 'Forward · history of all boards and PDFs'}
           disabled={nav === 'worklist' ? !wlNext : !history.canForward}
           onClick={() => nav === 'worklist' ? goWl(wlNext) : historyForward()}>
           <IconChevronRight size={13} stroke={2.2} />
