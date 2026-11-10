@@ -84,7 +84,7 @@ test('a board drag that crosses the minimap does not jump to the map point; a wh
   // A click on the map still recentres (on the map image — the strip above
   // it holds the history buttons).
   const q0 = await pose(page);
-  const c = (await map.locator('canvas').boundingBox())!;
+  const c = (await map.locator('canvas.minimap-base').boundingBox())!;
   await page.mouse.click(c.x + 4, c.y + 4);
   await page.waitForTimeout(300);
   const q1 = await pose(page);

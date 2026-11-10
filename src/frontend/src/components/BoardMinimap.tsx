@@ -35,6 +35,7 @@ import { useNavHistory } from '../hooks/useNavHistory';
 import { minimapTrail, MINIMAP_TRAIL_LIMIT } from '../store/minimap-trail';
 import type { BoardData } from '../parsers/types';
 
+/** The map's box at Size 100 %; `minimapScale` multiplies it. */
 const MAX_W = 220;
 const MAX_H = 150;
 const ACTIVE_HOLD_MS = 700;
@@ -156,6 +157,11 @@ function paintBoard(ctx: CanvasRenderingContext2D, model: Model, k: number, ox: 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
+/** The minimap element a canvas of it sits in (data attributes live there). */
+function mapRoot(el: HTMLElement): HTMLElement | null {
+  return el.closest<HTMLElement>('[data-testid="board-minimap"]');
+}
+
 // ── History trail ───────────────────────────────────────────────────────
 
 const partIndexCache = new WeakMap<BoardData, Map<string, number>>();
@@ -175,13 +181,17 @@ function parseHex(h: string): [number, number, number] | null {
   const n = parseInt(m[1], 16);
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
-/** Newest visit in the selection colour, oldest in the accent, fading. */
+/** Newest visit in the selection colour, oldest in magenta. Not the accent:
+ *  the map's edges and view box are drawn in it, and a trail fading into
+ *  that blue disappeared into the map. The alpha floor stays high because
+ *  the whole map is already faded by its opacity setting. */
+const TRAIL_COLD: [number, number, number] = [255, 64, 170];
 function trailColor(rank: number, n: number, alphaScale = 1): string {
   const hot = parseHex(css('--board-selection', '#ffff44')) ?? [255, 255, 68];
-  const cold = parseHex(css('--accent', '#4a9eff')) ?? [74, 158, 255];
+  const cold = TRAIL_COLD;
   const t = n <= 1 ? 0 : rank / (n - 1);
   const c = hot.map((v, i) => Math.round(v + (cold[i] - v) * t));
-  const a = (0.95 - 0.6 * t) * alphaScale;
+  const a = (1 - 0.35 * t) * alphaScale;
   return `rgba(${c[0]},${c[1]},${c[2]},${a.toFixed(3)})`;
 }
 
@@ -191,7 +201,7 @@ function paintTrail(ctx: CanvasRenderingContext2D, model: Model, tabId: number |
   const steps = renderSettingsStore.settings.minimapHistorySteps ?? MINIMAP_TRAIL_LIMIT;
   const trail = minimapTrail(navHistoryStore.entries, navHistoryStore.cursor, tabId, { limit: steps });
   // For tests and the curious: how many visits the map marks.
-  const host = ctx.canvas.parentElement;
+  const host = mapRoot(ctx.canvas);
   if (host) host.dataset.trail = String(trail.length);
   if (trail.length === 0) return;
   const { board } = model;
@@ -238,12 +248,17 @@ function paintTrail(ctx: CanvasRenderingContext2D, model: Model, tabId: number |
       ctx.setTransform(a * k * dpr, b * k * dpr, c * k * dpr, d * k * dpr, (tx * k + ox) * dpr, (ty * k + oy) * dpr);
       const px = 1 / (Math.hypot(a, b) * k);
       const pb = part.bounds;
-      // At least 4 map px, so a passive the size of a dot still shows.
-      const minS = px * 4;
+      // At least 6 map px, so a passive the size of a dot still reads.
+      const minS = px * 6;
       const w = Math.max(minS, pb.maxX - pb.minX), h = Math.max(minS, pb.maxY - pb.minY);
       const cx = (pb.minX + pb.maxX) / 2, cy = (pb.minY + pb.maxY) / 2;
+      // A dark rim first: it separates the mark from the board under it on
+      // light and dark schemes alike.
+      ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+      ctx.lineWidth = px * 3;
+      ctx.strokeRect(cx - w / 2, cy - h / 2, w, h);
       ctx.fillStyle = col;
-      ctx.globalAlpha = 0.55;
+      ctx.globalAlpha = 0.85;
       ctx.fillRect(cx - w / 2, cy - h / 2, w, h);
       ctx.globalAlpha = 1;
       ctx.strokeStyle = col;
@@ -273,7 +288,7 @@ function paintTrail(ctx: CanvasRenderingContext2D, model: Model, tabId: number |
 
 /** The loaded worklist's parts in their mark colours; the current row ringed. */
 function paintWorklist(ctx: CanvasRenderingContext2D, model: Model, wl: Worklist | null, k: number, ox: number, oy: number) {
-  const host = ctx.canvas.parentElement;
+  const host = mapRoot(ctx.canvas);
   const rows = (wl?.entries ?? []).filter(e => !e.unresolved && e.partIndex >= 0);
   if (host) host.dataset.wlMarks = String(rows.length);
   if (rows.length === 0) return;
@@ -316,6 +331,10 @@ function paintWorklist(ctx: CanvasRenderingContext2D, model: Model, wl: Worklist
 
 export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: BoardRenderer | null; tabId?: number | null; mode: 'always' | 'onPan' | 'off' }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  /** Marks layer over the board image: trail / worklist marks and the view
+   *  box. The opacity setting fades the board image and the frame only, so
+   *  the marks keep their contrast on a faded map. */
+  const marksRef = useRef<HTMLCanvasElement>(null);
   const baseRef = useRef<{ sig: string; canvas: HTMLCanvasElement; k: number; ox: number; oy: number; w: number; h: number } | null>(null);
   const activity = useRef(new PanActivity());
   const [shown, setShown] = useState(false);
@@ -352,11 +371,12 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     const cb = contentBounds(model);
     const sel = boardStore.selection.partIndex;
-    const sig = `${model.roots.map(r => r.m.join(',')).join('|')}|${model.board.parts.length}|${boardStore.showTop}${boardStore.showBottom}|${sel}|${mapSig()}`;
+    const sig = `${model.roots.map(r => r.m.join(',')).join('|')}|${model.board.parts.length}|${boardStore.showTop}${boardStore.showBottom}|${sel}|${mapSig()}|${renderSettingsStore.settings.minimapScale ?? 1}`;
     let base = baseRef.current;
     if (!base || base.sig !== sig) {
-      // Fit the board into MAX_W × MAX_H, keeping its aspect.
-      const k = Math.min((MAX_W - 8) / cb.w, (MAX_H - 8) / cb.h);
+      // Fit the board into the (scaled) MAX_W × MAX_H box, keeping its aspect.
+      const scale = renderSettingsStore.settings.minimapScale ?? 1;
+      const k = Math.min((MAX_W * scale - 8) / cb.w, (MAX_H * scale - 8) / cb.h);
       const w = Math.round(cb.w * k + 8), h = Math.round(cb.h * k + 8);
       const off = base?.canvas ?? document.createElement('canvas');
       off.width = Math.round(w * dpr); off.height = Math.round(h * dpr);
@@ -369,24 +389,37 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
       baseRef.current = base;
       if (size.w !== w || size.h !== h) setSize({ w, h });
     }
-    if (cv.width !== base.canvas.width || cv.height !== base.canvas.height) {
-      cv.width = base.canvas.width; cv.height = base.canvas.height;
+    const mk = marksRef.current;
+    for (const c of [cv, mk]) {
+      if (c && (c.width !== base.canvas.width || c.height !== base.canvas.height)) {
+        c.width = base.canvas.width; c.height = base.canvas.height;
+      }
     }
-    // Scheme background on the frame (palette schemes); '' falls back to the CSS chip.
-    if (cv.parentElement) cv.parentElement.style.background = mapColors().bg ?? '';
-    const ctx = cv.getContext('2d')!;
+    const root = mapRoot(cv);
+    // Scheme background on the frame (palette schemes), faded with the map;
+    // '' falls back to the CSS chip.
+    if (root) {
+      const bg = mapColors().bg;
+      root.style.setProperty('--mm-bg', bg ?? '');
+      root.classList.toggle('scheme-bg', !!bg);
+    }
+    const bctx = cv.getContext('2d')!;
+    bctx.setTransform(1, 0, 0, 1, 0, 0);
+    bctx.clearRect(0, 0, cv.width, cv.height);
+    bctx.drawImage(base.canvas, 0, 0);
+    if (!mk) return;
+    const ctx = mk.getContext('2d')!;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, cv.width, cv.height);
-    ctx.drawImage(base.canvas, 0, 0);
+    ctx.clearRect(0, 0, mk.width, mk.height);
     const nav = renderSettingsStore.settings.minimapNav ?? 'history';
     if (nav === 'worklist') {
-      if (cv.parentElement) cv.parentElement.dataset.trail = '0';
+      if (root) root.dataset.trail = '0';
       paintWorklist(ctx, model, worklistStore.worklistForTab(tabId), base.k, base.ox, base.oy);
     } else {
-      if (cv.parentElement) cv.parentElement.dataset.wlMarks = '0';
+      if (root) root.dataset.wlMarks = '0';
       if (renderSettingsStore.settings.minimapShowHistory !== false) {
         paintTrail(ctx, model, tabId, base.k, base.ox, base.oy, base.w, base.h, renderer!.viewSize());
-      } else if (cv.parentElement) cv.parentElement.dataset.trail = '0';
+      } else if (root) root.dataset.trail = '0';
     }
     // The view box, clipped to the map so a zoomed-out view still draws sanely.
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -460,7 +493,7 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
   };
   // Repaint when the trail switch flips (paint reads the store directly).
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (visible) paint(); }, [settings.minimapShowHistory, settings.minimapHistorySteps, settings.minimapNav]);
+  useEffect(() => { if (visible) paint(); }, [settings.minimapShowHistory, settings.minimapHistorySteps, settings.minimapNav, settings.minimapScale]);
   // Worklist mode: re-render the header (position) and repaint on edits.
   useWorklist();
   useBoardStore();
@@ -551,7 +584,7 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
       data-visible={visible ? 'true' : 'false'}
       data-position={position}
       data-placing={placing ? 'true' : 'false'}
-      style={{ width: Math.max(size.w, MIN_W) + FRAME, height: size.h + HEAD_H + FRAME, ...placeStyle, ['--mm-opacity' as string]: String(settings.minimapOpacity ?? 1) }}
+      style={{ width: Math.max(size.w, MIN_W) + FRAME, height: size.h + HEAD_H + FRAME, ...placeStyle, ['--mm-user' as string]: String(settings.minimapOpacity ?? 1) }}
       onContextMenu={e => { e.preventDefault(); e.stopPropagation(); if (!placing) setMenu({ x: e.clientX, y: e.clientY }); }}
       onPointerEnter={() => { hovering.current = true; }}
       onPointerLeave={() => { hovering.current = false; }}
@@ -610,7 +643,10 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
           <IconExternalLink size={12} stroke={2} />
         </button>
       </div>
-      <canvas ref={canvasRef} style={{ width: size.w, height: size.h, margin: '0 auto' }} />
+      <div className="minimap-body" style={{ width: size.w, height: size.h }}>
+        <canvas ref={canvasRef} className="minimap-base" style={{ width: size.w, height: size.h }} />
+        <canvas ref={marksRef} className="minimap-marks" style={{ width: size.w, height: size.h }} />
+      </div>
     </div>
     {menu && (
       <QuickMenu
@@ -643,6 +679,12 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
             onChange: v => renderSettingsStore.setMinimapHistorySteps(v),
           },
           { kind: 'sep' },
+          {
+            kind: 'range', label: 'Size', testId: 'minimap-size',
+            value: Math.round((settings.minimapScale ?? 1) * 100), min: 60, max: 200, step: 10,
+            format: v => `${v} %`,
+            onChange: v => renderSettingsStore.setMinimapScale(v / 100),
+          },
           {
             kind: 'range', label: 'Opacity', testId: 'minimap-opacity',
             value: Math.round((settings.minimapOpacity ?? 1) * 100), min: 20, max: 100, step: 5,

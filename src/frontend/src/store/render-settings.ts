@@ -523,6 +523,8 @@ export interface RenderSettings {
   /** What the minimap's header steps through and the map marks: the
    *  navigation history, or the worklist loaded on this board. */
   minimapNav: 'history' | 'worklist';
+  /** Minimap size, a factor on its 220 × 150 px box, 0.6–2 (right-click ▸ Size). */
+  minimapScale: number;
   /** Auto-enable selection-dim while a search-driven selection (focusPart /
    *  focusNet) is active, even if the user's showNetDim toggle is off. */
   searchAutoDim: boolean;
@@ -848,6 +850,7 @@ export const DEFAULTS: RenderSettings = {
   minimapShowHistory: true,
   minimapHistorySteps: 8,
   minimapNav: 'history',
+  minimapScale: 1,
   searchAutoDim: true,
   autoMarkMechanical: true,
 };
@@ -2022,6 +2025,15 @@ class RenderSettingsStore extends Emitter {
     const n = Math.round(Math.min(20, Math.max(2, Number.isFinite(v) ? v : 8)));
     if (this._global.minimapHistorySteps === n) return;
     this._global = { ...this._global, minimapHistorySteps: n };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  setMinimapScale(v: number) {
+    const k = Math.round(Math.min(2, Math.max(0.6, Number.isFinite(v) ? v : 1)) * 100) / 100;
+    if (this._global.minimapScale === k) return;
+    this._global = { ...this._global, minimapScale: k };
     saveToStorage(this._global);
     this.recomputeEffective();
     this.notify();

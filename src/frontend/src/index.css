@@ -9731,12 +9731,20 @@ body {
   overflow: hidden;
 }
 .board-minimap.visible {
-  opacity: var(--mm-opacity, 1);
+  opacity: 1;
   transform: translateX(-50%);
   pointer-events: auto;
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 .board-minimap canvas { display: block; }
+/* The opacity setting (inline --mm-user) fades the frame and the board
+   image; the marks layer on top stays at full strength. */
+.board-minimap { --mm-opacity: var(--mm-user, 1); }
+.board-minimap.visible { background: color-mix(in srgb, var(--chip-bg) calc(var(--mm-opacity) * 100%), transparent); }
+.board-minimap.visible.scheme-bg { background: color-mix(in srgb, var(--mm-bg) calc(var(--mm-opacity) * 100%), transparent); }
+.minimap-body { position: relative; margin: 0 auto; }
+.minimap-base { opacity: var(--mm-opacity); transition: opacity 0.18s ease; }
+.minimap-marks { position: absolute; inset: 0; pointer-events: none; }
 /* Header strip above the map: history ‹ ›, then the History tab. */
 .minimap-head {
   height: 20px; display: flex; align-items: center; gap: 1px; padding: 0 2px;
@@ -9757,7 +9765,7 @@ body {
 /* A faded map comes up to full strength under the pointer, while the board
    is panned or the map dragged (.active, set by BoardMinimap), and while it
    is being placed. */
-.board-minimap.visible:hover, .board-minimap.visible.active:not(.keep-opacity), .board-minimap.placing { opacity: 1; }
+.board-minimap.visible:hover, .board-minimap.visible.active:not(.keep-opacity), .board-minimap.placing { --mm-opacity: 1; }
 /* Placement (right-click the map). Centre is the rule above. */
 .board-minimap.pos-left { left: 8px; transform: translateY(-4px); }
 .board-minimap.pos-right { left: auto; right: 8px; transform: translateY(-4px); }

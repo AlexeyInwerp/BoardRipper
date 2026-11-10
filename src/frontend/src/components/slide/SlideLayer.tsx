@@ -59,7 +59,7 @@ function accentColor(): string {
 
 /** The minimap canvas, when it is showing. */
 function minimapCanvas(root: HTMLElement | null): HTMLCanvasElement | null {
-  return root?.querySelector<HTMLCanvasElement>('[data-testid="board-minimap"][data-visible="true"] canvas') ?? null;
+  return root?.querySelector<HTMLCanvasElement>('[data-testid="board-minimap"][data-visible="true"] canvas.minimap-base') ?? null;
 }
 
 /** A DOM element's rect in renderer px. The minimap and the guide live
@@ -118,6 +118,9 @@ function paintMinimap(ctx: CanvasRenderingContext2D, mm: HTMLCanvasElement, rect
   ctx.lineWidth = 1;
   ctx.stroke();
   ctx.drawImage(mm, x, y, w, h);
+  // The marks layer (trail / worklist marks, view box) sits right over it.
+  const marks = mm.parentElement?.querySelector<HTMLCanvasElement>('canvas.minimap-marks');
+  if (marks) ctx.drawImage(marks, x, y, w, h);
   ctx.restore();
 }
 

@@ -334,7 +334,7 @@ test.describe('pan minimap', () => {
     await expect(btn).toHaveAttribute('data-mode', 'always');         // the default
     await expect(map).toHaveAttribute('data-visible', 'true');        // up with no pan at all
     await expect(map).toHaveAttribute('data-position', 'center');
-    await expect.poll(() => map.evaluate(el => Number(getComputedStyle(el).opacity))).toBeCloseTo(0.6, 2);
+    await expect.poll(() => map.evaluate(el => Number(getComputedStyle(el.querySelector(".minimap-base")!).opacity))).toBeCloseTo(0.6, 2);
     await btn.click();
     await expect(btn).toHaveAttribute('data-mode', 'off');
     await expect(map).toHaveCount(0);

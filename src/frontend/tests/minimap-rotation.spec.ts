@@ -38,7 +38,7 @@ async function checkLayout(page: Page, label: string) {
     expect(b.y + b.height, `${label}: ${id} bottom`).toBeLessThanOrEqual(h.y + h.height + 0.5);
   }
   // The canvas sits under the header, inside the map.
-  const c = (await map.locator('canvas').boundingBox())!;
+  const c = (await map.locator('canvas.minimap-base').boundingBox())!;
   expect(c.y).toBeGreaterThanOrEqual(h.y + h.height - 0.5);
   expect(c.x).toBeGreaterThanOrEqual(m.x - 0.5);
   expect(c.x + c.width).toBeLessThanOrEqual(m.x + m.width + 0.5);

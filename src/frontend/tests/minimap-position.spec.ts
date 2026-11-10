@@ -50,7 +50,7 @@ test.describe('minimap placement', () => {
 
   test('opacity from the right-click menu: live, full under the pointer and while panning (unless unticked), survives a reload', async ({ page }) => {
     const map = await openBoardWithMap(page);
-    const opacity = () => map.evaluate(el => Number(getComputedStyle(el).opacity));
+    const opacity = () => map.evaluate(el => Number(getComputedStyle(el.querySelector(".minimap-base")!).opacity));
     await page.mouse.move(5, 5);
     await expect.poll(opacity).toBeCloseTo(0.6, 2);           // the default
     await map.click({ button: 'right' });
@@ -98,6 +98,21 @@ test.describe('minimap placement', () => {
     await page.setInputFiles('[data-testid="file-input"]', BOARD);
     await expect(map).toHaveAttribute('data-visible', 'true');
     await expect.poll(opacity).toBeCloseTo(0.4, 2);
+  });
+
+  test('size from the right-click menu scales the map live and is kept', async ({ page }) => {
+    const map = await openBoardWithMap(page);
+    const base = () => map.locator('canvas.minimap-base').boundingBox().then(b => b!);
+    const b0 = await base();
+    await map.click({ button: 'right' });
+    await page.getByTestId('minimap-size').fill('150');
+    await expect(page.getByTestId('minimap-menu')).toContainText('150 %');
+    await expect.poll(async () => (await base()).width / b0.width).toBeCloseTo(1.5, 1);
+    await page.getByTestId('minimap-size').fill('60');
+    await expect.poll(async () => (await base()).width / b0.width).toBeCloseTo(0.6, 1);
+    await page.keyboard.press('Escape');
+    // The header still fits at the smallest size.
+    expect(await page.getByTestId('minimap-head').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
   });
 
   test('float follows the pointer, a click puts it down, and the place survives a reload', async ({ page }) => {
