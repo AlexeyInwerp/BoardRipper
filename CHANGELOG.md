@@ -1,5 +1,31 @@
 # BoardRipper changelog
 
+## v0.52.1 — 2026-11-11
+
+### Added
+
+- **The minimap says which list it steps through.** The header shows
+  *History*, or the loaded worklist's name and the row you are on (`1/2`).
+  Switching between the two shows the new mode's name over the map for a
+  moment. With no worklist loaded, the open button goes to Tools ▸ Worklists.
+- **← and → step through the map's list.** On a board with the minimap on,
+  the plain arrow keys go back and forward through the history, or through
+  the loaded worklist when the map is set to it. ⌘ and ⌥ with the arrows
+  still rotate and pan.
+- **Add to library only.** Dropping more than four files splits the drop
+  area into *Open* and *Add to library only*; the second copies the files
+  into the library's `incoming/` folder and opens nothing.
+- **Recently added.** The History tab lists the newest files in the library,
+  under a separator you can drag to give it more room.
+
+### Fixed
+
+- **iPad Pro 11 (3rd gen) 820-02172 boardview opens as one board.** The file
+  draws the outline of one side only. BoardRipper cut that side in two and
+  showed the real other side next to it, and *Show all sides* had wrong
+  sizes. The missing outline is now drawn from the one that exists, and the
+  board folds normally.
+
 ## v0.52.0 — 2026-11-11
 
 ### Added
