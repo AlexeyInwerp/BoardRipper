@@ -11,6 +11,8 @@ import { toggleLibrarySidebar } from '../components/Sidebar.utils';
 import { copyText } from '../clipboard';
 import { peekHintStore } from '../store/peek-hint-store';
 import { historyBack, historyForward } from '../store/nav-history-actions';
+import { minimapNavStep } from '../store/minimap-nav-actions';
+import { renderSettingsStore, minimapMode } from '../store/render-settings';
 import { focusRibbonFind } from '../components/overlay/ribbon-find';
 import { log } from '../store/log-store';
 import { stepBoardResult } from '../store/search-step-actions';
@@ -276,6 +278,17 @@ export function useKeyboardShortcuts() {
           }
           return;
         }
+      }
+
+      // ← / → on an active board with the minimap on: the map's ‹ ›, i.e.
+      // back / forward through the history, or through the loaded worklist
+      // when the map is set to it. Ahead of the PDF branch below, which
+      // would otherwise take them whenever a PDF search has matches.
+      if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
+          && activePanelKind() === 'board' && minimapMode(renderSettingsStore.settings) !== 'off') {
+        e.preventDefault();
+        minimapNavStep(e.key === 'ArrowLeft' ? -1 : 1);
+        return;
       }
 
       // Arrow keys in PDF context: navigate matches if they exist, otherwise scroll pages

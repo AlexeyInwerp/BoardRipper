@@ -177,3 +177,47 @@ test.describe('on a touch screen', () => {
     await expect(map).toHaveAttribute('data-trail-current', await page.evaluate(() => (window as unknown as W).__boardStore.board.parts[0].name));
   });
 });
+
+test('← / → step the map\'s mode on an active board, and do nothing with the map off', async ({ page }) => {
+  await open(page);
+  const sel = () => page.evaluate(() => (window as unknown as W).__boardStore.selection.partIndex);
+  for (const i of [0, 15, 30]) {
+    await page.evaluate(n => (window as unknown as W).__boardStore.selectPart(n), i);
+    await page.waitForTimeout(150);
+  }
+  await page.waitForTimeout(300);
+
+  // History mode: ← back, → forward.
+  await page.keyboard.press('ArrowLeft');
+  await expect.poll(sel).toBe(15);
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(sel).toBe(30);
+
+  // Worklist mode: → / ← walk its rows.
+  const names = await page.evaluate(() => {
+    const w = window as unknown as { __boardStore: W['__boardStore']; __worklistStore: { createWorklist(n: string): unknown; pushRefdesToActive(r: string): unknown } };
+    const parts = w.__boardStore.board.parts;
+    w.__worklistStore.createWorklist('Keys');
+    w.__worklistStore.pushRefdesToActive(parts[3].name);
+    w.__worklistStore.pushRefdesToActive(parts[7].name);
+    w.__boardStore.selectPart(null);
+    return [parts[3].name, parts[7].name];
+  });
+  await page.getByTestId('minimap-nav-worklist').click();
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  const selName = () => page.evaluate(() => { const b = (window as unknown as W).__boardStore; const i = b.selection.partIndex; return i === null ? null : b.board.parts[i].name; });
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(selName).toBe(names[0]);
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(selName).toBe(names[1]);
+  await page.keyboard.press('ArrowLeft');
+  await expect.poll(selName).toBe(names[0]);
+
+  // Map off: the keys leave the selection alone.
+  await page.getByTestId('minimap-head').click({ button: 'right' });
+  await page.getByTestId('minimap-show-off').click();
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('ArrowRight');
+  await page.waitForTimeout(300);
+  expect(await selName()).toBe(names[0]);
+});

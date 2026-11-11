@@ -179,6 +179,15 @@ export const shortcuts: Shortcut[] = [
     description: 'Go forward again through the navigation history',
   },
   {
+    id: 'mapStep',
+    label: 'Map back / forward',
+    category: 'navigation',
+    key: 'ArrowLeft',
+    displayLabel: '← →',
+    displayOnly: true,
+    description: 'On a board with the minimap on: step back / forward through the history, or through the loaded worklist when the map is set to Worklist.',
+  },
+  {
     id: 'searchStep',
     label: 'Next / previous result',
     category: 'navigation',

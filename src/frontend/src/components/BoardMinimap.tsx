@@ -27,7 +27,8 @@ import { IconChevronLeft, IconChevronRight, IconHistory, IconChecklist, IconExte
 import { worklistStore, MARK_COLOR_CSS, type Worklist } from '../store/worklist-store';
 import { useWorklist } from '../hooks/useWorklist';
 import { useBoardStore } from '../hooks/useBoardStore';
-import { worklistStepKeys, currentWorklistKey, worklistStep } from '../store/minimap-worklist';
+import { worklistStepKeys, currentWorklistKey, worklistStep, type WlKey } from '../store/minimap-worklist';
+import { focusWorklistKey } from '../store/minimap-nav-actions';
 import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
 import { showSidebarTab } from './Sidebar.utils';
 import { setActiveTool } from '../panels/tools/tools-nav';
@@ -541,14 +542,7 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
   const wlAt = wlCur ? wlKeys.indexOf(wlCur) : -1;
   const wlPrev = worklistStep(wlKeys, wlCur, -1);
   const wlNext = worklistStep(wlKeys, wlCur, 1);
-  const goWl = (key: string | null) => {
-    if (!key) return;
-    // The store acts on the active tab: make it this map's board first
-    // (in a split view the other board may be the active one).
-    if (tabId !== null && boardStore.activeTabId !== tabId) boardStore.switchTab(tabId);
-    const name = key.slice(2);
-    if (key.startsWith('n:')) boardStore.focusNet(name); else boardStore.focusPart(name);
-  };
+  const goWl = (key: WlKey | null) => { focusWorklistKey(tabId, key); };
   // Repaint when the trail switch flips (paint reads the store directly).
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (visible) paint(); }, [settings.minimapShowHistory, settings.minimapHistorySteps, settings.minimapNav, settings.minimapScale]);
@@ -718,13 +712,13 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
       <div className="minimap-head" data-testid="minimap-head" data-nav={nav}
         title="Drag to move the map" onPointerDown={onHeadPointerDown}>
         <button type="button" data-testid="minimap-history-back" aria-label={nav === 'worklist' ? 'Previous row' : 'Back'}
-          title={nav === 'worklist' ? 'Previous worklist row' : 'Back · history of all boards and PDFs'}
+          title={nav === 'worklist' ? 'Previous worklist row · ←' : 'Back · history of all boards and PDFs · ←'}
           disabled={nav === 'worklist' ? !wlPrev : !history.canBack}
           onClick={() => nav === 'worklist' ? goWl(wlPrev) : historyBack()}>
           <IconChevronLeft size={ICON} stroke={2.2} />
         </button>
         <button type="button" data-testid="minimap-history-forward" aria-label={nav === 'worklist' ? 'Next row' : 'Forward'}
-          title={nav === 'worklist' ? (wlAt < 0 ? 'Start at the first worklist row' : 'Next worklist row') : 'Forward · history of all boards and PDFs'}
+          title={nav === 'worklist' ? (wlAt < 0 ? 'Start at the first worklist row · →' : 'Next worklist row · →') : 'Forward · history of all boards and PDFs · →'}
           disabled={nav === 'worklist' ? !wlNext : !history.canForward}
           onClick={() => nav === 'worklist' ? goWl(wlNext) : historyForward()}>
           <IconChevronRight size={ICON} stroke={2.2} />
