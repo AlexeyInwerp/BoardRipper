@@ -420,3 +420,143 @@ export function splitSymmetricLoop(
   };
   return { dim, axis, mode, lower: bbox(lowerIdx), upper: bbox(upperIdx), seam };
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// A half drawn without an outline
+// ─────────────────────────────────────────────────────────────────────────
+
+export interface MissingHalf {
+  dim: 'x' | 'y';
+  mode: 'mirror' | 'translate';
+  /** Mirror axis, or the translation along `dim`. */
+  axis?: number;
+  offset?: number;
+  /** The loop's segments moved onto the outline-less half. */
+  segments: Seg[];
+  /** Outside pins that land inside the new loop, of all outside pins. */
+  fit: number;
+  outsidePins: number;
+}
+
+/** Even-odd point-in-polygon over an unordered segment set (a closed loop's
+ *  edges in any order — ray casting only needs the crossings). */
+function insideSegments(segs: Seg[], x: number, y: number): boolean {
+  let inside = false;
+  for (const s of segs) {
+    const { p1: a, p2: b } = s;
+    if ((a.y > y) === (b.y > y)) continue;
+    const xi = a.x + (y - a.y) * (b.x - a.x) / (b.y - a.y);
+    if (xi > x) inside = !inside;
+  }
+  return inside;
+}
+
+/** Recover the bottom half's outline when the exporter drew only one.
+ *
+ *  Some XZZ files (iPad Pro 11 3rd gen, 820-02172) draw the top half's loop
+ *  and leave the bottom half — its parts placed beside the loop as usual —
+ *  without one. Nothing then pairs, and the legacy gap detector cuts the
+ *  one real half down the middle. This finds that case — one board-sized
+ *  loop, and a block of parts outside it that lies wholly to one side and
+ *  fits within the loop's extent — and returns the loop moved onto those
+ *  parts, so the ordinary pair-and-fold path takes over.
+ *
+ *  Mirror and translate are both tried: the fit decides, since an L-shaped
+ *  board only fits its own mirror image. The position along `dim` is the one
+ *  that puts most outside pins inside the moved loop, centred on the plateau
+ *  of equal fits. Returns null unless ≥ 90 % of the outside pins land
+ *  inside and the new loop leaves a gap to the old one. */
+export function synthesizeMissingHalf(
+  segments: Seg[],
+  comps: OutlineComponent[],
+  parts: Array<{ pins: Point[] }>,
+): MissingHalf | null {
+  if (comps.length === 0) return null;
+  const centroid = (pins: Point[]): Point => {
+    let x = 0, y = 0;
+    for (const p of pins) { x += p.x; y += p.y; }
+    return { x: x / pins.length, y: y / pins.length };
+  };
+  const withPins = parts.filter(p => p.pins.length > 0);
+  const lookup = makeRegionLookup(comps);
+  const partCount = new Array<number>(comps.length).fill(0);
+  const outside: Point[][] = [];
+  for (const p of withPins) {
+    const c = centroid(p.pins);
+    const i = lookup(c.x, c.y);
+    if (i >= 0) partCount[i]++; else outside.push(p.pins);
+  }
+  const cls = classifyComponents(comps, partCount);
+  if (cls.majors.length !== 1) return null;
+  if (outside.length < 20 || outside.length < withPins.length * 0.05) return null;
+  const loop = comps[cls.majors[0]];
+
+  // The outside block: every outside pin, as one box.
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const pins: Point[] = [];
+  for (const ps of outside) for (const p of ps) {
+    pins.push(p);
+    if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y;
+  }
+  const xSep = maxX < loop.minX || minX > loop.maxX;
+  const ySep = maxY < loop.minY || minY > loop.maxY;
+  if (xSep === ySep) return null;
+  const dim: 'x' | 'y' = xSep ? 'x' : 'y';
+  const loopLo = dim === 'x' ? loop.minX : loop.minY, loopHi = dim === 'x' ? loop.maxX : loop.maxY;
+  const outLo = dim === 'x' ? minX : minY, outHi = dim === 'x' ? maxX : maxY;
+  const crossLo = dim === 'x' ? loop.minY : loop.minX, crossHi = dim === 'x' ? loop.maxY : loop.maxX;
+  const outCrossLo = dim === 'x' ? minY : minX, outCrossHi = dim === 'x' ? maxY : maxX;
+  const tol = Math.max(20, 0.02 * (crossHi - crossLo));
+  if (outCrossLo < crossLo - tol || outCrossHi > crossHi + tol) return null;
+  const slack = (loopHi - loopLo) - (outHi - outLo);
+  if (slack < -tol) return null;
+
+  const loopSegs = loop.segIdxs.map(i => segments[i]);
+  const move = (mode: 'mirror' | 'translate', t: number) => (p: Point): Point => {
+    const v = dim === 'x' ? p.x : p.y;
+    const nv = mode === 'mirror' ? 2 * t - v : v + t;
+    return dim === 'x' ? { x: nv, y: p.y } : { x: p.x, y: nv };
+  };
+  // Pins are tested in the loop's own frame (inverse move) — cheaper than
+  // moving the loop for every candidate.
+  const fitAt = (mode: 'mirror' | 'translate', t: number): number => {
+    const back = mode === 'mirror' ? move('mirror', t) : move('translate', -t);
+    let n = 0;
+    for (const p of pins) { const q = back(p); if (insideSegments(loopSegs, q.x, q.y)) n++; }
+    return n;
+  };
+  const loopC = (loopLo + loopHi) / 2, outC = (outLo + outHi) / 2;
+  const range = Math.max(0, slack) / 2 + 50;
+  const step = Math.max(2, range / 60);
+  let best: { mode: 'mirror' | 'translate'; t: number; fit: number } | null = null;
+  for (const mode of ['mirror', 'translate'] as const) {
+    const t0 = mode === 'mirror' ? (loopC + outC) / 2 : outC - loopC;
+    // Mirror: moving the axis by d moves the image by 2d.
+    const k = mode === 'mirror' ? 0.5 : 1;
+    let bestFit = -1, plateau: number[] = [];
+    for (let d = -range; d <= range + 1e-9; d += step) {
+      const t = t0 + d * k;
+      const f = fitAt(mode, t);
+      if (f > bestFit) { bestFit = f; plateau = [t]; }
+      else if (f === bestFit) plateau.push(t);
+    }
+    const t = plateau[Math.floor(plateau.length / 2)];
+    if (!best || bestFit > best.fit) best = { mode, t, fit: bestFit };
+  }
+  if (!best || best.fit < pins.length * 0.9) return null;
+
+  const mv = move(best.mode, best.t);
+  const moved: Seg[] = loopSegs.map(s => ({ p1: mv(s.p1), p2: mv(s.p2) }));
+  let nLo = Infinity, nHi = -Infinity;
+  for (const s of moved) for (const p of [s.p1, s.p2]) {
+    const v = dim === 'x' ? p.x : p.y;
+    if (v < nLo) nLo = v; if (v > nHi) nHi = v;
+  }
+  if (!(nHi < loopLo || nLo > loopHi)) return null;
+  return {
+    dim, mode: best.mode,
+    ...(best.mode === 'mirror' ? { axis: best.t } : { offset: best.t }),
+    segments: moved, fit: best.fit, outsidePins: pins.length,
+  };
+}

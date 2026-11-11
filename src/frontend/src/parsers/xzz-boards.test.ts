@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyComponents, pairMajors, decideSide, splitSymmetricLoop, windingMode, type OutlineComponent, type ComponentPair } from './xzz-boards';
+import { classifyComponents, pairMajors, decideSide, splitSymmetricLoop, windingMode, synthesizeMissingHalf, type OutlineComponent, type ComponentPair } from './xzz-boards';
 
 const comp = (minX: number, minY: number, w: number, h: number, segCount = 100): OutlineComponent =>
   ({ minX, minY, maxX: minX + w, maxY: minY + h, segCount, segIdxs: [] });
@@ -169,5 +169,59 @@ describe('windingMode', () => {
   it('refuses mixed winding and too few samples', () => {
     expect(windingMode({ lowerCW: 10, lowerCCW: 9, upperCW: 8, upperCCW: 11 })).toBeNull();
     expect(windingMode({ lowerCW: 1, lowerCCW: 1, upperCW: 0, upperCCW: 30 })).toBeNull();
+  });
+});
+
+describe('synthesizeMissingHalf', () => {
+  // An L: a 1000×200 strip with a 100×400 arm rising from its left end
+  // (iPad Pro 11 3rd gen, 820-02172, at a tenth of the scale).
+  const L = [[0, 0], [1000, 0], [1000, 200], [200, 200], [200, 600], [100, 600], [100, 200], [0, 200]];
+  const loopSegs = (pts: number[][]) => pts.map((p, i) => {
+    const q = pts[(i + 1) % pts.length];
+    return { p1: { x: p[0], y: p[1] }, p2: { x: q[0], y: q[1] } };
+  });
+  const bbox = (segs: ReturnType<typeof loopSegs>): OutlineComponent => {
+    const xs = segs.flatMap(s => [s.p1.x, s.p2.x]), ys = segs.flatMap(s => [s.p1.y, s.p2.y]);
+    return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys), segCount: segs.length, segIdxs: segs.map((_, i) => i) };
+  };
+  const part = (x: number, y: number) => ({ pins: [{ x: x - 2, y }, { x: x + 2, y }] });
+  // Parts on the drawn half, and parts of the bottom half mirrored below
+  // y = -50 with no outline of their own — some of them down the arm.
+  const topParts = Array.from({ length: 60 }, (_, i) => part(20 + i * 16, 100));
+  const bottomParts = [
+    ...Array.from({ length: 30 }, (_, i) => part(30 + i * 30, -100 - 150 + 50)), // strip, y ∈ (-300, -100)
+    ...Array.from({ length: 10 }, (_, i) => part(150, -320 - i * 30)),           // arm, y < -300
+  ];
+
+  it('mirrors the lone loop onto the parts that have no outline', () => {
+    const segs = loopSegs(L);
+    const r = synthesizeMissingHalf(segs, [bbox(segs)], [...topParts, ...bottomParts]);
+    expect(r).not.toBeNull();
+    expect(r!.dim).toBe('y');
+    expect(r!.mode).toBe('mirror');
+    expect(r!.fit).toBe(r!.outsidePins);
+    const moved = bbox(r!.segments);
+    expect(moved.maxY).toBeLessThan(0);
+    expect(moved.minY).toBeLessThanOrEqual(-590);
+  });
+
+  it('leaves a file alone when every part sits inside the loop', () => {
+    const segs = loopSegs(L);
+    expect(synthesizeMissingHalf(segs, [bbox(segs)], topParts)).toBeNull();
+  });
+
+  it('refuses when the outside parts do not fit the loop', () => {
+    const segs = loopSegs(L);
+    // Arm parts on the wrong end: neither the mirror nor a slide fits them.
+    const wrong = [...bottomParts.slice(0, 30), ...Array.from({ length: 10 }, (_, i) => part(900, -320 - i * 30))];
+    expect(synthesizeMissingHalf(segs, [bbox(segs)], [...topParts, ...wrong])).toBeNull();
+  });
+
+  it('does nothing when the file already pairs two loops', () => {
+    const a = loopSegs(L);
+    const b = loopSegs(L.map(([x, y]) => [x, -100 - y]));
+    const segs = [...a, ...b];
+    const ca = bbox(a), cb = { ...bbox(b), segIdxs: b.map((_, i) => a.length + i) };
+    expect(synthesizeMissingHalf(segs, [ca, cb], [...topParts, ...bottomParts])).toBeNull();
   });
 });

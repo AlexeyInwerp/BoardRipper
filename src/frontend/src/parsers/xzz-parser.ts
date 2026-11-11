@@ -1,7 +1,7 @@
 import type { BoardData, BoardText, Part, Pin, Nail, Point, Trace, SilkscreenPath, Pad, DiodeReading, DiodeReferenceChannel } from './types';
 import { computeBBox, buildNets } from './types';
 import { detectXMirrorByPinDirection } from './mirror-detect';
-import { classifyComponents, pairMajors, decideSide, unionBBox, makeRegionLookup, splitSymmetricLoop, type OutlineComponent, type ComponentPair, type CopperVotes } from './xzz-boards';
+import { classifyComponents, pairMajors, decideSide, unionBBox, makeRegionLookup, splitSymmetricLoop, synthesizeMissingHalf, type OutlineComponent, type ComponentPair, type CopperVotes } from './xzz-boards';
 import { buildAnnotations } from './annotation-tables';
 import { log } from '../store/log-store';
 
@@ -2249,6 +2249,21 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       log.parser.log(
         `(pcb pads) oblong guard: collapsed ${collapsedTotal} implausible oblong pads to round dots` +
         (stats.subPen > 0 ? ` (${stats.subPen} of them for a sub-${MIN_PEN_MILS}-mil pen — not manufacturable copper)` : ''),
+      );
+    }
+  }
+
+  // A file that draws the bottom half's parts but not its outline: put the
+  // loop there too, before the snapshot, so the pair-and-fold path and the
+  // "Show all sides" view both see two halves (see synthesizeMissingHalf).
+  {
+    const half = synthesizeMissingHalf(segments, componentBBoxes(segments), partDataList);
+    if (half) {
+      for (const s of half.segments) segments.push(s);
+      log.parser.log(
+        `(pcb boards) one outline loop, ${half.outsidePins} pins outside it: drew the missing half's outline ` +
+        `(${half.mode} along ${half.dim} ${half.mode === 'mirror' ? `@ ${half.axis!.toFixed(0)}` : `by ${half.offset!.toFixed(0)}`}, ` +
+        `${half.fit}/${half.outsidePins} pins inside)`,
       );
     }
   }

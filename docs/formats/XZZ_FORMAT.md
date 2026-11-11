@@ -201,6 +201,22 @@ parser turns that into `BoardData.boards` in four steps
    `boards[i].fold.axis` (in `rawOutline` coordinates) and `boards[i].shift`
    let the store undo it for the raw-layout view.
 
+**A half with no outline.** The iPad Pro 11 3rd gen file (820-02172 3G
+boardview) draws one loop — the top half, an L of a strip with an arm — and
+places the bottom half's 649 parts below it, mirrored about y, with no loop of
+their own. With nothing to pair, the legacy gap detector used to cut the real
+top half in two at a gap inside it. `synthesizeMissingHalf` runs before the
+pre-fold snapshot: one board-sized loop plus ≥ 20 parts (≥ 5 % of all) whose
+pins lie wholly to one side of it and within its extent across → the loop is
+mirrored, and separately translated, onto those pins, the position along the
+axis chosen by how many pins land inside the moved loop (point-in-polygon,
+centre of the best plateau); the better of the two is added as a second loop
+if ≥ 90 % of the pins fit and the two loops do not overlap. An L only fits
+its own mirror image, so the fit also picks mirror vs translate (here mirror
+at y ≈ 9253, 701/701 pins inside). From there the ordinary pair, side
+(layout rule) and fold steps run, and Show all sides draws both loops.
+Fires on 1 of the 350 corpus files.
+
 **Touching halves (one loop).** The 2008–2015 Apple laptop and iMac exports
 draw the two halves edge to edge, so their loops share vertices along the
 seam and cluster into one loop; parts run right up to the seam, so no gap
