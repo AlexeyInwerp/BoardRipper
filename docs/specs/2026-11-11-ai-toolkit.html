@@ -1,0 +1,271 @@
+<title>BoardRipper AI Toolkit</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one reading column; the mockup breaks out wider as a dark "app window" so it reads as product, not prose. */
+:root {
+  --bg: #f5f6f3; --fg: #1c211d; --muted: #5d6760; --line: #d9ddd6; --card: #ffffff;
+  --accent: #1f7a4d; --accent-soft: #e2f0e7; --warn: #a15c00; --warn-soft: #fbefdc;
+  --app-bg: #16191a; --app-panel: #1f2324; --app-line: #31373a; --app-fg: #e6e9e7; --app-muted: #8f9a95; --app-accent: #3ecf8e;
+  --display: "Fraunces", Georgia, serif; --body: "IBM Plex Sans", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121514; --fg: #e3e7e4; --muted: #95a09a; --line: #2b3130; --card: #1a1e1d;
+  --accent: #4fd197; --accent-soft: #19352a; --warn: #f0b35c; --warn-soft: #3a2c16;
+  --app-bg: #0c0e0f; --app-panel: #171a1b; --app-line: #2a3033; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #121514; --fg: #e3e7e4; --muted: #95a09a; --line: #2b3130; --card: #1a1e1d;
+  --accent: #4fd197; --accent-soft: #19352a; --warn: #f0b35c; --warn-soft: #3a2c16;
+  --app-bg: #0c0e0f; --app-panel: #171a1b; --app-line: #2a3033; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font: 15px/1.6 var(--body); padding-inline: 16px; padding-block: 40px 80px; }
+.wrap { max-width: 980px; margin: 0 auto; display: grid; gap: 40px; }
+.col { max-width: 680px; }
+h1 { font: 600 2.4rem/1.1 var(--display); margin: 0 0 12px; text-wrap: balance; }
+h2 { font: 600 1.45rem/1.2 var(--display); margin: 0 0 12px; text-wrap: balance; }
+h3 { font-size: 1rem; margin: 0 0 4px; }
+p { margin: 0 0 12px; }
+.eyebrow { font: 500 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+.lede { font-size: 1.08rem; color: var(--muted); }
+code, .mono { font-family: var(--mono); font-size: .88em; }
+section { display: grid; gap: 4px; }
+
+/* ---- mockup ---- */
+.app { background: var(--app-bg); color: var(--app-fg); border-radius: 10px; border: 1px solid var(--app-line); overflow: hidden; box-shadow: 0 18px 40px -24px rgba(0,0,0,.45); }
+.app-bar { display: flex; gap: 8px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--app-line); font-size: 12px; color: var(--app-muted); }
+.app-bar b { color: var(--app-fg); font-weight: 500; }
+.app-body { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); }
+@media (max-width: 760px) { .app-body { grid-template-columns: 1fr; } }
+.pick { padding: 18px; border-right: 1px solid var(--app-line); display: grid; gap: 14px; align-content: start; }
+@media (max-width: 760px) { .pick { border-right: 0; border-bottom: 1px solid var(--app-line); } }
+.pick-h { font-size: 13px; color: var(--app-muted); }
+.group-label { font: 500 10px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--app-muted); margin-top: 4px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+.tile { all: unset; cursor: pointer; display: grid; gap: 2px; padding: 9px 10px; border-radius: 7px; background: var(--app-panel); border: 1px solid var(--app-line); font-size: 13px; }
+.tile small { color: var(--app-muted); font-size: 11px; }
+.tile:hover { border-color: #4a5357; }
+.tile:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 2px; }
+.tile[aria-pressed="true"] { border-color: var(--app-accent); box-shadow: inset 0 0 0 1px var(--app-accent); }
+.tile .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--app-accent); margin-right: 5px; }
+.detail { padding: 18px; display: grid; gap: 14px; align-content: start; min-width: 0; }
+.detail h3 { font-size: 15px; }
+.how { font-size: 13px; color: var(--app-muted); }
+.primary { all: unset; cursor: pointer; background: var(--app-accent); color: #08140e; font-weight: 600; font-size: 13px; padding: 9px 14px; border-radius: 6px; justify-self: start; }
+.primary:focus-visible { outline: 2px solid var(--app-fg); outline-offset: 2px; }
+pre.snip { margin: 0; background: #0a0c0d; border: 1px solid var(--app-line); border-radius: 6px; padding: 10px 12px; font: 12px/1.5 var(--mono); color: #cfe9dc; overflow-x: auto; white-space: pre; }
+.waiting { display: flex; gap: 10px; align-items: center; font-size: 13px; padding: 10px 12px; border-radius: 6px; border: 1px dashed var(--app-line); color: var(--app-muted); }
+.pulse { width: 9px; height: 9px; border-radius: 50%; background: var(--app-accent); animation: p 1.4s ease-in-out infinite; flex: none; }
+@keyframes p { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
+.connected { border-top: 1px solid var(--app-line); padding: 14px 18px; display: grid; gap: 8px; }
+.conn-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; font-size: 13px; }
+.conn-row small { color: var(--app-muted); display: block; font-size: 11px; }
+.chip { font: 500 11px/1 var(--mono); padding: 5px 7px; border-radius: 4px; border: 1px solid var(--app-line); color: var(--app-muted); }
+.chip.on { color: var(--app-accent); border-color: #2c5e47; }
+.linkish { color: var(--app-muted); font-size: 12px; text-decoration: underline; cursor: pointer; }
+
+/* ---- document pieces ---- */
+.ideas { display: grid; gap: 14px; }
+.idea { display: grid; grid-template-columns: 30px minmax(0,1fr); gap: 10px; }
+.idea .n { font: 600 1.05rem var(--display); color: var(--accent); }
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; min-width: 640px; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 500 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+tr:last-child td { border-bottom: 0; }
+.tag { font: 500 11px var(--mono); padding: 2px 6px; border-radius: 4px; white-space: nowrap; }
+.t-ok { background: var(--accent-soft); color: var(--accent); }
+.t-check { background: var(--warn-soft); color: var(--warn); }
+.phases { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.phase { border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; background: var(--card); }
+.phase ul { margin: 6px 0 0; padding-left: 18px; font-size: 14px; }
+.phase .eyebrow { margin-bottom: 6px; }
+ul.plain { margin: 0; padding-left: 18px; }
+ul.plain li { margin-bottom: 6px; }
+.note { font-size: 13px; color: var(--muted); }
+.t-no { background: color-mix(in srgb, var(--muted) 18%, transparent); color: var(--muted); }
+a { color: var(--accent); }
+.assist { padding: 16px 18px; display: grid; gap: 10px; font-size: 13.5px; }
+.msg { padding: 10px 12px; border-radius: 8px; max-width: 88%; min-width: 0; }
+.msg.user { background: #24302b; justify-self: end; }
+.msg.bot { background: var(--app-panel); border: 1px solid var(--app-line); }
+.msg.sys { color: var(--app-muted); font-size: 12px; justify-self: center; background: none; padding: 2px; }
+.msg .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.cite { font: 500 11px var(--mono); color: var(--app-accent); white-space: nowrap; }
+.composer { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; border: 1px solid var(--app-line); border-radius: 8px; padding: 10px 12px; color: var(--app-muted); }
+</style>
+
+<div class="wrap">
+  <header class="col">
+    <div class="eyebrow">BoardRipper · design · 2026-11-11 · terms checked on this date</div>
+    <h1>BoardRipper AI Toolkit</h1>
+    <p class="lede">Two ways to use AI with BoardRipper. <strong>Connect</strong>: an agent you already run (Claude Code, Cursor, Codex and others) reads and drives BoardRipper over MCP. <strong>Assistant</strong>: a chat panel inside BoardRipper, using your own API key, a local model or your ChatGPT plan. Every route below is one the model vendor documents for this use. Nothing depends on a grey area.</p>
+  </header>
+
+  <section class="col">
+    <h2>The rules everything else follows</h2>
+    <p>These hold for every part of the toolkit. A feature that would break one is not built.</p>
+    <div class="ideas">
+      <div class="idea"><span class="n">1</span><div><h3>We never touch another app's sign-in</h3><p>BoardRipper does not read, copy, store or forward tokens of Claude, Codex, Gemini or any other client. It does not offer "Sign in with Claude" or "Sign in with Google" for model access. Anthropic and Google forbid this explicitly and have suspended accounts for it.</p></div></div>
+      <div class="idea"><span class="n">2</span><div><h3>A subscription stays with its owner</h3><p>On a NAS several people use one install. A ChatGPT sign-in or an API key belongs to the paired browser that added it, never to the install. Answering someone else's request with your plan is the "on behalf of other users" sharing OpenAI and Anthropic both forbid.</p></div></div>
+      <div class="idea"><span class="n">3</span><div><h3>Subscriptions to Claude and Gemini are used through Connect</h3><p>Someone with Claude Pro/Max or a Google login runs the vendor's own app (Claude Code, Claude Desktop, Gemini CLI) and connects it to BoardRipper. That is the use those apps are made for. The Assistant panel accepts Claude and Gemini only with an API key.</p></div></div>
+      <div class="idea"><span class="n">4</span><div><h3>The user sees what leaves the machine</h3><p>Board data and PDF text go to whichever provider the user picked. The panel names the provider on every conversation, and a local model is always offered for boards the user must not upload.</p></div></div>
+      <div class="idea"><span class="n">5</span><div><h3>Changes to the board need a yes</h3><p>Reading is free. Selecting, highlighting and navigating need the per-assistant <em>can drive the board</em> permission. Anything that edits data (worklists, notes) asks every time. Text from a PDF or a web page is treated as data, never as an instruction.</p></div></div>
+      <div class="idea"><span class="n">6</span><div><h3>Re-checked before each release that touches it</h3><p>Terms change. The table under "Allowed routes" carries the date it was checked and its sources. A release that changes a provider re-reads them.</p></div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="col"><h2>Allowed routes</h2>
+    <p>Checked 2026-11-11 against the vendors' own pages. "Not offered" means BoardRipper has no such option at all.</p></div>
+    <div class="tbl"><table>
+      <thead><tr><th>Route</th><th>Connect</th><th>Assistant panel</th><th>Basis</th></tr></thead>
+      <tbody>
+        <tr><td>Claude Code, Claude Desktop with your Claude plan</td><td><span class="tag t-ok">yes</span></td><td><span class="tag t-no">not offered</span></td><td>You run Anthropic's app and it calls our MCP server. Third-party apps may not use Claude plan sign-in or its tokens.</td></tr>
+        <tr><td>Codex, ChatGPT desktop with your ChatGPT plan</td><td><span class="tag t-ok">yes</span></td><td><span class="tag t-check">phase 4</span></td><td>Connect: OpenAI's app calling our server. Panel: two documented routes, both open to us because BoardRipper is open source. (a) OpenAI's "ChatGPT plan usage" for open-source, locally hosted apps, with BoardRipper registered as its own client and <code>codex app-server</code> or the Responses API behind it. (b) <code>codex app-server</code> with Codex's own sign-in; OpenAI's Codex lead limits this to "pure OSS clients and existing partners". A closed-source app would have to ask OpenAI first.</td></tr>
+        <tr><td>Gemini CLI with a Google login</td><td><span class="tag t-ok">yes</span></td><td><span class="tag t-no">not offered</span></td><td>Google's FAQ calls third-party use of that login a violation.</td></tr>
+        <tr><td>Cursor, VS Code / Copilot, Windsurf, Zed, LM Studio and others</td><td><span class="tag t-ok">yes</span></td><td>n/a</td><td>Each runs under its own terms and calls our server.</td></tr>
+        <tr><td>Your own API key: Anthropic, OpenAI, Google AI Studio / Vertex</td><td>n/a</td><td><span class="tag t-ok">yes</span></td><td>The route all three vendors document for third-party apps. Billed to the key owner.</td></tr>
+        <tr><td>Local model: Ollama, LM Studio</td><td>n/a</td><td><span class="tag t-ok">yes</span></td><td>No vendor terms involved. Nothing leaves the network.</td></tr>
+        <tr><td>ChatGPT, claude.ai on the web or phone</td><td><span class="tag t-check">later</span></td><td>n/a</td><td>Allowed. They need a public HTTPS address, so this waits for an opt-in remote access with OAuth.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="col">
+    <h2>Part A · Connect</h2>
+    <p>One sheet in Settings ▸ Integrations. Picking an assistant turns the server on and gives the one action that installs it.</p>
+  </section>
+
+  <section>
+    <div class="eyebrow">Sketch · Settings ▸ Integrations</div>
+    <div class="app" id="app">
+      <div class="app-bar"><b>Integrations</b> · AI assistants · <span class="mono">http://rd-nas:1336/api/mcp</span></div>
+      <div class="app-body">
+        <div class="pick">
+          <div class="pick-h">Which assistant do you use? Picking one turns the server on.</div>
+          <div class="group-label">Coding agents and editors</div>
+          <div class="tiles" id="tiles-a"></div>
+          <div class="group-label">Desktop chat apps</div>
+          <div class="tiles" id="tiles-b"></div>
+          <div class="group-label">Cloud chat (needs remote access)</div>
+          <div class="tiles" id="tiles-c"></div>
+        </div>
+        <div class="detail" id="detail" aria-live="polite"></div>
+      </div>
+      <div class="connected">
+        <div class="group-label">Connected assistants</div>
+        <div class="conn-row"><div>Claude Code <small>this browser · last call board_overview, 2 min ago</small></div><span class="chip on">can drive the board</span><span class="linkish">Disconnect</span></div>
+        <div class="conn-row"><div>Cursor <small>this browser · 14 calls today</small></div><span class="chip">read only</span><span class="linkish">Disconnect</span></div>
+      </div>
+    </div>
+    <p class="note">Interactive: click a tile. Tokens shown are placeholders. The "Connected assistants" list replaces today's auth-mode toggle, token-source switch and connected-pages counter.</p>
+  </section>
+
+  <section class="col">
+    <div class="ideas">
+      <div class="idea"><span class="n">A1</span><div><h3>Recipes in one table</h3><p><code>store/mcp-clients.ts</code> holds each client's install method: deep link (VS Code, Cursor, LM Studio), bundle download (Claude Desktop), command (Claude Code, Codex, Gemini CLI) or config snippet (Windsurf, Zed). One more choice, <em>All assistants on this computer</em>, gives <code>npx add-mcp &lt;url&gt; --header … --all</code>, which writes all ten common agents at once. Formats marked "check" earlier are confirmed before they ship.</p></div></div>
+      <div class="idea"><span class="n">A2</span><div><h3>No auth choices on screen</h3><p>The default credential is the browser's pairing token, so an agent sees only that browser's boards. OAuth is used where the address is loopback or HTTPS. The install-wide token sits under Advanced and is served only after an explicit reveal.</p></div></div>
+      <div class="idea"><span class="n">A3</span><div><h3>Connected assistants</h3><p>The server records each client's name from MCP <code>initialize</code>. The sheet confirms the first call, then lists every assistant with its last call, its own <em>can drive the board</em> switch and Disconnect.</p></div></div>
+      <div class="idea"><span class="n">A4</span><div><h3>Claude Desktop without Node, desktop app without files to edit</h3><p>A generated <code>.mcpb</code> bundle carries the URL and token; Claude Desktop runs it with its own Node. The Electron app finds installed clients and writes their config itself, with a backup and the diff shown, the way JetBrains and Docker Desktop do it. A <code>server mcp-stdio</code> subcommand serves clients that only speak stdio.</p></div></div>
+      <div class="idea"><span class="n">A5</span><div><h3>Server fixes from the review</h3><p><code>destructiveHint: false</code> and <code>idempotentHint: true</code> on the drive tools, <code>openWorldHint: false</code> on all, so clients stop asking before every highlight. Tool groups in the URL (<code>?tools=board,pdf</code>, <code>?read_only=1</code>) to stay under client tool limits. A Host allow-list in front of <code>/api/mcp*</code> against DNS rebinding. The Claude Code skill's rules move into server instructions and prompts so every client gets them.</p></div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="col"><h2>Part B · Assistant</h2>
+    <p>A chat panel in BoardRipper, a destination on the activity rail. The Go backend runs the conversation itself, so it works the same on the NAS, in the desktop app and on an iPad. There is one tool loop with a small adapter per provider. The tools are the MCP server's own, called in-process, so Connect and Assistant can never drift apart.</p></div>
+    <div class="app">
+      <div class="app-bar"><b>Assistant</b> · 820-02016 · <span class="mono">Anthropic API · your key</span></div>
+      <div class="assist">
+        <div class="msg user">PPBUS_G3H is shorted to ground. Where do I start?</div>
+        <div class="msg bot">PPBUS_G3H has 212 pins on this board. The usual suspects are the input capacitors near the charger, U7000, and the large consumers on that rail. I've listed the ten capacitors closest to the charger, sorted by distance. <span class="cite">schematic p. 71</span><div class="actions"><span class="chip on">Highlight PPBUS_G3H</span><span class="chip">Add the 10 caps to the worklist</span></div></div>
+        <div class="msg sys">The worklist edit needs your OK. Highlighting is allowed for this assistant.</div>
+        <div class="composer"><span>Ask about this board…</span><span class="chip">Provider: Anthropic API ▾</span></div>
+      </div>
+    </div>
+    <div class="col" style="margin-top:14px">
+    <div class="ideas">
+      <div class="idea"><span class="n">B1</span><div><h3>Providers</h3><p>Anthropic, OpenAI and Google with the user's API key; Ollama and LM Studio through their OpenAI-compatible endpoint; ChatGPT plan in phase 4 through OpenAI's open-source program (our own OAuth client, a per-install host ID, the token refreshed by us, "Continue with ChatGPT" per OpenAI's UI rules, Plus/Pro only). Keys and sign-ins are stored on the backend per paired browser, mode 0600, and are never sent back to a browser.</p></div></div>
+      <div class="idea"><span class="n">B2</span><div><h3>Right-click actions</h3><p>On a part: <em>Describe</em>, <em>Find datasheet</em>, <em>Find equivalent</em>. On a pin: <em>Where does this net come from?</em>. Each opens the panel with a prepared question. Taken from NexusBV, which proved them useful.</p></div></div>
+      <div class="idea"><span class="n">B3</span><div><h3>Repair knowledge</h3><p>A hints file maps symptoms ("no backlight", "no VCCCORE") to what a technician checks first, served as MCP prompts so Connect agents get it too. A read-only <em>Summarise this board</em> workflow identifies the device and the board's role before anything else.</p></div></div>
+      <div class="idea"><span class="n">B4</span><div><h3>What the assistant cannot do</h3><p>No shell, no file writes, no network access except the provider's own web search for datasheets. No edits without a confirmation. No answers routed through another person's key or plan.</p></div></div>
+    </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="col"><h2>Phases</h2></div>
+    <div class="phases">
+      <div class="phase"><div class="eyebrow">Phase 1</div><h3>Connect sheet and server fixes</h3><ul><li>Recipes, tiles, first-call wait</li><li>Connected assistants, per-assistant drive switch</li><li>Annotations, Host allow-list, token on reveal</li><li>Tool groups in the URL</li><li>Skill rules into instructions</li></ul></div>
+      <div class="phase"><div class="eyebrow">Phase 2</div><h3>Packaging</h3><ul><li><code>.mcpb</code> for Claude Desktop</li><li><code>server mcp-stdio</code></li><li>Desktop app writes client configs</li><li><code>add-mcp --all</code> option</li></ul></div>
+      <div class="phase"><div class="eyebrow">Phase 3</div><h3>Assistant panel</h3><ul><li>Tool loop with provider adapters</li><li>API keys per browser, local models</li><li>Right-click actions, hints, summary</li><li>Confirmations and provider label</li></ul></div>
+      <div class="phase"><div class="eyebrow">Phase 4 and later</div><h3>Plans and reach</h3><ul><li>ChatGPT plan through OpenAI's open-source program</li><li>Opt-in remote access for ChatGPT and claude.ai web</li><li>WebMCP for the lite build, once it leaves origin trial</li></ul></div>
+    </div>
+  </section>
+
+  <section class="col">
+    <h2>Deliberately not built</h2>
+    <ul class="plain">
+      <li>Running Claude Code inside BoardRipper on the user's Claude plan, whether through the Agent SDK, the ACP adapter or <code>claude -p</code>. All three drive the same binary the same way, and the Agent SDK docs say: "Unless previously approved, Anthropic does not allow third party developers to offer claude.ai login or rate limits for their products." OpenCode (2.2.3) and Zed do it, but no public approval exists, so it is tolerated, not permitted. Revisit only with Anthropic's written OK.</li>
+      <li>Gemini or Antigravity on a Google login inside BoardRipper. Consumer Gemini CLI login moved to Antigravity CLI on 2026-06-18, and its terms name third-party use as a breach.</li>
+      <li>Reading credentials from <code>~/.claude</code>, <code>~/.codex</code> or <code>~/.gemini</code>, for any reason.</li>
+      <li>One subscription answering several people's browsers on a shared NAS.</li>
+      <li>A BoardRipper-paid model behind the app. That would make us a reseller with our own terms to meet.</li>
+    </ul>
+  </section>
+
+  <section class="col">
+    <h2>Before building</h2>
+    <ul class="plain">
+      <li>Phase 4: confirm on OpenAI's registration page that a self-hosted AGPL app with a Docker install qualifies as "open-source and locally hosted". If the answer is unclear, file the interest form first.</li>
+      <li>Phase 1: test OAuth over plain <code>http://</code> on a LAN address in Claude Code and VS Code.</li>
+      <li>Naming: we may say BoardRipper "works with Claude Code" in plain text; we may not use Anthropic's, OpenAI's or Google's logos or names in our feature names.</li>
+      <li>This page is a reading of published terms as of the date above, not legal advice.</li>
+    </ul>
+    <p class="note">Sources: <a href="https://code.claude.com/docs/en/legal-and-compliance">Claude Code legal and compliance</a> · <a href="https://developers.openai.com/siwc/token-sharing-open-source">OpenAI ChatGPT plan usage for open-source apps</a> · <a href="https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server">Codex app-server with plan usage</a> · <a href="https://www.aicoder.com/news/news-20260908-openai-codex-sign-in-policy">OpenAI on third-party Codex clients</a> · <a href="https://geminicli.com/docs/resources/faq/">Gemini CLI FAQ</a> · <a href="https://zed.dev/blog/anthropic-subscription-changes">Zed on Anthropic's billing change</a> · <a href="https://www.jetbrains.com/help/idea/2025.3/mcp-server.html">JetBrains MCP server</a> · <a href="https://docs.docker.com/ai/mcp-catalog-and-toolkit/toolkit.md">Docker MCP Toolkit</a> · <a href="https://supabase.com/docs/guides/ai-tools/mcp">Supabase MCP</a> · <a href="https://www.mintlify.com/neondatabase/add-mcp/usage/options">add-mcp</a> · <a href="https://nexusbv.net/">NexusBV</a></p>
+  </section>
+</div>
+
+<script>
+const URL_ = 'http://rd-nas:1336/api/mcp', T = 'brp_7Kq…4mZ';
+const C = {
+  'claude-code': { g:'a', label:'Claude Code', sub:'terminal', how:'Run this in your terminal. Then type /mcp in Claude Code to check.', snip:`claude mcp add --transport http boardripper \\\n  ${URL_} \\\n  --header "Authorization: Bearer ${T}"`, btn:'Copy command', on:true },
+  'cursor': { g:'a', label:'Cursor', sub:'one click', how:'Opens Cursor and asks you to confirm. The token is already filled in.', btn:'Add to Cursor', on:true },
+  'vscode': { g:'a', label:'VS Code', sub:'Copilot · one click', how:'Opens VS Code\'s install page for this server. Click Install there.', btn:'Add to VS Code' },
+  'windsurf': { g:'a', label:'Windsurf', sub:'config file', how:'Paste into ~/.codeium/windsurf/mcp_config.json and reload Windsurf.', snip:`{\n  "mcpServers": {\n    "boardripper": {\n      "serverUrl": "${URL_}",\n      "headers": { "Authorization": "Bearer ${T}" }\n    }\n  }\n}`, btn:'Copy' },
+  'codex': { g:'a', label:'Codex', sub:'CLI and IDE', how:'Codex reads the token from an environment variable. Run both lines.', snip:`export BOARDRIPPER_TOKEN=${T}\ncodex mcp add boardripper --url ${URL_} \\\n  --bearer-token-env-var BOARDRIPPER_TOKEN`, btn:'Copy commands' },
+  'gemini': { g:'a', label:'Gemini CLI', sub:'terminal', how:'Run this in your terminal.', snip:`gemini mcp add --transport http \\\n  --header "Authorization: Bearer ${T}" \\\n  boardripper ${URL_}`, btn:'Copy command' },
+  'zed': { g:'a', label:'Zed', sub:'config file', how:'Add under context_servers in Zed\'s settings.json.', btn:'Copy' , snip:`"context_servers": {\n  "boardripper": {\n    "url": "${URL_}",\n    "headers": { "Authorization": "Bearer ${T}" }\n  }\n}` },
+  'claude-desktop': { g:'b', label:'Claude Desktop', sub:'download', how:'Downloads BoardRipper.mcpb. Double-click it and Claude Desktop installs it. No Node needed.', btn:'Download for Claude Desktop' },
+  'lmstudio': { g:'b', label:'LM Studio', sub:'one click · local models', how:'Opens LM Studio and adds the server. Works with local models too.', btn:'Add to LM Studio' },
+  'chatgpt': { g:'c', label:'ChatGPT', sub:'remote access', remote:true },
+  'claude-ai': { g:'c', label:'claude.ai', sub:'web and mobile', remote:true },
+  'other': { g:'a', label:'Other', sub:'URL + header', how:'Any client that speaks Streamable HTTP.', snip:`URL:    ${URL_}\nHeader: Authorization: Bearer ${T}`, btn:'Copy' },
+};
+let sel = 'cursor';
+function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+function render(){
+  ['a','b','c'].forEach(g=>{
+    const el=document.getElementById('tiles-'+g); el.innerHTML='';
+    Object.entries(C).filter(([,v])=>v.g===g).forEach(([id,v])=>{
+      const b=document.createElement('button'); b.className='tile'; b.id='tile-'+id;
+      b.setAttribute('aria-pressed', id===sel);
+      b.innerHTML=`<span>${v.on?'<span class="dot" title="connected"></span>':''}${esc(v.label)}</span><small>${esc(v.sub)}</small>`;
+      b.onclick=()=>{sel=id;render();}; el.appendChild(b);
+    });
+  });
+  const v=C[sel], d=document.getElementById('detail');
+  if(v.remote){
+    d.innerHTML=`<h3>${esc(v.label)}</h3><p class="how">${esc(v.label)} connects from its own servers on the internet, so it cannot reach BoardRipper on your network. You can allow it by turning on remote access, which gives this server a public HTTPS address and requires sign-in through BoardRipper.</p><button class="primary" id="remote-btn">Set up remote access…</button><p class="how">Phase 3. Read-only by default.</p>`;
+    return;
+  }
+  d.innerHTML=`<h3>${esc(v.label)}</h3><p class="how">${esc(v.how)}</p>`+
+    (v.snip?`<pre class="snip">${esc(v.snip)}</pre>`:'')+
+    `<button class="primary" id="act-btn">${esc(v.btn)}</button>`+
+    (v.on?`<div class="waiting" style="border-style:solid;color:var(--app-accent)">✓ ${esc(v.label)} is connected to this browser.</div>`
+         :`<div class="waiting"><span class="pulse"></span>Waiting for ${esc(v.label)} to make its first call…</div>`)+
+    `<p class="how">Sees the boards open in this browser only. <span class="linkish">Advanced</span></p>`;
+  const btn=document.getElementById('act-btn');
+  btn.onclick=async()=>{ if(v.snip){ try{await navigator.clipboard.writeText(v.snip); btn.textContent='Copied';}catch{btn.textContent='Select the text above';} } else btn.textContent='(mockup)'; };
+}
+render();
+</script>
