@@ -84,6 +84,14 @@ const tabComponents = {
 const BOARD_EXTS = new Set<string>(); // populated lazily
 const PDF_EXT = '.pdf';
 
+/** More dropped files than this offers the "Add to library only" target. */
+const MANY_FILES_DROP = 4;
+
+/** Dropped files can be copied into the server library (Docker build only). */
+function canUploadToLibrary(): boolean {
+  return !isElectron() && !isLiteBuild();
+}
+
 function isFileDrag(e: React.DragEvent): boolean {
   return e.dataTransfer.types.includes('Files');
 }
@@ -136,6 +144,15 @@ function App() {
   const toasts = useSyncExternalStore(subscribeBoard, getToasts);
   const [dragOver, setDragOver] = useState(false);
   const dragCounter = useRef(0);
+  // A drop of many files (> MANY_FILES_DROP) offers a second target that only
+  // copies them into the library — opening and parsing a dozen boards at once
+  // is rarely what a bulk drop means. The target is chosen by where the
+  // pointer is, read from the zone's rect: the overlay is pointer-events:none
+  // so the drag-enter/leave counting on the app container stays untouched.
+  const [dropMany, setDropMany] = useState(false);
+  const [dropZone, setDropZone] = useState<'open' | 'library'>('open');
+  const dropZoneRef = useRef<'open' | 'library'>('open');
+  const libraryZoneEl = useRef<HTMLDivElement>(null);
   // Subscribe to all sidebar changes (collapse, side flip, tab switch)
 
   // Pre-load the library at app boot so the sidebar's Library tab is
@@ -171,7 +188,12 @@ function App() {
     e.preventDefault();
     if (!isFileDrag(e)) return;
     dragCounter.current++;
-    if (dragCounter.current === 1) setDragOver(true);
+    if (dragCounter.current === 1) {
+      setDragOver(true);
+      setDropMany(canUploadToLibrary() && e.dataTransfer.items.length > MANY_FILES_DROP);
+      dropZoneRef.current = 'open';
+      setDropZone('open');
+    }
   }, []);
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
@@ -188,12 +210,21 @@ function App() {
     if (!isFileDrag(e)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
+    const r = libraryZoneEl.current?.getBoundingClientRect();
+    const zone = r && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom
+      ? 'library' : 'open';
+    if (zone !== dropZoneRef.current) {
+      dropZoneRef.current = zone;
+      setDropZone(zone);
+    }
   }, []);
 
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
     dragCounter.current = 0;
     setDragOver(false);
+    const libraryOnly = dropZoneRef.current === 'library' && canUploadToLibrary();
+    dropZoneRef.current = 'open';
 
     // A dropped FOLDER becomes the library in the backend-free builds (the
     // Docker build's Go scanner owns the library there). Captured here and
@@ -267,6 +298,14 @@ function App() {
         `${shown}${more}. BoardRipper opens boardview files and PDFs.`,
         'error',
       );
+    }
+
+    if (libraryOnly) {
+      const all = [...boardFiles, ...pdfFiles];
+      if (all.length === 0) return;
+      boardStore.addToast(`Adding ${all.length} file${all.length === 1 ? '' : 's'} to the library…`, 'info');
+      await saveDroppedToIncoming(all);
+      return;
     }
 
     // Load board files
@@ -414,8 +453,27 @@ function App() {
           ))}
         </div>
       )}
-      {dragOver && (
-        <div className="drop-overlay">
+      {dragOver && dropMany && (
+        <div className="drop-overlay drop-overlay-split" data-testid="drop-overlay">
+          <div
+            className={`drop-overlay-content${dropZone === 'open' ? ' active' : ''}`}
+            data-testid="drop-zone-open"
+          >
+            Open
+            <div className="drop-overlay-hint">open and parse every file</div>
+          </div>
+          <div
+            ref={libraryZoneEl}
+            className={`drop-overlay-content${dropZone === 'library' ? ' active' : ''}`}
+            data-testid="drop-zone-library"
+          >
+            Add to library only
+            <div className="drop-overlay-hint">copy into incoming/, open nothing</div>
+          </div>
+        </div>
+      )}
+      {dragOver && !dropMany && (
+        <div className="drop-overlay" data-testid="drop-overlay">
           <div className="drop-overlay-content">
             Drop board files, PDFs, or an update bundle
             <div className="drop-overlay-hint">
