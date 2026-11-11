@@ -9815,9 +9815,7 @@ body {
   color: var(--text-secondary); font-size: 10.5px; line-height: 16px;
   transition: background 0.4s ease, color 0.4s ease;
 }
-.minimap-head-mode svg { flex: none; }
 .minimap-head-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); font-weight: 500; }
-.minimap-head[data-nav="worklist"] .minimap-head-mode svg { color: var(--accent); }
 .minimap-head-mode.flash { background: color-mix(in srgb, var(--accent) 22%, transparent); transition: none; }
 .minimap-head-mode .minimap-head-pos { flex: none; padding: 0 0 0 2px; }
 .board-minimap.touch .minimap-head-mode { font-size: 12.5px; height: 26px; line-height: 26px; }

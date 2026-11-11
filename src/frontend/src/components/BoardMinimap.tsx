@@ -725,9 +725,6 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
         </button>
         <span className={`minimap-head-mode${modeFlash ? ' flash' : ''}`} data-testid="minimap-mode"
           title={nav === 'worklist' ? (wl ? `Worklist “${wl.name}”` : 'No worklist loaded on this board') : 'History of all boards and PDFs'}>
-          {nav === 'worklist'
-            ? <IconChecklist size={ICON - 2} stroke={2} />
-            : <IconHistory size={ICON - 2} stroke={2} />}
           <span className="minimap-head-name" translate={nav === 'worklist' && wl ? 'no' : undefined}>
             {nav === 'worklist' ? (wl ? (wl.name || 'Worklist') : 'No worklist') : 'History'}
           </span>
