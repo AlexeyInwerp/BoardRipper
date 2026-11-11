@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { uiZoom } from '../store/ui-zoom';
 import { useDatabank } from '../hooks/useDatabank';
 import { useLibraryLoad } from '../store/library-load-store';
 import { databankStore, contentCollapsePlan, isElectron, AUTOBIND_RULE_LABEL } from '../store/databank-store';
@@ -2338,7 +2339,6 @@ function HistoryView({ onOpenFile, onSelectFile, selectedFileId, searchFilter }:
   // do path lookups via the store's Map<path,file> instead of rebuilding
   // a per-component Map. With 100k entries the rebuild was ~10–30ms.
   const { recentItems, files, favoritePaths } = useDatabank();
-  void files;
 
   const formatTime = (ts: number) => {
     const d = new Date(ts);
@@ -2405,23 +2405,135 @@ function HistoryView({ onOpenFile, onSelectFile, selectedFileId, searchFilter }:
     );
   };
 
+  const added = useMemo(
+    () => recentlyAdded(files, databankStore.localLibrary, searchFilter),
+    [files, searchFilter],
+  );
+  const { height: addedHeight, rootRef, onSplitterDown } = useAddedSplit();
+
   return (
-    <div className="library-history">
-      {recentItems.length === 0 ? (
-        <div className="library-empty">No recently opened files.</div>
-      ) : filteredItems.length === 0 ? (
-        <div className="library-empty">No recent files match "{searchFilter}".</div>
-      ) : (
-        <div className="library-tree-children">
-          {pinned.map((item, i) => renderRow(item, i))}
-          {pinned.length > 0 && recent.length > 0 && (
-            <div className="library-history-divider" aria-hidden="true" />
-          )}
-          {recent.map((item, i) => renderRow(item, pinned.length + i))}
-        </div>
-      )}
+    <div className="library-history" ref={rootRef}>
+      <div className="library-history-opened">
+        {recentItems.length === 0 ? (
+          <div className="library-empty">No recently opened files.</div>
+        ) : filteredItems.length === 0 ? (
+          <div className="library-empty">No recent files match "{searchFilter}".</div>
+        ) : (
+          <div className="library-tree-children">
+            {pinned.map((item, i) => renderRow(item, i))}
+            {pinned.length > 0 && recent.length > 0 && (
+              <div className="library-history-divider" aria-hidden="true" />
+            )}
+            {recent.map((item, i) => renderRow(item, pinned.length + i))}
+          </div>
+        )}
+      </div>
+      <div
+        className="library-history-splitter"
+        data-testid="library-added-splitter"
+        role="separator"
+        aria-orientation="horizontal"
+        onPointerDown={onSplitterDown}
+      >
+        <span>Recently added</span>
+      </div>
+      <div className="library-history-added" data-testid="library-added" style={{ height: addedHeight }}>
+        {added.length === 0 ? (
+          <div className="library-empty">
+            {searchFilter.trim() ? `No added files match "${searchFilter}".` : 'No files in the library yet.'}
+          </div>
+        ) : (
+          <div className="library-tree-children">
+            {added.map(({ file, at }) => (
+              <div
+                key={file.id}
+                className={`library-file-row${file.id === selectedFileId ? ' selected' : ''}`}
+                onClick={() => onSelectFile(file)}
+                onDoubleClick={() => onOpenFile(file)}
+                title={file.path}
+              >
+                <span className={`library-file-icon ${file.file_type === 'pdf' ? 'library-icon-pdf' : 'library-icon-board'}`}>
+                  {file.file_type === 'pdf' ? 'P' : 'B'}
+                </span>
+                <span className="library-file-name">{file.filename}</span>
+                <span className="library-history-time">{formatTime(at)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
+}
+
+const RECENTLY_ADDED_MAX = 100;
+
+/** The newest library files. On the server a row's id is its insertion order
+ *  (scan_time is rewritten when a file changes, so it would list edits as
+ *  additions); the desktop and folder producers stamp every row with the scan
+ *  time and hash their ids, so there the file's own mtime is the best clue. */
+function recentlyAdded(files: DatabankFile[], local: boolean, filter: string): { file: DatabankFile; at: number }[] {
+  const q = filter.trim().toLowerCase();
+  const pool = q
+    ? files.filter(f =>
+        f.filename.toLowerCase().includes(q) ||
+        f.path.toLowerCase().includes(q) ||
+        (f.board_number?.toLowerCase().includes(q) ?? false))
+    : files;
+  const key = local ? (f: DatabankFile) => f.mod_time : (f: DatabankFile) => f.id;
+  // Partial selection: keep the top N without sorting 100k rows.
+  const top: DatabankFile[] = [];
+  for (const f of pool) {
+    if (top.length === RECENTLY_ADDED_MAX && key(f) <= key(top[top.length - 1])) continue;
+    let i = top.length;
+    while (i > 0 && key(top[i - 1]) < key(f)) i--;
+    top.splice(i, 0, f);
+    if (top.length > RECENTLY_ADDED_MAX) top.pop();
+  }
+  return top.map(file => ({ file, at: (local ? file.mod_time : file.scan_time) * 1000 }));
+}
+
+const ADDED_HEIGHT_KEY = 'boardripper-library-added-height';
+const ADDED_MIN = 48;
+
+/** Height of the "Recently added" pane, set by dragging the separator above
+ *  it and remembered across sessions. */
+function useAddedSplit() {
+  const [height, setHeight] = useState<number>(() => {
+    try {
+      const v = Number(localStorage.getItem(ADDED_HEIGHT_KEY));
+      if (Number.isFinite(v) && v >= ADDED_MIN) return v;
+    } catch { /* storage unavailable */ }
+    return 200;
+  });
+  const rootRef = useRef<HTMLDivElement>(null);
+  const onSplitterDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const handle = e.currentTarget;
+    try { handle.setPointerCapture(e.pointerId); } catch { /* pointer gone */ }
+    const startY = e.clientY;
+    const startH = height;
+    // clientY is in unzoomed viewport px, layout heights are in zoomed CSS px.
+    const zoom = uiZoom();
+    const total = rootRef.current?.clientHeight ?? 0;
+    let last = startH;
+    const move = (ev: PointerEvent) => {
+      const max = Math.max(ADDED_MIN, total - 80);
+      last = Math.round(Math.min(max, Math.max(ADDED_MIN, startH - (ev.clientY - startY) / zoom)));
+      setHeight(last);
+    };
+    const up = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
+      try { localStorage.setItem(ADDED_HEIGHT_KEY, String(last)); } catch { /* storage unavailable */ }
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+    handle.addEventListener('pointercancel', up);
+  }, [height]);
+  return { height, rootRef, onSplitterDown };
 }
 
 // --- Search Results View ---
