@@ -6840,6 +6840,39 @@ body {
   color: var(--text-primary);
 }
 
+.library-history {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.library-history-opened {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.library-history-added {
+  flex: none;
+  overflow-y: auto;
+}
+.library-history-splitter {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 10px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: row-resize;
+  touch-action: none;
+  user-select: none;
+}
+.library-history-splitter:hover { color: var(--text-primary); }
 .library-history-divider {
   height: 1px;
   background: var(--border);
@@ -9773,6 +9806,40 @@ body {
 .board-minimap.touch .minimap-head button { width: 40px; height: 30px; border-radius: 6px; }
 .board-minimap.touch .minimap-head-seg button { width: 36px; height: 28px; }
 .board-minimap.touch .minimap-head-pos { font-size: 12.5px; }
+/* Mode label: which list the arrows walk — "History", or the loaded
+   worklist's name and the row position. Takes the room between the arrows
+   and the switch and ellipsises the name, never the position. */
+.minimap-head-mode {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 3px;
+  margin: 0 3px; padding: 0 4px; height: 16px; border-radius: 4px;
+  color: var(--text-secondary); font-size: 10.5px; line-height: 16px;
+  transition: background 0.4s ease, color 0.4s ease;
+}
+.minimap-head-mode svg { flex: none; }
+.minimap-head-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); font-weight: 500; }
+.minimap-head[data-nav="worklist"] .minimap-head-mode svg { color: var(--accent); }
+.minimap-head-mode.flash { background: color-mix(in srgb, var(--accent) 22%, transparent); transition: none; }
+.minimap-head-mode .minimap-head-pos { flex: none; padding: 0 0 0 2px; }
+.board-minimap.touch .minimap-head-mode { font-size: 12.5px; height: 26px; line-height: 26px; }
+/* Shown over the map for a moment after a mode switch. */
+.minimap-mode-banner {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  max-width: calc(100% - 16px); display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border-radius: 6px; pointer-events: none;
+  background: color-mix(in srgb, var(--chip-bg) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  color: var(--text-primary); font-size: 12px; font-weight: 500;
+  animation: minimap-mode-banner 1.4s ease forwards;
+}
+.minimap-mode-banner svg { flex: none; color: var(--accent); }
+.minimap-mode-banner span { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; line-height: 1.3; }
+@keyframes minimap-mode-banner {
+  0% { opacity: 0; transform: translate(-50%, -40%); }
+  12%, 70% { opacity: 1; transform: translate(-50%, -50%); }
+  100% { opacity: 0; transform: translate(-50%, -50%); }
+}
+@media (prefers-reduced-motion: reduce) { .minimap-mode-banner { animation: none; } }
 .minimap-head-pos { font-size: 10.5px; color: var(--text-secondary); padding: 0 3px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .minimap-head-seg { display: inline-flex; gap: 0; border: 1px solid color-mix(in srgb, var(--border) 80%, transparent); border-radius: 5px; margin-right: 2px; }
 .minimap-head-seg button { width: 20px; height: 16px; border-radius: 4px; color: var(--text-secondary); }

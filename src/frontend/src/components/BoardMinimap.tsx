@@ -30,6 +30,7 @@ import { useBoardStore } from '../hooks/useBoardStore';
 import { worklistStepKeys, currentWorklistKey, worklistStep } from '../store/minimap-worklist';
 import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
 import { showSidebarTab } from './Sidebar.utils';
+import { setActiveTool } from '../panels/tools/tools-nav';
 import { navHistoryStore } from '../store/nav-history-store';
 import { historyBack, historyForward } from '../store/nav-history-actions';
 import { useNavHistory } from '../hooks/useNavHistory';
@@ -50,7 +51,7 @@ const ICON = TOUCH ? 18 : 13;
 const HEAD_DRAG_SLOP_PX = 4;
 /** Narrowest the map gets, so the header's buttons always fit; a tall
  *  board (or one turned 90°) is centred in the extra width. */
-const MIN_W = TOUCH ? 250 : 180;
+const MIN_W = TOUCH ? 250 : 210;
 /** The frame's 1px border on each side (box-sizing is border-box). */
 const FRAME = 2;
 
@@ -514,7 +515,23 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
   // Hooks stay above the early return below.
   const history = useNavHistory();
   const nav = settings.minimapNav ?? 'history';
-  const wl = nav === 'worklist' ? worklistStore.worklistForTab(tabId) : null;
+  const loadedWl = worklistStore.worklistForTab(tabId);
+  const wl = nav === 'worklist' ? loadedWl : null;
+  // A mode switch, from the header or from anywhere else, shows the new
+  // mode's name over the map for a moment: the two modes share one pair of
+  // arrows, so the arrows alone do not say which list they now walk.
+  const [modeFlash, setModeFlash] = useState(0);
+  const prevNav = useRef(nav);
+  useEffect(() => {
+    if (prevNav.current === nav) return;
+    prevNav.current = nav;
+    setModeFlash(f => f + 1);
+  }, [nav]);
+  useEffect(() => {
+    if (!modeFlash) return;
+    const t = setTimeout(() => setModeFlash(0), 1400);
+    return () => clearTimeout(t);
+  }, [modeFlash]);
   const wlKeys = worklistStepKeys(wl);
   const own = tabState(tabId);
   const selPart = own.selection.partIndex;
@@ -712,33 +729,58 @@ export function BoardMinimap({ renderer, tabId = null, mode }: { renderer: Board
           onClick={() => nav === 'worklist' ? goWl(wlNext) : historyForward()}>
           <IconChevronRight size={ICON} stroke={2.2} />
         </button>
-        {nav === 'worklist' && (
-          <span className="minimap-head-pos" data-testid="minimap-wl-pos" translate="no">
-            {wlKeys.length === 0 ? (wl ? 'empty' : 'none') : wlAt < 0 ? String(wlKeys.length) : `${wlAt + 1}/${wlKeys.length}`}
+        <span className={`minimap-head-mode${modeFlash ? ' flash' : ''}`} data-testid="minimap-mode"
+          title={nav === 'worklist' ? (wl ? `Worklist “${wl.name}”` : 'No worklist loaded on this board') : 'History of all boards and PDFs'}>
+          {nav === 'worklist'
+            ? <IconChecklist size={ICON - 2} stroke={2} />
+            : <IconHistory size={ICON - 2} stroke={2} />}
+          <span className="minimap-head-name" translate={nav === 'worklist' && wl ? 'no' : undefined}>
+            {nav === 'worklist' ? (wl ? (wl.name || 'Worklist') : 'No worklist') : 'History'}
           </span>
-        )}
-        <span className="minimap-head-fill" />
+          {nav === 'worklist' && wl && (
+            <span className="minimap-head-pos" data-testid="minimap-wl-pos" translate="no">
+              {wlKeys.length === 0 ? 'empty' : wlAt < 0 ? String(wlKeys.length) : `${wlAt + 1}/${wlKeys.length}`}
+            </span>
+          )}
+        </span>
         <span className="minimap-head-seg" role="group" aria-label="Map shows">
           <button type="button" data-testid="minimap-nav-history" aria-pressed={nav === 'history'}
-            className={nav === 'history' ? 'on' : ''} title="History: back / forward and recent visits"
+            className={nav === 'history' ? 'on' : ''} title="Show history: back / forward and recent visits"
             onClick={() => renderSettingsStore.setMinimapNav('history')}>
             <IconHistory size={ICON} stroke={2} />
           </button>
           <button type="button" data-testid="minimap-nav-worklist" aria-pressed={nav === 'worklist'}
-            className={nav === 'worklist' ? 'on' : ''} title={wl ? `Worklist: step through “${wl.name}”` : 'Worklist: none loaded on this board'}
+            className={nav === 'worklist' ? 'on' : ''} title={loadedWl ? `Show worklist: step through “${loadedWl.name}”` : 'Show worklist: none loaded on this board'}
             onClick={() => renderSettingsStore.setMinimapNav('worklist')}>
             <IconChecklist size={ICON} stroke={2} />
           </button>
         </span>
-        <button type="button" data-testid="minimap-open-tab" aria-label={nav === 'worklist' ? 'Open the Worklist tab' : 'Open the History tab'}
-          title={nav === 'worklist' ? 'Open the Worklist tab' : 'Open the History tab'}
-          onClick={() => nav === 'worklist' ? openBoardSidebarTab('worklist', tabId ?? undefined) : showSidebarTab('history')}>
-          <IconExternalLink size={ICON - 1} stroke={2} />
-        </button>
+        {(() => {
+          const label = nav === 'history' ? 'Open the History tab'
+            : wl ? `Open worklist “${wl.name}”` : 'Open Tools ▸ Worklists';
+          return (
+            <button type="button" data-testid="minimap-open-tab" aria-label={label} title={label}
+              onClick={() => {
+                if (nav === 'history') showSidebarTab('history');
+                else if (wl) openBoardSidebarTab('worklist', tabId ?? undefined);
+                else { setActiveTool('worklists'); showSidebarTab('tools'); }
+              }}>
+              <IconExternalLink size={ICON - 1} stroke={2} />
+            </button>
+          );
+        })()}
       </div>
       <div className="minimap-body" style={{ width: size.w, height: size.h }}>
         <canvas ref={canvasRef} className="minimap-base" style={{ width: size.w, height: size.h }} />
         <canvas ref={marksRef} className="minimap-marks" style={{ width: size.w, height: size.h }} />
+        {modeFlash > 0 && (
+          <div key={modeFlash} className="minimap-mode-banner" data-testid="minimap-mode-banner" data-nav={nav}>
+            {nav === 'worklist' ? <IconChecklist size={15} stroke={2} /> : <IconHistory size={15} stroke={2} />}
+            <span translate={nav === 'worklist' && wl ? 'no' : undefined}>
+              {nav === 'worklist' ? (wl ? wl.name || 'Worklist' : 'No worklist loaded') : 'History'}
+            </span>
+          </div>
+        )}
       </div>
     </div>
     {menu && (

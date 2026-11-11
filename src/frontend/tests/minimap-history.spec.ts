@@ -100,8 +100,12 @@ test('switches to the loaded worklist: marks its parts and steps through its row
   // No worklist on this board yet: worklist mode says so and its steps are off.
   await page.getByTestId('minimap-nav-worklist').click();
   await expect(page.getByTestId('minimap-head')).toHaveAttribute('data-nav', 'worklist');
-  await expect(page.getByTestId('minimap-wl-pos')).toHaveText('none');
+  await expect(page.getByTestId('minimap-mode')).toHaveText('No worklist');
+  await expect(page.getByTestId('minimap-mode-banner')).toHaveText('No worklist loaded');
   await expect(page.getByTestId('minimap-history-forward')).toBeDisabled();
+  // With none loaded, the open button goes to Tools ▸ Worklists.
+  await page.getByTestId('minimap-open-tab').click();
+  await expect(page.getByTestId('wlnav-search')).toBeVisible();
 
   const names = await page.evaluate(() => {
     const w = window as unknown as { __boardStore: W['__boardStore']; __worklistStore: { createWorklist(n: string): unknown; pushRefdesToActive(r: string): unknown } };
@@ -114,6 +118,7 @@ test('switches to the loaded worklist: marks its parts and steps through its row
   });
   await expect(map).toHaveAttribute('data-wl-marks', '2');
   await expect(page.getByTestId('minimap-wl-pos')).toHaveText('2');
+  await expect(page.getByTestId('minimap-mode')).toContainText('Map steps');
 
   const selName = () => page.evaluate(() => { const b = (window as unknown as W).__boardStore; const i = b.selection.partIndex; return i === null ? null : b.board.parts[i].name; });
   const next = page.getByTestId('minimap-history-forward');
@@ -134,6 +139,8 @@ test('switches to the loaded worklist: marks its parts and steps through its row
   // Back to history mode: the worklist marks go, the trail returns.
   await page.getByTestId('minimap-nav-history').click();
   await expect(map).toHaveAttribute('data-wl-marks', '0');
+  await expect(page.getByTestId('minimap-mode')).toHaveText('History');
+  await expect(page.getByTestId('minimap-mode-banner')).toHaveText('History');
 });
 
 test('the trail follows Back past the shown steps, and shows the way Forward', async ({ page }) => {

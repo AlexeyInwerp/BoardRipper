@@ -119,7 +119,7 @@ test.describe('minimap placement', () => {
     const map = await openBoardWithMap(page);
     await page.waitForTimeout(400);
     const head = page.getByTestId('minimap-head');
-    const fill = (await head.locator('.minimap-head-fill').boundingBox())!;
+    const fill = (await page.getByTestId('minimap-mode').boundingBox())!;
     const b0 = (await map.boundingBox())!;
 
     // A still click on the header leaves it where it is.
