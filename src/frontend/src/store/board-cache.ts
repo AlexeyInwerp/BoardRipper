@@ -139,7 +139,9 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 // 102: XZZ test points that copy a part pin (same net or no net, inside its
 //     pad) are not emitted; test points read their own reading and are judged
 //     for placeholder pad geometry separately from part pins.
-const PARSER_VERSION = 102;
+// 103: XZZ files that draw only one half's outline get the other half's
+//     loop synthesised, so they fold as one board (iPad Pro 11 3rd gen).
+const PARSER_VERSION = 103;
 
 interface CachedBoard {
   key: string;
