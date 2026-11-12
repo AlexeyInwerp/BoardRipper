@@ -535,6 +535,8 @@ func main() {
 		mcpDeps.PDF = pdfIndex // avoid typed-nil in the PDFSearcher interface
 	}
 	mcpDeps.Worklists = wlStore
+	mcpAgents := mcpserver.LoadAgents(dataDir)
+	mcpDeps.Agents = mcpAgents
 	mcpSrv := mcpserver.New(mcpDeps)
 	mcpOAuth := mcpserver.NewOAuth()
 	mcpPairings, err := mcpserver.LoadPairings(dataDir)
@@ -550,9 +552,13 @@ func main() {
 	// the first frame must carry the per-install MCP secret (M14).
 	mux.Handle("/api/mcp/bridge", mcpBridge.ServeWS(mcpState, mcpSecret))
 	mux.HandleFunc("GET /api/mcp/status", mcpserver.StatusHandler(mcpState, mcpBridge, mcpSrv))
-	mux.HandleFunc("GET /api/mcp/token", mcpserver.TokenHandler(mcpState, mcpSecret))
-	mux.HandleFunc("POST /api/mcp/pair", mcpserver.PairHandler(mcpState, mcpPairings))
-	mux.HandleFunc("POST /api/mcp/pair/rotate", mcpserver.RotateHandler(mcpState, mcpPairings))
+	// Credential endpoints answer only for host names a DNS-rebinding page
+	// cannot use (mcpserver/hostcheck.go).
+	mux.Handle("GET /api/mcp/token", mcpserver.RequireAllowedHost(mcpserver.TokenHandler(mcpState, mcpSecret)))
+	mux.Handle("POST /api/mcp/pair", mcpserver.RequireAllowedHost(mcpserver.PairHandler(mcpState, mcpPairings)))
+	mux.Handle("POST /api/mcp/pair/rotate", mcpserver.RequireAllowedHost(mcpserver.RotateHandler(mcpState, mcpPairings)))
+	mux.Handle("GET /api/agents", mcpserver.AgentsListHandler(mcpAgents, mcpPairings))
+	mux.Handle("POST /api/agents/update", mcpserver.RequireAllowedHost(mcpserver.AgentUpdateHandler(mcpAgents)))
 	mux.HandleFunc("POST /api/mcp/selftest", mcpserver.SelfTestHandler(mcpState, mcpSrv))
 	// OAuth 2.1 onboarding: discovery + the embedded authorization server. Every
 	// endpoint (discovery, dynamic registration, authorize, token) is gated by

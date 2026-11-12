@@ -21,14 +21,14 @@ const bridgeRenderTimeout = 30 * time.Second
 // and returns the tab's JSON result verbatim. When gate is non-nil and returns
 // false, the tool refuses (used for the drive-UI opt-in so the Settings toggle
 // takes effect without a server restart).
-func liveTool[T any](s *mcp.Server, b *Bridge, name, desc, op string, readOnly bool, gate func() bool) {
+func liveTool[T any](s *mcp.Server, b *Bridge, name, desc, op string, readOnly bool, gate func(context.Context) bool) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        name,
 		Description: desc,
 		Annotations: ro(readOnly),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, a T) (*mcp.CallToolResult, map[string]any, error) {
-		if gate != nil && !gate() {
-			return errResult("drive-UI is disabled — enable “Allow agents to control the UI” in Settings ▸ Integrations"), nil, nil
+		if gate != nil && !gate(ctx) {
+			return errResult("Board control is off for this assistant. Turn it on in BoardRipper Settings ▸ Integrations ▸ Connected assistants."), nil, nil
 		}
 		if b == nil {
 			return errResult("bridge unavailable"), nil, nil
@@ -79,10 +79,10 @@ func decodeBinaryReply(raw json.RawMessage) (mime string, data []byte, meta map[
 // liveBinaryTool registers a bridge-backed tool whose browser reply is
 // {base64, mime, ...meta}; it decodes base64 and emits an MCP image/blob
 // content block via binaryResult. Uses the longer render timeout.
-func liveBinaryTool[T any](s *mcp.Server, b *Bridge, name, desc, op string, gate func() bool) {
+func liveBinaryTool[T any](s *mcp.Server, b *Bridge, name, desc, op string, gate func(context.Context) bool) {
 	mcp.AddTool(s, &mcp.Tool{Name: name, Description: desc, Annotations: ro(true)},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a T) (*mcp.CallToolResult, any, error) {
-			if gate != nil && !gate() {
+			if gate != nil && !gate(ctx) {
 				return errResult("disabled"), nil, nil
 			}
 			if b == nil {
@@ -294,7 +294,12 @@ func registerLiveTools(s *mcp.Server, deps *Deps) {
 	liveBinaryTool[emptyArgs](s, b, "board_snapshot", "Capture the live board view as a PNG (what the user currently sees — side, zoom, highlight). Prefer topology/text tools first; use this to correlate the board visually.", "board_snapshot", nil)
 
 	// --- drive-UI tools (always registered; gated per-call on DriveUI()) ---
-	gate := func() bool { return deps.State != nil && deps.State.DriveUI() }
+	// Drive permission: the agent's own override from Settings ▸ Integrations ▸
+	// Connected assistants, else the install-wide switch.
+	gate := func(ctx context.Context) bool {
+		global := deps.State != nil && deps.State.DriveUI()
+		return deps.Agents.DriveAllowed(ctx, global)
+	}
 	liveTool[netArgs](s, b, "highlight_net", "Highlight a net on the live board so the user can see it.", "highlight_net", false, gate)
 	liveTool[emptyArgs](s, b, "clear_highlight", "Clear any net highlight on the live board.", "clear_highlight", false, gate)
 	liveTool[partArgs](s, b, "select_part", "Select and centre a component by reference designator on the live board.", "select_part", false, gate)

@@ -18,6 +18,13 @@ type Scope struct {
 	// ClientID is the paired browser identity the caller is confined to;
 	// empty means shared/unscoped.
 	ClientID string
+	// Kind names the credential: browser | shared | oauth | assistant. Empty
+	// is read as browser when ClientID is set, else shared.
+	Kind string
+	// Groups and ReadOnly come from the server URL (?tools=, ?read_only=);
+	// nil Groups means every group. See groups.go.
+	Groups   map[string]bool
+	ReadOnly bool
 }
 
 // Shared reports whether the caller may reach every session.
@@ -102,14 +109,19 @@ func GateAuto(st *State, secret string, pairings *PairingStore, oauth *OAuth, ne
 			return
 		}
 		tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		groups, readOnly := toolFilter(r)
+		serve := func(sc Scope) {
+			sc.Groups, sc.ReadOnly = groups, readOnly
+			next.ServeHTTP(w, r.WithContext(withScope(r.Context(), sc)))
+		}
 		if pairings != nil {
 			if id, ok := pairings.ClientForToken(tok); ok {
-				next.ServeHTTP(w, r.WithContext(withScope(r.Context(), Scope{ClientID: id})))
+				serve(Scope{ClientID: id, Kind: "browser"})
 				return
 			}
 		}
 		if subtle.ConstantTimeCompare([]byte(tok), secretB) == 1 {
-			next.ServeHTTP(w, r) // shared scope (zero value)
+			serve(Scope{Kind: "shared"})
 			return
 		}
 		if oauth != nil {
@@ -118,7 +130,7 @@ func GateAuto(st *State, secret string, pairings *PairingStore, oauth *OAuth, ne
 			// never logs out live agents. Revoking is the explicit reset button
 			// (ResetOAuthHandler), not a side effect of the toggle.
 			if info, err := oauth.Verifier()(r.Context(), tok, r); err == nil && info != nil {
-				next.ServeHTTP(w, r) // shared scope (zero value)
+				serve(Scope{Kind: "oauth"}) // shared reach
 				return
 			} else if st.AuthMode() == "oauth" {
 				// Only advertise onboarding while it actually exists; in token

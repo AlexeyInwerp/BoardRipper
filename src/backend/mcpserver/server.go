@@ -89,6 +89,9 @@ type Deps struct {
 	FileBytes func(ctx context.Context, id int64) (data []byte, name, mime string, err error)
 	// Worklists, when set, registers worklist_list / worklist_read.
 	Worklists WorklistStore
+	// Agents records connected assistants and their per-agent permissions.
+	// Nil keeps no list and uses the global drive switch for everyone.
+	Agents *AgentRegistry
 }
 
 // Server wraps the SDK MCP server plus its Streamable HTTP handler.
@@ -110,6 +113,7 @@ func New(deps *Deps) *Server {
 	s := &Server{deps: deps, act: &activity{}}
 	s.mcp = mcp.NewServer(&mcp.Implementation{Name: "boardripper", Version: "1"}, &mcp.ServerOptions{Instructions: technicianPersona + "\n\n" + boardripperInstructions})
 
+	s.mcp.AddReceivingMiddleware(agentMiddleware(deps.Agents))
 	// Record tool usage centrally for the Settings live-status panel.
 	s.mcp.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
@@ -125,7 +129,7 @@ func New(deps *Deps) *Server {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "ping",
 		Description: "Health check; returns ok.",
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		Annotations: ro(true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, pingResult, error) {
 		return nil, pingResult{OK: true, Service: "boardripper"}, nil
 	})

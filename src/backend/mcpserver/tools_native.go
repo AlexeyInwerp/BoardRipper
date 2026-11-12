@@ -79,7 +79,20 @@ type ObdStore interface {
 	IsFetched(bpath string) (bool, *string)
 }
 
-func ro(b bool) *mcp.ToolAnnotations { return &mcp.ToolAnnotations{ReadOnlyHint: b} }
+// ro builds a tool's annotations. Every BoardRipper tool works on local state,
+// so openWorldHint is always false; and none of the writing tools is
+// destructive — highlighting, selecting and adding worklist rows can all be
+// undone — so destructiveHint is false too. The spec defaults both to TRUE when
+// absent, which made clients treat a net highlight as an irreversible action
+// against an outside system and ask for confirmation every time.
+func ro(readOnly bool) *mcp.ToolAnnotations {
+	f := false
+	a := &mcp.ToolAnnotations{ReadOnlyHint: readOnly, OpenWorldHint: &f}
+	if !readOnly {
+		a.DestructiveHint = &f
+	}
+	return a
+}
 
 // --- pdf_search ---
 
