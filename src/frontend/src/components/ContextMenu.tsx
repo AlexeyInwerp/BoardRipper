@@ -6,7 +6,9 @@ import { contextMenuStore } from '../store/context-menu-store';
 import type { ContextMenuState } from '../store/context-menu-store';
 import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
-import { databankStore } from '../store/databank-store';
+import { databankStore, hasBackend } from '../store/databank-store';
+import { isLiteBuild } from '../store/build-mode';
+import { askAssistant } from '../store/assistant-store';
 import { renderSettingsStore } from '../store/render-settings';
 import { ensurePdfPanel } from '../store/dockview-api';
 import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
@@ -92,6 +94,34 @@ function shortPdfName(fileName: string): string {
 /** Strip extension for shorter board display labels */
 function shortBoardName(fileName: string): string {
   return fileName.replace(/\.[^.]+$/, '');
+}
+
+/** "Ask the assistant" rows for a part (and its pin's net). Shown wherever the
+ *  assistant exists (a build with a server); an assistant that is not set up
+ *  yet keeps the question in its composer. */
+function assistantItems(part: string, pin: string | null | undefined, net: string | null | undefined): React.ReactNode {
+  if (isLiteBuild() || !hasBackend()) return null;
+  const ask = (q: string) => { contextMenuStore.hide(); void askAssistant(q); };
+  return (
+    <>
+      <div className="context-menu-label">Ask the assistant</div>
+      <div className="context-menu-item" data-testid="ctx-ai-describe" onClick={() => ask(`Describe [p:${part}]: what is it, what does it do on this board, and what should I check on it?`)}>
+        Describe {part}
+      </div>
+      <div className="context-menu-item" data-testid="ctx-ai-datasheet" onClick={() => ask(`Find the datasheet for [p:${part}]. Identify the exact part number from the board data and the schematic first, and say how sure you are.`)}>
+        Find the datasheet
+      </div>
+      <div className="context-menu-item" data-testid="ctx-ai-equivalent" onClick={() => ask(`Find replacement parts for [p:${part}]: same package and pinout, compatible ratings. Say what to double-check before using one.`)}>
+        Find an equivalent
+      </div>
+      {net && (
+        <div className="context-menu-item" data-testid="ctx-ai-net-source" onClick={() => ask(`Where does [n:${net}] come from${pin ? ` (seen on [p:${part}:${pin}])` : ''}? Trace it back to its source and tell me what to measure on the way.`)}>
+          Where does {net} come from?
+        </div>
+      )}
+      <div className="context-menu-separator" />
+    </>
+  );
 }
 
 export function ContextMenu() {
@@ -640,6 +670,7 @@ export function ContextMenu() {
             {isHidden ? `✓ Hide '${componentName}'` : `Hide '${componentName}'`}
           </div>
           <div className="context-menu-separator" />
+          {assistantItems(componentName, state.pinId, netName)}
         </React.Fragment>
       );
     })() : null;

@@ -3,6 +3,7 @@ import { IconLayoutSidebar, IconLayoutSidebarRight } from '@tabler/icons-react';
 import { LibraryPanel } from '../panels/LibraryPanel';
 import { SettingsPanel } from '../panels/SettingsPanel';
 import { ToolsPanel } from '../panels/ToolsPanel';
+import { AssistantPanel } from '../panels/AssistantPanel';
 import { HistoryPanel } from '../panels/HistoryPanel';
 import { PanelErrorBoundary } from './PanelErrorBoundary';
 import { DebugPanel } from '../panels/DebugPanel';
@@ -203,6 +204,15 @@ export function Sidebar() {
             <ToolsPanel />
           </PanelErrorBoundary>
         </div>
+        {activeTab === 'assistant' && (
+          // Mounted only while open: it loads its settings on mount, and the
+          // chat itself lives in assistant-store, so nothing is lost on close.
+          <div style={{ display: 'flex', flex: 1, minHeight: 0, flexDirection: 'column' }}>
+            <PanelErrorBoundary label="Assistant">
+              <AssistantPanel />
+            </PanelErrorBoundary>
+          </div>
+        )}
         <div style={{ display: activeTab === 'settings' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
           <SettingsPanel />
         </div>
