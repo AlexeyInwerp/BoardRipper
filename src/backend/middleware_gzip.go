@@ -171,3 +171,7 @@ func gzipMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(grw, r)
 	})
 }
+
+// Unwrap lets http.ResponseController reach the underlying writer (the
+// assistant's chat stream lifts the server's write deadline through it).
+func (g *gzipResponseWriter) Unwrap() http.ResponseWriter { return g.ResponseWriter }

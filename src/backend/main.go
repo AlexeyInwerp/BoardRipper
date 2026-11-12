@@ -22,6 +22,7 @@ import (
 	"boardripper/databank"
 	"boardripper/handlers"
 	"boardripper/librarysync"
+	"boardripper/assistant"
 	"boardripper/mcpserver"
 	"boardripper/obd"
 	"boardripper/pdfindex"
@@ -558,6 +559,14 @@ func main() {
 	mux.Handle("POST /api/mcp/pair", mcpserver.RequireAllowedHost(mcpserver.PairHandler(mcpState, mcpPairings)))
 	mux.Handle("POST /api/mcp/pair/rotate", mcpserver.RequireAllowedHost(mcpserver.RotateHandler(mcpState, mcpPairings)))
 	mux.Handle("GET /api/agents", mcpserver.AgentsListHandler(mcpAgents, mcpPairings))
+	// Built-in assistant: the user's own API key or a local model, the MCP
+	// tools in-process, scoped to the asking browser. docs/specs/2026-11-11-ai-toolkit.html
+	if asstStore, err := assistant.LoadStore(dataDir); err != nil {
+		log.Printf("assistant: settings unavailable (%v) — the assistant panel is disabled until assistant.json is fixed or removed", err)
+	} else {
+		asst := &assistant.Manager{Store: asstStore, MCP: mcpSrv, Agents: mcpAgents, DriveGlobal: mcpState.DriveUI}
+		asst.Routes(mux, mcpserver.RequireAllowedHost, mcpState.Enabled)
+	}
 	mux.Handle("POST /api/agents/update", mcpserver.RequireAllowedHost(mcpserver.AgentUpdateHandler(mcpAgents)))
 	mux.HandleFunc("POST /api/mcp/selftest", mcpserver.SelfTestHandler(mcpState, mcpSrv))
 	// OAuth 2.1 onboarding: discovery + the embedded authorization server. Every

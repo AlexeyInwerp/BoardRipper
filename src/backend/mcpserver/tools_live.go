@@ -297,6 +297,9 @@ func registerLiveTools(s *mcp.Server, deps *Deps) {
 	// Drive permission: the agent's own override from Settings ▸ Integrations ▸
 	// Connected assistants, else the install-wide switch.
 	gate := func(ctx context.Context) bool {
+		if ScopeFrom(ctx).Kind == "assistant" {
+			return true // the assistant loop asked the user already
+		}
 		global := deps.State != nil && deps.State.DriveUI()
 		return deps.Agents.DriveAllowed(ctx, global)
 	}
