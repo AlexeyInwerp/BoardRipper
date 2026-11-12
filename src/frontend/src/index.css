@@ -10424,3 +10424,72 @@ button.wl-tag:hover { color: var(--text-primary); }
   background: #2d7d46;
   transition: width 0.2s linear;
 }
+
+/* ---- Settings ▸ Integrations: AI assistants (panels/settings/IntegrationsSection.tsx) ---- */
+.ai-pick { display: grid; gap: 10px; margin: 8px 0 12px; }
+.ai-group { display: grid; gap: 6px; }
+.ai-group-label {
+  font-size: 0.72em; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-secondary); margin-top: 2px;
+}
+.ai-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 6px; }
+.ai-tile {
+  display: grid; gap: 1px; text-align: left; padding: 7px 9px; border-radius: 6px;
+  background: var(--bg-tertiary); border: 1px solid var(--border); color: var(--text-primary);
+  cursor: pointer; font-size: 0.9em; min-width: 0;
+}
+.ai-tile:hover { border-color: var(--accent); }
+.ai-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ai-tile[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.ai-tile-name { display: flex; align-items: center; gap: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-tile-sub { font-size: 0.8em; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ai-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green, #3ecf8e); flex: none; }
+.ai-detail {
+  display: grid; gap: 8px; padding: 10px 12px; margin-bottom: 12px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--bg-secondary);
+}
+.ai-detail .settings-hint { margin: 0; }
+.ai-detail-name { font-weight: 600; }
+.ai-snippet {
+  white-space: pre; overflow-x: auto; user-select: all; margin: 0;
+  font-size: 11px; padding: 8px 10px; border-radius: 6px;
+  background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-primary);
+}
+.ai-btn {
+  justify-self: start; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85em;
+  background: var(--bg-tertiary); border: 1px solid var(--border); color: var(--text-primary);
+  text-decoration: none; white-space: nowrap;
+}
+.ai-btn:hover:not(:disabled) { border-color: var(--accent); }
+.ai-btn:disabled { opacity: 0.45; cursor: default; }
+.ai-btn-primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
+.ai-btn-primary:hover { background: var(--accent-hover); }
+.ai-btn-quiet { background: none; border-color: transparent; color: var(--text-secondary); }
+.ai-status {
+  display: flex; align-items: center; gap: 8px; font-size: 0.85em; padding: 6px 8px; border-radius: 5px;
+  border: 1px dashed var(--border); color: var(--text-secondary);
+}
+.ai-status-ok { border-style: solid; color: var(--green, #3ecf8e); }
+.ai-pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: ai-pulse 1.4s ease-in-out infinite; flex: none; }
+@keyframes ai-pulse { 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) { .ai-pulse { animation: none; } }
+.ai-error { color: var(--danger, #e5534b); font-size: 0.85em; margin: 0; }
+.ai-agents { display: grid; gap: 6px; margin-bottom: 10px; }
+.ai-agent-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 6px; align-items: center;
+  padding: 6px 0; border-bottom: 1px solid var(--border);
+}
+.ai-agent-main { display: grid; min-width: 0; }
+.ai-agent-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-agent-sub { font-size: 0.8em; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; }
+.ai-select {
+  font-size: 0.8em; max-width: 160px; padding: 2px 4px; border-radius: 4px;
+  background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border);
+}
+@media (max-width: 420px) { .ai-agent-row { grid-template-columns: minmax(0, 1fr) auto; } }
+.ai-advanced-toggle {
+  background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 6px 0;
+  font-size: 0.85em;
+}
+.ai-advanced { display: grid; gap: 6px; padding-left: 4px; }
+.ai-advanced-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
