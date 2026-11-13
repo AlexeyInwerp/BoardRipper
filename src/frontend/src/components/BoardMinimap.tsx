@@ -36,6 +36,7 @@ import { navHistoryStore } from '../store/nav-history-store';
 import { historyBack, historyForward } from '../store/nav-history-actions';
 import { useNavHistory } from '../hooks/useNavHistory';
 import { minimapTrail, MINIMAP_TRAIL_LIMIT, type TrailItem } from '../store/minimap-trail';
+import { partOnRootSide } from '../store/minimap-sides';
 import type { BoardData } from '../parsers/types';
 
 /** The map's box at Size 100 %; `minimapScale` multiplies it. */
@@ -136,11 +137,7 @@ function paintBoard(ctx: CanvasRenderingContext2D, model: Model, k: number, ox: 
     if (mc.bg) ctx.globalAlpha = 0.55;   // scheme colours are opaque; Default's are pre-faded
     for (const part of board.parts) {
       if (part.hidden) continue;
-      const isTop = part.side === 'both' || (part.side === 'top') !== primaryBottom;
-      const isBottom = part.side === 'both' || !isTop;
-      if (r.side === 'top' && !isTop) continue;
-      if (r.side === 'bottom' && !isBottom) continue;
-      if (r.side === 'all' && !((top && isTop) || (bottom && isBottom))) continue;
+      if (!partOnRootSide(part.side, r.side, primaryBottom, top, bottom)) continue;
       const pb = part.bounds;
       ctx.fillRect(pb.minX, pb.minY, Math.max(px, pb.maxX - pb.minX), Math.max(px, pb.maxY - pb.minY));
     }
@@ -190,11 +187,8 @@ function setData(el: HTMLElement | null, key: string, v: string) {
 /** Which way a part shows on a root: drawn, hollow (its side is switched
  *  off — still on the list, so still marked) or not at all. */
 function partOnRoot(part: { side: string }, root: { side: 'top' | 'bottom' | 'all' }, primaryBottom: boolean, pc: PaintCtx): 'full' | 'hollow' | null {
-  const isTop = part.side === 'both' || (part.side === 'top') !== primaryBottom;
-  const isBottom = part.side === 'both' || !isTop;
-  if (root.side === 'top') return isTop ? 'full' : null;
-  if (root.side === 'bottom') return isBottom ? 'full' : null;
-  return (pc.showTop && isTop) || (pc.showBottom && isBottom) ? 'full' : 'hollow';
+  if (root.side !== 'all') return partOnRootSide(part.side, root.side, primaryBottom, pc.showTop, pc.showBottom) ? 'full' : null;
+  return partOnRootSide(part.side, 'all', primaryBottom, pc.showTop, pc.showBottom) ? 'full' : 'hollow';
 }
 
 /** The minimap element a canvas of it sits in (data attributes live there). */
