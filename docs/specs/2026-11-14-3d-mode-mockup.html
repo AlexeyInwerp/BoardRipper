@@ -1,0 +1,987 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3D Mode Mockup</title>
+<style>
+:root {
+  --bg: #121417; --panel: #1b1e23; --panel2: #23272e; --line: #31363f;
+  --text: #e6e8eb; --muted: #9aa1ab; --accent: #f5b301; --ok: #3ecf6e; --warn: #f0a33a; --bad: #f05252;
+  --l1: #e8873a; --l2: #2ec4b6; --l3: #b07cff; --l4: #4d9de0;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; overflow: hidden; }
+#app { display: grid; grid-template-rows: 40px 1fr; height: 100%; }
+header { display: flex; align-items: center; gap: 4px; padding: 0 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
+header h1 { font-size: 13px; font-weight: 600; margin: 0 16px 0 0; color: var(--muted); }
+.tab { background: none; border: 1px solid transparent; color: var(--muted); padding: 5px 12px; border-radius: 6px; cursor: pointer; font: inherit; }
+.tab.active { color: var(--text); background: var(--panel2); border-color: var(--line); }
+main { display: grid; grid-template-columns: 1fr 320px; min-height: 0; }
+#view { position: relative; min-width: 0; min-height: 0; }
+#view canvas { display: block; width: 100%; height: 100%; }
+#c2d { position: absolute; inset: 0; display: none; cursor: grab; }
+aside { background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; padding: 12px 14px 24px; }
+aside h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 0 8px; font-weight: 600; }
+aside h2:first-child { margin-top: 4px; }
+aside p { color: var(--muted); margin: 6px 0; }
+.row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.row label { flex: 1; }
+.seg { display: flex; flex-wrap: wrap; gap: 4px; }
+.seg button { flex: 1 1 auto; background: var(--panel2); border: 1px solid var(--line); color: var(--muted); border-radius: 6px; padding: 5px 8px; cursor: pointer; font: inherit; font-size: 12px; }
+.seg button.on { color: #111; background: var(--accent); border-color: var(--accent); }
+input[type=range] { width: 130px; accent-color: var(--accent); }
+select { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; font: inherit; width: 100%; }
+table { border-collapse: collapse; width: 100%; font-size: 12px; }
+th, td { text-align: left; padding: 3px 4px; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 500; }
+td.n { text-align: right; font-variant-numeric: tabular-nums; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; margin-right: 10px; }
+.sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+#tip { position: absolute; pointer-events: none; background: rgba(20,22,26,.94); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; font-size: 12px; max-width: 320px; display: none; z-index: 5; }
+#tip b { color: var(--accent); }
+#tip .ev { color: var(--muted); }
+#labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+#labels .lb { position: absolute; transform: translate(-50%, 0); font-size: 11px; color: #cfd3d8; white-space: nowrap; text-shadow: 0 1px 2px #000; }
+#labels .rowlb { position: absolute; font-size: 12px; color: var(--accent); white-space: nowrap; font-weight: 600; text-shadow: 0 1px 2px #000; transform: translate(-100%, -50%); }
+.hint { position: absolute; left: 12px; bottom: 10px; color: var(--muted); font-size: 12px; background: rgba(18,20,23,.7); padding: 4px 8px; border-radius: 6px; }
+.panel-tab { display: none; } .panel-tab.on { display: block; }
+.note { border-left: 2px solid var(--accent); padding: 4px 8px; color: var(--muted); background: var(--panel2); border-radius: 0 6px 6px 0; margin: 8px 0; }
+@media (max-width: 760px) { main { grid-template-columns: 1fr; grid-template-rows: 55vh 1fr; } aside { border-left: 0; border-top: 1px solid var(--line); } }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>BoardRipper · 3D mode mockup</h1>
+    <button class="tab active" data-tab="parts">Parts</button>
+    <button class="tab" data-tab="board">Board 3D</button>
+    <button class="tab" data-tab="sig2d">Signal 2D</button>
+  </header>
+  <main>
+    <div id="view">
+      <canvas id="c3d"></canvas>
+      <canvas id="c2d"></canvas>
+      <div id="labels"></div>
+      <div id="tip"></div>
+      <div class="hint" id="hint">Drag to orbit · right-drag to pan · wheel to zoom</div>
+    </div>
+    <aside>
+      <!-- PARTS -->
+      <div class="panel-tab on" data-panel="parts">
+        <h2>Generated models</h2>
+        <p>Every model is built from <b>(kind, L, W, H, pins)</b> at load time — no mesh files ship. Sizes are EIA nominal, heights typical. Hover a part for its numbers.</p>
+        <div class="row"><label>Show land pattern (pads)</label><input type="checkbox" id="g-pads" checked></div>
+        <div class="row"><label>1 mm grid</label><input type="checkbox" id="g-grid" checked></div>
+        <h2>Size from pin span — measured</h2>
+        <p>Two-pin parts whose package name states the size, 6 boards (KiCad, Allegro, GenCAD). Pin span = centre-to-centre, mils.</p>
+        <table>
+          <tr><th>EIA</th><th>L×W mm</th><th class="n">n</th><th class="n">span p10–p90</th></tr>
+          <tr><td>0201</td><td>0.6×0.3</td><td class="n">1360</td><td class="n">18–23</td></tr>
+          <tr><td>0402</td><td>1.0×0.5</td><td class="n">6427</td><td class="n">30–36</td></tr>
+          <tr><td>0603</td><td>1.6×0.8</td><td class="n">1477</td><td class="n">52–55</td></tr>
+          <tr><td>0805</td><td>2.0×1.25</td><td class="n">534</td><td class="n">63–75</td></tr>
+          <tr><td>1206</td><td>3.2×1.6</td><td class="n">56</td><td class="n">105–120</td></tr>
+        </table>
+        <p>Thresholds at 14 / 26 / 43 / 60 / 90 / 150 mil: <b>98.1 %</b> (9,673 of 9,859) agree with the package name. Misses are one size off (0402↔0603 hand-solder footprints).</p>
+        <h2>Two independent questions</h2>
+        <p><b>Size</b> comes from geometry (span, pad width). <b>Kind</b> — resistor, capacitor, bead, diode — comes from the package name, else the refdes prefix (R/C/L/FB/D…), else a neutral chip.</p>
+      </div>
+
+      <!-- BOARD -->
+      <div class="panel-tab" data-panel="board">
+        <h2>Board type</h2>
+        <div class="seg" id="b-mode"><button data-v="multi" class="on">Multi-layer</button><button data-v="plain">Plain boardview</button></div>
+        <p id="b-mode-note">KiCad · Allegro · Altium · EAGLE · TVW · GenCAD: copper per layer, vias, pours.</p>
+        <h2>Stack</h2>
+        <div class="row"><label>Explode layers</label><input type="range" id="b-explode" min="0" max="1" step="0.01" value="0"></div>
+        <div class="row"><label>X-ray board</label><input type="checkbox" id="b-xray"></div>
+        <div class="row" id="b-layers">
+          <label><input type="checkbox" data-l="0" checked> <span style="color:var(--l1)">L1</span></label>
+          <label><input type="checkbox" data-l="1" checked> <span style="color:var(--l2)">L2</span></label>
+          <label><input type="checkbox" data-l="2" checked> <span style="color:var(--l3)">L3</span></label>
+          <label><input type="checkbox" data-l="3" checked> <span style="color:var(--l4)">L4</span></label>
+        </div>
+        <div class="row"><label>Parts</label><input type="checkbox" id="b-parts" checked></div>
+        <h2>View</h2>
+        <div class="seg" id="b-cam"><button data-v="iso">Iso</button><button data-v="top">Top</button><button data-v="bottom">Bottom</button><button data-v="edge">Edge</button></div>
+        <h2>Highlight net</h2>
+        <select id="b-net"></select>
+        <p>Or click any part pin, trace or via.</p>
+        <h2>How each part was sized</h2>
+        <div class="row"><label>Evidence overlay</label><input type="checkbox" id="b-ev"></div>
+        <div class="legend"><span><i class="sw" style="background:var(--ok)"></i>package name</span><span><i class="sw" style="background:var(--warn)"></i>pin geometry</span><span><i class="sw" style="background:var(--bad)"></i>fallback body</span></div>
+        <div id="sigctl-board"></div>
+      </div>
+
+      <!-- SIGNAL 2D -->
+      <div class="panel-tab" data-panel="sig2d">
+        <h2>Same board, existing 2D view</h2>
+        <p>The lit net is drawn on its own Canvas2D overlay, like the label overlay — the WebGL scene is not re-rendered per frame. Wheel to zoom, drag to pan.</p>
+        <h2>Highlight net</h2>
+        <select id="s-net"></select>
+        <h2>Dash length</h2>
+        <div class="seg" id="s-units"><button data-v="screen" class="on">Screen px</button><button data-v="board">Board mils</button></div>
+        <p>Screen px keeps the same rhythm at every zoom; board mils makes dashes shrink when zoomed out.</p>
+        <div id="sigctl-2d"></div>
+      </div>
+
+      <!-- shared signal controls, moved between panels -->
+      <div id="sigctl">
+        <h2>Signal effect</h2>
+        <div class="seg" id="fx"><button data-v="0">Static</button><button data-v="1" class="on">Flow dashes</button><button data-v="2">Skewed</button><button data-v="3">Comet</button></div>
+        <div class="row"><label>Speed</label><input type="range" id="fx-speed" min="0" max="12" step="0.1" value="3"></div>
+        <div class="row"><label>Dim others</label><input type="range" id="fx-dim" min="0" max="1" step="0.01" value="0.75"></div>
+        <div class="row"><label>Glow</label><input type="checkbox" id="fx-glow" checked></div>
+        <div class="row"><label>Flow from source pin</label><input type="checkbox" id="fx-dir" checked></div>
+        <p class="note">Dashes run outward from the clicked pin along the routed path, through vias. Reduced-motion users get Static.</p>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+// ───────────────────────────── renderer / env ─────────────────────────────
+const canvas = document.getElementById('c3d');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+const pmrem = new THREE.PMREMGenerator(renderer);
+const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+let rng = 1234567;
+const rand = () => ((rng = (rng * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+
+// ───────────────────────────── materials ─────────────────────────────
+const M = {
+  tin:     new THREE.MeshStandardMaterial({ color: 0xd9dde2, metalness: 1, roughness: 0.28 }),
+  gold:    new THREE.MeshStandardMaterial({ color: 0xe3b95c, metalness: 1, roughness: 0.3 }),
+  ceramic: new THREE.MeshStandardMaterial({ color: 0xeeeee6, roughness: 0.7 }),
+  resTop:  new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.55 }),
+  mlcc:    new THREE.MeshStandardMaterial({ color: 0xb59766, roughness: 0.75 }),
+  bead:    new THREE.MeshStandardMaterial({ color: 0x2b2b2d, roughness: 0.6 }),
+  epoxy:   new THREE.MeshStandardMaterial({ color: 0x1b1b1e, roughness: 0.5 }),
+  tant:    new THREE.MeshStandardMaterial({ color: 0xd9b12b, roughness: 0.5 }),
+  tantBand:new THREE.MeshStandardMaterial({ color: 0x6b4710, roughness: 0.6 }),
+  alu:     new THREE.MeshStandardMaterial({ color: 0xc8ccd2, metalness: 0.9, roughness: 0.32 }),
+  sleeve:  new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.5 }),
+  ind:     new THREE.MeshStandardMaterial({ color: 0x3a3c40, roughness: 0.85 }),
+  subst:   new THREE.MeshStandardMaterial({ color: 0x2c4a2e, roughness: 0.6 }),
+  led:     new THREE.MeshStandardMaterial({ color: 0xf4f4ee, roughness: 0.6 }),
+  lens:    new THREE.MeshStandardMaterial({ color: 0xffe680, roughness: 0.1, transparent: true, opacity: 0.75, emissive: 0x6a5200 }),
+  band:    new THREE.MeshStandardMaterial({ color: 0xb8bcc2, roughness: 0.5 }),
+  dot:     new THREE.MeshStandardMaterial({ color: 0x5a5a5e, roughness: 0.4 }),
+  pad:     new THREE.MeshStandardMaterial({ color: 0xd9b25a, metalness: 0.9, roughness: 0.35 }),
+  ghost:   new THREE.MeshStandardMaterial({ color: 0x8a9099, roughness: 0.8, transparent: true, opacity: 0.55 }),
+  mask:    new THREE.MeshStandardMaterial({ color: 0x1d5b2f, roughness: 0.42, metalness: 0.05 }),
+  fr4:     new THREE.MeshStandardMaterial({ color: 0xb9a46a, roughness: 0.8 }),
+};
+const box = (w, h, d, mat, x = 0, y = 0, z = 0) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); m.castShadow = true; return m; };
+const rbox = (w, h, d, r, mat, x = 0, y = 0, z = 0) => { const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 3, Math.min(r, w / 2, h / 2, d / 2) * 0.99), mat); m.position.set(x, y, z); m.castShadow = true; return m; };
+
+// ───────────────────────────── model library ─────────────────────────────
+// Every builder: local frame, X = length axis, Y up from board surface, Z = width.
+// Returns { group, pads:[{x,z,w,d,round,name}], label, dims:'L×W×H' }.
+const EIA = {
+  '01005': { L: 0.4, W: 0.2, Hr: 0.13, Hc: 0.2 },
+  '0201':  { L: 0.6, W: 0.3, Hr: 0.23, Hc: 0.3 },
+  '0402':  { L: 1.0, W: 0.5, Hr: 0.35, Hc: 0.5 },
+  '0603':  { L: 1.6, W: 0.8, Hr: 0.45, Hc: 0.8 },
+  '0805':  { L: 2.0, W: 1.25, Hr: 0.5, Hc: 1.0 },
+  '1206':  { L: 3.2, W: 1.6, Hr: 0.55, Hc: 1.15 },
+  '1210':  { L: 3.2, W: 2.5, Hr: 0.55, Hc: 1.6 },
+  '2010':  { L: 5.0, W: 2.5, Hr: 0.55, Hc: 1.6 },
+  '2512':  { L: 6.4, W: 3.2, Hr: 0.55, Hc: 1.6 },
+};
+// Land pattern from the corpus: pin span ≈ 0.82·L, pad along ≈ 0.5·L, pad across ≈ 1.3·W.
+const chipPads = (L, W) => [
+  { x: -0.41 * L, z: 0, w: 0.5 * L, d: 1.3 * W, name: '1' },
+  { x:  0.41 * L, z: 0, w: 0.5 * L, d: 1.3 * W, name: '2' },
+];
+function chipR(size) {
+  const { L, W, Hr: H } = EIA[size]; const g = new THREE.Group();
+  g.add(box(L * 0.96, H * 0.82, W, M.ceramic, 0, H * 0.41));
+  g.add(box(L * 0.62, H * 0.12, W * 0.92, M.resTop, 0, H * 0.82 + H * 0.06));
+  for (const s of [-1, 1]) g.add(box(L * 0.2, H, W * 1.02, M.tin, s * (L / 2 - L * 0.1), H / 2));
+  return { group: g, pads: chipPads(L, W), label: `R ${size}`, dims: `${L}×${W}×${H} mm` };
+}
+function chipC(size, mat = M.mlcc) {
+  const { L, W, Hc: H } = EIA[size]; const g = new THREE.Group(); const r = Math.min(W, H) * 0.12;
+  g.add(rbox(L * 0.98, H, W, r, mat, 0, H / 2));
+  for (const s of [-1, 1]) g.add(rbox(L * 0.24, H * 1.02, W * 1.02, r, M.tin, s * (L / 2 - L * 0.12), H / 2));
+  return { group: g, pads: chipPads(L, W), label: `C ${size}`, dims: `${L}×${W}×${H} mm` };
+}
+function bead(size) { const m = chipC(size, M.bead); m.label = `FB ${size}`; return m; }
+function led(size) {
+  const { L, W } = EIA[size]; const H = 0.35; const g = new THREE.Group();
+  g.add(box(L * 0.96, H, W, M.led, 0, H / 2));
+  g.add(box(L * 0.7, 0.25, W * 0.8, M.lens, 0, H + 0.125));
+  for (const s of [-1, 1]) g.add(box(L * 0.16, H * 1.02, W * 1.02, M.tin, s * (L / 2 - L * 0.08), H / 2));
+  return { group: g, pads: chipPads(L, W), label: `LED ${size}`, dims: `${L}×${W}×0.6 mm` };
+}
+function tantalum(caseName) {
+  const D = { A: [3.2, 1.6, 1.6], B: [3.5, 2.8, 1.9] }[caseName]; const [L, W, H] = D; const g = new THREE.Group();
+  g.add(rbox(L * 0.8, H, W, 0.15, M.tant, 0, H / 2 + 0.02));
+  g.add(box(L * 0.14, 0.02, W * 0.85, M.tantBand, L * 0.27, H + 0.03));
+  for (const s of [-1, 1]) { g.add(box(0.08, H * 0.55, W * 0.6, M.tin, s * (L / 2 - 0.04), H * 0.275)); g.add(box(0.8, 0.06, W * 0.6, M.tin, s * (L / 2 - 0.4), 0.03)); }
+  return { group: g, pads: [{ x: -L * 0.38, z: 0, w: L * 0.4, d: W * 0.9, name: '1' }, { x: L * 0.38, z: 0, w: L * 0.4, d: W * 0.9, name: '2' }], label: `Tant ${caseName} (${caseName === 'A' ? 3216 : 3528})`, dims: `${L}×${W}×${H} mm` };
+}
+function electrolytic(dia = 6.3, h = 5.4) {
+  const g = new THREE.Group(); const r = dia / 2; const base = 0.6;
+  g.add(box(dia + 0.3, base, dia + 0.3, M.epoxy, 0, base / 2));
+  const can = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h - base, 48), M.alu); can.position.y = base + (h - base) / 2; can.castShadow = true; g.add(can);
+  const stripe = new THREE.Mesh(new THREE.CylinderGeometry(r * 1.01, r * 1.01, h - base - 0.3, 48, 1, true, Math.PI * 0.85, Math.PI * 0.3), M.sleeve); stripe.position.y = base + (h - base - 0.3) / 2; g.add(stripe);
+  for (const a of [0, Math.PI / 2]) { const c = box(dia * 0.7, 0.03, 0.12, M.dot, 0, h + 0.01); c.rotation.y = a; g.add(c); }
+  return { group: g, pads: [{ x: -2.4, z: 0, w: 3.0, d: 1.6, name: '2' }, { x: 2.4, z: 0, w: 3.0, d: 1.6, name: '1' }], label: `Alu ${dia}×${h}`, dims: `Ø${dia}×${h} mm` };
+}
+function inductor(s = 4, h = 2) {
+  const g = new THREE.Group();
+  g.add(rbox(s, h, s, 0.2, M.ind, 0, h / 2));
+  for (const k of [-1, 1]) g.add(box(0.7, 0.08, s * 0.7, M.tin, k * (s / 2 - 0.35), 0.04));
+  return { group: g, pads: [{ x: -s * 0.36, z: 0, w: s * 0.35, d: s * 0.8, name: '1' }, { x: s * 0.36, z: 0, w: s * 0.35, d: s * 0.8, name: '2' }], label: `Power L ${s}${s}`, dims: `${s}×${s}×${h} mm` };
+}
+function crystal() {
+  const L = 3.2, W = 2.5; const g = new THREE.Group();
+  g.add(box(L, 0.3, W, M.ceramic, 0, 0.15));
+  g.add(rbox(L * 0.92, 0.5, W * 0.9, 0.12, M.alu, 0, 0.3 + 0.25));
+  const pads = [];
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) pads.push({ x: sx * 1.1, z: sz * 0.8, w: 1.0, d: 0.9, name: String(pads.length + 1) });
+  return { group: g, pads, label: 'Xtal 3225', dims: '3.2×2.5×0.8 mm' };
+}
+// Gull-wing lead: from body side at height hy, out to tip at distance `out` beyond body edge.
+function gull(g, x, side, bodyHalf, out, hy, w, axis = 'z') {
+  const t = 0.15, k1 = out * 0.35, k2 = out * 0.55;
+  const parts = [
+    [k1, t, w, bodyHalf + k1 / 2, hy],
+    [t, hy, w, bodyHalf + k1, hy / 2],
+    [k2, t, w, bodyHalf + k1 + k2 / 2, t / 2],
+  ];
+  for (const [a, b, c, off, y] of parts) {
+    const m = axis === 'z' ? box(c, b, a, M.tin, x, y, side * off) : box(a, b, c, M.tin, side * off, y, x);
+    g.add(m);
+  }
+}
+function soic(pinsPerSide, pitch, L, W, H, label, out = 1.05, lw = 0.42) {
+  const g = new THREE.Group(); const so = 0.1;
+  g.add(rbox(L, H - so, W, 0.08, M.epoxy, 0, so + (H - so) / 2));
+  const d = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 0.02, 20), M.dot); d.position.set(-L / 2 + 0.6, H + 0.005, W / 2 - 0.6); g.add(d);
+  const pads = []; const x0 = -(pinsPerSide - 1) * pitch / 2;
+  for (let i = 0; i < pinsPerSide; i++) {
+    const x = x0 + i * pitch;
+    gull(g, x, 1, W / 2, out, H * 0.45, lw); gull(g, x, -1, W / 2, out, H * 0.45, lw);
+    pads.push({ x, z: W / 2 + out * 0.75, w: lw * 1.4, d: out * 1.3, name: String(i + 1) });
+  }
+  for (let i = 0; i < pinsPerSide; i++) { const x = -x0 - i * pitch; pads.push({ x, z: -(W / 2 + out * 0.75), w: lw * 1.4, d: out * 1.3, name: String(pinsPerSide + i + 1) }); }
+  return { group: g, pads, label, dims: `${L}×${W}×${H} mm, ${pinsPerSide * 2} pins @ ${pitch}` };
+}
+function sot23(five = false) {
+  const L = 2.9, W = 1.6, H = 1.1; const g = new THREE.Group();
+  g.add(rbox(L, H - 0.1, W, 0.06, M.epoxy, 0, 0.1 + (H - 0.1) / 2));
+  const pads = []; const out = 0.55;
+  const low = five ? [-0.95, 0, 0.95] : [-0.95, 0.95]; const high = five ? [0.95, -0.95] : [0];
+  low.forEach(x => { gull(g, x, 1, W / 2, out, 0.5, 0.4); pads.push({ x, z: W / 2 + 0.45, w: 0.6, d: 0.9, name: String(pads.length + 1) }); });
+  high.forEach(x => { gull(g, x, -1, W / 2, out, 0.5, 0.4); pads.push({ x, z: -(W / 2 + 0.45), w: 0.6, d: 0.9, name: String(pads.length + 1) }); });
+  return { group: g, pads, label: five ? 'SOT-23-5' : 'SOT-23', dims: `${L}×${W}×${H} mm` };
+}
+function sod(L, W, H, label) {
+  const g = new THREE.Group();
+  g.add(rbox(L, H - 0.05, W, 0.08, M.epoxy, 0, 0.05 + (H - 0.05) / 2));
+  g.add(box(L * 0.14, 0.02, W * 0.98, M.band, -L * 0.33, H + 0.005));
+  for (const s of [-1, 1]) gull(g, 0, s, L / 2, 0.7, H * 0.4, W * 0.45, 'x');
+  return { group: g, pads: [{ x: -(L / 2 + 0.5), z: 0, w: 0.9, d: W * 0.65, name: 'K' }, { x: L / 2 + 0.5, z: 0, w: 0.9, d: W * 0.65, name: 'A' }], label, dims: `${L}×${W}×${H} mm` };
+}
+function qfn(n = 32, S = 5, H = 0.85) {
+  const g = new THREE.Group(); const per = n / 4; const pitch = 0.5;
+  g.add(rbox(S, H, S, 0.05, M.epoxy, 0, H / 2));
+  const d = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.02, 20), M.dot); d.position.set(-S / 2 + 0.55, H + 0.005, -S / 2 + 0.55); g.add(d);
+  const pads = []; const o = -(per - 1) * pitch / 2; let k = 1;
+  const sides = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+  for (const [sx, sz] of sides) for (let i = 0; i < per; i++) {
+    const t = o + i * pitch;
+    const x = sx ? sx * (S / 2 - 0.2) : (sz < 0 ? t : -t), z = sz ? sz * (S / 2 - 0.2) : (sx > 0 ? t : -t);
+    g.add(box(sx ? 0.4 : 0.25, 0.2, sx ? 0.25 : 0.4, M.tin, x + sx * 0.01, 0.1, z + sz * 0.01));
+    pads.push({ x: x + sx * 0.2, z: z + sz * 0.2, w: sx ? 0.8 : 0.28, d: sx ? 0.28 : 0.8, name: String(k++) });
+  }
+  pads.push({ x: 0, z: 0, w: S * 0.65, d: S * 0.65, name: 'EP' });
+  return { group: g, pads, label: `QFN-${n}`, dims: `${S}×${S}×${H} mm @ 0.5` };
+}
+const BGA_ROWS = 'ABCDEFGHJK';
+function bga(n = 10, pitch = 0.8) {
+  const g = new THREE.Group(); const S = n * pitch + 1.0; const ballH = 0.3, sub = 0.36, mold = 0.6;
+  g.add(box(S, sub, S, M.subst, 0, ballH + sub / 2));
+  g.add(rbox(S - 0.8, mold, S - 0.8, 0.12, M.epoxy, 0, ballH + sub + mold / 2));
+  const d = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.02, 20), M.dot); d.position.set(-S / 2 + 1.0, ballH + sub + mold + 0.005, -S / 2 + 1.0); g.add(d);
+  const balls = new THREE.InstancedMesh(new THREE.SphereGeometry(0.2, 12, 8), M.tin, n * n); const mtx = new THREE.Matrix4();
+  const pads = []; const o = -(n - 1) * pitch / 2; let k = 0;
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+    const x = o + c * pitch, z = o + r * pitch;
+    mtx.makeTranslation(x, 0.17, z); balls.setMatrixAt(k++, mtx);
+    pads.push({ x, z, w: 0.38, d: 0.38, round: true, name: BGA_ROWS[r] + (c + 1) });
+  }
+  balls.castShadow = true; g.add(balls);
+  return { group: g, pads, label: `BGA-${n * n}`, dims: `${S.toFixed(1)}×${S.toFixed(1)}×${(ballH + sub + mold).toFixed(2)} mm @ ${pitch}` };
+}
+function header(n = 4) {
+  const g = new THREE.Group(); const p = 2.54; const L = n * p;
+  g.add(box(L, 2.5, p, M.epoxy, 0, 1.25));
+  const pads = [];
+  for (let i = 0; i < n; i++) {
+    const x = -(n - 1) * p / 2 + i * p;
+    g.add(box(0.64, 9, 0.64, M.gold, x, 1.5));
+    pads.push({ x, z: 0, w: 1.7, d: 1.7, round: i > 0, name: String(i + 1), tht: true });
+  }
+  return { group: g, pads, label: `Header 1×${n}`, dims: `${L.toFixed(2)}×2.54 · THT` };
+}
+function testPad() { return { group: new THREE.Group(), pads: [{ x: 0, z: 0, w: 1.0, d: 1.0, round: true, name: '1' }], label: 'Test pad', dims: 'Ø1.0 mm, no body' }; }
+function fallback(L, W, n) {
+  const g = new THREE.Group(); const H = 1.0;
+  const m = new THREE.Mesh(new THREE.BoxGeometry(L, H, W), M.ghost); m.position.y = H / 2; g.add(m);
+  const e = new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry), new THREE.LineBasicMaterial({ color: 0xf05252 })); e.position.y = H / 2; g.add(e);
+  const pads = []; for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2; pads.push({ x: Math.cos(a) * L * 0.4, z: Math.sin(a) * W * 0.4, w: 0.5, d: 0.5, name: String(i + 1) }); }
+  return { group: g, pads, label: `Unknown ${n}-pin`, dims: `${L}×${W}, height guessed` };
+}
+
+function addPadMeshes(g, pads, y = 0.0) {
+  for (const p of pads) {
+    const m = p.round ? new THREE.Mesh(new THREE.CylinderGeometry(p.w / 2, p.w / 2, 0.035, 24), M.pad) : new THREE.Mesh(new THREE.BoxGeometry(p.w, 0.035, p.d), M.pad);
+    m.position.set(p.x, y + 0.0175, p.z); m.receiveShadow = true; g.add(m);
+  }
+}
+
+// ───────────────────────────── gallery scene ─────────────────────────────
+const gallery = new THREE.Scene();
+gallery.background = new THREE.Color(0x15171b);
+gallery.environment = envTex;
+const gCam = new THREE.PerspectiveCamera(32, 1, 0.1, 500);
+gCam.position.set(0, 60, 54);
+const sunG = new THREE.DirectionalLight(0xffffff, 1.4); sunG.position.set(-20, 40, 15); sunG.castShadow = true;
+Object.assign(sunG.shadow.camera, { left: -40, right: 40, top: 30, bottom: -30, far: 120 }); sunG.shadow.mapSize.set(2048, 2048); sunG.shadow.bias = -0.0005;
+gallery.add(sunG, new THREE.AmbientLight(0xffffff, 0.15));
+const mat = new THREE.Mesh(new THREE.PlaneGeometry(90, 60), new THREE.MeshStandardMaterial({ color: 0x1d5b2f, roughness: 0.5 }));
+mat.rotation.x = -Math.PI / 2; mat.receiveShadow = true; gallery.add(mat);
+const grid = new THREE.GridHelper(90, 90, 0x3d7a4f, 0x2a6a3c); grid.position.y = 0.002; gallery.add(grid);
+
+const galleryRows = [
+  { title: 'Chip resistors', z: -16, items: ['01005', '0201', '0402', '0603', '0805', '1206', '1210', '2010', '2512'].map(s => chipR(s)) },
+  { title: 'MLCC', z: -9, items: ['01005', '0201', '0402', '0603', '0805', '1206', '1210'].map(s => chipC(s)) },
+  { title: 'Polarised / power / misc', z: 0, items: [bead('0603'), led('0603'), sod(2.7, 1.6, 1.1, 'SOD-123'), sod(1.7, 1.25, 0.9, 'SOD-323'), tantalum('A'), tantalum('B'), crystal(), inductor(), electrolytic(), testPad()] },
+  { title: 'ICs / connectors', z: 13, items: [sot23(), sot23(true), soic(4, 1.27, 4.9, 3.9, 1.5, 'SOIC-8'), soic(8, 0.65, 5.0, 4.4, 1.0, 'TSSOP-16', 0.8, 0.25), qfn(), bga(), header(), fallback(4, 3, 7)] },
+];
+const galleryPadGroups = []; const galleryLabels = []; const galleryPick = [];
+for (const row of galleryRows) {
+  const widths = row.items.map(it => new THREE.Box3().setFromObject(it.group).getSize(new THREE.Vector3()).x || 1.5);
+  const gap = row.z === 13 ? 4 : 2.5;
+  const total = widths.reduce((a, b) => a + b, 0) + gap * (widths.length - 1);
+  let x = -total / 2;
+  row.items.forEach((it, i) => {
+    const cx = x + widths[i] / 2; x += widths[i] + gap;
+    it.group.position.set(cx, 0, row.z); gallery.add(it.group);
+    const pg = new THREE.Group(); addPadMeshes(pg, it.pads); pg.position.copy(it.group.position); gallery.add(pg); galleryPadGroups.push(pg);
+    const bb = new THREE.Box3().setFromObject(it.group);
+    galleryLabels.push({ text: it.label, pos: new THREE.Vector3(cx, 0, Math.max(bb.max.z, row.z + 0.6) + 0.6) });
+    it.group.traverse(o => { if (o.isMesh) { o.userData.item = it; galleryPick.push(o); } });
+  });
+  galleryLabels.push({ text: row.title, pos: new THREE.Vector3(-total / 2 - 1.5, 0, row.z), row: true });
+}
+
+// ───────────────────────────── board data (synthetic, 4 layers) ─────────────────────────────
+const LAYER_COLORS = [0xe8873a, 0x2ec4b6, 0xb07cff, 0x4d9de0];
+const LAYER_BASE = [0.8, 0.267, -0.267, -0.8];
+const BW = 50, BH = 34;
+function outlinePoints() {
+  const pts = []; const r = 3, hw = BW / 2, hh = BH / 2;
+  const arc = (cx, cz, a0) => { for (let i = 0; i <= 8; i++) { const a = a0 + (i / 8) * Math.PI / 2; pts.push([cx + Math.cos(a) * r, cz + Math.sin(a) * r]); } };
+  arc(hw - r, -hh + r, -Math.PI / 2);
+  pts.push([hw, -4], [hw - 4, -2], [hw - 4, 2], [hw, 4]);   // notch
+  arc(hw - r, hh - r, 0); arc(-hw + r, hh - r, Math.PI / 2); arc(-hw + r, -hh + r, Math.PI);
+  return pts;
+}
+const OUTLINE = outlinePoints();
+const MOUNT = [[-22, -14], [22, 14], [-22, 14]];
+function boardShape(inset = 0, holes = [], holeR = 1.6) {
+  const s = new THREE.Shape(); const k = 1 - inset;
+  OUTLINE.forEach(([x, z], i) => (i ? s.lineTo(x * k, -z * k) : s.moveTo(x * k, -z * k)));
+  for (const [x, z] of MOUNT) { const h = new THREE.Path(); h.absarc(x, -z, holeR, 0, Math.PI * 2, true); s.holes.push(h); }
+  for (const [x, z, r] of holes) { const h = new THREE.Path(); h.absarc(x, -z, r, 0, Math.PI * 2, true); s.holes.push(h); }
+  return s;
+}
+
+// placements: [ref, builder(), x, z, rotDeg, side, evidence, evidenceText]
+const EV = { pkg: 0x3ecf6e, geom: 0xf0a33a, fallback: 0xf05252 };
+const P = [];
+const place = (ref, model, x, z, rot, side, ev, why) => P.push({ ref, model, x, z, rot, side, ev, why });
+place('U1', bga(), -8, -1, 0, 'top', 'pkg', 'package "BGA100C80P10X10" → 10×10 @ 0.8');
+place('U2', qfn(), 9, -6, 0, 'top', 'geom', '32 pins on a square perimeter, 0.5 pitch + centre pad → QFN-32 5×5');
+place('U3', soic(4, 1.27, 4.9, 3.9, 1.5, 'SOIC-8'), 12, 8, 0, 'top', 'pkg', 'package "SOIC8_150MIL"');
+place('Q1', sot23(), 2, 9, 0, 'top', 'geom', '3 pins, 2+1 rows, 1.9 mm between outer pins → SOT-23');
+place('Q2', sot23(true), -2, 13, 90, 'top', 'geom', '5 pins, 3+2 rows, 0.95 pitch → SOT-23-5');
+place('Y1', crystal(), 3, -11, 0, 'top', 'geom', '4 pins at the corners of 2.2×1.6 → 3225 crystal (refdes Y)');
+place('L1', inductor(), 19, -11, 0, 'top', 'pkg', 'package "IND_4040"');
+place('C1', electrolytic(), -19, 9, 0, 'top', 'pkg', 'package "CAP_ALU_6.3X5.4"');
+place('C2', tantalum('B'), -12, 13, 0, 'top', 'pkg', 'package "CASE_B_3528"');
+place('J1', header(), -21, -6, 90, 'top', 'pkg', 'package "HDR1X4_2.54" — through-hole');
+place('D1', sod(2.7, 1.6, 1.1, 'SOD-123'), 19, 0, 90, 'top', 'geom', '2 pins, span 3.7 mm, refdes D → SOD-123');
+place('D2', led('0603'), 21, 12, 0, 'top', 'pkg', 'package "LED_0603"');
+place('U4', fallback(4, 3, 7), 6, 13.5, 0, 'top', 'fallback', '7 pins, no package, no pattern match → body = pin box + margin, height 1 mm');
+place('TP1', testPad(), 15, 14, 0, 'top', 'geom', '1 pin, no body');
+place('TP2', testPad(), -15, -14, 0, 'top', 'geom', '1 pin, no body');
+// decoupling ring around U1
+const ring = [[-13.5, -4], [-13.5, 0], [-13.5, 4], [-2.5, -4], [-2.5, 0], [-2.5, 4], [-10, -6.5], [-6, -6.5], [-10, 4.6], [-6, 4.6]];
+ring.forEach(([x, z], i) => {
+  const size = i < 6 ? '0402' : '0201'; const vertical = Math.abs(x + 8) > 4;
+  place(`C${10 + i}`, chipC(size), x, z, vertical ? 90 : 0, 'top', i % 3 ? 'geom' : 'pkg', i % 3 ? `2 pins, span ${size === '0402' ? 32 : 20} mil → ${size} · refdes C → MLCC` : `package "C_${size}"`);
+});
+[[5, -2, '0402'], [5, 0, '0402'], [5, 2, '0402'], [14, -10, '0603'], [14, -2, '0603'], [8, 3, '0805'], [24, -6, '1206'], [-16, -12, '2512']].forEach(([x, z, s], i) =>
+  place(`R${1 + i}`, chipR(s), x, z, i < 3 ? 90 : 0, 'top', i % 2 ? 'pkg' : 'geom', i % 2 ? `package "R_${s}"` : `2 pins, span → ${s} · refdes R → resistor`));
+[[16, -6, '0805'], [22, -15, '0805'], [-17, 2, '1206'], [3, -6, '0603']].forEach(([x, z, s], i) =>
+  place(`C${30 + i}`, chipC(s), x, z, 0, 'top', 'geom', `2 pins, span → ${s} · refdes C → MLCC`));
+place('FB1', bead('0603'), -17, -2, 0, 'top', 'geom', '2 pins, span 53 mil → 0603 · refdes FB → bead');
+// bottom side
+[[-10, -3], [-6, -3], [-10, 1], [-6, 1], [-8, 3.5]].forEach(([x, z], i) => place(`C${50 + i}`, chipC('0402'), x, z, 0, 'bottom', 'geom', '2 pins, span 32 mil → 0402 · bottom'));
+place('U5', qfn(16, 3, 0.75), 10, 8, 0, 'bottom', 'geom', '16 pins on a square perimeter + centre pad → QFN-16 3×3');
+place('R20', chipR('0402'), 14, 3, 0, 'bottom', 'pkg', 'package "R_0402"');
+
+// ───────────────────────────── board scene ─────────────────────────────
+const boardScene = new THREE.Scene();
+boardScene.background = new THREE.Color(0x111316);
+boardScene.environment = envTex;
+const bCam = new THREE.PerspectiveCamera(35, 1, 0.1, 800);
+const sun = new THREE.DirectionalLight(0xffffff, 1.5); sun.position.set(-25, 50, 20); sun.castShadow = true;
+Object.assign(sun.shadow.camera, { left: -35, right: 35, top: 25, bottom: -25, far: 150 }); sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0004;
+const sun2 = new THREE.DirectionalLight(0xffffff, 0.6); sun2.position.set(20, -40, -10);
+boardScene.add(sun, sun2, new THREE.AmbientLight(0xffffff, 0.12));
+
+const layerGroups = [0, 1, 2, 3].map(i => { const g = new THREE.Group(); boardScene.add(g); return g; });
+const topParts = new THREE.Group(), botParts = new THREE.Group(); botParts.rotation.x = Math.PI;
+boardScene.add(topParts, botParts);
+
+// place parts, collect world pins
+const pins = new Map(); // "U1.A1" → {x,z,layer:0|3|'tht', part}
+const padInst = [];    // {x,z,w,d,round,angle,layer,net,key}
+const pickables = [];
+for (const p of P) {
+  const g = p.model.group; g.position.set(p.x, 0, p.side === 'top' ? p.z : -p.z); g.rotation.y = p.rot * Math.PI / 180;
+  (p.side === 'top' ? topParts : botParts).add(g);
+  g.traverse(o => { if (o.isMesh || o.isInstancedMesh) { o.userData.part = p; pickables.push(o); o.castShadow = true; } });
+}
+boardScene.updateMatrixWorld(true);
+for (const p of P) {
+  const parent = p.side === 'top' ? topParts : botParts;
+  for (const pd of p.model.pads) {
+    const w = p.model.group.localToWorld(new THREE.Vector3(pd.x, 0, pd.z));
+    const key = `${p.ref}.${pd.name}`;
+    const layer = pd.tht ? 'tht' : p.side === 'top' ? 0 : 3;
+    pins.set(key, { x: w.x, z: w.z, layer, part: p });
+    const ang = (p.side === 'top' ? 1 : -1) * p.rot * Math.PI / 180;
+    if (pd.tht) for (const L of [0, 1, 2, 3]) padInst.push({ ...pd, x: w.x, z: w.z, angle: ang, layer: L, key, part: p });
+    else padInst.push({ ...pd, x: w.x, z: w.z, angle: ang, layer, key, part: p });
+  }
+}
+void topParts; void botParts;
+
+// ───── nets: routes (polylines per layer) + vias ─────
+const nets = new Map(); // name → {segs:[{a,b,layer,w}], vias:[{x,z}], pins:[keys], source}
+const netOf = new Map(); // pin key → net
+function net(name) { if (!nets.has(name)) nets.set(name, { name, segs: [], vias: [], pins: [], source: null }); return nets.get(name); }
+function route45(a, b) {
+  const dx = b.x - a.x, dz = b.z - a.z; const ax = Math.abs(dx), az = Math.abs(dz);
+  if (ax < 1e-6 || az < 1e-6 || Math.abs(ax - az) < 1e-6) return [a, b];
+  const m = ax > az ? { x: b.x - Math.sign(dx) * az, z: a.z } : { x: a.x, z: b.z - Math.sign(dz) * ax };
+  return [a, m, b];
+}
+function addPath(n, pts, layer, w) { for (let i = 1; i < pts.length; i++) n.segs.push({ a: pts[i - 1], b: pts[i], layer, w }); }
+// connect(net, pinA, pinB, plan) — plan: [layer] direct, or [outer, inner, outer] with vias near each end.
+function connect(name, ka, kb, plan = [0], w = 0.25, esc = 1.6) {
+  const n = net(name); const a = pins.get(ka), b = pins.get(kb);
+  if (!a || !b) { console.warn('missing pin', ka, kb); return; }
+  for (const k of [ka, kb]) { if (!n.pins.includes(k)) n.pins.push(k); netOf.set(k, name); }
+  if (!n.source) n.source = ka;
+  const A = { x: a.x, z: a.z }, B = { x: b.x, z: b.z };
+  if (plan.length === 1) { addPath(n, route45(A, B), plan[0], w); return; }
+  const dx = B.x - A.x, dz = B.z - A.z; const horiz = Math.abs(dx) > Math.abs(dz);
+  const va = horiz ? { x: A.x + Math.sign(dx) * esc, z: A.z + esc * 0.5 * Math.sign(dz || 1) } : { x: A.x + esc * 0.5 * Math.sign(dx || 1), z: A.z + Math.sign(dz) * esc };
+  const vb = horiz ? { x: B.x - Math.sign(dx) * esc, z: B.z - esc * 0.5 * Math.sign(dz || 1) } : { x: B.x - esc * 0.5 * Math.sign(dx || 1), z: B.z - Math.sign(dz) * esc };
+  const la = a.layer === 'tht' ? plan[1] : plan[0], lb = b.layer === 'tht' ? plan[1] : plan[2];
+  if (a.layer !== 'tht') addPath(n, route45(A, va), la, w); else va.x = A.x, va.z = A.z;
+  if (b.layer !== 'tht') addPath(n, route45(vb, B), lb, w); else vb.x = B.x, vb.z = B.z;
+  addPath(n, route45(va, vb), plan[1], w);
+  if (a.layer !== 'tht') n.vias.push(va); if (b.layer !== 'tht') n.vias.push(vb);
+}
+function stitch(name, k, dx, dz) { const n = net(name); const p = pins.get(k); const v = { x: p.x + dx, z: p.z + dz }; addPath(n, [{ x: p.x, z: p.z }, v], p.layer === 3 ? 3 : 0, 0.3); n.vias.push(v); if (!n.pins.includes(k)) n.pins.push(k); netOf.set(k, name); if (!n.source) n.source = k; }
+
+// real-ish nets
+connect('PP1V8_S0', 'U1.K10', 'C12.1', [0], 0.3);
+connect('PP1V8_S0', 'U1.K10', 'U2.3', [0, 2, 0], 0.3);
+connect('PP1V8_S0', 'U2.3', 'C33.1', [0], 0.3);
+connect('PP1V8_S0', 'U1.K10', 'C52.1', [0, 2, 3], 0.3);
+connect('SPI_CLK', 'U2.12', 'U3.3', [0, 2, 0], 0.15);
+connect('SPI_CLK', 'U3.3', 'R2.2', [0], 0.15);
+connect('SPI_MOSI', 'U2.13', 'U3.5', [0, 3, 0], 0.15);
+connect('I2C_SDA', 'Q1.3', 'U3.6', [0], 0.15);
+connect('I2C_SDA', 'Q1.3', 'U1.A3', [0, 2, 0], 0.15);
+connect('XTAL_IN', 'Y1.2', 'U2.5', [0], 0.15);
+connect('XTAL_OUT', 'Y1.4', 'U2.6', [0], 0.15);
+connect('PPBUS', 'J1.1', 'L1.1', [0, 3, 0], 0.6);
+connect('PPBUS', 'J1.1', 'C1.1', [3, 3, 0], 0.6);
+connect('PPBUS', 'L1.1', 'C30.1', [0], 0.6);
+connect('PP3V3', 'L1.2', 'D1.A', [0], 0.5);
+connect('PP3V3', 'D1.A', 'D2.2', [0], 0.3);
+connect('PP3V3', 'L1.2', 'U5.4', [0, 2, 3], 0.3);
+connect('PP3V3', 'U5.4', 'R20.1', [3], 0.2);
+connect('LED_EN', 'Q2.1', 'D2.1', [0, 3, 0], 0.15);
+connect('USB_D_P', 'J1.2', 'U1.A1', [0, 2, 0], 0.18);
+connect('USB_D_N', 'J1.3', 'U1.B1', [0, 2, 0], 0.18);
+for (const k of ['C10.2', 'C11.2', 'C13.2', 'C14.2', 'C30.2', 'C31.2', 'C1.2', 'U3.4', 'Q1.2', 'J1.4', 'Y1.1', 'U2.EP', 'C50.2', 'C51.2'])
+  stitch('GND', k, 0.6 * (rand() > 0.5 ? 1 : -1), 0.6);
+// decor buses: parallel 45° buses on L3 and L4 (and some on L1)
+function bus(layer, x0, z0, moves, count, pitch, w, prefix) {
+  for (let i = 0; i < count; i++) {
+    const n = net(`${prefix}${i}`); let p = { x: x0, z: z0 + i * pitch }; const pts = [p];
+    for (const [dx, dz] of moves) { const off = dz && dx ? i * pitch * 0.41 * Math.sign(dx) : 0; p = { x: p.x + dx - off, z: p.z + dz }; pts.push(p); }
+    addPath(n, pts, layer, w); n.source = null; n.start = pts[0];
+  }
+}
+bus(2, -20, -15, [[14, 0], [6, 6], [14, 0], [4, -4], [5, 0]], 6, 0.6, 0.2, 'DDR_DQ');
+bus(2, -22, 4, [[10, 0], [5, -5], [12, 0]], 4, 0.6, 0.2, 'PCIE_');
+bus(3, -20, 6, [[16, 0], [5, 5], [18, 0]], 5, 0.7, 0.2, 'DP_');
+bus(3, -10, -15, [[0, 6], [6, 6], [14, 0]], 4, 0.6, 0.18, 'EDP_');
+bus(0, 13, -16, [[6, 0], [3, 3], [2, 0]], 3, 0.5, 0.15, 'GPIO');
+bus(3, 0, -13, [[12, 0], [6, 6]], 3, 0.6, 0.2, 'AUD_');
+
+// net index & distance field (Dijkstra from the source over segments + vias)
+const netNames = [...nets.keys()];
+const netId = new Map(netNames.map((n, i) => [n, i]));
+const LAYER_GAP = [0.533, 0.534, 0.533];
+const nodeKey = (layer, p) => `${layer}:${Math.round(p.x * 100)}:${Math.round(p.z * 100)}`;
+function distanceField(n, sourceKey) {
+  const adj = new Map(); const add = (a, b, w) => { (adj.get(a) || adj.set(a, []).get(a)).push([b, w]); (adj.get(b) || adj.set(b, []).get(b)).push([a, w]); };
+  for (const s of n.segs) add(nodeKey(s.layer, s.a), nodeKey(s.layer, s.b), Math.hypot(s.b.x - s.a.x, s.b.z - s.a.z));
+  for (const v of n.vias) for (let L = 0; L < 3; L++) add(nodeKey(L, v), nodeKey(L + 1, v), LAYER_GAP[L]);
+  for (const k of n.pins) { const p = pins.get(k); if (p.layer === 'tht') for (let L = 0; L < 3; L++) add(nodeKey(L, p), nodeKey(L + 1, p), LAYER_GAP[L]); }
+  const dist = new Map(); let start;
+  if (sourceKey) { const p = pins.get(sourceKey); start = nodeKey(p.layer === 'tht' ? 0 : p.layer, p); }
+  else if (n.start) start = nodeKey(n.segs[0].layer, n.start);
+  else return dist;
+  dist.set(start, 0); const q = [[0, start]];
+  while (q.length) {
+    q.sort((a, b) => a[0] - b[0]); const [d, u] = q.shift(); if (d > dist.get(u)) continue;
+    for (const [v, w] of adj.get(u) || []) { const nd = d + w; if (nd < (dist.get(v) ?? Infinity)) { dist.set(v, nd); q.push([nd, v]); } }
+  }
+  return dist;
+}
+
+// ───── trace shader ─────
+const sigUniforms = {
+  uTime: { value: 0 }, uSpeed: { value: 3 }, uMode: { value: 1 }, uActive: { value: -1 }, uDim: { value: 0.75 },
+  uPeriod: { value: 1.1 }, uSkew: { value: 2.2 }, uHot: { value: new THREE.Color(0xffa400) }, uHot2: { value: new THREE.Color(0xfff6b0) },
+};
+const vert = `
+attribute float aDist; attribute float aSide; attribute float aWidth; attribute float aNet;
+varying float vDist; varying float vSide; varying float vWidth; varying float vNet;
+void main(){ vDist=aDist; vSide=aSide; vWidth=aWidth; vNet=aNet; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`;
+const fragCommon = `
+uniform float uTime,uSpeed,uMode,uActive,uDim,uPeriod,uSkew; uniform vec3 uHot,uHot2;
+varying float vDist; varying float vSide; varying float vWidth; varying float vNet;
+float band(float f){ return smoothstep(0.0,0.06,f)*(1.0-smoothstep(0.48,0.54,f)); }
+vec3 signal(){
+  float d = vDist - uTime*uSpeed;
+  if (uMode < 0.5) return uHot2*0.9 + uHot*0.25;
+  if (uMode < 1.5) { float s = band(fract(d/uPeriod)); return mix(uHot*0.42, uHot2*1.25, s); }
+  if (uMode < 2.5) { float s = band(fract((d + vSide*vWidth*uSkew)/(uPeriod*0.8))); return mix(uHot*0.30, uHot2*1.3, s); }
+  float f = fract(d/(uPeriod*5.0)); return uHot*0.35 + uHot2*pow(f,7.0)*1.7;
+}
+bool isActive(){ return uActive >= 0.0 && abs(vNet-uActive) < 0.5; }`;
+function traceMaterial(color, opacity = 1) {
+  return new THREE.ShaderMaterial({
+    uniforms: { ...sigUniforms, uBase: { value: new THREE.Color(color) }, uOpacity: { value: opacity } },
+    vertexShader: vert, transparent: true, depthWrite: true, side: THREE.DoubleSide,
+    fragmentShader: fragCommon + `
+uniform vec3 uBase; uniform float uOpacity;
+void main(){
+  vec3 c = uBase; float a = uOpacity;
+  if (uActive >= 0.0 && !isActive()) { c = mix(uBase, vec3(0.06,0.07,0.08), uDim); a *= 1.0 - uDim*0.55; }
+  if (isActive()) { c = signal(); a = 1.0; }
+  gl_FragColor = vec4(c, a);
+  #include <colorspace_fragment>
+}`,
+  });
+}
+const glowMaterial = new THREE.ShaderMaterial({
+  uniforms: sigUniforms, vertexShader: vert, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+  fragmentShader: fragCommon + `
+void main(){ if (!isActive()) discard; float f = 1.0 - abs(vSide)*2.0; f = f*f; gl_FragColor = vec4(signal()*f*0.55, 1.0);
+  #include <colorspace_fragment>
+}`,
+});
+// dist cache: per net, current source
+const distCache = new Map();
+function netDist(name) {
+  const n = nets.get(name); const src = n.activeSource ?? n.source; const key = name + '|' + src;
+  if (!distCache.has(key)) distCache.set(key, distanceField(n, src));
+  return distCache.get(key);
+}
+// Build ribbons per layer; widthScale > 1 for the glow mesh.
+function buildTraceGeometry(layer, widthScale = 1) {
+  const pos = [], dist = [], side = [], width = [], nid = [];
+  const pushV = (x, z, d, s, w, id) => { pos.push(x, 0, z); dist.push(d); side.push(s); width.push(w); nid.push(id); };
+  for (const [name, n] of nets) {
+    const id = netId.get(name); const df = netDist(name);
+    for (const s of n.segs) {
+      if (s.layer !== layer) continue;
+      const w = s.w * widthScale; const dx = s.b.x - s.a.x, dz = s.b.z - s.a.z; const len = Math.hypot(dx, dz) || 1;
+      const nx = -dz / len * w / 2, nz = dx / len * w / 2;
+      let da = df.get(nodeKey(layer, s.a)), db = df.get(nodeKey(layer, s.b));
+      if (da === undefined || db === undefined) { da = 0; db = len; }
+      const q = [[s.a.x + nx, s.a.z + nz, da, 0.5], [s.a.x - nx, s.a.z - nz, da, -0.5], [s.b.x + nx, s.b.z + nz, db, 0.5], [s.b.x - nx, s.b.z - nz, db, -0.5]];
+      for (const i of [0, 1, 2, 2, 1, 3]) pushV(q[i][0], q[i][1], q[i][2], q[i][3], s.w, id);
+      for (const [p, d] of [[s.a, da], [s.b, db]]) for (let k = 0; k < 10; k++) {   // round joints
+        const a0 = k / 10 * Math.PI * 2, a1 = (k + 1) / 10 * Math.PI * 2;
+        pushV(p.x, p.z, d, 0, s.w, id); pushV(p.x + Math.cos(a0) * w / 2, p.z + Math.sin(a0) * w / 2, d, widthScale > 1 ? 0.5 : 0, s.w, id); pushV(p.x + Math.cos(a1) * w / 2, p.z + Math.sin(a1) * w / 2, d, widthScale > 1 ? 0.5 : 0, s.w, id);
+      }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('aDist', new THREE.Float32BufferAttribute(dist, 1));
+  g.setAttribute('aSide', new THREE.Float32BufferAttribute(side, 1));
+  g.setAttribute('aWidth', new THREE.Float32BufferAttribute(width, 1));
+  g.setAttribute('aNet', new THREE.Float32BufferAttribute(nid, 1));
+  return g;
+}
+const traceMeshes = [], glowMeshes = [];
+for (let L = 0; L < 4; L++) {
+  const m = new THREE.Mesh(buildTraceGeometry(L), traceMaterial(LAYER_COLORS[L], L === 0 ? 0.95 : 0.9));
+  m.position.y = L === 3 ? -0.012 : 0.012; m.renderOrder = 2; m.userData.layer = L; layerGroups[L].add(m); traceMeshes.push(m); pickables.push(m);
+  const gl = new THREE.Mesh(buildTraceGeometry(L, 5), glowMaterial); gl.position.y = m.position.y * 1.5; gl.renderOrder = 3; layerGroups[L].add(gl); glowMeshes.push(gl);
+}
+function rebuildDist() {
+  for (let L = 0; L < 4; L++) {
+    const a = buildTraceGeometry(L), b = buildTraceGeometry(L, 5);
+    traceMeshes[L].geometry.dispose(); traceMeshes[L].geometry = a; glowMeshes[L].geometry.dispose(); glowMeshes[L].geometry = b;
+  }
+  buildVias();
+}
+
+// ───── vias: merged barrels with the same shader, rings per layer ─────
+const allVias = []; for (const [name, n] of nets) for (const v of n.vias) allVias.push({ ...v, net: name });
+let viaMesh = null; const viaMat = traceMaterial(0xc9a36a, 1);
+function buildVias() {
+  const pos = [], dist = [], side = [], width = [], nid = [], idx = []; let base = 0;
+  for (const v of allVias) {
+    const df = netDist(v.net); const dTop = df.get(nodeKey(0, v)) ?? 0, dBot = df.get(nodeKey(3, v)) ?? 1.6;
+    const r = 0.17, seg = 14;
+    for (let j = 0; j <= 1; j++) for (let k = 0; k <= seg; k++) {
+      const a = k / seg * Math.PI * 2; pos.push(v.x + Math.cos(a) * r, 0.5 - j, v.z + Math.sin(a) * r);
+      dist.push(j ? dBot : dTop); side.push(k / seg - 0.5); width.push(2 * Math.PI * r); nid.push(netId.get(v.net));
+    }
+    for (let k = 0; k < seg; k++) { const a = base + k, b = base + k + 1, c = base + seg + 1 + k, d = c + 1; idx.push(a, c, b, b, c, d); }
+    base += (seg + 1) * 2;
+  }
+  const g = new THREE.BufferGeometry(); g.setIndex(idx);
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('aDist', new THREE.Float32BufferAttribute(dist, 1)); g.setAttribute('aSide', new THREE.Float32BufferAttribute(side, 1));
+  g.setAttribute('aWidth', new THREE.Float32BufferAttribute(width, 1)); g.setAttribute('aNet', new THREE.Float32BufferAttribute(nid, 1));
+  if (viaMesh) { viaMesh.geometry.dispose(); viaMesh.geometry = g; } else { viaMesh = new THREE.Mesh(g, viaMat); boardScene.add(viaMesh); pickables.push(viaMesh); }
+}
+buildVias();
+const ringGeo = new THREE.RingGeometry(0.17, 0.32, 18); ringGeo.rotateX(-Math.PI / 2);
+const ringMeshes = [0, 1, 2, 3].map(L => {
+  const inst = new THREE.InstancedMesh(ringGeo, new THREE.MeshBasicMaterial({ color: LAYER_COLORS[L], side: THREE.DoubleSide }), allVias.length);
+  const m4 = new THREE.Matrix4(); allVias.forEach((v, i) => { m4.makeTranslation(v.x, L === 3 ? -0.014 : 0.014, v.z); inst.setMatrixAt(i, m4); });
+  inst.userData.vias = allVias; layerGroups[L].add(inst); return inst;
+});
+
+// ───── pads (instanced per layer) ─────
+const padMeshes = [0, 1, 2, 3].map(L => {
+  const list = padInst.filter(p => p.layer === L);
+  const rect = list.filter(p => !p.round), round = list.filter(p => p.round);
+  const mk = (geo, arr) => {
+    const inst = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({ color: 0xd9b25a, metalness: 0.85, roughness: 0.35 }), Math.max(arr.length, 1));
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
+    arr.forEach((p, i) => { e.set(0, p.angle, 0); q.setFromEuler(e); m4.compose(new THREE.Vector3(p.x, L === 3 ? -0.02 : 0.02, p.z), q, new THREE.Vector3(p.w, 1, p.round ? p.w : p.d)); inst.setMatrixAt(i, m4); inst.setColorAt(i, new THREE.Color(0xd9b25a)); });
+    inst.count = arr.length; inst.userData.pads = arr; inst.receiveShadow = true; layerGroups[L].add(inst); pickables.push(inst); return inst;
+  };
+  const rg = new THREE.BoxGeometry(1, 0.035, 1), cg = new THREE.CylinderGeometry(0.5, 0.5, 0.035, 20);
+  return [mk(rg, rect), mk(cg, round)];
+}).flat();
+
+// ───── board body, sheets, GND pour ─────
+const slabGeo = new THREE.ExtrudeGeometry(boardShape(), { depth: 1.6, bevelEnabled: false, curveSegments: 24 });
+slabGeo.rotateX(-Math.PI / 2); slabGeo.translate(0, -0.8, 0);
+const slabMats = [M.mask.clone(), M.fr4.clone()];
+const slab = new THREE.Mesh(slabGeo, slabMats); slab.receiveShadow = true; boardScene.add(slab);
+const sheetGeo = new THREE.ShapeGeometry(boardShape(), 24); sheetGeo.rotateX(-Math.PI / 2);
+const sheets = [0, 1, 2, 3].map(L => { const m = new THREE.Mesh(sheetGeo, new THREE.MeshBasicMaterial({ color: 0x9c8a55, transparent: true, opacity: 0.1, depthWrite: false, side: THREE.DoubleSide })); m.position.y = L === 3 ? 0.02 : -0.03; layerGroups[L].add(m); return m; });
+const gndHoles = allVias.filter(v => v.net !== 'GND').map(v => [v.x, v.z, 0.45]);
+const pourGeo = new THREE.ShapeGeometry(boardShape(0.025, gndHoles), 24); pourGeo.rotateX(-Math.PI / 2);
+const pourMat = new THREE.MeshBasicMaterial({ color: LAYER_COLORS[1], transparent: true, opacity: 0.3, depthWrite: false, side: THREE.DoubleSide });
+const pour = new THREE.Mesh(pourGeo, pourMat); pour.position.y = 0.004; layerGroups[1].add(pour);
+
+// evidence overlay boxes
+const evBoxes = new THREE.Group(); boardScene.add(evBoxes);
+for (const p of P) {
+  const bb = new THREE.Box3().setFromObject(p.model.group); if (bb.isEmpty()) continue;
+  const size = bb.getSize(new THREE.Vector3()).addScalar(0.25), c = bb.getCenter(new THREE.Vector3());
+  const m = new THREE.Mesh(new THREE.BoxGeometry(size.x, Math.max(size.y, 0.3), size.z), new THREE.MeshBasicMaterial({ color: EV[p.ev], transparent: true, opacity: 0.38, depthWrite: false }));
+  m.position.copy(c); m.userData.part = p; m.userData.side = p.side; evBoxes.add(m);
+}
+evBoxes.visible = false;
+
+// ───────────────────────────── state & layout ─────────────────────────────
+const S = { tab: 'parts', mode: 'multi', explode: 0, xray: false, layers: [true, true, true, true], parts: true, active: null, ev: false };
+const layerY = i => LAYER_BASE[i] * (1 + S.explode * 8);
+function applyLayout() {
+  const multi = S.mode === 'multi';
+  for (let L = 0; L < 4; L++) {
+    layerGroups[L].position.y = layerY(L) + (L === 0 ? 0.005 : L === 3 ? -0.005 : 0);
+    const inner = L === 1 || L === 2;
+    layerGroups[L].visible = S.layers[L] && (multi || !inner);
+    traceMeshes[L].visible = glowMeshes[L].visible = ringMeshes[L].visible = multi;
+    sheets[L].visible = multi && (S.explode > 0.02 || S.xray);
+  }
+  pour.visible = multi;
+  topParts.position.y = layerY(0) + 0.04; botParts.position.y = layerY(3) - 0.04;
+  topParts.visible = botParts.visible = S.parts;
+  evBoxes.visible = S.ev && S.parts;
+  evBoxes.children.forEach(b => { b.position.y = b.userData.side === 'top' ? b.userData.y0 + topParts.position.y : -b.userData.y0 + botParts.position.y; });
+  if (viaMesh) { viaMesh.visible = multi; viaMesh.scale.y = layerY(0) - layerY(3) + 0.03; }
+  const exploded = multi && S.explode > 0.02;
+  slab.visible = !exploded;
+  const see = S.xray && multi;
+  slabMats.forEach(m => { m.transparent = see; m.opacity = see ? 0.28 : 1; m.depthWrite = !see; m.needsUpdate = true; });
+}
+evBoxes.children.forEach(b => { b.userData.y0 = b.userData.side === 'top' ? b.position.y : -b.position.y; });
+
+// ───────────────────────────── controls / cameras ─────────────────────────────
+const gCtl = new OrbitControls(gCam, canvas); gCtl.target.set(0, 0, -1.5); gCtl.enableDamping = true;
+const bCtl = new OrbitControls(bCam, canvas); bCtl.enableDamping = true; bCtl.enabled = false;
+const camViews = { iso: [[-30, 38, 48], [0, 0, 0]], top: [[0, 62, 0.01], [0, 0, 0]], bottom: [[0, -62, 0.01], [0, 0, 0]], edge: [[0, 4, 62], [0, 0, 0]] };
+let camAnim = null;
+function goCam(v) { const [p, t] = camViews[v]; camAnim = { from: bCam.position.clone(), to: new THREE.Vector3(...p), t0: performance.now(), tf: bCtl.target.clone(), tt: new THREE.Vector3(...t) }; }
+bCam.position.set(...camViews.iso[0]);
+
+function resize() {
+  const el = document.getElementById('view'); const w = el.clientWidth, h = el.clientHeight;
+  renderer.setSize(w, h, false); gCam.aspect = bCam.aspect = w / h; gCam.updateProjectionMatrix(); bCam.updateProjectionMatrix();
+  const c2 = document.getElementById('c2d'); c2.width = w * devicePixelRatio; c2.height = h * devicePixelRatio;
+}
+addEventListener('resize', resize);
+
+// ───────────────────────────── UI wiring ─────────────────────────────
+const $ = s => document.querySelector(s);
+const seg = (sel, fn) => $(sel).addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; $(sel).querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); fn(b.dataset.v); });
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const sigctl = $('#sigctl');
+function setTab(t) {
+  S.tab = t;
+  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
+  document.querySelectorAll('.panel-tab').forEach(p => p.classList.toggle('on', p.dataset.panel === t));
+  if (t === 'board') $('#sigctl-board').appendChild(sigctl); else if (t === 'sig2d') $('#sigctl-2d').appendChild(sigctl);
+  sigctl.style.display = t === 'parts' ? 'none' : '';
+  gCtl.enabled = t === 'parts'; bCtl.enabled = t === 'board';
+  $('#c3d').style.display = t === 'sig2d' ? 'none' : 'block';
+  $('#c2d').style.display = t === 'sig2d' ? 'block' : 'none';
+  $('#labels').style.display = t === 'parts' ? '' : 'none';
+  $('#hint').textContent = t === 'sig2d' ? 'Wheel to zoom · drag to pan · click a trace to light its net' : t === 'board' ? 'Drag to orbit · right-drag to pan · click a pin, trace or via' : 'Drag to orbit · right-drag to pan · wheel to zoom';
+  $('#tip').style.display = 'none';
+}
+document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
+sigctl.style.display = 'none';
+$('#g-pads').onchange = e => galleryPadGroups.forEach(g => (g.visible = e.target.checked));
+$('#g-grid').onchange = e => (grid.visible = e.target.checked);
+seg('#b-mode', v => { S.mode = v; $('#b-mode-note').textContent = v === 'multi' ? 'KiCad · Allegro · Altium · EAGLE · TVW · GenCAD: copper per layer, vias, pours.' : 'BVR · BRD · BDV · FZ · XZZ: pins and parts only. The board is a slab; parts are estimated. Nets light pins only — there is no copper to animate.'; $('#b-explode').disabled = v !== 'multi'; applyLayout(); });
+$('#b-explode').oninput = e => { S.explode = +e.target.value; applyLayout(); };
+$('#b-xray').onchange = e => { S.xray = e.target.checked; applyLayout(); };
+$('#b-parts').onchange = e => { S.parts = e.target.checked; applyLayout(); };
+$('#b-ev').onchange = e => { S.ev = e.target.checked; applyLayout(); };
+$('#b-layers').addEventListener('change', e => { const l = e.target.dataset.l; if (l !== undefined) { S.layers[+l] = e.target.checked; applyLayout(); } });
+seg('#b-cam', goCam);
+seg('#fx', v => (sigUniforms.uMode.value = +v));
+$('#fx-speed').oninput = e => (sigUniforms.uSpeed.value = +e.target.value);
+$('#fx-dim').oninput = e => (sigUniforms.uDim.value = +e.target.value);
+$('#fx-glow').onchange = e => glowMeshes.forEach(g => (g.material.visible = e.target.checked));
+$('#fx-dir').onchange = () => { dirOn = $('#fx-dir').checked; distCache.clear(); for (const n of nets.values()) n.activeSource = undefined; rebuildDist(); };
+let dirOn = true;
+if (reduceMotion) { sigUniforms.uMode.value = 0; $('#fx').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === '0')); }
+seg('#s-units', v => (S2.units = v));
+
+const realNets = netNames.filter(n => !/^(DDR_DQ|PCIE_|DP_|EDP_|GPIO|AUD_)/.test(n));
+for (const sel of ['#b-net', '#s-net']) {
+  const el = $(sel); el.innerHTML = '<option value="">— none —</option>' + realNets.map(n => `<option>${n}</option>`).join('') + '<optgroup label="Buses">' + netNames.filter(n => !realNets.includes(n)).map(n => `<option>${n}</option>`).join('') + '</optgroup>';
+  el.onchange = () => setActive(el.value || null);
+}
+function setActive(name, sourcePin) {
+  S.active = name; sigUniforms.uActive.value = name ? netId.get(name) : -1;
+  if (name && sourcePin && dirOn && nets.get(name).pins.includes(sourcePin) && nets.get(name).activeSource !== sourcePin) { nets.get(name).activeSource = sourcePin; rebuildDist(); }
+  $('#b-net').value = $('#s-net').value = name || '';
+  // pads
+  for (const inst of padMeshes) inst.userData.pads.forEach((p, i) => inst.setColorAt(i, new THREE.Color(name && netOf.get(p.key) === name ? 0xffd04a : name ? 0x6b5a32 : 0xd9b25a)));
+  padMeshes.forEach(m => m.instanceColor && (m.instanceColor.needsUpdate = true));
+  pourMat.opacity = name === 'GND' ? 0.55 : name ? 0.12 : 0.3;
+  pourMat.color.set(name === 'GND' ? 0xffb000 : LAYER_COLORS[1]);
+}
+
+// picking
+const ray = new THREE.Raycaster(); const mouse = new THREE.Vector2(); const tip = $('#tip');
+function pick(e, cam, list) {
+  const r = canvas.getBoundingClientRect(); mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(mouse, cam); return ray.intersectObjects(list.filter(o => { let v = o; while (v) { if (!v.visible) return false; v = v.parent; } return true; }), false)[0];
+}
+function describeHit(h) {
+  const o = h.object;
+  if (o.userData.pads && h.instanceId !== undefined) { const p = o.userData.pads[h.instanceId]; const n = netOf.get(p.key); return { html: `<b>${p.key}</b> · pad ${p.round ? 'Ø' + p.w.toFixed(2) : p.w.toFixed(2) + '×' + p.d.toFixed(2)} mm<br>net ${n ?? '—'}`, net: n, src: p.key }; }
+  if (o === viaMesh) { const v = allVias[Math.floor(h.face.a / 30)]; return v ? { html: `Via · net <b>${v.net}</b>`, net: v.net } : null; }
+  if (o.userData.layer !== undefined && o.geometry.attributes.aNet) { const n = netNames[o.geometry.attributes.aNet.getX(h.face.a)]; return { html: `Trace on L${o.userData.layer + 1} · net <b>${n}</b>`, net: n }; }
+  const p = o.userData.part;
+  if (p) return { html: `<b>${p.ref}</b> · ${p.model.label} <span class="ev">(${p.side})</span><br>${p.model.dims}<br><span class="ev">sized by ${p.ev === 'pkg' ? 'package name' : p.ev === 'geom' ? 'pin geometry' : 'fallback'}: ${p.why}</span>`, part: p };
+  return null;
+}
+let hoverQueued = null;
+canvas.addEventListener('pointermove', e => { hoverQueued = e; });
+function doHover() {
+  const e = hoverQueued; hoverQueued = null; if (!e) return;
+  if (S.tab === 'parts') {
+    const h = pick(e, gCam, galleryPick); const it = h?.object.userData.item;
+    showTip(e, it ? `<b>${it.label}</b><br>${it.dims}<br><span class="ev">${it.pads.length} pad${it.pads.length === 1 ? '' : 's'}</span>` : null);
+  } else if (S.tab === 'board') {
+    const h = pick(e, bCam, pickables.concat(S.ev ? evBoxes.children : [])); showTip(e, h ? describeHit(h)?.html : null);
+  }
+}
+function showTip(e, html) {
+  if (!html) { tip.style.display = 'none'; return; }
+  const r = $('#view').getBoundingClientRect(); tip.innerHTML = html; tip.style.display = 'block';
+  tip.style.left = Math.min(e.clientX - r.left + 14, r.width - 330) + 'px'; tip.style.top = (e.clientY - r.top + 14) + 'px';
+}
+let downAt = null;
+canvas.addEventListener('pointerdown', e => (downAt = [e.clientX, e.clientY]));
+canvas.addEventListener('pointerup', e => {
+  if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5 || S.tab !== 'board') return;
+  const h = pick(e, bCam, pickables); const d = h && describeHit(h);
+  if (d?.net) setActive(d.net, d.src);
+  else if (d?.part) { const k = [...pins.keys()].find(k => k.startsWith(d.part.ref + '.') && netOf.get(k)); setActive(k ? netOf.get(k) : null, k); }
+  else setActive(null);
+});
+canvas.addEventListener('pointerleave', () => (tip.style.display = 'none'));
+
+// gallery labels
+const labelsEl = $('#labels');
+const labelEls = galleryLabels.map(l => { const d = document.createElement('div'); d.className = l.row ? 'rowlb' : 'lb'; d.textContent = l.text; labelsEl.appendChild(d); return d; });
+function placeLabels() {
+  const w = canvas.clientWidth, h = canvas.clientHeight; const v = new THREE.Vector3();
+  galleryLabels.forEach((l, i) => { v.copy(l.pos).project(gCam); const el = labelEls[i]; if (v.z > 1) { el.style.display = 'none'; return; } el.style.display = ''; el.style.left = ((v.x + 1) / 2 * w) + 'px'; el.style.top = ((1 - v.y) / 2 * h) + 'px'; });
+}
+
+// ───────────────────────────── 2D signal view (Canvas2D overlay technique) ─────────────────────────────
+const c2 = $('#c2d'); const ctx = c2.getContext('2d');
+const S2 = { scale: 16, ox: 0, oy: 0, units: 'screen' };
+const toS = (x, z) => [c2.width / 2 + (x * S2.scale + S2.ox) * devicePixelRatio, c2.height / 2 + (z * S2.scale + S2.oy) * devicePixelRatio];
+const css = n => '#' + n.toString(16).padStart(6, '0');
+function draw2D(t) {
+  const dpr = devicePixelRatio; const k = S2.scale * dpr;
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#0d0f12'; ctx.fillRect(0, 0, c2.width, c2.height);
+  // board
+  ctx.beginPath(); OUTLINE.forEach(([x, z], i) => { const [sx, sy] = toS(x, z); i ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy); }); ctx.closePath();
+  ctx.fillStyle = '#16191d'; ctx.fill(); ctx.strokeStyle = '#e5d36a'; ctx.lineWidth = 1.2 * dpr; ctx.stroke();
+  // static scene: all traces in layer colours (this is the part the WebGL renderer already draws)
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (const L of [3, 2, 1, 0]) for (const n of nets.values()) for (const s of n.segs) if (s.layer === L) {
+    ctx.strokeStyle = css(LAYER_COLORS[L]); ctx.globalAlpha = L === 0 ? 0.9 : 0.55; ctx.lineWidth = Math.max(s.w * k, 1);
+    ctx.beginPath(); ctx.moveTo(...toS(s.a.x, s.a.z)); ctx.lineTo(...toS(s.b.x, s.b.z)); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  for (const p of padInst) { if (p.layer !== 0 && p.layer !== 3) continue; const [x, y] = toS(p.x, p.z); ctx.fillStyle = p.layer === 0 ? '#c9b26a' : '#5d7da8'; ctx.fillRect(x - p.w * k / 2, y - (p.round ? p.w : p.d) * k / 2, p.w * k, (p.round ? p.w : p.d) * k); }
+  for (const v of allVias) { const [x, y] = toS(v.x, v.z); ctx.fillStyle = '#c9a36a'; ctx.beginPath(); ctx.arc(x, y, 0.32 * k, 0, 7); ctx.fill(); ctx.fillStyle = '#0d0f12'; ctx.beginPath(); ctx.arc(x, y, 0.17 * k, 0, 7); ctx.fill(); }
+  if (!S.active) return;
+  // ── overlay: everything below is what the new per-frame overlay canvas would draw ──
+  const dim = sigUniforms.uDim.value; ctx.fillStyle = `rgba(8,9,11,${dim * 0.82})`; ctx.fillRect(0, 0, c2.width, c2.height);
+  const n = nets.get(S.active); const df = netDist(S.active);
+  const unit = S2.units === 'screen' ? dpr : k / 16;     // px per "dash unit"
+  const period = 18 * unit, speed = sigUniforms.uSpeed.value * 6 * unit, mode = sigUniforms.uMode.value;
+  const glow = glowMeshes[0].material.visible;
+  const hot = '#ffa400', hot2 = '#fff6b0';
+  const segsOn = n.segs.map(s => ({ s, da: df.get(nodeKey(s.layer, s.a)) ?? 0, db: df.get(nodeKey(s.layer, s.b)) ?? 0 }));
+  for (const { s } of segsOn) {   // base + glow
+    const w = Math.max(s.w * k, 2 * dpr);
+    if (glow) { ctx.strokeStyle = 'rgba(255,170,0,0.22)'; ctx.lineWidth = w + 9 * dpr; ctx.beginPath(); ctx.moveTo(...toS(s.a.x, s.a.z)); ctx.lineTo(...toS(s.b.x, s.b.z)); ctx.stroke(); }
+    ctx.strokeStyle = mode === 0 ? hot2 : 'rgba(255,164,0,0.55)'; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(...toS(s.a.x, s.a.z)); ctx.lineTo(...toS(s.b.x, s.b.z)); ctx.stroke();
+  }
+  if (mode !== 0) for (const { s, da, db } of segsOn) {
+    const [ax, ay] = toS(s.a.x, s.a.z), [bx, by] = toS(s.b.x, s.b.z); const len = Math.hypot(bx - ax, by - ay); if (len < 0.5) continue;
+    const ux = (bx - ax) / len, uy = (by - ay) / len; const w = Math.max(s.w * k, 2 * dpr);
+    // distance along path in screen units at each end (direction-aware)
+    const pa = da * k, pb = db * k; const dir = pb >= pa ? 1 : -1;
+    const phase = t * speed;
+    if (mode === 1 || mode === 2) {
+      const skew = mode === 2 ? w * 1.1 : 0; const per = mode === 2 ? period * 0.8 : period;
+      ctx.fillStyle = hot2;
+      // dash i covers path distance [i*per + phase, i*per + phase + per/2]
+      const lo = Math.min(pa, pb), hi = Math.max(pa, pb);
+      for (let i = Math.floor((lo - phase) / per) - 1; i * per + phase < hi + per; i++) {
+        const d0 = Math.max(i * per + phase, lo), d1 = Math.min(i * per + phase + per / 2, hi); if (d1 <= d0) continue;
+        const s0 = dir > 0 ? d0 - pa : pa - d0, s1 = dir > 0 ? d1 - pa : pa - d1;
+        const nx = -uy * w / 2, ny = ux * w / 2, sk = skew * dir;
+        ctx.beginPath();
+        ctx.moveTo(ax + ux * (s0 + sk / 2) + nx, ay + uy * (s0 + sk / 2) + ny); ctx.lineTo(ax + ux * (s1 + sk / 2) + nx, ay + uy * (s1 + sk / 2) + ny);
+        ctx.lineTo(ax + ux * (s1 - sk / 2) - nx, ay + uy * (s1 - sk / 2) - ny); ctx.lineTo(ax + ux * (s0 - sk / 2) - nx, ay + uy * (s0 - sk / 2) - ny);
+        ctx.closePath(); ctx.fill();
+      }
+    } else {
+      const steps = Math.max(2, Math.ceil(len / (3 * dpr)));
+      for (let j = 0; j < steps; j++) {
+        const f0 = j / steps, f1 = (j + 1) / steps; const d = pa + (pb - pa) * (f0 + f1) / 2;
+        let f = ((d - phase) / (period * 5)) % 1; if (f < 0) f += 1; const a = Math.pow(f, 7);
+        if (a < 0.02) continue; ctx.strokeStyle = `rgba(255,246,176,${a})`; ctx.lineWidth = w; ctx.lineCap = 'butt';
+        ctx.beginPath(); ctx.moveTo(ax + (bx - ax) * f0, ay + (by - ay) * f0); ctx.lineTo(ax + (bx - ax) * f1, ay + (by - ay) * f1); ctx.stroke();
+      }
+      ctx.lineCap = 'round';
+    }
+  }
+  for (const v of n.vias) { const [x, y] = toS(v.x, v.z); ctx.fillStyle = hot2; ctx.beginPath(); ctx.arc(x, y, (0.36 + 0.05 * Math.sin(t * 4)) * k, 0, 7); ctx.fill(); ctx.fillStyle = '#3a2a00'; ctx.beginPath(); ctx.arc(x, y, 0.15 * k, 0, 7); ctx.fill(); }
+  for (const key of n.pins) { const p = pins.get(key); const [x, y] = toS(p.x, p.z); ctx.strokeStyle = hot2; ctx.lineWidth = 2 * dpr; ctx.beginPath(); ctx.arc(x, y, 0.7 * k, 0, 7); ctx.stroke(); }
+}
+let drag2 = null;
+c2.addEventListener('wheel', e => { e.preventDefault(); const f = Math.exp(-e.deltaY * 0.0015); const r = c2.getBoundingClientRect(); const mx = e.clientX - r.left - r.width / 2, my = e.clientY - r.top - r.height / 2; S2.ox = mx - (mx - S2.ox) * f; S2.oy = my - (my - S2.oy) * f; S2.scale *= f; }, { passive: false });
+c2.addEventListener('pointerdown', e => { drag2 = [e.clientX, e.clientY, S2.ox, S2.oy, e.clientX, e.clientY]; c2.setPointerCapture(e.pointerId); });
+c2.addEventListener('pointermove', e => { if (drag2) { S2.ox = drag2[2] + e.clientX - drag2[0]; S2.oy = drag2[3] + e.clientY - drag2[1]; } });
+c2.addEventListener('pointerup', e => {
+  const d = drag2; drag2 = null; if (!d || Math.hypot(e.clientX - d[4], e.clientY - d[5]) > 4) return;
+  const r = c2.getBoundingClientRect(); const x = (e.clientX - r.left - r.width / 2 - S2.ox) / S2.scale, z = (e.clientY - r.top - r.height / 2 - S2.oy) / S2.scale;
+  let best = null, bd = 0.8;
+  for (const [name, n] of nets) for (const s of n.segs) { const dx = s.b.x - s.a.x, dz = s.b.z - s.a.z; const t = Math.max(0, Math.min(1, ((x - s.a.x) * dx + (z - s.a.z) * dz) / (dx * dx + dz * dz || 1))); const dd = Math.hypot(x - s.a.x - dx * t, z - s.a.z - dz * t); if (dd < bd) { bd = dd; best = name; } }
+  setActive(best);
+});
+
+// ───────────────────────────── loop ─────────────────────────────
+resize(); applyLayout(); setActive('PP1V8_S0', 'U1.K10');
+const clock = new THREE.Clock();
+function frame() {
+  const t = clock.getElapsedTime(); sigUniforms.uTime.value = t;
+  doHover();
+  if (camAnim) {
+    const k = Math.min(1, (performance.now() - camAnim.t0) / 600), e = 1 - Math.pow(1 - k, 3);
+    bCam.position.lerpVectors(camAnim.from, camAnim.to, e); bCtl.target.lerpVectors(camAnim.tf, camAnim.tt, e); if (k >= 1) camAnim = null;
+  }
+  if (S.tab === 'parts') { gCtl.update(); renderer.render(gallery, gCam); placeLabels(); }
+  else if (S.tab === 'board') { bCtl.update(); renderer.render(boardScene, bCam); }
+  else draw2D(t);
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>
