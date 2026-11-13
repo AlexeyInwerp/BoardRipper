@@ -26,7 +26,7 @@ MIT/Apache-2.0/BSD.
 
 ## Supported Formats
 - **BVR1** — tab-delimited, absolute coords ×1000. Spec: `docs/formats/BVR_FORMAT.md`
-- **BVR3** — keyword-value, relative pin coords. Spec: `docs/formats/BVR_FORMAT.md`
+- **BVR3** — keyword-value; PIN_ORIGIN is relative to PART_ORIGIN *or* absolute, decided per file by a vote (`detectAbsolutePinCoords`: each non-zero-origin part's pin 1 votes for whichever reading puts it nearer its part; the old "every pin 1 exactly on its origin" rule read the Switch Lite logic board as relative and drew the pins at twice their coordinates, 2026-11-14). Spec: `docs/formats/BVR_FORMAT.md`
 - **BRD** — binary obfuscated boardview (Apple/Mac repair). Spec: `docs/formats/BRD_FORMAT.md`
 - **BDV** — plain-text boardview (BRDOUT/NETS/PARTS/PINS/NAILS sections). Spec: `docs/formats/BDV_FORMAT.md`
 - **BDV ASC** — Honhan / Tebo-ICT multi-section ASC. Two deliveries of one document: obfuscated single-file `.bdv` (line-key cipher, three sections) and plain `.asc` section files, of which the older deliveries ship **five** — `format`/`nails`/`pins` plus `parts` (rotation + package name) and `nets` (net listing). Clicking any one of them in the Library opens the whole board: `asc-siblings.ts` groups same-folder files by the stem left after stripping the section keyword, and `asc-open.ts` merges them through the one code path the `.bdv` already uses. The OS picker and drag-drop can't see the folder, so a lone section opens as-is plus a toast whose "Add sections…" button takes the rest. Spec: `docs/formats/BDV_ASC_FORMAT.md`, design: `docs/specs/2026-08-09-asc-multi-file-open-design.md`

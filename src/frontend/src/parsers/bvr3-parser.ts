@@ -5,15 +5,25 @@ import { log } from '../store/log-store';
 /**
  * Pre-scan to detect whether PIN_ORIGIN values are relative to PART_ORIGIN
  * or already absolute.  Many real-world BVR3 files (e.g. Apple boards) store
- * absolute pin positions even when PART_ORIGIN is non-zero.  We detect this
- * by looking at parts whose PART_ORIGIN is non-zero: if every such part's
- * first PIN_ORIGIN exactly equals its PART_ORIGIN the file uses absolute
- * coordinates and we must NOT add the origin offset.
+ * absolute pin positions even when PART_ORIGIN is non-zero.
+ *
+ * Each part with a non-zero PART_ORIGIN votes with its first pin: read as
+ * absolute, the pin sits at its distance from the part origin; read as
+ * relative, at its distance from (0,0). A pin belongs near its part, so the
+ * smaller of the two is the file's convention, and the majority decides.
+ *
+ * The earlier rule demanded that EVERY such part's first pin sit exactly on
+ * its origin — true for Apple exports, where pin 1 is the origin. The Switch
+ * Lite logic board (2026-11-14) stores absolute pins whose pin 1 is off the
+ * origin on all but 170 of 1272 parts; read as relative, the pins landed at
+ * twice their coordinates and the outline drew at a quarter of the board.
+ * Across 17 BVR3 files from the corpus the vote agrees with the old rule on
+ * every one, and puts all of the Switch Lite's pins inside its outline.
  */
-function detectAbsolutePinCoords(lines: string[]): boolean {
+export function detectAbsolutePinCoords(lines: string[]): boolean {
   let partOX = 0, partOY = 0;
   let nonZeroOriginParts = 0;
-  let matchCount = 0;
+  let absVotes = 0;
   let sawPin = false;
 
   for (const raw of lines) {
@@ -34,22 +44,20 @@ function detectAbsolutePinCoords(lines: string[]): boolean {
         const vals = val.split(/\s+/);
         const px = Number(vals[0]) || 0;
         const py = Number(vals[1]) || 0;
-        if (px === partOX && py === partOY) matchCount++;
+        if (Math.hypot(px - partOX, py - partOY) < Math.hypot(px, py)) absVotes++;
       }
     } else if (kw === 'PART_END') {
       partOX = 0; partOY = 0; sawPin = false;
     }
   }
 
-  // If every non-zero-origin part has first PIN_ORIGIN == PART_ORIGIN, coords are absolute.
-  // Partial match (some absolute, some not) falls through to relative mode — log a warning.
-  if (matchCount > 0 && matchCount < nonZeroOriginParts) {
-    log.parser.warn(
-      `Mixed coordinate convention detected: ${matchCount}/${nonZeroOriginParts} ` +
-      'non-zero-origin parts have PIN_ORIGIN == PART_ORIGIN. Falling back to relative mode.',
+  const absolute = nonZeroOriginParts > 0 && absVotes > nonZeroOriginParts / 2;
+  if (absVotes > 0 && absVotes < nonZeroOriginParts) {
+    log.parser.log(
+      `BVR3 pin coordinates: ${absVotes}/${nonZeroOriginParts} parts read as absolute → ${absolute ? 'absolute' : 'relative'}`,
     );
   }
-  return nonZeroOriginParts > 0 && matchCount === nonZeroOriginParts;
+  return absolute;
 }
 
 export function parseBVR3(text: string): BoardData {

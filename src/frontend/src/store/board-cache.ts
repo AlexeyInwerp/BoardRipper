@@ -141,7 +141,9 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 //     for placeholder pad geometry separately from part pins.
 // 103: XZZ files that draw only one half's outline get the other half's
 //     loop synthesised, so they fold as one board (iPad Pro 11 3rd gen).
-const PARSER_VERSION = 103;
+// 104: BVR3 pin coordinates absolute-vs-relative decided by a per-part
+//     vote, not "every pin 1 on its origin" (Switch Lite logic board).
+const PARSER_VERSION = 104;
 
 interface CachedBoard {
   key: string;
