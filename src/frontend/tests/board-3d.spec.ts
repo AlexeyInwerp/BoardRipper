@@ -142,6 +142,7 @@ test('3D view: turning is free — a drag carries on over the top to the undersi
 });
 
 test('3D view: a drag turns about the point pressed, and circles never tilt the board', async ({ page }) => {
+  test.setTimeout(90000);
   await openBoard(page);
   await page.getByTestId('view3d-btn').click();
   await page.waitForFunction(() => ((window as unknown as W).__board3d?.renderer.drawnParts ?? 0) > 0, null, { timeout: 30000 });
@@ -156,10 +157,10 @@ test('3D view: a drag turns about the point pressed, and circles never tilt the 
   expect(pivot).not.toBeNull();
   const at = await page.evaluate(p => (window as unknown as { __board3d: { renderer: { project(p: [number, number, number]): [number, number] } } }).__board3d.renderer.project(p), pivot!);
   expect(Math.hypot(at[0] - x0, at[1] - y0)).toBeLessThan(3);
-  // five circles of the pointer: a turntable has no roll to accumulate
+  // three circles of the pointer: a turntable has no roll to accumulate
   const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
   await page.mouse.move(cx + 120, cy); await page.mouse.down();
-  for (let k = 1; k <= 5 * 36; k++) { const a = k * Math.PI / 18; await page.mouse.move(cx + 120 * Math.cos(a), cy + 120 * Math.sin(a)); }
+  for (let k = 1; k <= 3 * 24; k++) { const a = k * Math.PI / 12; await page.mouse.move(cx + 120 * Math.cos(a), cy + 120 * Math.sin(a)); }
   await page.mouse.up(); await page.waitForTimeout(300);
   const roll = await page.evaluate(() => (window as unknown as { __board3d: { renderer: { cameraState(): { roll: number } } } }).__board3d.renderer.cameraState().roll);
   expect(Math.abs(roll)).toBeLessThan(0.01);

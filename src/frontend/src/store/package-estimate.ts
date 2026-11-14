@@ -223,6 +223,7 @@ export function parsePackageName(name: string, ref: string): PkgHint | null {
   if (m) return { family: 'son', dims: { L: +m[2], W: +m[3], H: 0.55 }, label: `SON-${m[1]} ${m[2]}×${m[3]}` };
   m = n.match(/CRYSTAL[_-]?(\d+(?:\.\d+)?)X(\d+(?:\.\d+)?)/);
   if (m) return { family: 'crystal', dims: { L: +m[1], W: +m[2], H: 0.8 }, label: `crystal ${m[1]}×${m[2]}` };
+  if (/(?:^|[^A-Z])(?:FC|F|W|U|T)?BGA/.test(n)) return { family: 'bga', label: 'BGA' };
   if (/TACTILE.*RA|RA.*TACT|_RA_|RIGHT.?ANGLE/.test(n) && /BTN|SW|TACT|SPST/.test(n)) return { family: 'button-ra', label: 'right-angle tact switch' };
   if (/BTN|TACT|KMR|SPST|SWITCH/.test(n)) return { family: 'button', label: 'tact switch' };
   if (/JST.?SH|SM\d+B-SR/.test(n)) return { family: 'conn', size: 'JST SH', label: 'JST SH' };
@@ -484,6 +485,17 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
         const B = bboxOf(sl), p = mm(pitchOf(gx.map(c => c.c))), margin = Math.min(1.6, Math.max(0.4, p * 1.5)); // chip-scale packages end close to their outer balls
         return out({ family: 'bga', L: mm(B.x1 - B.x0) + margin, W: mm(B.y1 - B.y0) + margin, H: 1.2, cx: f.cx, cy: f.cy, rotDeg: wrap(f.deg), p: { cols: gx.length, rows: gy.length, pitch: p, balls: small.length } },
           `${small.length} balls on a ${gx.length}×${gy.length} grid @ ${p.toFixed(2)} → BGA`);
+      }
+    }
+    // A big ball field with several pitches (CPU/GPU) defeats the grid test; its density does not:
+    // n balls at nearest-neighbour pitch p cover about n·p² of the field.
+    {
+      const nn = nearestNeighbours(sloc).map(e => e.d).filter(Number.isFinite).sort((a, c) => a - c), pitch = nn[nn.length >> 1] ?? 0;
+      const B = bboxOf(sloc), area = (B.x1 - B.x0) * (B.y1 - B.y0);
+      if (hint?.family === 'bga' || (small.length >= 100 && area > 0 && small.length * pitch * pitch / area > 0.25)) {
+        const pm = mm(pitch), margin = Math.min(1.6, Math.max(0.4, pm * 1.5));
+        return out({ family: 'bga', L: mm(B.x1 - B.x0) + margin, W: mm(B.y1 - B.y0) + margin, H: 1.2, cx: f0.cx, cy: f0.cy, rotDeg: wrap(f0.deg), p: { pitch: pm, balls: small.length } },
+          `${small.length} balls in a dense field @ ~${pm.toFixed(2)} → BGA`);
       }
     }
     // fallback: body = pin box + margin, height guessed

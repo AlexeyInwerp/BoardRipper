@@ -118,7 +118,7 @@ export class Board3DRenderer {
     for (const h of m.holes) { const p = new THREE.Path(); p.absellipse(h.x, -h.z, h.rx, h.rz, 0, Math.PI * 2, true); shape.holes.push(p); }
     const slabGeo = new THREE.ExtrudeGeometry(shapes, { depth: T, bevelEnabled: false, curveSegments: 16 });
     slabGeo.rotateX(-Math.PI / 2); slabGeo.translate(0, -TOP, 0);
-    const slab = new THREE.Mesh(slabGeo, [new THREE.MeshStandardMaterial({ color: 0x0f1a13, roughness: 0.45 }), new THREE.MeshStandardMaterial({ color: 0x8a7d5c, roughness: 0.85 })]);
+    const slab = new THREE.Mesh(slabGeo, [new THREE.MeshStandardMaterial({ color: 0x09130d, roughness: 0.45 }), new THREE.MeshStandardMaterial({ color: 0x8a7d5c, roughness: 0.85 })]);
     // the slab must not shadow its own face: that was the speckle (shadow acne) over the whole board
     slab.receiveShadow = true; this.boardRoot.add(slab);
     const faceGeo = new THREE.ShapeGeometry(shapes, 16); faceGeo.rotateX(-Math.PI / 2);
@@ -134,8 +134,8 @@ export class Board3DRenderer {
     const cv = document.createElement('canvas'); cv.width = Math.ceil(m.width * ppm); cv.height = Math.ceil(m.height * ppm);
     const c = cv.getContext('2d')!;
     const U = (x: number) => (x + m.width / 2) * ppm, V = (z: number) => (z + m.height / 2) * ppm;
-    c.fillStyle = '#12261a'; c.fillRect(0, 0, cv.width, cv.height);
-    c.strokeStyle = '#1d3a28'; c.lineCap = 'round';
+    c.fillStyle = '#0a1710'; c.fillRect(0, 0, cv.width, cv.height); // darker mask: parts, lands and the lit net stand out
+    c.strokeStyle = '#13281b'; c.lineCap = 'round';
     for (const t of m.traces) if (t.side === side) { c.lineWidth = Math.max(1, t.w * ppm); c.beginPath(); c.moveTo(U(t.x1), V(t.z1)); c.lineTo(U(t.x2), V(t.z2)); c.stroke(); }
     c.fillStyle = '#c99a3c';
     for (const p of m.pads) {
@@ -154,9 +154,18 @@ export class Board3DRenderer {
     return tex;
   }
 
+  /** Large bodies that stand over their own pins (BGAs, QFNs, connectors…) are kept as their own
+   *  meshes with their own materials, so they can turn see-through when zoomed into or selected. */
+  private static seeThrough(e: Board3DPart['est']): boolean {
+    const area = e.L * e.W;
+    return area >= 12 || (area >= 4 && ['bga', 'qfn', 'son', 'b2b', 'conn', 'usb-c', 'soic'].includes(e.family));
+  }
+  private xray: { index: number; group: THREE.Group; mats: THREE.MeshStandardMaterial[]; centre: THREE.Vector3; radius: number; opacity: number }[] = [];
+
   private buildParts(m: Board3DModel): void {
-    const tmp = new THREE.Group();
+    const shared = new THREE.Group();
     const pickMat = new THREE.MeshBasicMaterial();
+    this.xray = [];
     for (const part of m.parts) {
       const e = part.est; if (!e.populated) continue;
       const g = buildPartModel(e); if (!g) continue;
@@ -165,7 +174,7 @@ export class Board3DRenderer {
       const holder = new THREE.Group(); holder.position.set(x, bottom ? -TOP : TOP, z);
       if (bottom) holder.rotation.x = Math.PI;
       g.rotation.y = (bottom ? -1 : 1) * e.rotDeg * Math.PI / 180;
-      holder.add(g); tmp.add(holder);
+      holder.add(g);
       holder.updateMatrixWorld(true);
       const bb = new THREE.Box3().setFromObject(holder);
       if (bb.isEmpty()) continue;
@@ -173,26 +182,54 @@ export class Board3DRenderer {
       const pb = new THREE.Mesh(new THREE.BoxGeometry(size.x, size.y, size.z), pickMat);
       pb.position.copy(bb.getCenter(new THREE.Vector3())); pb.visible = false; pb.userData.index = part.index;
       this.pickRoot.add(pb); this.pickBoxes.push(pb); this.partByIndex.set(part.index, { part, box: bb });
+      if (Board3DRenderer.seeThrough(e)) {
+        const own = new THREE.Group(), clones = new Map<THREE.Material, THREE.MeshStandardMaterial>();
+        Board3DRenderer.mergeByMaterial([holder], own, mat => { let c = clones.get(mat); if (!c) { c = (mat as THREE.MeshStandardMaterial).clone(); clones.set(mat, c); } return c; });
+        this.partsRoot.add(own);
+        this.xray.push({ index: part.index, group: own, mats: [...clones.values()], centre: bb.getCenter(new THREE.Vector3()), radius: size.length() / 2, opacity: 1 });
+      } else shared.add(holder);
     }
-    // one mesh per material
-    tmp.updateMatrixWorld(true);
+    Board3DRenderer.mergeByMaterial([shared], this.partsRoot, mat => mat);
+    this.dirty = true;
+  }
+  /** Merge every mesh under `roots` into one mesh per material (indices kept), into `into`. */
+  private static mergeByMaterial(roots: THREE.Object3D[], into: THREE.Object3D, matFor: (m: THREE.Material) => THREE.Material): void {
     const groups = new Map<THREE.Material, THREE.BufferGeometry[]>(), flat = new Map<THREE.Material, THREE.BufferGeometry[]>();
-    tmp.traverse(o => {
-      if (!(o instanceof THREE.Mesh)) return;
-      const g = o.geometry.clone();
-      for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
-      g.applyMatrix4(o.matrixWorld);
-      // mergeGeometries needs all-indexed or all-non-indexed: one bucket each per material
-      const key = o.material as THREE.Material; const bucket = g.index ? groups : flat;
-      let list = bucket.get(key); if (!list) bucket.set(key, (list = [])); list.push(g);
-    });
+    for (const root of roots) {
+      root.updateMatrixWorld(true);
+      root.traverse(o => {
+        if (!(o instanceof THREE.Mesh)) return;
+        const g = o.geometry.clone();
+        for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
+        g.applyMatrix4(o.matrixWorld);
+        // mergeGeometries needs all-indexed or all-non-indexed: one bucket each per material
+        const key = o.material as THREE.Material, bucket = g.index ? groups : flat;
+        let list = bucket.get(key); if (!list) bucket.set(key, (list = [])); list.push(g);
+      });
+    }
     for (const [mat, list] of [...groups, ...flat]) {
       const merged = mergeGeometries(list); list.forEach(g => g.dispose()); if (!merged) continue;
       // parts cast onto the board; they do not receive (a shadow lookup per part pixel for little to see)
-      const mesh = new THREE.Mesh(merged, mat); mesh.castShadow = true; this.partsRoot.add(mesh);
+      const mesh = new THREE.Mesh(merged, matFor(mat)); mesh.castShadow = true; into.add(mesh);
     }
-    this.dirty = true;
   }
+
+  /** See-through for large bodies: they fade as they fill the view (zooming into a BGA shows its
+   *  lands and the lit net under it), and the selected part fades when one of its pins is picked. */
+  private updateXray(): void {
+    const focal = 1 / Math.tan(this.camera.fov * Math.PI / 360);
+    for (const x of this.xray) {
+      const dist = Math.max(0.1, this.camera.position.distanceTo(x.centre)), frac = x.radius / dist * focal; // share of the half-height
+      let op = 1 - 0.78 * THREE.MathUtils.smoothstep(frac, 0.6, 1.2); // starts once the part fills over half the view height
+      if (x.index === this.selectedPart && this.selectedPin !== null) op = Math.min(op, 0.35);
+      if (Math.abs(op - x.opacity) < 0.01) continue;
+      x.opacity = op;
+      for (const m of x.mats) { m.transparent = op < 0.999; m.opacity = op; m.depthWrite = op >= 0.999; m.needsUpdate = true; }
+      x.group.traverse(o => { if (o instanceof THREE.Mesh) o.castShadow = op > 0.9; });
+    }
+  }
+  private xrayOpacity(index: number): number { return this.xray.find(x => x.index === index)?.opacity ?? 1; }
+  private selectedPin: number | null = null;
 
   /** Every drawn part's name on its outer face, along its long axis. */
   private buildLabels(m: Board3DModel): void {
@@ -200,7 +237,9 @@ export class Board3DRenderer {
     for (const [, { part, box }] of this.partByIndex) {
       const e = part.est, bottom = part.side === 'bottom', c = box.getCenter(new THREE.Vector3());
       const long = Math.max(e.L, e.W), short = Math.min(e.L, e.W);
-      specs.push({ text: part.name, x: c.x, y: bottom ? box.min.y - 0.012 : box.max.y + 0.012, z: c.z, height: Math.min(short * 0.6, 1.4), maxLength: long * 0.9, angleDeg: e.L >= e.W ? e.rotDeg : e.rotDeg + 90, side: part.side });
+      // on the body's top, not on whatever sticks up from it (header pins)
+      const topY = Math.min(bottom ? -box.min.y : box.max.y, TOP + e.H + 0.05) + 0.012;
+      specs.push({ text: part.name, x: c.x, y: bottom ? -topY : topY, z: c.z, height: Math.min(short * 0.45, 1.0), maxLength: long * 0.85, angleDeg: e.L >= e.W ? e.rotDeg : e.rotDeg + 90, side: part.side });
     }
     void m;
     const mesh = buildLabelMesh(specs); if (!mesh) return;
@@ -246,13 +285,14 @@ export class Board3DRenderer {
     const faceHit = this.ray.ray.intersectPlane(plane, onFace);
     const hit = this.ray.intersectObjects(this.pickBoxes, false)[0];
     if (hit) {
-      // a click on the body over one of the part's own lands picks that pin (end caps, gull-wing feet)
       const index = hit.object.userData.index as number, pads = m.pinPads(index);
-      for (const pt of [hit.point, faceHit ? onFace : null]) {
-        if (!pt) continue;
-        const pin = pads.findIndex(p => p && Board3DRenderer.inPad(p, pt.x, pt.z, 0.05));
-        if (pin >= 0 && pads.filter(Boolean).length > 1) return { part: index, pin, net: null };
-      }
+      const pinAt = (pt: THREE.Vector3) => (pads.filter(Boolean).length > 1 ? pads.findIndex(p => p && Board3DRenderer.inPad(p, pt.x, pt.z, 0.05)) : -1);
+      // Drill down: a click on the part already selected, or on a body gone see-through, picks the
+      // pin under the pointer (its land on the face below) — a BGA ball, a QFN pad.
+      if (faceHit && (index === this.selectedPart || this.xrayOpacity(index) < 0.6)) { const pin = pinAt(onFace); if (pin >= 0) return { part: index, pin, net: null }; }
+      // Otherwise only a terminal you can see picks a pin: the body's surface near the board, over a land (end caps, feet).
+      const nearBoard = Math.abs(hit.point.y) < TOP + 0.4;
+      if (nearBoard) { const pin = pinAt(hit.point); if (pin >= 0) return { part: index, pin, net: null }; }
       return { part: index, pin: null, net: null };
     }
     if (!faceHit) return { part: null, pin: null, net: null };
@@ -270,27 +310,30 @@ export class Board3DRenderer {
   }
 
   // ───────────── selection ─────────────
+  /** Three levels, so the eye finds the one thing that was picked:
+   *   - the picked pin: its land white, with a ring that shows through any body above it;
+   *   - the net: every land on it filled red, every part on it outlined in red (no fill);
+   *   - the selected part: a warm outline and a faint fill; it turns see-through when a pin of it is picked. */
   setSelection(partIndex: number | null, net: string | null, pinIndex: number | null = null): void {
-    this.selectedPart = partIndex;
+    this.selectedPart = partIndex; this.selectedPin = pinIndex;
     disposeTree(this.hlRoot);
     const m = this.model; if (!m) return;
     if (net) this.hlRoot.add(this.netPads(m, net, partIndex, pinIndex));
-    // red, so it stands out from every body colour on a board (green mask, tan MLCCs, gold lands, grey inductors)
-    const RED = 0xff2d2d;
-    const shell = (box: THREE.Box3, pad: number, opacity: number, edge: number) => {
+    const outline = (box: THREE.Box3, pad: number, color: number, fill: number) => {
       const sz = box.getSize(new THREE.Vector3()).addScalar(pad), c = box.getCenter(new THREE.Vector3()), geo = new THREE.BoxGeometry(sz.x, Math.max(sz.y, 0.3), sz.z);
-      const fill = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: RED, transparent: true, opacity, depthWrite: false })); fill.position.copy(c); fill.renderOrder = 5; this.hlRoot.add(fill);
+      if (fill > 0) { const f = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: fill, depthWrite: false })); f.position.copy(c); f.renderOrder = 5; this.hlRoot.add(f); }
       // depth-tested: a top-side part's outline must not show through the board when seen from below
-      const lines = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: edge })); lines.position.copy(c); lines.renderOrder = 10; this.hlRoot.add(lines);
+      const lines = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color })); lines.position.copy(c); lines.renderOrder = 10; this.hlRoot.add(lines);
     };
     if (net) for (const [index, { box }] of this.partByIndex) {
       if (index === partIndex || !m.pinsOf(index).some(q => q.net === net)) continue;
-      shell(box, 0.15, 0.5, RED);
+      outline(box, 0.12, NET_RED, 0);
     }
     if (partIndex !== null) {
       const e = this.partByIndex.get(partIndex);
       const box = e?.box ?? (() => { const pins = m.pinsOf(partIndex); if (!pins.length) return null; const b = new THREE.Box3(); for (const q of pins) b.expandByPoint(new THREE.Vector3(q.x, q.side === 'top' ? TOP : -TOP, q.z)); return b.expandByScalar(0.3); })();
-      if (box) shell(box, 0.3, 0.62, 0xffffff);
+      if (box) outline(box, 0.25, PART_YELLOW, pinIndex === null ? 0.12 : 0);
+      if (pinIndex !== null) { const pad = m.pinPads(partIndex)[pinIndex], q = m.pinsOf(partIndex)[pinIndex]; if (pad || q) this.hlRoot.add(this.pinRing(pad?.x ?? q.x, pad?.z ?? q.z, (pad?.side ?? q.side) === 'bottom', pad ? Math.max(pad.w, pad.h) : q.r * 2)); }
     }
     this.dirty = true;
   }
@@ -312,11 +355,19 @@ export class Board3DRenderer {
         }
       });
     }
-    for (const [list, color] of [[lit, 0xff2d2d], [hot, 0xffffff]] as const) {
+    for (const [list, color] of [[lit, NET_RED], [hot, 0xffffff]] as const) {
       if (!list.length) continue; const merged = mergeGeometries(list.map(x => x.index ? x.toNonIndexed() : x)); list.forEach(x => x.dispose()); if (!merged) continue;
       const mesh = new THREE.Mesh(merged, new THREE.MeshBasicMaterial({ color, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 })); mesh.renderOrder = 4; g.add(mesh);
     }
     return g;
+  }
+
+  /** A ring around the picked pin that stays visible through the body standing on it. */
+  private pinRing(x: number, z: number, bottom: boolean, size: number): THREE.Mesh {
+    const r = Math.max(size * 0.9, 0.35), geo = new THREE.RingGeometry(r, r + Math.max(0.08, r * 0.25), 32);
+    geo.rotateX(bottom ? Math.PI / 2 : -Math.PI / 2);
+    const ring = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, side: THREE.DoubleSide }));
+    ring.position.set(x, bottom ? -TOP - 0.02 : TOP + 0.02, z); ring.renderOrder = 12; return ring;
   }
 
   /** Centre the camera on a part without changing the viewing angle. */
@@ -539,6 +590,7 @@ export class Board3DRenderer {
     if (pr !== this.renderer.getPixelRatio()) { this.renderer.setPixelRatio(pr); this.resize(); }
     if (!this.dirty) return;
     this.dirty = false;
+    this.updateXray();
     this.renderer.render(this.scene, this.camera);
   }
   dispose(): void {
@@ -548,6 +600,8 @@ export class Board3DRenderer {
     this.renderer.dispose(); this.renderer.forceContextLoss(); this.canvas.remove();
   }
 }
+
+const NET_RED = 0xff3b30, PART_YELLOW = 0xffd84a;
 
 function disposeTree(root: THREE.Object3D): void {
   root.traverse(o => {
