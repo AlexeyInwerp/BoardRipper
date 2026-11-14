@@ -220,7 +220,7 @@ export class Board3DRenderer {
     const m = this.model; if (!m) return;
     // fit the board's long side to the view: the vertical extent that has to fit is the larger of
     // the height and the width over the aspect; an angled view foreshortens, so it can sit closer
-    const span = Math.max(m.height, m.width / this.camera.aspect) * (preset === 'iso' ? 0.9 : 1.08);
+    const span = Math.max(m.height, m.width / this.camera.aspect) * (preset === 'iso' ? 1.2 : 1.08);
     const dist = span / (2 * Math.tan(this.camera.fov * Math.PI / 360));
     // the user's Top is the file's primary side
     const top = (preset === 'top') !== (m.primarySide === 'bottom') ? 1 : -1;
