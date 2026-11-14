@@ -68,7 +68,10 @@ export class Board3DRenderer {
     this.scene.add(this.boardRoot, this.partsRoot, this.pickRoot, this.hlRoot);
     this.controls = new OrbitControls(this.camera, this.canvas);
     this.controls.enableDamping = true; this.controls.screenSpacePanning = true;
+    this.controls.zoomToCursor = true; // the wheel zooms towards the point under the pointer, as in 2D
     this.controls.addEventListener('change', () => { this.dirty = true; this.movingUntil = performance.now() + 180; });
+    // capture phase, ahead of OrbitControls' own wheel listener on the canvas
+    this.canvas.addEventListener('wheel', this.onWheel, { capture: true, passive: false });
     this.ro = new ResizeObserver(() => this.resize()); this.ro.observe(host);
     this.resize();
     const loop = () => { if (this.disposed) return; this.raf = requestAnimationFrame(loop); this.tick(); };
@@ -216,6 +219,44 @@ export class Board3DRenderer {
   }
 
   // ───────────── camera ─────────────
+  /** Move the camera towards (factor < 1) or away from (> 1) its target. */
+  zoomBy(factor: number): void {
+    const d = this.camera.position.clone().sub(this.controls.target), len = d.length() * factor;
+    const m = this.model, max = m ? Math.max(m.width, m.height) * 8 : 2000;
+    this.animateTo(this.controls.target.clone().add(d.setLength(Math.min(max, Math.max(2, len)))), this.controls.target.clone());
+  }
+  /** Pan by screen pixels (+x right, +y down), the board following the pointer. */
+  panBy(dx: number, dy: number, animate = false): void {
+    const dist = this.camera.position.distanceTo(this.controls.target);
+    const perPx = 2 * dist * Math.tan(this.camera.fov * Math.PI / 360) / Math.max(1, this.canvas.clientHeight);
+    const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrix, 0), up = new THREE.Vector3().setFromMatrixColumn(this.camera.matrix, 1);
+    const move = right.multiplyScalar(-dx * perPx).add(up.multiplyScalar(dy * perPx));
+    if (animate) this.animateTo(this.camera.position.clone().add(move), this.controls.target.clone().add(move));
+    else { this.camera.position.add(move); this.controls.target.add(move); this.dirty = true; this.movingUntil = performance.now() + 180; }
+  }
+  /** Whole board in view, keeping the current viewing angle. */
+  fit(): void {
+    const m = this.model; if (!m) return;
+    const dir = this.camera.position.clone().sub(this.controls.target).normalize();
+    const span = Math.max(m.height, m.width / this.camera.aspect) * 1.2, dist = span / (2 * Math.tan(this.camera.fov * Math.PI / 360));
+    this.animateTo(dir.multiplyScalar(dist), new THREE.Vector3());
+  }
+  /** What a plain left-drag does: orbit (default) or pan. */
+  setLeftDrag(mode: 'orbit' | 'pan'): void {
+    this.controls.mouseButtons.LEFT = mode === 'pan' ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
+    this.controls.mouseButtons.RIGHT = mode === 'pan' ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
+    this.controls.touches.ONE = mode === 'pan' ? THREE.TOUCH.PAN : THREE.TOUCH.ROTATE;
+  }
+  /** Bare wheel / two-finger scroll pans when the app's scroll binding says pan; pinch (ctrlKey) always zooms. */
+  setWheelPans(pan: boolean): void { this.wheelPans = pan; }
+  private wheelPans = false;
+  private onWheel = (e: WheelEvent) => {
+    if (!this.wheelPans || e.ctrlKey || e.metaKey) return; // OrbitControls zooms
+    e.preventDefault(); e.stopImmediatePropagation();
+    const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.canvas.clientHeight : 1;
+    if (e.shiftKey && !e.deltaX) this.panBy(-e.deltaY * k, 0); else this.panBy(-e.deltaX * k, -e.deltaY * k);
+  };
+
   view(preset: View3DPreset, animate = true): void {
     const m = this.model; if (!m) return;
     // fit the board's long side to the view: the vertical extent that has to fit is the larger of
@@ -247,6 +288,10 @@ export class Board3DRenderer {
     return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height];
   }
   get drawnParts(): number { return this.partByIndex.size; }
+  /** Camera distance and target, for tests. */
+  cameraState(): { dist: number; target: [number, number, number]; leftDrag: 'orbit' | 'pan' } {
+    const t = this.controls.target; return { dist: this.camera.position.distanceTo(t), target: [t.x, t.y, t.z], leftDrag: this.controls.mouseButtons.LEFT === THREE.MOUSE.PAN ? 'pan' : 'orbit' };
+  }
 
   /** Draw calls, triangles and buffers of the last frame, and the build time. */
   stats() {
@@ -305,7 +350,7 @@ export class Board3DRenderer {
     this.renderer.render(this.scene, this.camera);
   }
   dispose(): void {
-    this.disposed = true; cancelAnimationFrame(this.raf); this.ro.disconnect(); this.controls.dispose();
+    this.disposed = true; cancelAnimationFrame(this.raf); this.canvas.removeEventListener('wheel', this.onWheel, { capture: true }); this.ro.disconnect(); this.controls.dispose();
     for (const root of [this.boardRoot, this.partsRoot, this.pickRoot, this.hlRoot]) disposeTree(root);
     this.renderer.dispose(); this.renderer.forceContextLoss(); this.canvas.remove();
   }

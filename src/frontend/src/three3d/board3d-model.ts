@@ -90,17 +90,28 @@ export function buildBoard3DModel(board: BoardData): Board3DModel {
     if (est.family === 'hole') { const [x, z] = toScene({ x: est.cx, y: est.cy }); holes.push({ x, z, rx: (est.p.drill || est.L * 0.5) / 2, rz: (est.p.drill || est.W * 0.5) / 2 }); }
   });
 
-  // pads: the file's list, else one per pin
+  // pads: the file's list, else one per pin — from the pin's pad when it has one,
+  // else shaped like the estimated package's terminal (BVR and other formats
+  // carry only a pin radius, and a round pad under a chip's end cap reads wrong)
   const pads: Board3DPad[] = [];
+  const estByIndex = new Map(parts.map(p => [p.index, p.est]));
   const pushPad = (b: BBox, side: Board3DPad['side'], w: number | undefined, h: number | undefined, a: number | undefined, round: boolean, drill: number | undefined) => {
     const yb = B(b); const [x, z] = toScene({ x: (yb.minX + yb.maxX) / 2, y: (yb.minY + yb.maxY) / 2 });
     pads.push({ x, z, w: (w ?? b.maxX - b.minX) * MM, h: (h ?? b.maxY - b.minY) * MM, angle: (yUp ? 1 : -1) * (a ?? 0), round, side, drill: (drill ?? 0) * MM });
   };
   if (board.pads?.length) for (const p of board.pads) pushPad(p.bounds, p.side, p.width, p.height, p.angleDeg, p.shape === 'round', p.drill);
-  else for (const pt of board.parts) if (!pt.hidden) for (const q of pt.pins) {
-    const b = q.padBounds ?? { minX: q.position.x - q.radius, maxX: q.position.x + q.radius, minY: q.position.y - q.radius, maxY: q.position.y + q.radius };
-    pushPad(b, q.side, q.padWidth, q.padHeight, q.padAngleDeg, !q.padBounds, q.drill);
-  }
+  else board.parts.forEach((pt, index) => {
+    if (pt.hidden) return;
+    const est = estByIndex.get(index);
+    for (const q of pt.pins) {
+      const roundFamily = est && ['bga', 'testpoint', 'fiducial', 'hole'].includes(est.family);
+      if (q.padBounds) { pushPad(q.padBounds, q.side, q.padWidth, q.padHeight, q.padAngleDeg, q.padShape === 'round' || (!q.padShape && !!roundFamily), q.drill); continue; }
+      const t = est && !q.drill ? terminalPad(est, P(q.position), q.radius * MM) : null;
+      const [x, z] = toScene(P(q.position));
+      if (t) pads.push({ x, z, w: t.w, h: t.h, angle: t.angle, round: false, side: q.side, drill: 0 });
+      else pads.push({ x, z, w: q.radius * 2 * MM, h: q.radius * 2 * MM, angle: 0, round: true, side: q.side, drill: (q.drill ?? 0) * MM });
+    }
+  });
   for (const p of pads) if (p.drill > 0.25) holes.push({ x: p.x, z: p.z, rx: p.drill / 2, rz: p.drill / 2 });
 
   // traces on the outer layers, for the board-face texture
@@ -123,4 +134,26 @@ export function buildBoard3DModel(board: BoardData): Board3DModel {
     primarySide: board.primarySide === 'bottom' ? 'bottom' : 'top',
     toScene, pinsOf,
   };
+}
+
+/** A rectangular land for one pin of an estimated package, in the Y-up frame:
+ *  width along the body's X axis, height across, angle = the body's. Null for
+ *  packages whose lands are round (BGA balls, test points, holes). */
+function terminalPad(e: PartEstimate, pin: Point, radiusMm: number): { w: number; h: number; angle: number } | null {
+  const a = e.rotDeg * Math.PI / 180, dx = (pin.x - e.cx) * MM, dy = (pin.y - e.cy) * MM;
+  const lx = dx * Math.cos(a) + dy * Math.sin(a), ly = -dx * Math.sin(a) + dy * Math.cos(a); // pin in the body frame, mm
+  const along = (w: number, h: number) => ({ w, h, angle: e.rotDeg }), across = (w: number, h: number) => ({ w: h, h: w, angle: e.rotDeg });
+  switch (e.family) {
+    case 'chip': case 'chip3t': return Math.abs(lx) >= Math.abs(ly) ? along(e.L * 0.5, e.W * 1.25) : across(e.W * 0.6, e.L * 0.3);
+    case 'molded-cap': case 'inductor': case 'sod123': case 'sod323': return along(Math.max(e.L * 0.28, radiusMm * 2), e.W * 0.75);
+    case 'sot23': case 'sot23-5': return across(0.6, 1.0);
+    case 'soic': return across(Math.max(0.3, (e.p.pitch || 1.27) * 0.55), 1.5);
+    case 'qfn': case 'son': case 'b2b': {
+      const pitch = e.p.pitch || 0.5, len = e.family === 'b2b' ? 0.7 : 0.8;
+      if (Math.abs(lx) < e.L * 0.3 && Math.abs(ly) < e.W * 0.3) return along(e.L * 0.6, e.W * 0.6); // exposed centre pad
+      return Math.abs(lx) / e.L > Math.abs(ly) / e.W ? along(len, pitch * 0.55) : across(len, pitch * 0.55);
+    }
+    case 'conn': case 'usb-c': case 'header': return null;
+    default: return null;
+  }
 }

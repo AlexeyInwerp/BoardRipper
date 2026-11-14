@@ -356,7 +356,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
       <ResizeModeBanner />
       {is3d && thisTab?.board && (
         <Suspense fallback={<div className="board-3d board-3d-loading">Loading 3D view…</div>}>
-          <Board3DView tabId={tabId} />
+          <Board3DView tabId={tabId} bareScroll={bareAction} />
         </Suspense>
       )}
       {!is3d && <SlideLayer tabId={tabId} renderer={liveRenderer} rootRef={rootRef} hostRef={containerRef} fileName={tabFileName} />}
