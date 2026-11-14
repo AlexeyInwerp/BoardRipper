@@ -22,6 +22,7 @@ export type Family =
   | 'chip' | 'sod123' | 'sod323' | 'sot23' | 'sot23-5'
   | 'son' | 'qfn' | 'soic' | 'bga'
   | 'crystal' | 'button' | 'button-ra' | 'led3535'
+  | 'molded-cap' | 'inductor' | 'chip3t' | 'coax' | 'b2b' | 'standoff'
   | 'conn' | 'usb-c' | 'header' | 'box';
 export type ChipKind = 'R' | 'C' | 'L' | 'FB' | 'D' | 'LED' | 'F' | 'chip';
 
@@ -120,7 +121,7 @@ function kindFromPrefix(ref: string): ChipKind {
   if (/^(FB|FL|BEAD)$/.test(p)) return 'FB';
   if (/^P?R[A-Z]?$/.test(p) && !/^RV$/.test(p)) return 'R';
   if (/^P?C[A-Z]?$/.test(p)) return 'C';
-  if (/^P?L$/.test(p)) return 'L';
+  if (/^P?L[A-Z]?$/.test(p)) return 'L';
   if (/^(D|ZD|PD)$/.test(p)) return 'D';
   if (/^F$/.test(p)) return 'F';
   return 'chip';
@@ -227,10 +228,15 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
   // ── single pin ──
   if (n === 1) {
     const p = pins[0]; const d = mm(p.drill ?? 0), pad = mm(pinSize(p));
+    const pw = mm(p.padWidth ?? pinSize(p)), ph = mm(p.padHeight ?? pinSize(p));
+    // A pad of ≥ 3.8 mm is a plated mounting hole even when the file gives no drill
+    // (Apple SH04xx: oval and round screw rings, listed on one side only). A 2.3–3.8 mm
+    // pad named like a standoff (SH/ST/ZS/SP) is an SMD spacer nut.
     const fam: Family = hint?.family === 'hole' || hint?.family === 'fiducial' || hint?.family === 'testpoint' ? hint.family
-      : d >= 2 ? 'hole' : !p.net ? 'fiducial' : 'testpoint';
-    return out({ family: fam, L: pad, W: pad, H: 0, cx: p.position.x, cy: p.position.y, rotDeg: 0, p: { drill: d } },
-      fam === 'hole' ? `1 pin, ${d.toFixed(1)} mm drill → mounting hole` : fam === 'fiducial' ? '1 pin, no net → fiducial' : '1 pin on a net → test point');
+      : d >= 2 || pad >= 3.8 ? 'hole' : pad >= 2.3 && /^(SH|ST|ZS|SP|SO)/i.test(ref) ? 'standoff' : !p.net ? 'fiducial' : 'testpoint';
+    if (fam === 'standoff') return out({ family: fam, L: pw, W: ph, H: 1.6, cx: p.position.x, cy: p.position.y, rotDeg: 0 }, `1 pin, ${pw.toFixed(1)}×${ph.toFixed(1)} mm pad, refdes ${ref} → SMD standoff`);
+    return out({ family: fam, L: pw, W: ph, H: 0, cx: p.position.x, cy: p.position.y, rotDeg: 0, p: { drill: d || pad * 0.5 } },
+      fam === 'hole' ? (d ? `1 pin, ${d.toFixed(1)} mm drill → mounting hole` : `1 pin, ${pw.toFixed(1)}×${ph.toFixed(1)} mm pad → plated mounting hole (both sides)`) : fam === 'fiducial' ? '1 pin, no net → fiducial' : '1 pin on a net → test point');
   }
 
   // ── headers: every pin drilled ──
@@ -257,7 +263,18 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
     const gap = span - along;
     const kind = hint?.kind ?? kindFromPrefix(ref);
     if (hint?.family === 'sod123' || (!hint && kind === 'D' && span > 120)) return out({ family: 'sod123', L: 2.7, W: 1.6, H: 1.1, cx: c.x, cy: c.y, rotDeg: deg }, `2 pins, span ${span.toFixed(0)} mil, refdes ${ref} → SOD-123`);
-    if (hint?.family === 'sod323' || (!hint && kind === 'D' && span > 75)) return out({ family: 'sod323', L: 1.7, W: 1.25, H: 0.9, cx: c.x, cy: c.y, rotDeg: deg }, `2 pins, span ${span.toFixed(0)} mil, refdes ${ref} → SOD-323`);
+    if (hint?.family === 'sod323' || (!hint && kind === 'D' && span > 75 && !(across !== undefined && across > 40))) return out({ family: 'sod323', L: 1.7, W: 1.25, H: 0.9, cx: c.x, cy: c.y, rotDeg: deg }, `2 pins, span ${span.toFixed(0)} mil, refdes ${ref} → SOD-323`);
+    // Large two-terminal parts are molded, not chips: polymer/tantalum caps
+    // (black, J-lead) and power inductors (grey). Measured on 820-02016.
+    const alongMm = Number.isFinite(along) ? mm(along) : undefined, acrossMm = across !== undefined ? mm(across) : undefined;
+    if (!hint && kind === 'C' && span > 140) {
+      const L = Math.min(mm(span) * 1.15, 7.6), W = acrossMm ? Math.min(acrossMm * 1.65, L * 0.75) : L * 0.6;
+      return out({ family: 'molded-cap', kind, L, W, H: L > 6 ? 1.9 : 1.6, cx: c.x, cy: c.y, rotDeg: deg }, `2 pins, span ${span.toFixed(0)} mil, refdes ${ref} → molded polymer cap ${L.toFixed(1)}×${W.toFixed(1)}`);
+    }
+    if (!hint && kind === 'L' && span > 140) {
+      const L = mm(span) + (alongMm ?? mm(span) * 0.4) * 0.5, W = span > 250 ? L : Math.max((acrossMm ?? 0) * 1.1, L * 0.85);
+      return out({ family: 'inductor', kind, L, W, H: L > 8 ? 3.0 : L > 5 ? 2.0 : 1.2, cx: c.x, cy: c.y, rotDeg: deg }, `2 pins, span ${span.toFixed(0)} mil, refdes ${ref} → molded power inductor ${L.toFixed(1)}×${W.toFixed(1)}`);
+    }
     const vote = chipSizeVote(span, Number.isFinite(gap) ? gap : undefined, across);
     const size = hint?.size && EIA[hint.size] ? hint.size : vote.size;
     if (size) {
@@ -277,6 +294,45 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
   const f0 = frame(pins, gridAngle(small.map(i => pins[i].position)), small);
   const sloc = small.map(i => f0.loc[i]);
   const tol = Math.max(4, median(sizes) * 0.35);
+
+  const shapeKey = (p: Pin) => { const w = p.padWidth ?? p.radius * 2, h = p.padHeight ?? p.radius * 2; return `${Math.round(Math.min(w, h) / 3)}:${Math.round(Math.max(w, h) / 3)}`; };
+  const groups = new Map<string, number[]>(); pins.forEach((p, i) => (groups.get(shapeKey(p)) ?? groups.set(shapeKey(p), []).get(shapeKey(p))!).push(i));
+  // Four pins in a plus: two pairs on perpendicular axes through the centre.
+  // Unequal arms → 3-terminal capacitor (end terminals + side ground pads);
+  // equal arms → RF coax receptacle (U.FL / MHF4).
+  if (n === 4 && !hint) {
+    // pair each pin with the one opposite it through the centre
+    const P = pins.map(p => p.position), c = { x: P.reduce((a, q) => a + q.x, 0) / 4, y: P.reduce((a, q) => a + q.y, 0) / 4 };
+    const j = [1, 2, 3].find(k => Math.hypot(P[0].x + P[k].x - 2 * c.x, P[0].y + P[k].y - 2 * c.y) < 4);
+    const rest = [1, 2, 3].filter(k => k !== j);
+    const pa = j !== undefined ? { x: P[j].x - P[0].x, y: P[j].y - P[0].y } : null, pb = { x: P[rest[1]].x - P[rest[0]].x, y: P[rest[1]].y - P[rest[0]].y };
+    const opposite = j !== undefined && Math.hypot(P[rest[0]].x + P[rest[1]].x - 2 * c.x, P[rest[0]].y + P[rest[1]].y - 2 * c.y) < 4;
+    const ax = pa ? Math.hypot(pa.x, pa.y) : 0, ay = Math.hypot(pb.x, pb.y);
+    if (pa && opposite && Math.abs(pa.x * pb.x + pa.y * pb.y) < 0.15 * ax * ay) {
+      const lo = Math.min(ax, ay), hi = Math.max(ax, ay), long = ax >= ay ? pa : pb;
+      const deg = Math.atan2(long.y, long.x) * 180 / Math.PI; const f = { cx: c.x, cy: c.y };
+      if (hi / lo < 1.3) { const s = Math.max(2, mm(hi) + 0.6); return out({ family: 'coax', L: s, W: s, H: 1.2, cx: f.cx, cy: f.cy, rotDeg: deg }, `4 pins in a plus, equal arms ${mm(lo).toFixed(1)} mm → RF coax receptacle`); }
+      const L = mm(hi) * 1.25 + 0.15, W = Math.max(mm(lo) * 1.4, L * 0.5);
+      return out({ family: 'chip3t', kind: 'C', L, W, H: W * 0.9, cx: f.cx, cy: f.cy, rotDeg: deg }, `4 pins in a plus, arms ${hi.toFixed(0)}/${lo.toFixed(0)} mil → 3-terminal capacitor`);
+    }
+  }
+
+  // Board-to-board receptacle: the most common pad shape forms two equal rows at
+  // 0.3–0.5 mm, a few mm apart; other pads (tabs, ground) around them.
+  if (n >= 16 && !hint) {
+    const sig = [...groups.values()].sort((a, b) => b.length - a.length)[0];
+    if (sig.length >= 12) {
+      for (const extra of [0, 90]) {
+        const f = frame(pins, gridAngle(sig.map(i => pins[i].position)) + extra, sig); const sl = sig.map(i => f.loc[i]);
+        const yc = clusters(sl.map(v => v.y), tol).sort((a, b) => b.n - a.n).slice(0, 2).sort((a, b) => a.c - b.c);
+        if (yc.length !== 2 || yc[0].n < 8 || Math.abs(yc[0].n - yc[1].n) > 1 || yc[0].n + yc[1].n < 0.6 * sig.length) continue;
+        const row = sl.filter(v => Math.abs(v.y - yc[0].c) <= tol).map(v => v.x).sort((a, b) => a - b); const p = mm(pitchOf(row)), gap = mm(Math.abs(yc[1].c - yc[0].c));
+        if (p < 0.25 || p > 0.55 || gap > 4.5) continue;
+        const L = mm(row[row.length - 1] - row[0]) + 1.6, W = gap + 0.3;
+        return out({ family: 'b2b', L, W, H: 0.9, cx: f.cx, cy: f.cy, rotDeg: f.deg, p: { perSide: row.length, pitch: p } }, `${sig.length} pads in two rows ${gap.toFixed(1)} mm apart @ ${p.toFixed(2)} + ${n - sig.length} others → board-to-board connector`);
+      }
+    }
+  }
 
   // USB-C: ≥10 small pins on two close rows at ~0.5 mm + large/drilled shell tabs.
   if (hint?.family === 'usb-c' || (!hint && small.length >= 10 && big.length >= 2)) {
@@ -299,8 +355,6 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
   // Row connector: one row of identical signal pads at 0.3–2.6 mm + 2–4 pads of
   // another shape outside the row's ends (JST SH/PH, FPC, PicoBlade). Grouped
   // by pad shape, not size: a JST PH's signal pads are longer than its tabs.
-  const shapeKey = (p: Pin) => { const w = p.padWidth ?? p.radius * 2, h = p.padHeight ?? p.radius * 2; return `${Math.round(Math.min(w, h) / 3)}:${Math.round(Math.max(w, h) / 3)}`; };
-  const groups = new Map<string, number[]>(); pins.forEach((p, i) => (groups.get(shapeKey(p)) ?? groups.set(shapeKey(p), []).get(shapeKey(p))!).push(i));
   const connTry = (sig: number[], tabs: number[]): PartEstimate | null => {
     const fs = frame(pins, gridAngle(sig.map(i => pins[i].position)), sig);
     for (const extra of [0, 90]) {
@@ -387,10 +441,17 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
       return out({ family: 'soic', L, W, H: p >= 1.2 ? 1.5 : 1.0, cx: f.cx, cy: f.cy, rotDeg: wrap(f.deg + (pin1Turn(f) === 0 || pin1Turn(f) === 90 ? 0 : 180)), p: { perSide: row.length, pitch: p, span: gap } },
         `${small.length} pins, two rows ${gap.toFixed(1)} mm apart @ ${p.toFixed(2)} → ${p >= 1.2 ? 'SOIC' : 'TSSOP'}`);
     }
-    if (xs.length >= 4 && ys.length >= 4 && small.length >= 0.6 * xs.length * ys.length) {
-      const p = mm(pitchOf(xs.map(c => c.c)));
-      return out({ family: 'bga', L: spanX + 1.6, W: spanY + 1.6, H: 1.2, cx: f0.cx, cy: f0.cy, rotDeg: f0.deg, p: { cols: xs.length, rows: ys.length, pitch: p } },
-        `${small.length} balls on a ${xs.length}×${ys.length} grid @ ${p.toFixed(2)} → BGA`);
+    // grids: try the nearest-neighbour angle and 45° off it (staggered ball fields)
+    // a checkerboard field has diagonal nearest neighbours; the package edge is the angle with the tighter box
+    const area = (d: number) => { const B = bboxOf(frame(pins, d, small).loc); return (B.x1 - B.x0) * (B.y1 - B.y0); };
+    for (const extra of area(f0.deg) <= area(f0.deg + 45) * 1.02 ? [0, 45] : [45, 0]) {
+      const f = frame(pins, f0.deg + extra, small); const sl = small.map(i => f.loc[i]);
+      const gx = clusters(sl.map(v => v.x), tol), gy = clusters(sl.map(v => v.y), tol);
+      if (gx.length >= 4 && gy.length >= 4 && small.length >= 16 && small.length >= 0.3 * gx.length * gy.length) {
+        const B = bboxOf(sl), p = mm(pitchOf(gx.map(c => c.c)));
+        return out({ family: 'bga', L: mm(B.x1 - B.x0) + 1.6, W: mm(B.y1 - B.y0) + 1.6, H: 1.2, cx: f.cx, cy: f.cy, rotDeg: wrap(f.deg), p: { cols: gx.length, rows: gy.length, pitch: p, balls: small.length } },
+          `${small.length} balls on a ${gx.length}×${gy.length} grid @ ${p.toFixed(2)} → BGA`);
+      }
     }
     // fallback: body = pin box + margin, height guessed
     const B = bboxOf(f0.loc);

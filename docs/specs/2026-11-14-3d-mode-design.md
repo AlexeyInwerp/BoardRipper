@@ -161,9 +161,69 @@ for i in 04 05 06; do curl -so samples/3d-compare/4884-$i.jpg https://cdn-shop.a
 cd src/frontend && npx vite-node ../../scripts/board-3d-export.ts -- ../../samples/3d-compare/rp2040.brd ../../samples/3d-compare/feather-rp2040.js "Adafruit Feather RP2040"
 ```
 
-Next: a denser board with photos, ideally a laptop board with an Allegro file and an
-XZZ boardview of the same revision, to measure BGAs, pin-only formats and the
-families (FPC, B2B, large BGA) this board doesn't have.
+### MacBook Air M1, 820-02016: two plain boardviews against scans of the real board
+
+Apple boards come in every boardview format, so this one tests the case that
+matters most: no package names, only pins. Inputs: `820-02016.bvr` (3,075 parts,
+pin positions and radii only) and the XZZ `.pcb` rev -07 (2,535 parts, with pad
+sizes). Reference: the two board scans in Apple's "Scanning image" PDF, top and
+bottom, 6,600 px wide. Select the board at the top of the comparison page
+(`?board=m1-bvr` / `m1-xzz`).
+
+- **Placement:** the scans are flat, so the camera is orthographic. The board
+  outline from the file is fitted to the board's silhouette on the white
+  background (scale, turn, shift, mirror): **99.3 % overlap** for the BVR, top
+  and bottom. Drawn onto the scan, the file's mounting holes land on the gold
+  rings.
+- **The BVR is Y-down** (its format has no `flipY`). On the first try the fit
+  only worked mirrored. The export now turns Y-down files Y-up before
+  estimating, and the 3D view must apply the format's `flipY` the same way the
+  2D renderer does.
+- **The XZZ outline is drawn inside the board edge** (about 3 % short in Y).
+  Its parts agree with the BVR's to 17 mil (median, 2,509 shared refdes, after
+  a 0.13° turn and a 0.9 % scale). So the XZZ is placed through the BVR
+  (`board-3d-export.ts --align=`), and two boardviews of one board need that
+  alignment step before they can share anything.
+- **What renders right** (XZZ, against both scans):
+  - every chip field, including the dense 0201 capacitor field under the SoC on the bottom;
+  - the polymer caps ("686 16E 042") and the molded inductors ("2R7", "R56", "150");
+  - the 3-terminal caps and the RF coax receptacles;
+  - the display board-to-board connector, the SMD standoffs and the mounting rings on both sides;
+  - the Intel retimers, the NAND and the M1 package — position and size.
+- **Fallback boxes:** 11 of 2,535 parts (XZZ) and 27 of 3,075 (BVR) — the
+  battery connector, a shielded 49-pin connector, some odd-pin power parts. They
+  are in the right place, shown as estimates.
+- **Format limit, not a bug:** the BVR has no pad sizes, so its larger
+  inductors fall back to chip sizes by span. The XZZ draws them right.
+- **Not in any boardview, so not in the render:** shield cans and fences,
+  thermal pads, stiffeners, rubber bumpers, laser markings. One NAND sits under
+  a shield can in the photo.
+- **A style guess, labelled as one:** a very large BGA is drawn as a metal lid
+  over the SoC with two memory dies along its long edge — right for Apple
+  M-series, a guess elsewhere.
+- **Families added for this board, all from geometry:**
+  - 3-terminal caps and coax receptacles: four pins in a plus, unequal or equal arms;
+  - polymer caps and power inductors: large two-pin C or L, by span;
+  - board-to-board connectors: two dominant rows at 0.3–0.55 mm;
+  - mounting rings: a single pad ≥ 3.8 mm, drawn on both sides;
+  - SMD standoffs: a 2.3–3.8 mm pad named SH/ST;
+  - sparse and checkerboard BGAs, oriented by the tighter of two candidate angles.
+
+  Chip sizing on the 7-board corpus is unchanged at 99.9 %.
+
+Reproduce: copy `820-02016.bvr`, the XZZ `.pcb` and the "Scanning image" PDF to
+`samples/3d-compare/m1air/`. Extract the two JPEGs from the PDF (they are plain
+DCT streams) and downscale them to 3200 px as `top-3200.jpg` / `bottom-3200.jpg`.
+Then:
+
+```sh
+cd src/frontend
+npx vite-node ../../scripts/board-3d-export.ts -- ../../samples/3d-compare/m1air/820-02016.bvr ../../samples/3d-compare/m1air/m1-bvr.js "MacBook Air M1 820-02016 (bvr)"
+npx vite-node ../../scripts/board-3d-export.ts -- ../../samples/3d-compare/m1air/820-02016.pcb ../../samples/3d-compare/m1air/m1-pcb.js "MacBook Air M1 820-02016 (pcb)" --align=../../samples/3d-compare/m1air/820-02016.bvr
+```
+
+A `file://` page cannot read the scan's pixels, so the silhouette fit is stored
+in the page. Over HTTP it refits live.
 
 ## Renderer
 

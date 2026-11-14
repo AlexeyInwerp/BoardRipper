@@ -13,14 +13,60 @@
  * silkscreen texture.
  */
 import { readFileSync, writeFileSync } from 'fs';
-import { parseBoardFile } from '../src/frontend/src/parsers';
+import { parseBoardFile, getFormat } from '../src/frontend/src/parsers';
+import type { BoardData, BBox, Point } from '../src/frontend/src/parsers/types';
 import { parseEagleXml, parseEagleRot, type EagleXmlNode } from '../src/frontend/src/parsers/eagle-parser';
 import { estimatePart } from '../src/frontend/src/store/package-estimate';
 
-const [file, outFile, name = file.split('/').pop()] = process.argv.slice(2).filter(a => a !== '--');
+const [file, outFile, name = file.split('/').pop()] = process.argv.slice(2).filter(a => a !== '--' && !a.startsWith('--'));
 const buf = readFileSync(file);
 const board = await parseBoardFile(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer, file);
 const MIL = 1 / 0.0254;
+
+// The 3D frame is Y-up. A Y-down file (format flipY false, e.g. BVR) is turned
+// Y-up here — the same convention change the 2D renderer makes on screen, not a
+// mirror of the board — before any estimate, so angles and "which side" rules
+// are read in one frame.
+const flipY = board.flipY ?? getFormat(board.format)?.flipY ?? false;
+if (!flipY) toYUp(board);
+
+// --align=<other board file>: move this board into the other file's frame, fitted on the
+// reference designators both share (a similarity, mirror allowed). Two boardviews of one
+// board differ by an offset, a mirror, sometimes a rotation; their outlines may not agree.
+const alignArg = process.argv.find(a => a.startsWith('--align='))?.slice(8);
+if (alignArg) {
+  const ob = readFileSync(alignArg); const other = await parseBoardFile(ob.buffer.slice(ob.byteOffset, ob.byteOffset + ob.byteLength) as ArrayBuffer, alignArg);
+  if (!(other.flipY ?? getFormat(other.format)?.flipY ?? false)) toYUp(other);
+  const ctr = (pt: { pins: { position: Point }[] }) => pt.pins.reduce((a, q) => ({ x: a.x + q.position.x / pt.pins.length, y: a.y + q.position.y / pt.pins.length }), { x: 0, y: 0 });
+  const om = new Map(other.parts.filter(p => p.pins.length).map(p => [p.name, ctr(p)]));
+  const pairs = board.parts.filter(p => p.pins.length && om.has(p.name)).map(p => [ctr(p), om.get(p.name)!] as const);
+  const fit = (mirror: boolean) => { // least-squares similarity as complex numbers: w ≈ a·z + t (z conjugated when mirrored)
+    const z = pairs.map(([p]) => ({ x: p.x, y: mirror ? -p.y : p.y })), w = pairs.map(([, q]) => q);
+    const zc = z.reduce((a, p) => ({ x: a.x + p.x / z.length, y: a.y + p.y / z.length }), { x: 0, y: 0 }), wc = w.reduce((a, p) => ({ x: a.x + p.x / w.length, y: a.y + p.y / w.length }), { x: 0, y: 0 });
+    let re = 0, im = 0, nn = 0; z.forEach((p, i) => { const zx = p.x - zc.x, zy = p.y - zc.y, wx = w[i].x - wc.x, wy = w[i].y - wc.y; re += zx * wx + zy * wy; im += zx * wy - zy * wx; nn += zx * zx + zy * zy; });
+    const ar = re / nn, ai = im / nn; const map = (p: Point) => { const x = p.x, y = mirror ? -p.y : p.y, dx = x - zc.x, dy = y - zc.y; return { x: ar * dx - ai * dy + wc.x, y: ai * dx + ar * dy + wc.y }; };
+    const res = pairs.map(([p, q]) => { const m = map(p); return Math.hypot(m.x - q.x, m.y - q.y); }).sort((a, b) => a - b);
+    return { mirror, map, rot: Math.atan2(ai, ar) * 180 / Math.PI, scale: Math.hypot(ar, ai), median: res[res.length >> 1], p90: res[Math.floor(res.length * 0.9)] };
+  };
+  const best = [fit(false), fit(true)].sort((a, b) => a.median - b.median)[0];
+  const P = (p: Point) => { const m = best.map(p); p.x = m.x; p.y = m.y; };
+  const B = (q: BBox) => { const c = [[q.minX, q.minY], [q.maxX, q.minY], [q.minX, q.maxY], [q.maxX, q.maxY]].map(([x, y]) => best.map({ x, y })); q.minX = Math.min(...c.map(p => p.x)); q.maxX = Math.max(...c.map(p => p.x)); q.minY = Math.min(...c.map(p => p.y)); q.maxY = Math.max(...c.map(p => p.y)); };
+  const A = (d: number) => (best.mirror ? -d : d) + best.rot;
+  board.outline.forEach(p => { if (!Number.isNaN(p.x)) P(p); }); B(board.bounds);
+  for (const pt of board.parts) { P(pt.origin); B(pt.bounds); if (pt.angleDeg !== undefined) pt.angleDeg = A(pt.angleDeg); for (const q of pt.pins) { P(q.position); if (q.padBounds) B(q.padBounds); if (q.padAngleDeg !== undefined) q.padAngleDeg = A(q.padAngleDeg); q.padPolygon?.forEach(P); } }
+  board.pads?.forEach(q => { B(q.bounds); q.polygon?.forEach(P); }); board.traces?.forEach(t => { P(t.start); P(t.end); }); board.vias?.forEach(v => P(v.position)); board.silkscreen?.forEach(s => s.points.forEach(P));
+  console.log(`aligned to ${alignArg.split('/').pop()} on ${pairs.length} shared refdes: ${best.mirror ? 'mirrored, ' : ''}turned ${best.rot.toFixed(2)}°, scale ${best.scale.toFixed(4)}, residual median ${best.median.toFixed(1)} mil, p90 ${best.p90.toFixed(1)} mil`);
+}
+function toYUp(b: BoardData) {
+  const P = (p: Point) => { p.y = -p.y; }, B = (q: BBox) => { const y0 = q.minY; q.minY = -q.maxY; q.maxY = -y0; };
+  b.outline.forEach(p => { if (!Number.isNaN(p.y)) P(p); }); B(b.bounds);
+  for (const pt of b.parts) {
+    P(pt.origin); B(pt.bounds); if (pt.angleDeg !== undefined) pt.angleDeg = -pt.angleDeg;
+    for (const q of pt.pins) { P(q.position); if (q.padBounds) B(q.padBounds); if (q.padAngleDeg !== undefined) q.padAngleDeg = -q.padAngleDeg; q.padPolygon?.forEach(P); }
+  }
+  b.pads?.forEach(q => { B(q.bounds); if (q.angleDeg !== undefined) q.angleDeg = -q.angleDeg; q.polygon?.forEach(P); });
+  b.traces?.forEach(t => { P(t.start); P(t.end); }); b.vias?.forEach(v => P(v.position)); b.silkscreen?.forEach(s => s.points.forEach(P));
+}
 const r1 = (v: number) => Math.round(v * 10) / 10;
 
 // ── silkscreen art + plain holes/texts straight from the XML (EAGLE) ──
@@ -65,7 +111,11 @@ const out = {
   holes,
   vias: (board.vias ?? []).map(v => [r1(v.position.x), r1(v.position.y), r1(v.diameter)]),
   traces: (board.traces ?? []).map(t => [r1(t.start.x), r1(t.start.y), r1(t.end.x), r1(t.end.y), r1(t.width), t.layer ?? 0, t.net]),
-  pads: (board.pads ?? []).map(p => ({ b: [r1(p.bounds.minX), r1(p.bounds.minY), r1(p.bounds.maxX), r1(p.bounds.maxY)], side: p.side, shape: p.shape ?? 'rect', w: p.width && r1(p.width), h: p.height && r1(p.height), a: p.angleDeg ?? 0, drill: p.drill && r1(p.drill), net: p.net })),
+  // plain boardviews carry no pad list: one pad per pin, from its pad size or radius
+  pads: (board.pads?.length ? board.pads : board.parts.flatMap(pt => pt.pins.map(q => ({
+    bounds: q.padBounds ?? { minX: q.position.x - q.radius, minY: q.position.y - q.radius, maxX: q.position.x + q.radius, maxY: q.position.y + q.radius },
+    side: q.side, shape: q.padShape ?? (q.padBounds ? 'rect' : 'round'), width: q.padWidth, height: q.padHeight, angleDeg: q.padAngleDeg, drill: q.drill, net: q.net,
+  })))).map(p => ({ b: [r1(p.bounds.minX), r1(p.bounds.minY), r1(p.bounds.maxX), r1(p.bounds.maxY)], side: p.side, shape: p.shape ?? 'rect', w: p.width && r1(p.width), h: p.height && r1(p.height), a: p.angleDeg ?? 0, drill: p.drill && r1(p.drill), net: p.net })),
   silk: (board.silkscreen ?? []).map(s => ({ side: s.side, pts: s.points.map(p => [r1(p.x), r1(p.y)]) })),
   rects, texts,
   parts: board.parts.map(p => ({

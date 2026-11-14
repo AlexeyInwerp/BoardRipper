@@ -3,7 +3,7 @@
 // [status, note] — ok: same part, size, place and look; warn: right part and
 // place, look simplified; bad: wrong. "Pins only:" notes where the plain-
 // boardview estimate differs.
-window.VERDICT3D = {
+window.VERDICT3D = { feather: {
   C1: ['ok', '0805 MLCC, place and size match'], C4: ['ok', '0805 MLCC'], C5: ['ok', '0805 MLCC'], C20: ['ok', '0805 MLCC'],
   C2: ['ok', '0603 MLCC'], C3: ['ok', '0603 MLCC'], C6: ['ok', '0603 MLCC'], C7: ['ok', '0603 MLCC'], C8: ['ok', '0603 MLCC'], C9: ['ok', '0603 MLCC'],
   C10: ['ok', '0603 MLCC'], C11: ['ok', '0603 MLCC'], C12: ['ok', '0603 MLCC'], C13: ['ok', '0603 MLCC'], C14: ['ok', '0603 MLCC'], C15: ['ok', '0603 MLCC'], C16: ['ok', '0603 MLCC'],
@@ -29,4 +29,17 @@ window.VERDICT3D = {
   'U$34': ['ok', 'fiducial'], 'U$35': ['ok', 'fiducial'],
   TP1: ['ok', 'bottom test pad'], TP2: ['ok', 'bottom test pad'], TP3: ['ok', 'bottom test pad'],
   'D+1': ['ok', 'bottom USB D+ test pad'], 'D-1': ['ok', 'bottom USB D− test pad'],
+},
+  // MacBook Air M1 820-02016, XZZ (rev -07) against the scans in Apple's "Scanning image" PDF, both sides.
+  'm1-xzz': {
+    U0600: ['warn', 'M1 package: place and size match; the lid + two memory dies layout is a style guess for large packages'],
+    UN000: ['warn', 'NAND BGA: place and size match; in the photo one sits under a silver shield can the file does not describe'], UN100: ['ok', 'NAND BGA'],
+    L5230: ['ok', 'molded power inductor "2R7", 10 mm'], L5800: ['ok', 'molded inductor "R56"'], L5820: ['ok', 'molded inductor "R56"'], L5840: ['ok', 'molded inductor'],
+    C5960: ['ok', 'polymer cap "686 16E 042", D-case'], C5961: ['ok', 'polymer cap'], C5962: ['ok', 'polymer cap'], C5963: ['ok', 'polymer cap'], C5964: ['ok', 'polymer cap'],
+    JF600: ['ok', 'board-to-board display connector, 2 × 28 @ 0.35'], JL100: ['ok', 'RF coax receptacle'], JL101: ['ok', 'RF coax receptacle'],
+    SHF600: ['ok', 'SMD standoff'], SHF601: ['ok', 'SMD standoff'], SHT400: ['ok', 'SMD standoff'], SHT401: ['ok', 'SMD standoff'], SH0420: ['ok', 'oblong SMD standoff'],
+    SH0400: ['ok', 'oval plated mounting ring, both sides'], SH0401: ['ok', 'oval plated mounting ring'], SH0410: ['ok', 'mounting ring'], SH0411: ['ok', 'mounting ring'], SH0412: ['ok', 'mounting ring'], SH0413: ['ok', 'mounting ring'],
+    UF400: ['ok', 'USB-C controller BGA (bottom)'], UF500: ['bad', 'same package as UF400 but its pads come in two shapes; falls to a grey fallback box'],
+    JE900: ['bad', 'shielded display connector (49 pins, bottom): fallback box in the right place'], J5150: ['bad', 'battery connector: fallback box'],
+  },
 };

@@ -16,9 +16,9 @@ header h1 { font-size:13px; font-weight:600; margin:0 16px 0 0; color:var(--mute
 main { display:grid; grid-template-columns:1fr 340px; min-height:0; }
 #view { position:relative; min-width:0; min-height:0; overflow:hidden; background:#202225; }
 #stage { position:absolute; transform-origin:0 0; user-select:none; -webkit-user-select:none; }
-#stage canvas, #stage .photo { position:absolute; left:0; top:0; width:100%; height:100%; }
-#photoClip { position:absolute; inset:0; pointer-events:none; }
-#photoClip img { width:100%; height:100%; display:block; }
+#stage canvas { position:absolute; left:0; top:0; width:100%; height:100%; }
+#photoClip { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
+#photoClip img { position:absolute; left:0; top:0; display:block; transform-origin:0 0; }
 #wipe { position:absolute; top:0; bottom:0; width:2px; background:var(--accent); cursor:ew-resize; z-index:4; }
 #wipe::after { content:"⇔"; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:var(--accent); color:#111; border-radius:12px; padding:2px 6px; font-size:12px; font-weight:700; }
 #wipe::before { content:""; position:absolute; inset:0 -12px; }
@@ -46,7 +46,16 @@ tr.hl td { background:#2b2f37; }
 .err { padding:24px; color:var(--bad); }
 code { background:var(--panel2); padding:1px 4px; border-radius:4px; }
 </style>
-<script src="../../samples/3d-compare/feather-rp2040.js"></script>
+<script>
+// Which board: ?board=feather | m1-bvr | m1-xzz. Board data is a classic script so this works from file://.
+window.DATASETS = {
+  feather: { title: 'Adafruit Feather RP2040 · EAGLE', data: '../../samples/3d-compare/feather-rp2040.js', credit: 'Board files © Adafruit, CC BY-SA; photos © Adafruit, used locally for comparison only.' },
+  'm1-bvr': { title: 'MacBook Air M1 820-02016 · BVR', data: '../../samples/3d-compare/m1air/m1-bvr.js', credit: 'Boardview and board scans from the local library (samples/3d-compare/m1air), used for comparison only.' },
+  'm1-xzz': { title: 'MacBook Air M1 820-02016 · XZZ', data: '../../samples/3d-compare/m1air/m1-pcb.js', credit: 'Boardview and board scans from the local library (samples/3d-compare/m1air), used for comparison only.' },
+};
+{ const id = new URLSearchParams(location.search).get('board'); window.DS_ID = id in window.DATASETS ? id : 'feather'; }
+document.write('<script src="' + window.DATASETS[window.DS_ID].data + '"><\/script>');
+</script>
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }
 </script>
@@ -54,11 +63,9 @@ code { background:var(--panel2); padding:1px 4px; border-radius:4px; }
 <body>
 <div id="app">
   <header>
-    <h1>3D vs photo · Adafruit Feather RP2040</h1>
-    <button class="tab active" data-tab="top">Top photo</button>
-    <button class="tab" data-tab="angle">Angled photo</button>
-    <button class="tab" data-tab="free">Free orbit</button>
-    <button class="tab" data-tab="parts">Parts &amp; verdicts</button>
+    <h1>3D vs photo</h1>
+    <select id="board" style="width:auto;margin-right:12px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 6px;font:inherit"></select>
+    <span id="tabs"></span>
   </header>
   <main>
     <div id="view">
@@ -72,12 +79,12 @@ code { background:var(--panel2); padding:1px 4px; border-radius:4px; }
       <div id="tip"></div>
     </div>
     <aside>
-      <h2>Estimate parts from</h2>
+      <div id="modebox"><h2>Estimate parts from</h2>
       <div class="seg" id="mode"><button data-v="pkg" class="on">Package names</button><button data-v="pins">Pins only</button></div>
-      <p id="mode-note"></p>
+      <p id="mode-note"></p></div>
       <h2>Photo</h2>
       <div class="row"><label>Photo opacity</label><input type="range" id="op" min="0" max="1" step="0.01" value="1"></div>
-      <p>Drag the yellow line to wipe between photo and render. The render camera — position, aim and field of view — is solved from the four mounting holes in each photo.</p>
+      <p id="fit-how"></p>
       <p id="fit"></p>
       <h2>Board</h2>
       <div class="row"><label>Copper visible under mask</label><input type="checkbox" id="cu" checked></div>
@@ -87,7 +94,7 @@ code { background:var(--panel2); padding:1px 4px; border-radius:4px; }
       <div class="row"><label>Evidence tint</label><input type="checkbox" id="evt"></div>
       <h2>Summary</h2>
       <div id="summary"></div>
-      <p class="note">Data: <code>samples/3d-compare/</code>, made by <code>scripts/board-3d-export.ts</code>. Board files © Adafruit, CC BY-SA; photos © Adafruit, used locally for comparison only.</p>
+      <p class="note">Data made by <code>scripts/board-3d-export.ts</code>. <span id="credit"></span></p>
     </aside>
   </main>
 </div>
@@ -96,6 +103,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const D = window.BOARD3D;
 if (!D) { document.getElementById('view').innerHTML = '<div class="err">No board data. Run <code>cd src/frontend &amp;&amp; npx vite-node ../../scripts/board-3d-export.ts -- ../../samples/3d-compare/rp2040.brd ../../samples/3d-compare/feather-rp2040.js</code> (board and photos: see the design doc).</div>'; throw new Error('no data'); }
@@ -116,15 +124,16 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
 scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
-scene.environmentIntensity = 0.45;
+scene.environmentIntensity = 0.3;
 const key = new THREE.DirectionalLight(0xffffff, 1.3); key.position.set(-30, 80, 40); key.castShadow = true;
-Object.assign(key.shadow.camera, { left: -40, right: 40, top: 30, bottom: -30, far: 200 }); key.shadow.mapSize.set(2048, 2048); key.shadow.bias = -0.0004; key.shadow.radius = 4;
-scene.add(key, new THREE.HemisphereLight(0xffffff, 0x444448, 0.5));
+Object.assign(key.shadow.camera, { left: -110, right: 110, top: 60, bottom: -60, far: 300 }); key.shadow.mapSize.set(2048, 2048); key.shadow.bias = -0.0004; key.shadow.radius = 4;
+const under = new THREE.DirectionalLight(0xffffff, 1.3); under.position.set(-30, -80, 40); // lights the bottom side for bottom views
+scene.add(key, under, new THREE.HemisphereLight(0xffffff, 0x444448, 0.4));
 const backdrop = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshStandardMaterial({ color: 0x47484b, roughness: 0.9 }));
 backdrop.rotation.x = -Math.PI / 2; backdrop.position.y = -T / 2 - 0.02; backdrop.receiveShadow = true; scene.add(backdrop);
 
 // ───────────── board textures (mask + copper-under-mask + pads + silk) ─────────────
-const PPM = 40; // px per mm
+const PPM = Math.min(40, 8000 / Math.max(Wmm, Hmm)); // px per mm, texture ≤ 8000 px
 function boardTexture(side, opts) {
   const cv = document.createElement('canvas'); cv.width = Math.ceil(Wmm * PPM); cv.height = Math.ceil(Hmm * PPM);
   const c = cv.getContext('2d'); const U = x => (x - ob.x0) * MM * PPM, V = y => (ob.y1 - y) * MM * PPM, S = m => m * MM * PPM;
@@ -146,6 +155,7 @@ function boardTexture(side, opts) {
     else c.fillRect(-S(x1 - x0) / 2, -S(y1 - y0) / 2, S(x1 - x0), S(y1 - y0));
     c.restore();
   }
+  c.fillStyle = '#c99a3c'; for (const e of MOUNT) { c.beginPath(); c.ellipse(U(e.cx), V(e.cy), e.L * PPM / 2, e.W * PPM / 2, 0, 0, 7); c.fill(); }
   if (opts.silk) {
     c.fillStyle = c.strokeStyle = '#ecebe4';
     for (const r of D.rects) if (r.side === side) c.fillRect(U(r.x0), V(r.y1), S(r.x1 - r.x0) + 0.6, S(r.y1 - r.y0) + 0.6);
@@ -161,11 +171,13 @@ function boardTexture(side, opts) {
   tex.repeat.set(1 / Wmm, 1 / Hmm); tex.offset.set(-x0 / Wmm, -y0 / Hmm);
   return tex;
 }
+const MOUNT = D.parts.map(p => p.est.pins.family === 'hole' || p.est.pkg.family === 'hole' ? (p.est.pkg.family === 'hole' ? p.est.pkg : p.est.pins) : null).filter(Boolean);
 // board shape with every drill as a hole
 function boardShape() {
   const s = new THREE.Shape(); contours[0].forEach(([x, y], i) => (i ? s.lineTo(X(x), y * MM - CY) : s.moveTo(X(x), y * MM - CY)));
   const holes = [...D.holes.map(h => [h.x, h.y, h.d]), ...D.pads.filter(p => p.drill).map(p => [(p.b[0] + p.b[2]) / 2, (p.b[1] + p.b[3]) / 2, p.drill])];
   for (const [x, y, d] of holes) { const h = new THREE.Path(); h.absarc(X(x), y * MM - CY, d * MM / 2, 0, Math.PI * 2, true); s.holes.push(h); }
+  for (const e of MOUNT) if (!D.pads.some(p => p.drill && Math.abs((p.b[0] + p.b[2]) / 2 - e.cx) < 5 && Math.abs((p.b[1] + p.b[3]) / 2 - e.cy) < 5)) { const h = new THREE.Path(); h.absellipse(X(e.cx), e.cy * MM - CY, e.L * 0.28, e.W * 0.28, 0, Math.PI * 2, true); s.holes.push(h); }
   return s;
 }
 const shape = boardShape();
@@ -201,11 +213,17 @@ const M = {
   nylon: new THREE.MeshStandardMaterial({ color: 0xe8dfc8, roughness: 0.65 }),
   slot: new THREE.MeshStandardMaterial({ color: 0x0b0b0c, roughness: 0.9 }),
   ghost: new THREE.MeshStandardMaterial({ color: 0x8a9099, roughness: 0.8, transparent: true, opacity: 0.55 }),
-  lens: c => new THREE.MeshPhysicalMaterial({ color: c, roughness: 0.1, transmission: 0.3, transparent: true, opacity: 0.85, emissive: c, emissiveIntensity: 0.15 }),
+  lens: c => (M._lens[c] ??= new THREE.MeshPhysicalMaterial({ color: c, roughness: 0.1, transmission: 0.3, transparent: true, opacity: 0.85, emissive: c, emissiveIntensity: 0.15 })), _lens: {},
+  polymer: new THREE.MeshStandardMaterial({ color: 0x17171a, roughness: 0.5 }),
+  ferrite: new THREE.MeshStandardMaterial({ color: 0x5b5d61, roughness: 0.7, metalness: 0.2 }),
+  lid: new THREE.MeshStandardMaterial({ color: 0xc9ccd1, metalness: 0.9, roughness: 0.38 }),
+  subst: new THREE.MeshStandardMaterial({ color: 0x2f3d2a, roughness: 0.6 }),
+  print: new THREE.MeshStandardMaterial({ color: 0xd9d9d2, roughness: 0.6 }),
 };
-const box = (w, h, d, mat, x = 0, y = 0, z = 0) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; return m; };
-const rbox = (w, h, d, r, mat, x = 0, y = 0, z = 0) => { const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 3, Math.min(r, w / 2, h / 2, d / 2) * 0.99), mat); m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; return m; };
-const cyl = (r, h, mat, x = 0, y = 0, z = 0, seg = 28) => { const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, seg), mat); m.position.set(x, y, z); m.castShadow = true; return m; };
+const GC = new Map(); const geo = (k, f) => GC.get(k) ?? GC.set(k, f()).get(k);
+const box = (w, h, d, mat, x = 0, y = 0, z = 0) => { const m = new THREE.Mesh(geo(`b${w.toFixed(3)},${h.toFixed(3)},${d.toFixed(3)}`, () => new THREE.BoxGeometry(w, h, d)), mat); m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; return m; };
+const rbox = (w, h, d, r, mat, x = 0, y = 0, z = 0) => { const m = new THREE.Mesh(geo(`r${w.toFixed(3)},${h.toFixed(3)},${d.toFixed(3)},${r.toFixed(3)}`, () => new RoundedBoxGeometry(w, h, d, 2, Math.min(r, w / 2, h / 2, d / 2) * 0.99)), mat); m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; return m; };
+const cyl = (r, h, mat, x = 0, y = 0, z = 0, seg = 28) => { const m = new THREE.Mesh(geo(`c${r.toFixed(3)},${h.toFixed(3)},${seg}`, () => new THREE.CylinderGeometry(r, r, h, seg)), mat); m.position.set(x, y, z); m.castShadow = true; return m; };
 function gull(g, x, side, half, out, hy, w, axis = 'z') {
   const t = 0.13, k1 = out * 0.35, k2 = out * 0.55;
   for (const [a, b, c, off, y] of [[k1, t, w, half + k1 / 2, hy], [t, hy, w, half + k1, hy / 2], [k2, t, w, half + k1 + k2 / 2, t / 2]])
@@ -244,7 +262,20 @@ function buildModel(e, part, mode) {
       for (let i = 0; i < per; i++) { gull(g, o + i * pitch, 1, W / 2, out, H * 0.45, pitch * 0.33); gull(g, o + i * pitch, -1, W / 2, out, H * 0.45, pitch * 0.33); }
       break;
     }
-    case 'bga': g.add(box(L, 0.36, W, new THREE.MeshStandardMaterial({ color: 0x2c4a2e }), 0, 0.45)); g.add(rbox(L - 0.6, 0.6, W - 0.6, 0.1, M.epoxy, 0, 0.93)); break;
+    case 'bga': {
+      // a large package reads as a metal-lidded SoC, the rest as moulded (a style guess, shown as such)
+      g.add(box(L, 0.36, W, M.subst, 0, 0.45));
+      // SoC-with-memory package (Apple M-series): lid over the SoC, two memory dies side by side along the long edge
+      if (L * W > 400) { g.add(rbox(L * 0.8, 0.5, W * 0.6, 0.3, M.lid, 0, 0.88, -W * 0.14)); for (const sx of [-1, 1]) g.add(rbox(L * 0.42, 0.7, W * 0.27, 0.1, M.epoxy, sx * L * 0.22, 0.98, W * 0.33)); }
+      else g.add(rbox(L - 0.6, 0.6, W - 0.6, 0.1, M.epoxy, 0, 0.93));
+      break;
+    }
+    case 'standoff': { const r = Math.min(L, W) * 0.42; g.add(cyl(r, H, M.lid, 0, H / 2, 0, 6)); g.add(cyl(r * 0.45, 0.02, M.slot, 0, H + 0.01, 0, 20)); break; }
+    case 'molded-cap': g.add(rbox(L * 0.86, H, W, 0.18, M.polymer, 0, H / 2)); for (const s of [-1, 1]) g.add(box(L * 0.1, H * 0.45, W * 0.55, M.tin, s * (L / 2 - L * 0.05), H * 0.225)); g.add(box(L * 0.12, 0.02, W * 0.9, M.print, -L * 0.3, H + 0.005)); break;
+    case 'inductor': g.add(rbox(L, H, W, Math.min(L, W) * 0.12, M.ferrite, 0, H / 2)); for (const s of [-1, 1]) g.add(box(L * 0.16, 0.1, W * 0.6, M.tin, s * (L / 2 - L * 0.08), 0.05)); break;
+    case 'chip3t': { const r = Math.min(W, H) * 0.12; g.add(rbox(L * 0.98, H, W, r, M.mlcc, 0, H / 2)); for (const s of [-1, 1]) g.add(rbox(L * 0.2, H * 1.02, W * 1.02, r, M.tin, s * (L / 2 - L * 0.1), H / 2)); g.add(box(L * 0.22, H * 1.02, W * 1.04, M.tin, 0, H / 2)); break; }
+    case 'coax': g.add(box(L, 0.3, W, M.lid, 0, 0.15)); g.add(cyl(Math.min(L, W) * 0.38, H - 0.3, M.lid, 0, 0.3 + (H - 0.3) / 2, 0, 32)); g.add(cyl(Math.min(L, W) * 0.12, 0.02, M.slot, 0, H + 0.01, 0, 16)); break;
+    case 'b2b': { g.add(rbox(L, H, W, 0.08, M.epoxy, 0, H / 2)); g.add(box(L - 1.2, 0.02, W * 0.45, M.slot, 0, H + 0.005)); for (const s of [-1, 1]) g.add(box(L - 1.4, 0.03, 0.12, M.gold, 0, H + 0.01, s * W * 0.17)); for (const s of [-1, 1]) g.add(box(0.3, H * 0.9, W * 0.9, M.lid, s * (L / 2 - 0.1), H * 0.45)); break; }
     case 'crystal': g.add(box(L, 0.3, W, M.ceramic, 0, 0.15)); g.add(rbox(L * 0.92, H - 0.3, W * 0.9, 0.1, M.steel, 0, 0.3 + (H - 0.3) / 2)); break;
     case 'button': { g.add(box(L, 0.55, W, M.dark, 0, 0.275)); g.add(rbox(L * 0.97, 0.3, W * 0.95, 0.06, M.steel, 0, 0.7)); const r = Math.min(L, W) * 0.3; const dm = new THREE.MeshStandardMaterial({ color: 0x77787c, roughness: 0.5 }); const dome = new THREE.Mesh(new THREE.SphereGeometry(r, 28, 12, 0, Math.PI * 2, 0, Math.PI / 2), dm); dome.scale.y = 0.45; dome.position.y = 0.95; dome.castShadow = true; g.add(dome); g.add(cyl(r, 0.2, dm, 0, 0.9, 0)); break; }
     case 'button-ra': {
@@ -255,14 +286,15 @@ function buildModel(e, part, mode) {
     case 'conn': {
       // signal row at local +Z (board −y side of the body), mating face at local −Z
       const n = p.n || 2, pitch = p.pitch || 1, ph = e.size === 'JST PH';
-      if (e.size === 'FPC') { g.add(box(L, H * 0.7, W * 0.6, M.nylon, 0, H * 0.35)); g.add(box(L * 0.9, 0.3, W * 0.35, new THREE.MeshStandardMaterial({ color: 0x3e2b20 }), 0, H * 0.8, W * 0.3)); break; }
+      const housing = /JST/.test(e.size) ? M.nylon : M.epoxy; // JST housings are natural nylon; laptop board connectors black
+      if (e.size === 'FPC') { g.add(box(L, H * 0.7, W * 0.6, housing, 0, H * 0.35)); g.add(box(L * 0.9, 0.3, W * 0.35, new THREE.MeshStandardMaterial({ color: 0x3e2b20 }), 0, H * 0.8, W * 0.3)); break; }
       if (ph) { // side-entry PH: open top, two wells, pins lying in them
         g.add(box(L, 0.4, W, M.nylon, 0, 0.2)); g.add(box(L, H, 0.6, M.nylon, 0, H / 2, W / 2 - 0.3));
         for (const s of [-1, 1]) g.add(box(0.6, H, W, M.nylon, s * (L / 2 - 0.3), H / 2, 0));
         g.add(box(L - 1.2, H * 0.35, 0.5, M.nylon, 0, H * 0.175, -W / 2 + 0.25)); g.add(box(0.5, H * 0.85, W - 1.2, M.nylon, 0, H * 0.425, 0.0));
         for (let i = 0; i < n; i++) g.add(box(0.64, 0.64, W * 0.7, M.gold, -(n - 1) * pitch / 2 + i * pitch, 1.4, 0));
       } else { // SH: closed, mouth on the mating face, latch window on top
-        g.add(rbox(L, H, W, 0.12, M.nylon, 0, H / 2)); g.add(box(L - 1.4, H - 0.8, 0.05, M.slot, 0, H / 2 + 0.1, -W / 2 - 0.01));
+        g.add(rbox(L, H, W, 0.12, housing, 0, H / 2)); g.add(box(L - 1.4, H - 0.8, 0.05, M.slot, 0, H / 2 + 0.1, -W / 2 - 0.01));
       }
       for (let i = 0; i < n; i++) g.add(box(pitch * 0.32, 0.1, 0.9, M.tin, -(n - 1) * pitch / 2 + i * pitch, 0.05, W / 2 + 0.35));
       for (const s of [-1, 1]) g.add(box(0.25, H * 0.4, 1.4, M.tin, s * (L / 2 + 0.12), H * 0.2, -W * 0.2));
@@ -299,10 +331,10 @@ function nameDecal(g, text, ink) {
   m.rotation.x = -Math.PI / 2; if (!along) m.rotation.z = Math.PI / 2; m.position.y = bb.max.y + 0.01; g.add(m);
 }
 const EVC = { package: 0x3ecf6e, geometry: 0xf0a33a, fallback: 0xf05252 };
-const partsRoot = new THREE.Group(); scene.add(partsRoot);
+const partsRoot = new THREE.Group(); scene.add(partsRoot); const pickRoot = new THREE.Group(); scene.add(pickRoot); const PICKMAT = new THREE.MeshBasicMaterial();
 let pick = [];
 function buildParts() {
-  partsRoot.clear(); pick = [];
+  partsRoot.clear(); pickRoot.clear(); pick = [];
   const mode = S.mode;
   for (const part of D.parts) {
     const e = part.est[mode]; if (!e.populated) continue;
@@ -315,24 +347,54 @@ function buildParts() {
       const out = s => g.localToWorld(new THREE.Vector3(0, 0, s)); const far = s => { const v = out(s); return Math.max(Math.abs(v.x) / (Wmm / 2), Math.abs(v.z) / (Hmm / 2)); };
       const s = far(1) > far(-1) ? 1 : -1; a.position.z = s * (Wd / 2 + 0.5);
     }
-    if ($('#names').checked) nameDecal(g, part.name, ['chip', 'led3535', 'conn', 'crystal', 'button-ra', 'usb-c'].includes(e.family) && e.kind !== 'R' ? '#222' : '#eee');
+    const bbp = new THREE.Box3().setFromObject(holder);
+    if (!bbp.isEmpty()) { const sz = bbp.getSize(new THREE.Vector3()); const pb = new THREE.Mesh(new THREE.BoxGeometry(Math.max(sz.x, 0.2), Math.max(sz.y, 0.2), Math.max(sz.z, 0.2)), PICKMAT); pb.position.copy(bbp.getCenter(new THREE.Vector3())); pb.visible = false; pb.userData.part = part; pick.push(pb); pickRoot.add(pb); }
+    if ($('#names').checked && (D.parts.length < 400 || e.L * e.W > 6)) nameDecal(g, part.name, ['chip', 'led3535', 'conn', 'crystal', 'button-ra', 'usb-c'].includes(e.family) && e.kind !== 'R' ? '#222' : '#eee');
     if ($('#evt').checked) { const bb = new THREE.Box3().setFromObject(g); const sz = bb.getSize(new THREE.Vector3()).addScalar(0.3); const m = new THREE.Mesh(new THREE.BoxGeometry(sz.x, Math.max(sz.y, 0.3), sz.z), new THREE.MeshBasicMaterial({ color: EVC[e.evidence], transparent: true, opacity: 0.4, depthWrite: false })); m.position.copy(bb.getCenter(new THREE.Vector3())); m.userData.part = part; partsRoot.add(m); pick.push(m); }
-    g.traverse(o => { if (o.isMesh) { o.userData.part = part; pick.push(o); } });
     partsRoot.add(holder);
   }
+  mergeByMaterial(partsRoot);
+}
+// One mesh per material: a 3,000-part board drops from ~12,000 draw calls to a few dozen.
+function mergeByMaterial(root) {
+  root.updateMatrixWorld(true);
+  const groups = new Map(), keep = [];
+  root.traverse(o => {
+    if (!o.isMesh) { if (o.isLineSegments) keep.push(o); return; }
+    if (o.material.map || o.material.transparent) { keep.push(o); return; }
+    const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
+    for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
+    g.applyMatrix4(o.matrixWorld); (groups.get(o.material) ?? groups.set(o.material, []).get(o.material)).push(g);
+  });
+  const kept = keep.map(o => { const m = o.clone(); m.matrix.copy(o.matrixWorld); m.matrixAutoUpdate = false; return m; });
+  root.clear();
+  for (const [mat, list] of groups) { const m = new THREE.Mesh(mergeGeometries(list), mat); m.castShadow = m.receiveShadow = true; root.add(m); list.forEach(g => g.dispose()); }
+  kept.forEach(m => root.add(m));
 }
 
 // ───────────── cameras fitted to photos ─────────────
-// Mounting holes: board mils ↔ photo px (measured by colour centroid, see design doc).
-const HOLES = [[100, 800], [1900, 800], [100, 100], [1900, 100]];
-const PHOTOS = {
-  top: { src: '../../samples/3d-compare/4884-05.jpg', px: [[245.9, 315.2], [954.5, 319.7], [245.5, 598.2], [954.1, 593.7]], guess: [0, 160, 2, 0, 0, 0, 20] },
-  angle: { src: '../../samples/3d-compare/4884-04.jpg', px: [[417.8, 176.7], [979.8, 571.1], [220.2, 337.3], [780.1, 747.0]], guess: [70, 110, 90, 2, 2, 0, 20] },
+const DS = { ...window.DATASETS[window.DS_ID], id: window.DS_ID };
+const M1 = '../../samples/3d-compare/m1air/';
+// persp: a product photo; camera solved from mounting holes (board mils ↔ photo px, measured by colour centroid).
+// ortho: a flat scan; camera = similarity fitted to the board's silhouette against the white background.
+const PHOTO_SETS = {
+  feather: {
+    top: { label: 'Top photo', kind: 'persp', src: '../../samples/3d-compare/4884-05.jpg', size: [1200, 900], holes: [[100, 800], [1900, 800], [100, 100], [1900, 100]], px: [[245.9, 315.2], [954.5, 319.7], [245.5, 598.2], [954.1, 593.7]], guess: [0, 160, 2, 0, 0, 0, 20] },
+    angle: { label: 'Angled photo', kind: 'persp', src: '../../samples/3d-compare/4884-04.jpg', size: [1200, 900], holes: [[100, 800], [1900, 800], [100, 100], [1900, 100]], px: [[417.8, 176.7], [979.8, 571.1], [220.2, 337.3], [780.1, 747.0]], guess: [70, 110, 90, 2, 2, 0, 20] },
+  },
+  // `fit` = the silhouette fit computed once over HTTP (a file:// page cannot read the scan's pixels); refit live when it can.
+  'm1-bvr': { top: { label: 'Top scan', kind: 'ortho', side: 'top', src: M1 + 'top-3200.jpg', fit: { q: [4.116929, 0.001094, 399.3125, 120.5], flip: [false, false], iou: 0.9932 } },
+              bottom: { label: 'Bottom scan', kind: 'ortho', side: 'bottom', src: M1 + 'bottom-3200.jpg', fit: { q: [4.124824, 0.000781, 402, 122.5], flip: [false, false], iou: 0.9934 } } },
 };
-const SW = 1200, SH = 900, FOV = 20;
-const cam = new THREE.PerspectiveCamera(FOV, SW / SH, 1, 2000);
+// the XZZ export is aligned to the BVR's frame, so it reuses the BVR's scan fit as is (its own outline is inset)
+PHOTO_SETS['m1-xzz'] = Object.fromEntries(Object.entries(PHOTO_SETS['m1-bvr']).map(([k, v]) => [k, { ...v, useFit: true }]));
+const PHOTOS = PHOTO_SETS[DS.id];
+const FOV = 20;
+const cam = new THREE.PerspectiveCamera(FOV, 4 / 3, 1, 4000);
+const ocam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
+let activeCam = cam;
 function applyPose(c, q) { c.fov = q[6] ?? FOV; c.position.set(q[0], q[1], q[2]); c.up.set(0, 1, 0); c.lookAt(q[3], 0, q[4]); c.rotateZ(q[5]); c.updateMatrixWorld(true); c.updateProjectionMatrix(); }
-function reproj(q, px) { applyPose(cam, q); let e = 0; HOLES.forEach(([x, y], i) => { const v = new THREE.Vector3(X(x), TOP, Z(y)).project(cam); const u = (v.x + 1) / 2 * SW, w = (1 - v.y) / 2 * SH; e += (u - px[i][0]) ** 2 + (w - px[i][1]) ** 2; }); return e; }
+function reproj(q, ph) { cam.aspect = ph.size[0] / ph.size[1]; applyPose(cam, q); let e = 0; ph.holes.forEach(([x, y], i) => { const v = new THREE.Vector3(X(x), TOP, Z(y)).project(cam); const u = (v.x + 1) / 2 * ph.size[0], w = (1 - v.y) / 2 * ph.size[1]; e += (u - ph.px[i][0]) ** 2 + (w - ph.px[i][1]) ** 2; }); return e; }
 function nelderMead(f, x0, step, iters = 1500) {
   const n = x0.length; let pts = [x0]; for (let i = 0; i < n; i++) { const p = [...x0]; p[i] += step[i]; pts.push(p); }
   let vals = pts.map(f);
@@ -347,37 +409,125 @@ function nelderMead(f, x0, step, iters = 1500) {
   }
   const b = vals.indexOf(Math.min(...vals)); return { x: pts[b], f: vals[b] };
 }
-for (const [k, ph] of Object.entries(PHOTOS)) {
-  let best = null;
-  for (let r = 0; r < 6; r++) { const g0 = r ? (best.x.map((v, i) => v + (Math.random() - 0.5) * [30, 30, 30, 3, 3, 0.2, 6][i])) : ph.guess; const s = nelderMead(q => (q[6] < 5 || q[6] > 50 ? 1e9 : reproj(q, ph.px) + 0.02 * (q[6] - 20) ** 2), g0, [20, 20, 20, 2, 2, 0.1, 4]); if (!best || s.f < best.f) best = s; }
-  ph.pose = best.x; ph.rms = Math.sqrt(reproj(best.x, ph.px) / 4);
+// Outline polygon (largest contour) in scene (x, z).
+const outlinePoly = contours.slice().sort((a, b) => b.length - a.length)[0].map(([x, y]) => [X(x), Z(y)]);
+// Ortho view of one side: scene (x, z) → (u, v) "as seen", before scale/rotation/shift.
+const sideUV = side => side === 'top' ? ([x, z]) => [x, z] : ([x, z]) => [-x, z];
+// ── 3×3 projective helpers ──
+const m3mul = (A, B) => A.map((r, i) => [0, 1, 2].map(j => r[0] * B[0][j] + r[1] * B[1][j] + r[2] * B[2][j]));
+const m3inv = m => { const [[a, b, c], [d, e, f], [g, h, i]] = m; const A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g, det = a * A + b * B + c * C;
+  return [[A / det, -(b * i - c * h) / det, (b * f - c * e) / det], [B / det, (a * i - c * g) / det, -(a * f - c * d) / det], [C / det, -(a * h - b * g) / det, (a * e - b * d) / det]]; };
+const m3apply = (m, [x, y]) => { const w = m[2][0] * x + m[2][1] * y + m[2][2]; return [(m[0][0] * x + m[0][1] * y + m[0][2]) / w, (m[1][0] * x + m[1][1] * y + m[1][2]) / w]; };
+function solveAffine(src, dst) { // least squares, 6 dof
+  const N = Array.from({ length: 3 }, () => Array(3).fill(0)), bx = [0, 0, 0], by = [0, 0, 0];
+  src.forEach(([u, v], k) => { const r = [u, v, 1]; for (let i = 0; i < 3; i++) { for (let j = 0; j < 3; j++) N[i][j] += r[i] * r[j]; bx[i] += r[i] * dst[k][0]; by[i] += r[i] * dst[k][1]; } });
+  const Ni = m3inv(N), sol = b => [0, 1, 2].map(i => Ni[i][0] * b[0] + Ni[i][1] * b[1] + Ni[i][2] * b[2]);
+  const a = sol(bx), b = sol(by); return [a, b, [0, 0, 1]];
 }
-$('#fit').textContent = `Camera fit, rms reprojection error: top photo ${PHOTOS.top.rms.toFixed(1)} px, angled photo ${PHOTOS.angle.rms.toFixed(1)} px (of 1200 × 900).`;
+function solveH(src, dst) { // least-squares homography src → dst, coordinates normalised for conditioning
+  const norm = pts => { const cx = pts.reduce((a, p) => a + p[0], 0) / pts.length, cy = pts.reduce((a, p) => a + p[1], 0) / pts.length; const sc = Math.SQRT2 / (pts.reduce((a, p) => a + Math.hypot(p[0] - cx, p[1] - cy), 0) / pts.length); return [[sc, 0, -sc * cx], [0, sc, -sc * cy], [0, 0, 1]]; };
+  const Ts = norm(src), Td = norm(dst), S2 = src.map(p => m3apply(Ts, p)), D2 = dst.map(p => m3apply(Td, p));
+  const N = Array.from({ length: 8 }, () => Array(9).fill(0));
+  S2.forEach(([u, v], k) => { const [x, y] = D2[k]; for (const [row, b] of [[[u, v, 1, 0, 0, 0, -u * x, -v * x], x], [[0, 0, 0, u, v, 1, -u * y, -v * y], y]]) for (let i = 0; i < 8; i++) { for (let j = 0; j < 8; j++) N[i][j] += row[i] * row[j]; N[i][8] += row[i] * b; } });
+  for (let i = 0; i < 8; i++) { let pv = i; for (let r = i + 1; r < 8; r++) if (Math.abs(N[r][i]) > Math.abs(N[pv][i])) pv = r; [N[i], N[pv]] = [N[pv], N[i]]; for (let r = 0; r < 8; r++) if (r !== i) { const f = N[r][i] / N[i][i]; for (let c = i; c < 9; c++) N[r][c] -= f * N[i][c]; } }
+  const h = N.map((r, i) => r[8] / r[i]); return m3mul(m3inv(Td), m3mul([[h[0], h[1], h[2]], [h[3], h[4], h[5]], [h[6], h[7], 1]], Ts));
+}
+async function fitOrtho(ph) {
+  const img = new Image(); img.src = ph.src; await img.decode(); ph.size = [img.naturalWidth, img.naturalHeight];
+  const Wd = 800, Hd = Math.round(800 * img.naturalHeight / img.naturalWidth);
+  const cv = document.createElement('canvas'); cv.width = Wd; cv.height = Hd; const c = cv.getContext('2d', { willReadFrequently: true });
+  c.drawImage(img, 0, 0, Wd, Hd); let px;
+  try { px = c.getImageData(0, 0, Wd, Hd).data; if (ph.useFit) throw 0; } catch { if (!ph.fit) throw new Error('no stored fit for ' + ph.src); return setFit(ph, ph.fit, Wd, Hd); } // file:// taints the canvas: use the stored fit
+  const mask = new Uint8Array(Wd * Hd); for (let i = 0; i < Wd * Hd; i++) mask[i] = (px[i * 4] + px[i * 4 + 1] + px[i * 4 + 2]) / 3 < 232 ? 1 : 0;
+  const uv = outlinePoly.map(sideUV(ph.side));
+  const score = (q, flip) => { // q = [s, θ, tx, ty]; IoU of the drawn outline against the mask
+    const [sc, th, tx, ty] = q, co = Math.cos(th), si = Math.sin(th);
+    c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, Wd, Hd); c.fillStyle = '#000'; c.beginPath();
+    uv.forEach(([u, v], i) => { let X2 = sc * (co * u - si * v) + tx, Y2 = sc * (si * u + co * v) + ty; if (flip[0]) X2 = Wd - X2; if (flip[1]) Y2 = Hd - Y2; i ? c.lineTo(X2, Y2) : c.moveTo(X2, Y2); }); c.fill();
+    const d = c.getImageData(0, 0, Wd, Hd).data; let I = 0, U = 0; for (let i = 0; i < Wd * Hd; i++) { const a = d[i * 4 + 3] > 127, m = mask[i]; if (a && m) I++; if (a || m) U++; } return I / U;
+  };
+  const mb = { x0: Wd, x1: 0, y0: Hd, y1: 0 }; for (let y = 0; y < Hd; y++) for (let x = 0; x < Wd; x++) if (mask[y * Wd + x]) { mb.x0 = Math.min(mb.x0, x); mb.x1 = Math.max(mb.x1, x); mb.y0 = Math.min(mb.y0, y); mb.y1 = Math.max(mb.y1, y); }
+  const pb = uv.reduce((b, [u, v]) => ({ x0: Math.min(b.x0, u), x1: Math.max(b.x1, u), y0: Math.min(b.y0, v), y1: Math.max(b.y1, v) }), { x0: 1e9, x1: -1e9, y0: 1e9, y1: -1e9 });
+  let best = null;
+  for (const flip of [[false, false], [true, false], [false, true], [true, true]]) {
+    const sc = ((mb.x1 - mb.x0) / (pb.x1 - pb.x0) + (mb.y1 - mb.y0) / (pb.y1 - pb.y0)) / 2;
+    let q = [sc, 0, (mb.x0 + mb.x1) / 2 - sc * (pb.x0 + pb.x1) / 2, (mb.y0 + mb.y1) / 2 - sc * (pb.y0 + pb.y1) / 2];
+    if (flip[0]) q[2] = Wd - (mb.x0 + mb.x1) / 2 - sc * (pb.x0 + pb.x1) / 2; // after a flip, centre still lands on centre
+    if (flip[1]) q[3] = Hd - (mb.y0 + mb.y1) / 2 - sc * (pb.y0 + pb.y1) / 2;
+    let f = score(q, flip); const step = [sc * 0.02, 0.01, 4, 4];
+    for (let it = 0; it < 7; it++) { let moved = true; while (moved) { moved = false; for (let k = 0; k < 4; k++) for (const sg of [1, -1]) { const t = [...q]; t[k] += sg * step[k]; const ft = score(t, flip); if (ft > f) { f = ft; q = t; moved = true; } } } step.forEach((v, k) => (step[k] = v / 2)); }
+    if (!best || f > best.f) best = { q, f, flip };
+  }
+  setFit(ph, { q: best.q, flip: best.flip, iou: best.f }, Wd, Hd);
+  (window.__fits ??= {})[ph.side] = { q: best.q.map(v => +v.toFixed(6)), flip: best.flip, iou: +best.f.toFixed(4) };
+}
+// natural-px affine of scene (x,z): p = K·(s·R(θ)·uv + t), mirrored when flipped
+function setFit(ph, fit, Wd, Hd) {
+  const K = ph.size[0] / Wd, [sc, th, tx, ty] = fit.q, co = Math.cos(th), si = Math.sin(th), map = sideUV(ph.side);
+  ph.toPhoto = ([x, z]) => { const [u, v] = map([x, z]); let a = sc * (co * u - si * v) + tx, b = sc * (si * u + co * v) + ty; if (fit.flip[0]) a = Wd - a; if (fit.flip[1]) b = Hd - b; return [a * K, b * K]; };
+  ph.iou = fit.iou; ph.flip = fit.flip.some(Boolean) ? (fit.flip[0] ? 'mirrored left–right' : '') + (fit.flip[0] && fit.flip[1] ? ' and ' : '') + (fit.flip[1] ? 'top–bottom' : '') : ''; ph.thetaDeg = th * 180 / Math.PI;
+}
+const fits = [];
+for (const [k, ph] of Object.entries(PHOTOS)) {
+  if (ph.kind === 'persp') {
+    let best = null;
+    for (let r = 0; r < 6; r++) { const g0 = r ? (best.x.map((v, i) => v + (Math.random() - 0.5) * [30, 30, 30, 3, 3, 0.2, 6][i])) : ph.guess; const sres = nelderMead(q => (q[6] < 5 || q[6] > 50 ? 1e9 : reproj(q, ph) + 0.02 * (q[6] - 20) ** 2), g0, [20, 20, 20, 2, 2, 0.1, 4]); if (!best || sres.f < best.f) best = sres; }
+    ph.pose = best.x; ph.rms = Math.sqrt(reproj(best.x, ph) / 4);
+    fits.push(`${ph.label}: ${ph.rms.toFixed(1)} px rms over 4 holes`);
+  } else { await fitOrtho(ph); fits.push(`${ph.label}: outline overlap ${(ph.iou * 100).toFixed(1)} %${ph.useFit ? ' (BVR outline, XZZ aligned to it)' : ''}${ph.flip ? ', ' + ph.flip : ''}`); }
+}
+$('#fit').textContent = 'Fit — ' + fits.join(' · ');
+$('#fit-how').textContent = Object.values(PHOTOS)[0].kind === 'persp' ? 'Drag the yellow line to wipe between photo and render. The camera (position, aim, field of view) is solved from the four mounting holes in each photo.' : 'Drag the yellow line to wipe between scan and render. The scan is placed in two steps: the board outline from the file is fitted to the board silhouette (scale, turn, shift, mirror), the XZZ is placed through the BVR of the same board (fitted on the reference designators both files share), because its own outline is drawn inside the board edge.';
+$('#credit').textContent = DS.credit;
 
 // ───────────── layout / interaction ─────────────
-const S = { tab: 'top', mode: 'pkg', wipe: 0.5 };
+const S = { tab: Object.keys(PHOTOS)[0], mode: 'pkg', wipe: 0.5 };
 const ctl = new OrbitControls(cam, canvas); ctl.enabled = false; ctl.enableDamping = true;
-const stage = $('#stage'), view = $('#view'), clip = $('#photoClip'), wipe = $('#wipe');
+const stage = $('#stage'), view = $('#view'), clip = $('#photoClip'), wipe = $('#wipe'), photoEl = $('#photo');
+function affineFrom3(f) { // 2D affine from a point map, sampled at three points
+  const o = f([0, 0]), ex = f([1, 0]), ez = f([0, 1]); return [ex[0] - o[0], ex[1] - o[1], ez[0] - o[0], ez[1] - o[1], o[0], o[1]];
+}
+const inv = ([a, b, c, d, e, f]) => { const det = a * d - b * c; return [d / det, -b / det, -c / det, a / det, (c * f - d * e) / det, (b * e - a * f) / det]; };
+const mul = ([a1, b1, c1, d1, e1, f1], [a2, b2, c2, d2, e2, f2]) => [a1 * a2 + c1 * b2, b1 * a2 + d1 * b2, a1 * c2 + c1 * d2, b1 * c2 + d1 * d2, a1 * e2 + c1 * f2 + e1, b1 * e2 + d1 * f2 + f1];
 function layout() {
-  const vw = view.clientWidth, vh = view.clientHeight;
-  if (S.tab === 'free') { stage.style.transform = ''; stage.style.width = vw + 'px'; stage.style.height = vh + 'px'; renderer.setSize(vw, vh, false); cam.aspect = vw / vh; cam.updateProjectionMatrix(); return; }
-  const k = Math.min(vw / SW, vh / SH); stage.style.width = SW * k + 'px'; stage.style.height = SH * k + 'px';
-  stage.style.left = (vw - SW * k) / 2 + 'px'; stage.style.top = (vh - SH * k) / 2 + 'px'; stage.style.transform = '';
-  renderer.setSize(SW * k, SH * k, false); cam.aspect = SW / SH; cam.updateProjectionMatrix();
+  const vw = view.clientWidth, vh = view.clientHeight, ph = PHOTOS[S.tab];
+  if (!ph || ph.kind === 'ortho') {
+    stage.style.left = stage.style.top = '0px'; stage.style.width = vw + 'px'; stage.style.height = vh + 'px'; renderer.setSize(vw, vh, false);
+    if (!ph) { cam.aspect = vw / vh; cam.updateProjectionMatrix(); return; }
+    // ortho camera over this side, board filling the view
+    const span = Math.max(Wmm / (vw / vh), Hmm) * 0.56; const top = ph.side === 'top';
+    Object.assign(ocam, { left: -span * vw / vh, right: span * vw / vh, top: span, bottom: -span }); ocam.updateProjectionMatrix();
+    ocam.position.set(0, top ? 200 : -200, 0); ocam.up.set(0, 0, -1); ocam.lookAt(0, 0, 0); ocam.updateMatrixWorld(true);
+    const y = top ? TOP : -TOP, toScreen = ([x, z]) => { const v = new THREE.Vector3(x, y, z).project(ocam); return [(v.x + 1) / 2 * vw, (1 - v.y) / 2 * vh]; };
+    // screen ← scene is affine (ortho); photo ← scene is projective: screen ← photo = Ar · P⁻¹, as a CSS matrix3d
+    const pts = [[0, 0], [30, 0], [0, 15], [30, 15], [-40, -10], [45, 12]];
+    const Ar = solveH(pts, pts.map(toScreen)), P = solveH(pts, pts.map(ph.toPhoto)), m = m3mul(Ar, m3inv(P));
+    photoEl.style.width = ph.size[0] + 'px'; photoEl.style.height = ph.size[1] + 'px';
+    photoEl.style.transform = `matrix3d(${m[0][0]},${m[1][0]},0,${m[2][0]},${m[0][1]},${m[1][1]},0,${m[2][1]},0,0,1,0,${m[0][2]},${m[1][2]},0,${m[2][2]})`;
+  } else {
+    const [SW, SH] = ph.size, k = Math.min(vw / SW, vh / SH); stage.style.width = SW * k + 'px'; stage.style.height = SH * k + 'px';
+    stage.style.left = (vw - SW * k) / 2 + 'px'; stage.style.top = (vh - SH * k) / 2 + 'px';
+    renderer.setSize(SW * k, SH * k, false); cam.aspect = SW / SH; applyPose(cam, ph.pose);
+    photoEl.style.width = SW * k + 'px'; photoEl.style.height = SH * k + 'px'; photoEl.style.transform = '';
+  }
   clip.style.clipPath = `inset(0 ${(1 - S.wipe) * 100}% 0 0)`; wipe.style.left = `calc(${S.wipe * 100}% - 1px)`;
 }
 function setTab(t) {
   S.tab = t; document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
   $('#parts').style.display = t === 'parts' ? 'block' : 'none';
-  const photo = t === 'top' || t === 'angle';
-  clip.style.display = wipe.style.display = photo ? '' : 'none'; document.querySelectorAll('.tagl,.tagr').forEach(e => (e.style.display = photo ? '' : 'none'));
-  backdrop.visible = !photo || +$('#op').value < 1 || true;
-  if (photo) { $('#photo').src = PHOTOS[t].src; applyPose(cam, PHOTOS[t].pose); ctl.enabled = false; stage.style.position = 'absolute'; }
-  if (t === 'free') { stage.style.left = stage.style.top = '0px'; ctl.enabled = true; ctl.target.set(0, 0, 0); cam.position.set(-40, 50, 60); }
+  const ph = PHOTOS[t];
+  clip.style.display = wipe.style.display = ph ? '' : 'none'; document.querySelectorAll('.tagl,.tagr').forEach(e => (e.style.display = ph ? '' : 'none'));
+  activeCam = ph?.kind === 'ortho' ? ocam : cam; ctl.enabled = t === 'free'; under.visible = !ph || ph.side === 'bottom'; key.visible = !ph || ph.side !== 'bottom';
+  if (ph) photoEl.src = ph.src;
+  if (t === 'free') { cam.fov = 35; ctl.target.set(0, 0, 0); cam.position.set(-Wmm * 0.4, Wmm * 0.5, Wmm * 0.6); cam.updateProjectionMatrix(); }
   if (t === 'parts') renderTable();
   layout();
 }
+$('#tabs').innerHTML = Object.entries(PHOTOS).map(([k, ph]) => `<button class="tab" data-tab="${k}">${ph.label}</button>`).join('') + '<button class="tab" data-tab="free">Free orbit</button><button class="tab" data-tab="parts">Parts &amp; verdicts</button>';
 document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
+$('#board').innerHTML = Object.entries(window.DATASETS).map(([k, d]) => `<option value="${k}" ${k === DS.id ? 'selected' : ''}>${d.title}</option>`).join('');
+$('#board').onchange = e => { location.search = '?board=' + e.target.value; };
+if (!D.parts.some(p => p.package)) $('#modebox').style.display = 'none', S.mode = 'pins';
 $('#mode').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; $('#mode').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); S.mode = b.dataset.v; noteMode(); buildParts(); if (S.tab === 'parts') renderTable(); });
 function noteMode() { $('#mode-note').textContent = S.mode === 'pkg' ? 'Kind and size from the EAGLE package name where it names one; position and orientation always from the pins.' : 'As a plain boardview would allow: pin positions, pad sizes and refdes only — package names and values ignored.'; }
 $('#op').oninput = e => ($('#photo').style.opacity = e.target.value);
@@ -393,7 +543,7 @@ addEventListener('resize', layout);
 const ray = new THREE.Raycaster(), mv = new THREE.Vector2(), tip = $('#tip');
 canvas.addEventListener('pointermove', e => {
   const r = canvas.getBoundingClientRect(); mv.set((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1);
-  ray.setFromCamera(mv, cam); const h = ray.intersectObjects(pick, false)[0]; const part = h?.object.userData.part;
+  ray.setFromCamera(mv, activeCam); const h = ray.intersectObjects(pick, false)[0]; const part = h?.object.userData.part;
   if (!part) { tip.style.display = 'none'; return; }
   const e2 = part.est[S.mode], vr = view.getBoundingClientRect();
   tip.innerHTML = `<b>${part.name}</b> · ${e2.family}${e2.size ? ' ' + e2.size : ''}${e2.kind && e2.kind !== 'chip' ? ' ' + e2.kind : ''} <span class="ev">(${e2.evidence})</span><br>${e2.L.toFixed(2)}×${e2.W.toFixed(2)}×${e2.H.toFixed(2)} mm<br><span class="ev">${e2.why}</span>${part.package ? `<br><span class="ev">file: ${part.package} ${part.value}</span>` : ''}${VERDICT[part.name] ? `<br>photo: ${VERDICT[part.name][1]}` : ''}`;
@@ -402,7 +552,7 @@ canvas.addEventListener('pointermove', e => {
 canvas.addEventListener('pointerleave', () => (tip.style.display = 'none'));
 
 // ───────────── verdicts: render vs photo, part by part (filled in by review) ─────────────
-const VERDICT = window.VERDICT3D || {};
+const VERDICT = (window.VERDICT3D || {})[DS.id] || {};
 function renderTable() {
   const rows = D.parts.filter(p => p.est.pkg.family !== 'none').sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true }));
   const cell = e => `${e.family}${e.size ? ' ' + e.size : ''}${e.kind && e.kind !== 'chip' && e.family === 'chip' ? ' · ' + e.kind : ''}${e.populated ? '' : ' (not fitted)'}`;
@@ -412,13 +562,20 @@ function renderTable() {
 function summary() {
   const n = D.parts.filter(p => p.est.pkg.family !== 'none').length, agree = D.parts.filter(p => p.est.pkg.family !== 'none' && p.est.pkg.family === p.est.pins.family && p.est.pkg.size === p.est.pins.size).length;
   const vs = Object.values(VERDICT); const c = k => vs.filter(v => v[0] === k).length;
-  $('#summary').innerHTML = `<p>${n} parts with pins. Pins-only agrees with the package name on <b>${agree}</b>.</p>` + (vs.length ? `<p>Against the photo: <span class="v-ok">${c('ok')} match</span> · <span class="v-warn">${c('warn')} close</span> · <span class="v-bad">${c('bad')} wrong</span>.</p>` : '');
+  $('#summary').innerHTML = (D.parts.some(p => p.package) ? `<p>${n} parts with pins. Pins-only agrees with the package name on <b>${agree}</b>.</p>` : `<p>${n} parts with pins, ${D.format}: no package names — every part is estimated from its pins${D.parts[0]?.pins.length ? '' : ''}.</p>` + (() => { const fam = {}; D.parts.forEach(p => { const k = p.est.pins.family; fam[k] = (fam[k] || 0) + 1; }); return '<p>' + Object.entries(fam).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(' · ') + '</p>'; })()) + (vs.length ? `<p>Against the photo: <span class="v-ok">${c('ok')} match</span> · <span class="v-warn">${c('warn')} close</span> · <span class="v-bad">${c('bad')} wrong</span>.</p>` : '');
 }
 
 // ───────────── go ─────────────
-noteMode(); refreshTextures(); buildParts(); summary(); setTab('top');
-(function loop() { if (ctl.enabled) ctl.update(); renderer.render(scene, cam); requestAnimationFrame(loop); })();
+$('#silk').checked = D.format === 'EAGLE_BRD'; // XZZ/BVR outlines are assembly drawings, not printed silkscreen
+noteMode(); refreshTextures(); buildParts(); summary(); setTab(S.tab);
+(function loop() { if (ctl.enabled) ctl.update(); renderer.render(scene, activeCam); requestAnimationFrame(loop); })();
 window.__setWipe = f => { S.wipe = f; layout(); };
+// diagnostic: the scan with the file's outline (green) and mounting-hole centres (red) drawn through the current fit
+window.__dbgDraw = async tab => { const ph = PHOTOS[tab]; const img = new Image(); img.src = ph.src; await img.decode(); const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight; const x = c.getContext('2d'); x.drawImage(img, 0, 0);
+  x.strokeStyle = '#0f0'; x.lineWidth = 3; x.beginPath(); outlinePoly.forEach((p, i) => { const q = ph.toPhoto(p); i ? x.lineTo(...q) : x.moveTo(...q); }); x.closePath(); x.stroke();
+  x.strokeStyle = '#f00'; for (const e of MOUNT) { const q = ph.toPhoto([X(e.cx), Z(e.cy)]); x.beginPath(); x.arc(q[0], q[1], 12, 0, 7); x.stroke(); x.beginPath(); x.moveTo(q[0] - 25, q[1]); x.lineTo(q[0] + 25, q[1]); x.moveTo(q[0], q[1] - 25); x.lineTo(q[0], q[1] + 25); x.stroke(); }
+  for (const pt of D.parts) if (pt.name === 'U0600') { const e = pt.est.pins; const co = Math.cos(e.rotDeg * Math.PI / 180), si = Math.sin(e.rotDeg * Math.PI / 180); x.strokeStyle = '#0ff'; x.beginPath(); [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([a, b], i) => { const lx = a * e.L / 2 / MM, ly = b * e.W / 2 / MM; const q = ph.toPhoto([X(e.cx + lx * co - ly * si), Z(e.cy + lx * si + ly * co)]); i ? x.lineTo(...q) : x.moveTo(...q); }); x.closePath(); x.stroke(); }
+  return c.toDataURL('image/jpeg', 0.85); };
 window.__ready = true;
 </script>
 <script src="2026-11-14-3d-compare-verdicts.js"></script>
