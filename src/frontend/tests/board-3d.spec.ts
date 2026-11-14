@@ -20,7 +20,7 @@ async function openBoard(page: Page) {
   await page.waitForFunction(() => (window as unknown as { __boardStore?: { board: unknown } }).__boardStore?.board, null, { timeout: 30000 });
 }
 
-type Cam = { dist: number; target: [number, number, number]; leftDrag: 'orbit' | 'pan' };
+type Cam = { dist: number; target: [number, number, number]; pos: [number, number, number]; leftDrag: 'orbit' | 'pan' };
 type W = { __board3d?: { renderer: { cameraState(): Cam; screenOfPin(a: number, b: number): [number, number] | null; drawnParts: number; screenOf(i: number): [number, number] | null; part(i: number): { name: string; est: { family: string } } | undefined } }; __boardStore?: { selection: { partIndex: number | null }; board: { parts: { name: string; pins: unknown[] }[] } } };
 
 test('3D view: toggle, draws estimated parts, a click selects, back to 2D', async ({ page }) => {
@@ -123,5 +123,39 @@ test('3D view: a scroll pans, Ctrl+scroll zooms', async ({ page }) => {
   expect(Math.abs(b.dist - a.dist)).toBeLessThan(a.dist * 0.02);   // a pan, not a zoom
   await page.keyboard.down('Control'); await page.mouse.wheel(0, -300); await page.keyboard.up('Control'); await page.waitForTimeout(500);
   expect((await cam()).dist).toBeLessThan(b.dist * 0.95);
+});
+
+test('3D view: turning is free — a drag carries on over the top to the underside', async ({ page }) => {
+  await openBoard(page);
+  await page.getByTestId('view3d-btn').click();
+  await page.waitForFunction(() => ((window as unknown as W).__board3d?.renderer.drawnParts ?? 0) > 0, null, { timeout: 30000 });
+  await page.getByTestId('board-3d-top').click(); await page.waitForTimeout(700);
+  const cam = () => page.evaluate(() => (window as unknown as W).__board3d!.renderer.cameraState());
+  expect((await cam()).pos[1]).toBeGreaterThan(0);
+  const box = (await page.locator('.board-3d-host').boundingBox())!;
+  const x = box.x + box.width / 2, y0 = box.y + box.height * 0.15;
+  await page.mouse.move(x, y0); await page.mouse.down();
+  for (let k = 1; k <= 30; k++) await page.mouse.move(x, y0 + box.height * 0.7 * k / 30);
+  await page.mouse.up(); await page.waitForTimeout(1200);
+  // an orbit control stops at the pole; a trackball goes over it and below the board
+  expect((await cam()).pos[1]).toBeLessThan(0);
+});
+
+test('3D view: a drag turns about the selected part, else the board centre', async ({ page }) => {
+  await openBoard(page);
+  await page.getByTestId('view3d-btn').click();
+  await page.waitForFunction(() => ((window as unknown as W).__board3d?.renderer.drawnParts ?? 0) > 0, null, { timeout: 30000 });
+  await page.waitForTimeout(700);
+  const box = (await page.locator('.board-3d-host').boundingBox())!;
+  const drag = async () => { const x = box.x + box.width / 2, y = box.y + box.height / 2; await page.mouse.move(x - 120, y); await page.mouse.down(); for (let k = 1; k <= 12; k++) await page.mouse.move(x - 120 + k * 20, y + k * 6); await page.mouse.up(); await page.waitForTimeout(300); };
+  // the pivot stays put on screen: project it before and after a drag
+  const proj = (p: [number, number, number] | null) => page.evaluate(pp => (window as unknown as { __board3d: { renderer: { project(p: [number, number, number]): [number, number] } } }).__board3d.renderer.project(pp ?? [0, 0, 0]), p);
+  const c0 = await proj(null); await drag(); const c1 = await proj(null);
+  expect(Math.hypot(c1[0] - c0[0], c1[1] - c0[1])).toBeLessThan(2);   // board centre did not move on screen
+  const sel = await page.evaluate(() => { const w = window as unknown as { __boardStore: { board: { parts: { pins: unknown[] }[] }; selectPart(i: number): void }; __board3d: { renderer: { partCentre(i: number): [number, number, number] | null } } };
+    const i = w.__boardStore.board.parts.findIndex((p, k) => p.pins.length > 8 && w.__board3d.renderer.partCentre(k)); w.__boardStore.selectPart(i); return w.__board3d.renderer.partCentre(i); });
+  await page.waitForTimeout(300);
+  const s0 = await proj(sel); await drag(); const s1 = await proj(sel);
+  expect(Math.hypot(s1[0] - s0[0], s1[1] - s0[1])).toBeLessThan(2);   // the selected part is the pivot
 });
 

@@ -93,8 +93,9 @@ export function buildPartModel(e: PartEstimate): THREE.Group | null {
     }
     case 'bga': {
       g.add(box(L, 0.36, W, MAT.subst, 0, 0.45));
-      // a very large package is drawn as an SoC with memory (lid + two dies along the long edge): a style guess
-      if (L * W > 400) { g.add(rbox(L * 0.8, 0.5, W * 0.6, 0.3, MAT.lid, 0, 0.88, -W * 0.14)); for (const sx of [-1, 1]) g.add(rbox(L * 0.42, 0.7, W * 0.27, 0.1, MAT.epoxy, sx * L * 0.22, 0.98, W * 0.33)); }
+      // Apple M-series: SoC under a lid with two memory dies along the long edge. Only for that kind of
+      // package — ≥ 2,000 balls at ≤ 0.55 mm pitch and ≥ 400 mm²; Intel CPUs, Tegra, GPUs are plain moulded boxes
+      if (L * W > 400 && (p.balls ?? 0) >= 2000 && (p.pitch ?? 1) <= 0.55) { g.add(rbox(L * 0.8, 0.5, W * 0.6, 0.3, MAT.lid, 0, 0.88, -W * 0.14)); for (const sx of [-1, 1]) g.add(rbox(L * 0.42, 0.7, W * 0.27, 0.1, MAT.epoxy, sx * L * 0.22, 0.98, W * 0.33)); }
       else g.add(rbox(L - 0.6, 0.6, W - 0.6, 0.1, MAT.epoxy, 0, 0.93));
       break;
     }

@@ -9,7 +9,6 @@
  * live WebGL contexts and every board tab already holds one.
  */
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Board3DModel, Board3DPad, Board3DPart } from './board3d-model';
@@ -24,7 +23,10 @@ export class Board3DRenderer {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(35, 1, 0.5, 5000);
-  private controls: OrbitControls;
+  /** The point the camera looks at. Turning pivots about the selected part, else the board centre. */
+  private target = new THREE.Vector3();
+  private leftDrag: 'orbit' | 'pan' = 'orbit';
+  private selectedPart: number | null = null;
   private boardRoot = new THREE.Group();
   private partsRoot = new THREE.Group();
   private pickRoot = new THREE.Group();
@@ -36,7 +38,7 @@ export class Board3DRenderer {
   private partByIndex = new Map<number, { part: Board3DPart; box: THREE.Box3 }>();
   private dirty = true;
   private raf = 0;
-  private anim: { from: THREE.Vector3; to: THREE.Vector3; tf: THREE.Vector3; tt: THREE.Vector3; t0: number } | null = null;
+  private anim: { from: THREE.Vector3; to: THREE.Vector3; tf: THREE.Vector3; tt: THREE.Vector3; t0: number; uf: THREE.Vector3; ut: THREE.Vector3 } | null = null;
   private ro: ResizeObserver;
   private ray = new THREE.Raycaster();
   private disposed = false;
@@ -69,11 +71,15 @@ export class Board3DRenderer {
     this.scene.add(key, key.target, under, new THREE.HemisphereLight(0xffffff, 0x444448, 0.45));
     this.key = key;
     this.scene.add(this.boardRoot, this.partsRoot, this.pickRoot, this.hlRoot, this.labelRoot);
-    this.controls = new OrbitControls(this.camera, this.canvas);
-    this.controls.enableDamping = true; this.controls.screenSpacePanning = true;
-    this.controls.zoomToCursor = true; // the wheel zooms towards the point under the pointer, as in 2D
-    this.controls.addEventListener('change', () => { this.dirty = true; this.movingUntil = performance.now() + 180; });
-    // capture phase, ahead of OrbitControls' own wheel listener on the canvas
+    // Our own drag handling, not OrbitControls / TrackballControls: turning is free in every
+    // direction (an orbit control clamps at the poles and the board got stuck there), and it
+    // pivots about a point we choose — the selected part, else the board centre.
+    this.canvas.addEventListener('pointerdown', this.onPointerDown);
+    this.canvas.addEventListener('pointermove', this.onPointerMove);
+    this.canvas.addEventListener('pointerup', this.onPointerUp);
+    this.canvas.addEventListener('pointercancel', this.onPointerUp);
+    this.canvas.addEventListener('contextmenu', this.onContextMenu);
+    // every wheel is ours: a scroll pans, a pinch or ⌘/Ctrl+scroll zooms at the pointer
     this.canvas.addEventListener('wheel', this.onWheel, { capture: true, passive: false });
     this.ro = new ResizeObserver(() => this.resize()); this.ro.observe(host);
     this.resize();
@@ -234,7 +240,7 @@ export class Board3DRenderer {
     const m = this.model; if (!m) return { part: null, pin: null, net: null };
     const r = this.canvas.getBoundingClientRect();
     this.ray.setFromCamera(new THREE.Vector2((clientX - r.left) / r.width * 2 - 1, -(clientY - r.top) / r.height * 2 + 1), this.camera);
-    const fromAbove = this.camera.position.y >= this.controls.target.y;
+    const fromAbove = this.camera.position.y >= this.target.y;
     const side: 'top' | 'bottom' = fromAbove ? 'top' : 'bottom';
     const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), fromAbove ? -TOP : TOP), onFace = new THREE.Vector3();
     const faceHit = this.ray.ray.intersectPlane(plane, onFace);
@@ -265,6 +271,7 @@ export class Board3DRenderer {
 
   // ───────────── selection ─────────────
   setSelection(partIndex: number | null, net: string | null, pinIndex: number | null = null): void {
+    this.selectedPart = partIndex;
     disposeTree(this.hlRoot);
     const m = this.model; if (!m) return;
     if (net) this.hlRoot.add(this.netPads(m, net, partIndex, pinIndex));
@@ -315,45 +322,101 @@ export class Board3DRenderer {
   /** Centre the camera on a part without changing the viewing angle. */
   focusPart(partIndex: number): void {
     const e = this.partByIndex.get(partIndex); if (!e) return;
-    const c = e.box.getCenter(new THREE.Vector3()), d = this.camera.position.clone().sub(this.controls.target);
+    const c = e.box.getCenter(new THREE.Vector3()), d = this.camera.position.clone().sub(this.target);
     const dist = Math.min(d.length(), Math.max(15, e.box.getSize(new THREE.Vector3()).length() * 6));
     this.animateTo(c.clone().add(d.setLength(dist)), c);
   }
 
   // ───────────── camera ─────────────
+  /** Zoom towards (factor < 1) or away from the point under a screen position: it stays under the pointer. */
+  zoomAt(clientX: number, clientY: number, factor: number): void {
+    const r = this.canvas.getBoundingClientRect();
+    this.ray.setFromCamera(new THREE.Vector2((clientX - r.left) / r.width * 2 - 1, -(clientY - r.top) / r.height * 2 + 1), this.camera);
+    const hit = this.ray.intersectObjects([...this.pickBoxes, ...this.boardRoot.children], false)[0];
+    const p = hit?.point ?? this.ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), new THREE.Vector3()) ?? this.target.clone();
+    const dist = this.camera.position.distanceTo(p), m = this.model, max = m ? Math.max(m.width, m.height) * 8 : 2000;
+    const f = Math.min(max / Math.max(dist, 1e-3), Math.max(1.5 / Math.max(dist, 1e-3), factor));
+    this.camera.position.sub(p).multiplyScalar(f).add(p); this.target.sub(p).multiplyScalar(f).add(p);
+    this.dirty = true; this.movingUntil = performance.now() + 180;
+  }
   /** Move the camera towards (factor < 1) or away from (> 1) its target. */
   zoomBy(factor: number): void {
-    const d = this.camera.position.clone().sub(this.controls.target), len = d.length() * factor;
+    const d = this.camera.position.clone().sub(this.target), len = d.length() * factor;
     const m = this.model, max = m ? Math.max(m.width, m.height) * 8 : 2000;
-    this.animateTo(this.controls.target.clone().add(d.setLength(Math.min(max, Math.max(2, len)))), this.controls.target.clone());
+    this.animateTo(this.target.clone().add(d.setLength(Math.min(max, Math.max(2, len)))), this.target.clone());
   }
   /** Pan by screen pixels (+x right, +y down), the board following the pointer. */
   panBy(dx: number, dy: number, animate = false): void {
-    const dist = this.camera.position.distanceTo(this.controls.target);
+    const dist = this.camera.position.distanceTo(this.target);
     const perPx = 2 * dist * Math.tan(this.camera.fov * Math.PI / 360) / Math.max(1, this.canvas.clientHeight);
     const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrix, 0), up = new THREE.Vector3().setFromMatrixColumn(this.camera.matrix, 1);
     const move = right.multiplyScalar(-dx * perPx).add(up.multiplyScalar(dy * perPx));
-    if (animate) this.animateTo(this.camera.position.clone().add(move), this.controls.target.clone().add(move));
-    else { this.camera.position.add(move); this.controls.target.add(move); this.dirty = true; this.movingUntil = performance.now() + 180; }
+    if (animate) this.animateTo(this.camera.position.clone().add(move), this.target.clone().add(move));
+    else { this.camera.position.add(move); this.target.add(move); this.dirty = true; this.movingUntil = performance.now() + 180; }
   }
   /** Whole board in view, keeping the current viewing angle. */
   fit(): void {
     const m = this.model; if (!m) return;
-    const dir = this.camera.position.clone().sub(this.controls.target).normalize();
+    const dir = this.camera.position.clone().sub(this.target).normalize();
     const span = Math.max(m.height, m.width / this.camera.aspect) * 1.2, dist = span / (2 * Math.tan(this.camera.fov * Math.PI / 360));
     this.animateTo(dir.multiplyScalar(dist), new THREE.Vector3());
   }
   /** What a plain left-drag does: orbit (default) or pan. */
-  setLeftDrag(mode: 'orbit' | 'pan'): void {
-    this.controls.mouseButtons.LEFT = mode === 'pan' ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
-    this.controls.mouseButtons.RIGHT = mode === 'pan' ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
-    this.controls.touches.ONE = mode === 'pan' ? THREE.TOUCH.PAN : THREE.TOUCH.ROTATE;
+  setLeftDrag(mode: 'orbit' | 'pan'): void { this.leftDrag = mode; }
+
+  // ───────────── drag: turn about a pivot, pan, pinch ─────────────
+  private pointers = new Map<number, { x: number; y: number }>();
+  private drag: { mode: 'turn' | 'pan'; pivot: THREE.Vector3 } | null = null;
+  private pinch: { dist: number; mid: [number, number] } | null = null;
+  private onContextMenu = (e: Event) => e.preventDefault();
+  /** Where turning pivots: the selected part's centre, else the board centre. */
+  private pivot(): THREE.Vector3 {
+    const sel = this.selectedPart !== null ? this.partByIndex.get(this.selectedPart) : undefined;
+    return sel ? sel.box.getCenter(new THREE.Vector3()) : new THREE.Vector3();
+  }
+  private onPointerDown = (e: PointerEvent) => {
+    this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    try { this.canvas.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
+    if (this.pointers.size === 2) { this.drag = null; this.pinch = this.pinchState(); return; }
+    const panButton = e.button === 1 || (e.button === 2) === (this.leftDrag === 'orbit') || (e.button === 0 && e.shiftKey);
+    this.drag = { mode: panButton ? 'pan' : 'turn', pivot: this.pivot() };
+    this.anim = null;
+  };
+  private pinchState() { const [a, b] = [...this.pointers.values()]; return { dist: Math.hypot(a.x - b.x, a.y - b.y), mid: [(a.x + b.x) / 2, (a.y + b.y) / 2] as [number, number] }; }
+  private onPointerMove = (e: PointerEvent) => {
+    const prev = this.pointers.get(e.pointerId); if (!prev) return;
+    const dx = e.clientX - prev.x, dy = e.clientY - prev.y; prev.x = e.clientX; prev.y = e.clientY;
+    if (this.pinch && this.pointers.size >= 2) {
+      const now = this.pinchState();
+      if (now.dist > 0 && this.pinch.dist > 0) this.zoomAt(now.mid[0], now.mid[1], this.pinch.dist / now.dist);
+      this.panBy(now.mid[0] - this.pinch.mid[0], now.mid[1] - this.pinch.mid[1]);
+      this.pinch = now; return;
+    }
+    if (!this.drag || (dx === 0 && dy === 0)) return;
+    if (this.drag.mode === 'pan') this.panBy(dx, dy);
+    else this.turnBy(dx, dy, this.drag.pivot);
+  };
+  private onPointerUp = (e: PointerEvent) => {
+    this.pointers.delete(e.pointerId);
+    if (this.pointers.size < 2) this.pinch = null;
+    if (this.pointers.size === 0) this.drag = null;
+  };
+  /** Turn the whole camera frame about `pivot`: horizontal drag about the screen's vertical axis,
+   *  vertical drag about its horizontal one — no pole, no lookAt jump when the pivot is off-centre. */
+  turnBy(dx: number, dy: number, pivot: THREE.Vector3): void {
+    const k = 0.006, right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0), up = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 1);
+    const q = new THREE.Quaternion().setFromAxisAngle(up, -dx * k).multiply(new THREE.Quaternion().setFromAxisAngle(right, -dy * k));
+    this.camera.position.sub(pivot).applyQuaternion(q).add(pivot);
+    this.target.sub(pivot).applyQuaternion(q).add(pivot);
+    this.camera.up.applyQuaternion(q);
+    this.camera.quaternion.premultiply(q); this.camera.updateMatrixWorld();
+    this.dirty = true; this.movingUntil = performance.now() + 180;
   }
   /** In 3D a plain wheel / two-finger swipe pans and a pinch (ctrlKey) or ⌘/Ctrl+wheel zooms at the pointer; drag turns. */
   private onWheel = (e: WheelEvent) => {
-    if (e.ctrlKey || e.metaKey) return; // OrbitControls zooms towards the cursor
     e.preventDefault(); e.stopImmediatePropagation();
     const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.canvas.clientHeight : 1;
+    if (e.ctrlKey || e.metaKey) { this.zoomAt(e.clientX, e.clientY, Math.exp(e.deltaY * k * 0.004)); return; }
     if (e.shiftKey && !e.deltaX) this.panBy(-e.deltaY * k, 0); else this.panBy(-e.deltaX * k, -e.deltaY * k);
   };
 
@@ -366,10 +429,12 @@ export class Board3DRenderer {
     // the user's Top is the file's primary side
     const top = (preset === 'top') !== (m.primarySide === 'bottom') ? 1 : -1;
     const to = preset === 'iso' ? new THREE.Vector3(-0.35, 0.75 * (m.primarySide === 'bottom' ? -1 : 1), 0.75).setLength(dist) : new THREE.Vector3(0, top * dist, 0.001 * dist);
-    if (animate) this.animateTo(to, new THREE.Vector3()); else { this.camera.position.copy(to); this.controls.target.set(0, 0, 0); this.controls.update(); this.dirty = true; }
+    const up = preset === 'iso' ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, -1); // straight at a face: the board's +y is screen-up
+    if (animate) this.animateTo(to, new THREE.Vector3(), up);
+    else { this.camera.position.copy(to); this.camera.up.copy(up); this.target.set(0, 0, 0); this.camera.lookAt(0, 0, 0); this.camera.updateMatrixWorld(); this.dirty = true; }
   }
-  private animateTo(to: THREE.Vector3, target: THREE.Vector3): void {
-    this.anim = { from: this.camera.position.clone(), to, tf: this.controls.target.clone(), tt: target, t0: performance.now() };
+  private animateTo(to: THREE.Vector3, target: THREE.Vector3, up?: THREE.Vector3): void {
+    this.anim = { from: this.camera.position.clone(), to, tf: this.target.clone(), tt: target, t0: performance.now(), uf: this.camera.up.clone(), ut: up ?? this.camera.up.clone() };
   }
 
   // ───────────── picking ─────────────
@@ -388,6 +453,9 @@ export class Board3DRenderer {
     return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height];
   }
   get drawnParts(): number { return this.partByIndex.size; }
+  /** For tests: a scene point's client position, and a part's centre. */
+  project(p: [number, number, number]): [number, number] { const v = new THREE.Vector3(...p).project(this.camera), r = this.canvas.getBoundingClientRect(); return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height]; }
+  partCentre(i: number): [number, number, number] | null { const e = this.partByIndex.get(i); if (!e) return null; const c = e.box.getCenter(new THREE.Vector3()); return [c.x, c.y, c.z]; }
   /** Screen position (client px) of a pin's land on its face — for tests. */
   screenOfPin(part: number, pin: number): [number, number] | null {
     const pad = this.model?.pinPads(part)[pin]; if (!pad) return null;
@@ -395,8 +463,8 @@ export class Board3DRenderer {
     return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height];
   }
   /** Camera distance and target, for tests. */
-  cameraState(): { dist: number; target: [number, number, number]; leftDrag: 'orbit' | 'pan' } {
-    const t = this.controls.target; return { dist: this.camera.position.distanceTo(t), target: [t.x, t.y, t.z], leftDrag: this.controls.mouseButtons.LEFT === THREE.MOUSE.PAN ? 'pan' : 'orbit' };
+  cameraState(): { dist: number; target: [number, number, number]; pos: [number, number, number]; leftDrag: 'orbit' | 'pan' } {
+    const t = this.target, c = this.camera.position; return { dist: c.distanceTo(t), target: [t.x, t.y, t.z], pos: [c.x, c.y, c.z], leftDrag: this.leftDrag };
   }
 
   /** Draw calls, triangles and buffers of the last frame, and the build time. */
@@ -414,7 +482,7 @@ export class Board3DRenderer {
       const step = () => {
         const now = performance.now(); worst = Math.max(worst, now - last); last = now;
         if (now - t0 > ms) { if (pixelRatio) { this.renderer.setPixelRatio(prevPr); this.resize(); } this.dirty = true; res({ fps: Math.round(n * 1000 / (now - t0)), worstMs: Math.round(worst) }); return; }
-        const a = (now - t0) / ms * Math.PI * 2; this.camera.position.set(Math.cos(a) * r * 0.8, r * 0.55, Math.sin(a) * r * 0.8); this.camera.lookAt(this.controls.target);
+        const a = (now - t0) / ms * Math.PI * 2; this.camera.position.set(Math.cos(a) * r * 0.8, r * 0.55, Math.sin(a) * r * 0.8); this.camera.lookAt(this.target);
         this.renderer.render(this.scene, this.camera); n++; requestAnimationFrame(step);
       };
       requestAnimationFrame(step);
@@ -427,7 +495,7 @@ export class Board3DRenderer {
     const gl = this.renderer.getContext(), px = new Uint8Array(4), t: number[] = [];
     const r = this.camera.position.length(), base = Math.atan2(this.camera.position.z, this.camera.position.x);
     for (let k = 0; k < frames; k++) {
-      const a = base + k * 2 * Math.PI / frames; this.camera.position.set(Math.cos(a) * r * 0.8, r * 0.55, Math.sin(a) * r * 0.8); this.camera.lookAt(this.controls.target);
+      const a = base + k * 2 * Math.PI / frames; this.camera.position.set(Math.cos(a) * r * 0.8, r * 0.55, Math.sin(a) * r * 0.8); this.camera.lookAt(this.target);
       const t0 = performance.now(); this.renderer.render(this.scene, this.camera); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); t.push(performance.now() - t0);
     }
     t.sort((x, y) => x - y); this.dirty = true;
@@ -445,10 +513,10 @@ export class Board3DRenderer {
   private tick(): void {
     if (this.anim) {
       const k = Math.min(1, (performance.now() - this.anim.t0) / 450), e = 1 - Math.pow(1 - k, 3);
-      this.camera.position.lerpVectors(this.anim.from, this.anim.to, e); this.controls.target.lerpVectors(this.anim.tf, this.anim.tt, e);
+      this.camera.position.lerpVectors(this.anim.from, this.anim.to, e); this.target.lerpVectors(this.anim.tf, this.anim.tt, e);
+      this.camera.up.lerpVectors(this.anim.uf, this.anim.ut, e).normalize(); this.camera.lookAt(this.target); this.camera.updateMatrixWorld();
       if (k >= 1) { this.anim = null; this.movingUntil = performance.now() + 180; } this.dirty = true;
     }
-    this.controls.update();
     const now = performance.now(), moving = this.anim !== null || now < this.movingUntil;
     const pr = moving ? Math.min(1, this.fullPr) : this.fullPr;
     if (pr !== this.renderer.getPixelRatio()) { this.renderer.setPixelRatio(pr); this.resize(); }
@@ -457,7 +525,8 @@ export class Board3DRenderer {
     this.renderer.render(this.scene, this.camera);
   }
   dispose(): void {
-    this.disposed = true; cancelAnimationFrame(this.raf); this.canvas.removeEventListener('wheel', this.onWheel, { capture: true }); this.ro.disconnect(); this.controls.dispose();
+    this.disposed = true; cancelAnimationFrame(this.raf); this.canvas.removeEventListener('wheel', this.onWheel, { capture: true }); this.ro.disconnect();
+    for (const [ev, fn] of [['pointerdown', this.onPointerDown], ['pointermove', this.onPointerMove], ['pointerup', this.onPointerUp], ['pointercancel', this.onPointerUp], ['contextmenu', this.onContextMenu]] as const) this.canvas.removeEventListener(ev, fn as EventListener);
     for (const root of [this.boardRoot, this.partsRoot, this.pickRoot, this.hlRoot, this.labelRoot]) disposeTree(root);
     this.renderer.dispose(); this.renderer.forceContextLoss(); this.canvas.remove();
   }
