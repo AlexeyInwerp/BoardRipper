@@ -31,6 +31,10 @@ function atlas(chars: string[]): { tex: THREE.CanvasTexture; uv: Map<string, [nu
 
 export interface LabelSpec {
   text: string;
+  /** Tint, 0xRRGGBB; white when absent. */
+  colour?: number;
+  /** Screen height (px) at which the label is fully in; it starts fading in at half that. 9 when absent. */
+  showAtPx?: number;
   /** Centre on the face, scene mm. */
   x: number; y: number; z: number;
   /** Text height and the longest it may run, mm. */
@@ -44,7 +48,7 @@ export function buildLabelMesh(specs: LabelSpec[]): THREE.Mesh | null {
   if (!specs.length) return null;
   const chars = [...new Set(specs.flatMap(s => [...s.text]))].sort();
   const { tex, uv } = atlas(chars);
-  const pos: number[] = [], uvs: number[] = [], hs: number[] = [], idx: number[] = [];
+  const pos: number[] = [], uvs: number[] = [], hs: number[] = [], cols: number[] = [], shows: number[] = [], idx: number[] = [];
   for (const s of specs) {
     const n = s.text.length; if (!n) continue;
     const h = Math.min(s.height, s.maxLength / (n * ADV)); if (h < 0.05) continue;
@@ -53,12 +57,12 @@ export function buildLabelMesh(specs: LabelSpec[]): THREE.Mesh | null {
     let a = ((viewerAngle % 360) + 360) % 360; if (a > 90 && a <= 270) a -= 180; // keep it reading left-to-right
     const r = a * Math.PI / 180, vx = s.side === 'top' ? 1 : -1;
     const right = new THREE.Vector3(vx * Math.cos(r), 0, -Math.sin(r)), up = new THREE.Vector3(-vx * Math.sin(r), 0, -Math.cos(r));
-    const w = h * ADV, x0 = -n * w / 2;
+    const w = h * ADV, x0 = -n * w / 2, col = new THREE.Color(s.colour ?? 0xffffff), show = s.showAtPx ?? 9;
     [...s.text].forEach((ch, i) => {
       const [u0, v0, u1, v1] = uv.get(ch)!, base = pos.length / 3, cx = x0 + (i + 0.5) * w;
       for (const [dx, dy, u, v] of [[-w / 2, -h / 2, u0, v0], [w / 2, -h / 2, u1, v0], [w / 2, h / 2, u1, v1], [-w / 2, h / 2, u0, v1]] as const) {
         const p = new THREE.Vector3(s.x, s.y, s.z).addScaledVector(right, cx + dx).addScaledVector(up, dy);
-        pos.push(p.x, p.y, p.z); uvs.push(u, v); hs.push(h);
+        pos.push(p.x, p.y, p.z); uvs.push(u, v); hs.push(h); cols.push(col.r, col.g, col.b); shows.push(show);
       }
       idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
     });
@@ -67,22 +71,25 @@ export function buildLabelMesh(specs: LabelSpec[]): THREE.Mesh | null {
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geo.setAttribute('aH', new THREE.Float32BufferAttribute(hs, 1));
+  geo.setAttribute('aCol', new THREE.Float32BufferAttribute(cols, 3));
+  geo.setAttribute('aShow', new THREE.Float32BufferAttribute(shows, 1));
   geo.setIndex(idx);
   const mat = new THREE.ShaderMaterial({
-    uniforms: { map: { value: tex }, viewportH: { value: 1000 } },
+    uniforms: { map: { value: tex }, viewportH: { value: 1000 }, dim: { value: 1 } },
     vertexShader: `
-      attribute float aH; uniform float viewportH; varying vec2 vUv; varying float vA;
+      attribute float aH; attribute vec3 aCol; attribute float aShow; uniform float viewportH; varying vec2 vUv; varying float vA; varying vec3 vCol;
       void main() {
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
         gl_Position = projectionMatrix * mv;
         float px = aH * projectionMatrix[1][1] * 0.5 * viewportH / max(-mv.z, 1e-3); // label height on screen
-        vA = smoothstep(5.0, 9.0, px); vUv = uv;
+        vA = smoothstep(aShow * 0.55, aShow, px); vUv = uv; vCol = aCol;
+        if (vA <= 0.0) gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // too small to read: outside the clip volume, so nothing is rasterised
       }`,
     fragmentShader: `
-      uniform sampler2D map; varying vec2 vUv; varying float vA;
+      uniform sampler2D map; uniform float dim; varying vec2 vUv; varying float vA; varying vec3 vCol;
       void main() {
         vec4 t = texture2D(map, vUv); float a = t.a * vA; if (a < 0.04) discard;
-        gl_FragColor = vec4(t.rgb, a);
+        gl_FragColor = vec4(t.rgb * vCol * dim, a);
         #include <colorspace_fragment>
       }`,
     transparent: true, depthWrite: false, side: THREE.DoubleSide,

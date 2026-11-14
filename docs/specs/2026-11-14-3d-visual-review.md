@@ -18,31 +18,53 @@ RP2040 (EAGLE), Metal on an M1. Part of [2026-11-14-3d-mode-design.md](2026-11-1
 | 9 | The board tilted more and more while rotating in circles; the pivot drifted. | Turntable about the pressed point. (Earlier round.) |
 | 10 | Second pass: red/white selection still hard to see; the white pin land competed with the white names. | Colours no board has. **Picked pin:** electric cyan, with a cyan ring of constant screen size, so it can be found from any zoom. **Net:** magenta lands, magenta part outlines, and magenta dots of constant size for lands hidden under bodies, on the face the camera sees (skipped above 300 pins, e.g. GND). **Selected part:** violet. Outlines are 2.5–3.5 px screen-space lines instead of 1-px GL lines. |
 | 11 | The M1 package looked worse after the see-through change: it faded at a normal inspection distance, and its memory dies stood taller than the lid. | Fade only when the camera is closer than ~2× the part's size. The lid is the highest point again, with a sealant rim; the dies sit lower. |
+| 12 | Third pass: the pin ring (26 px, plus a world-space ring) covered neighbouring parts and sat over their names; magenta read as noise; no net lines; nothing to adjust. | **Pin ring** is one 14 px screen-constant ring and nothing else. **Net** defaults to cyan, **pin** to lime, **part** to violet. **Net lines** follow the ribbon's mode (star from the picked pin, chain through one land per part; off by default; skipped on GND), drawn through bodies. **Net names** print on the lands in pale blue and fade in from 7 px of screen height, so they appear only close up. **Dim the rest**: lights at 30 % while a net is lit; the selection is unlit and keeps its colour. **Settings menu** (sliders icon beside the cube): the three colours, part names, net names, dimming, see-through, shadows, marker size, outline width; global, persisted in `boardripper-view3d`. |
+
+## Code notes from the self-review
+
+- **Draw-call regression from the see-through round, found by re-measuring:** each
+  large body was its own mesh with its own cloned materials — 872 draw calls on
+  the 6,055-part iMac Pro board (31 before), 47 fps. The see-through parts now
+  share one merged mesh per material with a per-vertex `aOpacity` attribute the
+  shader multiplies in (`buildFadingParts`); fading a part writes a few floats.
+  45 draw calls again. Their materials use alpha-to-coverage, not blending: a
+  blended surface defeats the Apple GPU's hidden-surface removal, and these are
+  the largest surfaces on the board (3 fps on its own).
+- **Labels below their fade-in size collapse in the vertex shader** to a point
+  outside the clip volume, so a zoomed-out board rasterises none of the ~150 k
+  net-name quads.
+- **Measuring:** the render loop used to fight `bench(…, 1)` / `fps(…, 1)` over
+  the pixel ratio every frame, so the 1× numbers in earlier rounds were taken at
+  2× with a resize per frame; `benchPr` now holds the loop off. And the day's
+  baseline matters: the 38-part Tomu board measured 53 fps at 2× in this session
+  against 59 earlier, so a comparison needs a same-session control. With that
+  control, this round is at parity with the last measured one.
+- `netLines` had a dangling `else`: the star branch's inner `if` took it, so chain mode drew nothing. Braces now; `selectionStats()` lets the E2E assert segments per mode.
+- Marker sprites were a new `CanvasTexture` per selection redraw and were never disposed; they are two module-wide textures now, excluded from `disposeTree`.
+- The settings effect runs before `setModel`, so a persisted setting does not rebuild the labels a second time on open.
+- `chain-adjacent` in 3D draws like `chain` for the lit net only; the adjacent nets the 2D view lights are not drawn. Noted, not fixed.
 
 ## Open, by impact
 
-1. **Dim the rest when something is lit.** The 2D view has a dim mode; 3D
-   has none. Darkening the unlit parts by ~40 % while a net is lit would
-   double the contrast of the selection without adding colour.
-2. **Part colours match 2D.** Every IC is the same black and every passive
+1. **Part colours match 2D.** Every IC is the same black and every passive
    follows its kind. The user's 2D part-type colour rules could tint the
    bodies (or their tops), so a part found in 2D is the same colour in 3D.
-3. **Label clutter at middle zoom.** 0201/0402 names overlap where the
+2. **Label clutter at middle zoom.** 0201/0402 names overlap where the
    parts are dense. They need screen-space collision culling (keep the larger
    part's name), drawn on the GPU like the size fade.
-4. **Hover feedback.** Only a tooltip today. A thin outline on the body
+3. **Hover feedback.** Only a tooltip today. A thin outline on the body
    under the pointer would show what a click will pick, especially with
    drill-down.
-5. **Copper under the mask is barely visible** at middle zoom
+4. **Copper under the mask is barely visible** at middle zoom
    (`#13281b` on `#0a1710`). It needs a "show copper" toggle with stronger
    traces, and the layer stack (phase 4).
-6. **Contact shadows.** Shadows are clean now, but small parts still read as
+5. **Contact shadows.** Shadows are clean now, but small parts still read as
    slightly floating from grazing angles. Screen-space ambient occlusion would
    ground them. It costs a full-screen pass, so it should be on only when the
    camera is still (the view already redraws at full resolution on settle).
-7. **Board edge.** The FR4 sides are bright tan; real edges are darker and
+6. **Board edge.** The FR4 sides are bright tan; real edges are darker and
    show the copper and mask layers. Cosmetic.
-8. **Silkscreen** is drawn only where it is printed art (EAGLE, KiCad).
+7. **Silkscreen** is drawn only where it is printed art (EAGLE, KiCad).
    Allegro and the boardview formats carry assembly outlines, deliberately not
    drawn. Allegro's real silk layer could be added.
 

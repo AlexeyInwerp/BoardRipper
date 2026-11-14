@@ -17,6 +17,8 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import type { Board3DModel, Board3DPad, Board3DPart } from './board3d-model';
 import { buildPartModel, MAT } from './part-models';
 import { buildLabelMesh, type LabelSpec } from './part-labels';
+import { SEL_COLOURS, DEFAULT_VIEW3D_SETTINGS, type View3DSettings } from '../store/view3d-store';
+import type { NetLineMode } from '../store/board-store';
 
 export type View3DPreset = 'iso' | 'top' | 'bottom';
 const T = 1.6, TOP = T / 2;
@@ -49,7 +51,12 @@ export class Board3DRenderer {
   // draws at 1× while the camera moves and once at full resolution when it settles.
   private fullPr = 1;
   private movingUntil = 0;
+  /** A measurement's pixel ratio: the loop leaves it alone until the measurement ends. */
+  private benchPr: number | null = null;
 
+  private settings: View3DSettings = DEFAULT_VIEW3D_SETTINGS;
+  private netLineMode: NetLineMode = 'off';
+  private sel: { part: number | null; net: string | null; pin: number | null } = { part: null, net: null, pin: null };
   private host: HTMLElement;
   constructor(host: HTMLElement) {
     this.host = host;
@@ -72,7 +79,7 @@ export class Board3DRenderer {
     const key = new THREE.DirectionalLight(0xffffff, 1.3); key.position.set(-0.4, 1, 0.5); key.castShadow = true; key.shadow.mapSize.set(4096, 4096); key.shadow.bias = -0.0002; key.shadow.normalBias = 0.03; key.shadow.radius = 3;
     const under = new THREE.DirectionalLight(0xffffff, 0.9); under.position.set(-0.3, -1, 0.4);
     this.scene.add(key, key.target, under, new THREE.HemisphereLight(0xffffff, 0x444448, 0.45));
-    this.key = key;
+    this.key = key; this.under = under; this.hemi = this.scene.children.find(o => o instanceof THREE.HemisphereLight) as THREE.HemisphereLight;
     this.scene.add(this.boardRoot, this.partsRoot, this.pickRoot, this.hlRoot, this.labelRoot);
     // Our own drag handling, not OrbitControls / TrackballControls: turning is free in every
     // direction (an orbit control clamps at the poles and the board got stuck there), and it
@@ -90,6 +97,26 @@ export class Board3DRenderer {
     this.raf = requestAnimationFrame(loop);
   }
   private key: THREE.DirectionalLight;
+  private under: THREE.DirectionalLight;
+  private hemi: THREE.HemisphereLight;
+
+  /** Visual settings (global, from view3dStore). Anything that changes the built scene rebuilds the
+   *  part it touches; colours and sizes redraw the selection only. */
+  applySettings(s: View3DSettings): void {
+    const prev = this.settings; this.settings = s;
+    this.labelRoot.visible = s.partNames || s.netNames;
+    if (this.model && (prev.partNames !== s.partNames || prev.netNames !== s.netNames)) this.buildLabels(this.model);
+    if (prev.shadows !== s.shadows) {
+      // a shadow-map switch changes every receiving material's shader: ask them to recompile
+      this.renderer.shadowMap.enabled = s.shadows; this.key.castShadow = s.shadows; this.renderer.shadowMap.needsUpdate = true;
+      this.boardRoot.traverse(o => { if (o instanceof THREE.Mesh) for (const m of Array.isArray(o.material) ? o.material : [o.material]) m.needsUpdate = true; });
+    }
+    this.dirty = true; // updateXray runs before the next render and resets any fade when see-through is off
+    this.setSelection(this.sel.part, this.sel.net, this.sel.pin);
+  }
+  /** The ribbon's net-lines mode (shared with 2D): off / star / chain / chain-adjacent. */
+  setNetLineMode(mode: NetLineMode): void { if (mode === this.netLineMode) return; this.netLineMode = mode; this.setSelection(this.sel.part, this.sel.net, this.sel.pin); }
+  private colour(k: 'netColour' | 'pinColour' | 'partColour'): number { return SEL_COLOURS[this.settings[k]]; }
 
   // ───────────── board ─────────────
   private buildMs = 0;
@@ -108,6 +135,7 @@ export class Board3DRenderer {
     this.camera.far = span * 20; this.camera.updateProjectionMatrix();
     this.view('iso', false);
     this.renderer.shadowMap.needsUpdate = true;
+    this.applySettings(this.settings);
     this.buildMs = Math.round(performance.now() - t0);
   }
 
@@ -163,12 +191,16 @@ export class Board3DRenderer {
     const area = e.L * e.W;
     return area >= 12 || (area >= 4 && ['bga', 'qfn', 'son', 'b2b', 'conn', 'usb-c', 'soic'].includes(e.family));
   }
-  private xray: { index: number; group: THREE.Group; mats: THREE.MeshStandardMaterial[]; centre: THREE.Vector3; radius: number; opacity: number }[] = [];
+  /** See-through parts share one mesh per material with everything else that fades; each part owns a
+   *  vertex range whose `aOpacity` the shader multiplies in. Fading a part writes a few floats — the
+   *  first cut gave every such part its own mesh and materials, which was 872 draw calls on a 6k-part board. */
+  private xray: { index: number; ranges: { mesh: THREE.Mesh; start: number; count: number }[]; centre: THREE.Vector3; radius: number; opacity: number }[] = [];
 
   private buildParts(m: Board3DModel): void {
     const shared = new THREE.Group();
     const pickMat = new THREE.MeshBasicMaterial();
     this.xray = [];
+    const fading: { index: number; holder: THREE.Group; centre: THREE.Vector3; radius: number }[] = [];
     for (const part of m.parts) {
       const e = part.est; if (!e.populated) continue;
       const g = buildPartModel(e); if (!g) continue;
@@ -185,15 +217,47 @@ export class Board3DRenderer {
       const pb = new THREE.Mesh(new THREE.BoxGeometry(size.x, size.y, size.z), pickMat);
       pb.position.copy(bb.getCenter(new THREE.Vector3())); pb.visible = false; pb.userData.index = part.index;
       this.pickRoot.add(pb); this.pickBoxes.push(pb); this.partByIndex.set(part.index, { part, box: bb });
-      if (Board3DRenderer.seeThrough(e)) {
-        const own = new THREE.Group(), clones = new Map<THREE.Material, THREE.MeshStandardMaterial>();
-        Board3DRenderer.mergeByMaterial([holder], own, mat => { let c = clones.get(mat); if (!c) { c = (mat as THREE.MeshStandardMaterial).clone(); clones.set(mat, c); } return c; });
-        this.partsRoot.add(own);
-        this.xray.push({ index: part.index, group: own, mats: [...clones.values()], centre: bb.getCenter(new THREE.Vector3()), radius: size.length() / 2, opacity: 1 });
-      } else shared.add(holder);
+      if (Board3DRenderer.seeThrough(e)) fading.push({ index: part.index, holder, centre: bb.getCenter(new THREE.Vector3()), radius: size.length() / 2 });
+      else shared.add(holder);
     }
     Board3DRenderer.mergeByMaterial([shared], this.partsRoot, mat => mat);
+    this.buildFadingParts(fading);
     this.dirty = true;
+  }
+  /** The see-through parts: merged per material like the rest, but with an `aOpacity` vertex
+   *  attribute and a material patched to multiply it in; each part keeps its vertex ranges. */
+  private buildFadingParts(parts: { index: number; holder: THREE.Group; centre: THREE.Vector3; radius: number }[]): void {
+    type Bucket = { mat: THREE.Material; indexed: boolean; geos: THREE.BufferGeometry[]; owners: { index: number; count: number }[] };
+    const buckets = new Map<string, Bucket>();
+    for (const p of parts) {
+      p.holder.updateMatrixWorld(true);
+      p.holder.traverse(o => {
+        if (!(o instanceof THREE.Mesh)) return;
+        const g = o.geometry.clone();
+        for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
+        g.applyMatrix4(o.matrixWorld);
+        const mat = o.material as THREE.Material, key = mat.uuid + (g.index ? 'i' : 'f');
+        let b = buckets.get(key); if (!b) buckets.set(key, (b = { mat, indexed: !!g.index, geos: [], owners: [] }));
+        b.geos.push(g); b.owners.push({ index: p.index, count: g.attributes.position.count });
+      });
+    }
+    const byIndex = new Map(parts.map(p => [p.index, { index: p.index, ranges: [] as { mesh: THREE.Mesh; start: number; count: number }[], centre: p.centre, radius: p.radius, opacity: 1 }]));
+    for (const b of buckets.values()) {
+      const merged = mergeGeometries(b.geos); b.geos.forEach(g => g.dispose()); if (!merged) continue;
+      const n = merged.attributes.position.count, op = new THREE.Float32BufferAttribute(new Float32Array(n).fill(1), 1); op.setUsage(THREE.DynamicDrawUsage);
+      merged.setAttribute('aOpacity', op);
+      // alpha-to-coverage, not blending: the fade dithers through the MSAA samples and the bodies stay on the
+      // opaque pipeline — blending them cost a third of the frame at 2× (they are the biggest surfaces on the board)
+      const mat = (b.mat as THREE.MeshStandardMaterial).clone(); mat.alphaToCoverage = true;
+      mat.onBeforeCompile = sh => {
+        sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float aOpacity; varying float vOpacity;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvOpacity = aOpacity;');
+        sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vOpacity;').replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.a *= vOpacity;');
+      };
+      mat.customProgramCacheKey = () => 'fade';
+      const mesh = new THREE.Mesh(merged, mat); mesh.castShadow = true; this.partsRoot.add(mesh);
+      let start = 0; for (const o of b.owners) { byIndex.get(o.index)!.ranges.push({ mesh, start, count: o.count }); start += o.count; }
+    }
+    this.xray = [...byIndex.values()];
   }
   /** Merge every mesh under `roots` into one mesh per material (indices kept), into `into`. */
   private static mergeByMaterial(roots: THREE.Object3D[], into: THREE.Object3D, matFor: (m: THREE.Material) => THREE.Material): void {
@@ -220,37 +284,49 @@ export class Board3DRenderer {
   /** See-through for large bodies: they fade as they fill the view (zooming into a BGA shows its
    *  lands and the lit net under it), and the selected part fades when one of its pins is picked. */
   private updateXray(): void {
-    const focal = 1 / Math.tan(this.camera.fov * Math.PI / 360);
+    const focal = 1 / Math.tan(this.camera.fov * Math.PI / 360), touched = new Set<THREE.Mesh>();
     for (const x of this.xray) {
       const dist = Math.max(0.1, this.camera.position.distanceTo(x.centre)), frac = x.radius / dist * focal; // share of the half-height
       // fades only when the camera comes closer than ~2× the part's own size (a big SoC must stay solid at a normal look)
-      let op = 1 - 0.78 * THREE.MathUtils.smoothstep(frac, 1.6, 3.0);
+      let op = this.settings.seeThrough ? 1 - 0.78 * THREE.MathUtils.smoothstep(frac, 1.6, 3.0) : 1;
       if (x.index === this.selectedPart && this.selectedPin !== null) op = Math.min(op, 0.35);
       if (Math.abs(op - x.opacity) < 0.01) continue;
       x.opacity = op;
-      for (const m of x.mats) { m.transparent = op < 0.999; m.opacity = op; m.depthWrite = op >= 0.999; m.needsUpdate = true; }
-      x.group.traverse(o => { if (o instanceof THREE.Mesh) o.castShadow = op > 0.9; });
+      for (const r of x.ranges) { const a = r.mesh.geometry.attributes.aOpacity as THREE.BufferAttribute; (a.array as Float32Array).fill(op, r.start, r.start + r.count); touched.add(r.mesh); }
     }
+    for (const mesh of touched) (mesh.geometry.attributes.aOpacity as THREE.BufferAttribute).needsUpdate = true;
   }
   private xrayOpacity(index: number): number { return this.xray.find(x => x.index === index)?.opacity ?? 1; }
   private selectedPin: number | null = null;
 
-  /** Every drawn part's name on its outer face, along its long axis. */
+  /** Every drawn part's name on its outer face along its long axis, and — close up — every land's
+   *  net name on the land, in the net's own tint. One atlas, one mesh, one draw call. */
   private buildLabels(m: Board3DModel): void {
+    disposeTree(this.labelRoot); this.labelMat = null;
     const specs: LabelSpec[] = [];
-    for (const [, { part, box }] of this.partByIndex) {
+    if (this.settings.partNames) for (const [, { part, box }] of this.partByIndex) {
       const e = part.est, bottom = part.side === 'bottom', c = box.getCenter(new THREE.Vector3());
       const long = Math.max(e.L, e.W), short = Math.min(e.L, e.W);
       // on the body's top, not on whatever sticks up from it (header pins)
       const topY = Math.min(bottom ? -box.min.y : box.max.y, TOP + e.H + 0.05) + 0.012;
       specs.push({ text: part.name, x: c.x, y: bottom ? -topY : topY, z: c.z, height: Math.min(short * 0.45, 1.0), maxLength: long * 0.85, angleDeg: e.L >= e.W ? e.rotDeg : e.rotDeg + 90, side: part.side });
     }
-    void m;
+    if (this.settings.netNames) for (const pt of m.parts) {
+      const pins = m.pinsOf(pt.index), pads = m.pinPads(pt.index);
+      pins.forEach((q, i) => {
+        const pad = pads[i]; if (!pad || !q.net) return;
+        const long = Math.max(pad.w, pad.h), short = Math.min(pad.w, pad.h);
+        if (short < 0.12) return;
+        for (const side of pad.side === 'both' ? (['top', 'bottom'] as const) : [q.side]) {
+          // along the land's long axis; `angle` is the land's own turn (CCW, board frame)
+          specs.push({ text: q.net, x: pad.x, y: side === 'top' ? TOP + 0.02 : -TOP - 0.02, z: pad.z, height: Math.min(short * 0.7, 0.5), maxLength: long * 0.95, angleDeg: pad.w >= pad.h ? pad.angle : pad.angle + 90, side, colour: 0xbfe9ff, showAtPx: 12 });
+        }
+      });
+    }
     const mesh = buildLabelMesh(specs); if (!mesh) return;
     this.labelMat = mesh.material as THREE.ShaderMaterial; this.labelMat.uniforms.viewportH.value = this.renderer.domElement.height;
     this.labelRoot.add(mesh);
   }
-  setLabelsVisible(on: boolean): void { this.labelRoot.visible = on; this.dirty = true; }
 
   // ───────────── pick grids (pads by pin, traces), 1 mm cells ─────────────
   private padGrid = new Map<string, { part: number; pin: number; pad: Board3DPad }[]>();
@@ -316,34 +392,70 @@ export class Board3DRenderer {
   // ───────────── selection ─────────────
   /** Three levels in colours nothing on a board has (green mask, gold lands, tan / black / grey
    *  bodies, white names), so the eye finds the one thing that was picked:
-   *   - the picked pin: its land electric cyan, with a cyan ring drawn through any body above it;
-   *   - the net: every land on it magenta, every part on it outlined magenta; lands hidden under a
-   *     body get a small magenta marker that shows through it (not on huge nets like GND);
-   *   - the selected part: a thick violet outline and a faint violet veil; see-through once a pin of it is picked. */
+   *   - the picked pin: its land in the pin colour, with a small ring of constant screen size that
+   *     shows through any body above it — small, so it covers nothing and competes with no name;
+   *   - the net: every land on it in the net colour, every part on it outlined; lands hidden under
+   *     a body get a dot that shows through (not on huge nets like GND); net lines per the ribbon's mode;
+   *   - the selected part: a thick outline and a faint veil; see-through once a pin of it is picked.
+   *  With "dim the rest" on, the lights go down while a net is lit, and these (unlit) stay bright. */
   setSelection(partIndex: number | null, net: string | null, pinIndex: number | null = null): void {
-    this.selectedPart = partIndex; this.selectedPin = pinIndex;
+    this.selectedPart = partIndex; this.selectedPin = pinIndex; this.sel = { part: partIndex, net, pin: pinIndex };
     disposeTree(this.hlRoot); this.lineMats = []; this.markers = [];
     const m = this.model; if (!m) return;
-    if (net) this.hlRoot.add(this.netPads(m, net, partIndex, pinIndex));
-    if (net) for (const [index, { box }] of this.partByIndex) {
-      if (index === partIndex || !m.pinsOf(index).some(q => q.net === net)) continue;
-      this.hlRoot.add(this.thickBox(box, 0.12, SEL.net, 2.5));
+    const NET = this.colour('netColour'), PIN = this.colour('pinColour'), PART = this.colour('partColour'), px = this.settings.outlinePx;
+    if (net) {
+      this.hlRoot.add(this.netPads(m, net, partIndex, pinIndex, NET, PIN));
+      for (const [index, { box }] of this.partByIndex) {
+        if (index === partIndex || !m.pinsOf(index).some(q => q.net === net)) continue;
+        this.hlRoot.add(this.thickBox(box, 0.12, NET, px));
+      }
+      this.hlRoot.add(this.netMarkers(m, net, partIndex, pinIndex, NET));
+      this.hlRoot.add(this.netLines(m, net, partIndex, pinIndex, NET, px));
     }
-    if (net) this.hlRoot.add(this.netMarkers(m, net, partIndex, pinIndex));
     if (partIndex !== null) {
       const e = this.partByIndex.get(partIndex);
       const box = e?.box ?? (() => { const pins = m.pinsOf(partIndex); if (!pins.length) return null; const b = new THREE.Box3(); for (const q of pins) b.expandByPoint(new THREE.Vector3(q.x, q.side === 'top' ? TOP : -TOP, q.z)); return b.expandByScalar(0.3); })();
       if (box) {
-        this.hlRoot.add(this.thickBox(box, 0.25, SEL.part, 3.5));
-        if (pinIndex === null) { const sz = box.getSize(new THREE.Vector3()).addScalar(0.25), veil = new THREE.Mesh(new THREE.BoxGeometry(sz.x, Math.max(sz.y, 0.3), sz.z), new THREE.MeshBasicMaterial({ color: SEL.part, transparent: true, opacity: 0.14, depthWrite: false })); veil.position.copy(box.getCenter(new THREE.Vector3())); veil.renderOrder = 5; this.hlRoot.add(veil); }
+        this.hlRoot.add(this.thickBox(box, 0.25, PART, px + 1));
+        if (pinIndex === null) { const sz = box.getSize(new THREE.Vector3()).addScalar(0.25), veil = new THREE.Mesh(new THREE.BoxGeometry(sz.x, Math.max(sz.y, 0.3), sz.z), new THREE.MeshBasicMaterial({ color: PART, transparent: true, opacity: 0.14, depthWrite: false })); veil.position.copy(box.getCenter(new THREE.Vector3())); veil.renderOrder = 5; this.hlRoot.add(veil); }
       }
-      if (pinIndex !== null) { const pad = m.pinPads(partIndex)[pinIndex], q = m.pinsOf(partIndex)[pinIndex]; if (pad || q) this.hlRoot.add(this.pinRing(pad?.x ?? q.x, pad?.z ?? q.z, (pad?.side ?? q.side) === 'bottom', pad ? Math.max(pad.w, pad.h) : q.r * 2)); }
+      if (pinIndex !== null) { const pad = m.pinPads(partIndex)[pinIndex], q = m.pinsOf(partIndex)[pinIndex]; if (pad || q) this.hlRoot.add(this.pinRing(pad?.x ?? q.x, pad?.z ?? q.z, (pad?.side ?? q.side) === 'bottom', PIN)); }
     }
+    // dim: lights down while a net is lit; the selection is unlit and keeps its colour
+    const dim = net && this.settings.dimOthers ? 0.3 : 1;
+    this.key.intensity = 1.3 * dim; this.under.intensity = 0.9 * dim; this.hemi.intensity = 0.45 * dim; this.scene.environmentIntensity = 0.4 * dim;
+    if (this.labelMat) this.labelMat.uniforms.dim.value = dim === 1 ? 1 : 0.55;
     this.dirty = true;
   }
 
+  /** Net lines for the lit net, in the ribbon's mode: star from the picked pin (or the selected part)
+   *  to every other land on the net, or a nearest-neighbour chain through them. Chain-adjacent lights
+   *  the adjacent nets too in 2D; here it chains like chain (the adjacent nets are the store's). Lands
+   *  are joined centre to centre, lifted off the face, through bodies. Skipped on huge nets (GND). */
+  private netLines(m: Board3DModel, net: string, partIndex: number | null, pinIndex: number | null, colour: number, px: number): THREE.Object3D {
+    const g = new THREE.Group(); if (this.netLineMode === 'off' || /GND/i.test(net)) return g;
+    type L = { x: number; y: number; z: number; part: number; pin: number };
+    const lands: L[] = [];
+    for (const pt of m.parts) { const pads = m.pinPads(pt.index); m.pinsOf(pt.index).forEach((q, i) => { if (q.net !== net) return; const pad = pads[i]; const top = (pad?.side ?? q.side) !== 'bottom'; lands.push({ x: pad?.x ?? q.x, y: top ? TOP + 0.25 : -TOP - 0.25, z: pad?.z ?? q.z, part: pt.index, pin: i }); }); }
+    if (lands.length < 2 || lands.length > 400) return g;
+    const segs: number[] = [];
+    const push = (a: L, b: L) => segs.push(a.x, a.y, a.z, b.x, b.y, b.z);
+    const anchor = pinIndex !== null ? lands.find(l => l.part === partIndex && l.pin === pinIndex) : partIndex !== null ? lands.find(l => l.part === partIndex) : undefined;
+    if (this.netLineMode === 'star' && anchor) { for (const l of lands) if (l !== anchor) push(anchor, l); }
+    else { // nearest-neighbour chain (Prim), one land per part so a BGA's many balls make one stop
+      const stops: L[] = []; const seen = new Set<number>(); for (const l of lands) if (!seen.has(l.part) || (l.part === partIndex && l.pin === pinIndex)) { seen.add(l.part); stops.push(l); }
+      const inTree = anchor && stops.includes(anchor) ? [anchor] : [stops[0]], rest = new Set(stops.filter(l => l !== inTree[0]));
+      while (rest.size) { let bi = inTree[0], bj: L | null = null, bd = Infinity; for (const a of inTree) for (const b of rest) { const d = (a.x - b.x) ** 2 + (a.z - b.z) ** 2; if (d < bd) { bd = d; bi = a; bj = b; } } if (!bj) break; rest.delete(bj); inTree.push(bj); push(bi, bj); }
+    }
+    if (!segs.length) return g;
+    const geo = new LineSegmentsGeometry().setPositions(segs);
+    const mat = new LineMaterial({ color: colour, linewidth: Math.max(1.5, px), worldUnits: false, transparent: true, opacity: 0.85, depthTest: false }); mat.resolution.set(this.renderer.domElement.width, this.renderer.domElement.height);
+    this.lineMats.push(mat); const l = new LineSegments2(geo, mat); l.renderOrder = 9; g.add(l);
+    return g;
+  }
+
   /** The lands of every pin on `net`, lit on their face; the clicked pin's land brighter. */
-  private netPads(m: Board3DModel, net: string, partIndex: number | null, pinIndex: number | null): THREE.Group {
+  private netPads(m: Board3DModel, net: string, partIndex: number | null, pinIndex: number | null, netColour: number, pinColour: number): THREE.Group {
     const g = new THREE.Group(), lit: THREE.BufferGeometry[] = [], hot: THREE.BufferGeometry[] = [];
     for (const pt of m.parts) {
       const pins = m.pinsOf(pt.index), pads = m.pinPads(pt.index);
@@ -359,24 +471,19 @@ export class Board3DRenderer {
         }
       });
     }
-    for (const [list, color] of [[lit, SEL.net], [hot, SEL.pin]] as const) {
+    for (const [list, color] of [[lit, netColour], [hot, pinColour]] as const) {
       if (!list.length) continue; const merged = mergeGeometries(list.map(x => x.index ? x.toNonIndexed() : x)); list.forEach(x => x.dispose()); if (!merged) continue;
       const mesh = new THREE.Mesh(merged, new THREE.MeshBasicMaterial({ color, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 })); mesh.renderOrder = 4; g.add(mesh);
     }
     return g;
   }
 
-  /** A ring around the picked pin that stays visible through the body standing on it. */
-  private pinRing(x: number, z: number, bottom: boolean, size: number): THREE.Mesh {
-    const r = Math.max(size * 0.9, 0.35), geo = new THREE.RingGeometry(r, r + Math.max(0.12, r * 0.4), 40);
-    geo.rotateX(bottom ? Math.PI / 2 : -Math.PI / 2);
-    const ring = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: SEL.pin, depthTest: false, transparent: true, side: THREE.DoubleSide }));
-    ring.position.set(x, bottom ? -TOP - 0.02 : TOP + 0.02, z); ring.renderOrder = 12; ring.userData.face = bottom ? 'bottom' : 'top'; this.markers.push(ring);
-    // and a ring of constant screen size, so the picked pin is findable from any distance
-    const pg = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3));
-    const pts = new THREE.Points(pg, new THREE.PointsMaterial({ color: SEL.pin, size: 26, sizeAttenuation: false, map: markerTexture('ring'), transparent: true, depthTest: false, alphaTest: 0.1 }));
-    pts.renderOrder = 13; pts.userData.face = ring.userData.face; this.markers.push(pts); ring.add(pts);
-    return ring;
+  /** A small ring of constant screen size at the picked pin, drawn through whatever stands on it:
+   *  findable from any distance, and small enough to cover nothing and compete with no name. */
+  private pinRing(x: number, z: number, bottom: boolean, colour: number): THREE.Points {
+    const pg = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([x, bottom ? -TOP - 0.02 : TOP + 0.02, z], 3));
+    const pts = new THREE.Points(pg, new THREE.PointsMaterial({ color: colour, size: this.settings.markerPx, sizeAttenuation: false, map: markerTexture('ring'), transparent: true, depthTest: false, alphaTest: 0.1 }));
+    pts.renderOrder = 13; pts.userData.face = bottom ? 'bottom' : 'top'; this.markers.push(pts); return pts;
   }
 
   /** A box outline in screen-pixel-wide lines (WebGL draws 1-px GL lines, too thin to see on a busy board). */
@@ -393,15 +500,14 @@ export class Board3DRenderer {
   /** Lands of the lit net that sit under a body: small markers drawn through the body, on the face the
    *  camera is on (the other face's markers would show through the board). Skipped on huge nets. */
   private markers: THREE.Object3D[] = [];
-  private netMarkers(m: Board3DModel, net: string, partIndex: number | null, pinIndex: number | null): THREE.Group {
+  private netMarkers(m: Board3DModel, net: string, partIndex: number | null, pinIndex: number | null, colour: number): THREE.Group {
     const g = new THREE.Group(), pts: { x: number; z: number; side: 'top' | 'bottom'; r: number }[] = [];
     for (const [index] of this.partByIndex) m.pinsOf(index).forEach((q, i) => { if (q.net === net && !(index === partIndex && i === pinIndex)) { const pad = m.pinPads(index)[i]; pts.push({ x: pad?.x ?? q.x, z: pad?.z ?? q.z, side: q.side, r: Math.max(0.12, Math.min(0.5, (pad ? Math.min(pad.w, pad.h) : q.r * 2) * 0.45)) }); } });
     if (!pts.length || pts.length > 300) return g;
-    const tex = markerTexture('dot');
     for (const side of ['top', 'bottom'] as const) {
       const on = pts.filter(p => p.side === side); if (!on.length) continue;
       const pg = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(on.flatMap(p => [p.x, side === 'top' ? TOP + 0.03 : -TOP - 0.03, p.z]), 3));
-      const mesh = new THREE.Points(pg, new THREE.PointsMaterial({ color: SEL.net, size: 9, sizeAttenuation: false, map: tex, transparent: true, depthTest: false, alphaTest: 0.1 }));
+      const mesh = new THREE.Points(pg, new THREE.PointsMaterial({ color: colour, size: Math.max(5, this.settings.markerPx * 0.55), sizeAttenuation: false, map: markerTexture('dot'), transparent: true, depthTest: false, alphaTest: 0.1 }));
       mesh.renderOrder = 11; mesh.userData.face = side; this.markers.push(mesh); g.add(mesh);
     }
     return g;
@@ -541,14 +647,7 @@ export class Board3DRenderer {
     this.anim = { from: this.camera.position.clone(), to, tf: this.target.clone(), tt: target, t0: performance.now(), uf: this.camera.up.clone(), ut: up ?? this.camera.up.clone() };
   }
 
-  // ───────────── picking ─────────────
-  pick(clientX: number, clientY: number): number | null {
-    const r = this.canvas.getBoundingClientRect();
-    const v = new THREE.Vector2((clientX - r.left) / r.width * 2 - 1, -(clientY - r.top) / r.height * 2 + 1);
-    this.ray.setFromCamera(v, this.camera);
-    const hit = this.ray.intersectObjects(this.pickBoxes, false)[0];
-    return hit ? (hit.object.userData.index as number) : null;
-  }
+  // ───────────── queries ─────────────
   part(index: number): Board3DPart | undefined { return this.partByIndex.get(index)?.part; }
   /** Screen position (client px) of a part's centre — for tests and labels. */
   screenOf(index: number): [number, number] | null {
@@ -566,6 +665,15 @@ export class Board3DRenderer {
     const side = pad.side === 'bottom' ? -1 : 1, v = new THREE.Vector3(pad.x, side * (TOP + 0.01), pad.z).project(this.camera), r = this.canvas.getBoundingClientRect();
     return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height];
   }
+  /** What the selection drew, for tests: net-line segments, markers, outlines, lit lands. */
+  selectionStats(): { netLineSegments: number; markers: number; outlines: number; litLands: number } {
+    let netLineSegments = 0, outlines = 0, litLands = 0;
+    this.hlRoot.traverse(o => {
+      if (o instanceof LineSegments2) { const n = (o.geometry.attributes.instanceStart?.count ?? 0); if (n === 12) outlines++; else netLineSegments += n; }
+      else if (o instanceof THREE.Mesh && !(o instanceof LineSegments2) && o.renderOrder === 4) litLands += o.geometry.attributes.position.count / 6;
+    });
+    return { netLineSegments, markers: this.markers.length, outlines, litLands: Math.round(litLands) };
+  }
   /** Camera distance and target, for tests. */
   cameraState(): { dist: number; target: [number, number, number]; pos: [number, number, number]; leftDrag: 'orbit' | 'pan'; roll: number } {
     const t = this.target, c = this.camera.position, right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
@@ -581,12 +689,12 @@ export class Board3DRenderer {
   /** Frames actually delivered during a continuous `ms`-long orbit, paced by
    *  requestAnimationFrame like real use (no read-back stalls). */
   fps(ms = 2000, pixelRatio?: number): Promise<{ fps: number; worstMs: number }> {
-    const prevPr = this.renderer.getPixelRatio(); if (pixelRatio) { this.renderer.setPixelRatio(pixelRatio); this.resize(); }
+    const prevPr = this.renderer.getPixelRatio(); if (pixelRatio) { this.benchPr = pixelRatio; this.renderer.setPixelRatio(pixelRatio); this.resize(); }
     const r = this.camera.position.length(), t0 = performance.now(); let n = 0, last = t0, worst = 0;
     return new Promise(res => {
       const step = () => {
         const now = performance.now(); worst = Math.max(worst, now - last); last = now;
-        if (now - t0 > ms) { if (pixelRatio) { this.renderer.setPixelRatio(prevPr); this.resize(); } this.dirty = true; res({ fps: Math.round(n * 1000 / (now - t0)), worstMs: Math.round(worst) }); return; }
+        if (now - t0 > ms) { if (pixelRatio) { this.benchPr = null; this.renderer.setPixelRatio(prevPr); this.resize(); } this.dirty = true; res({ fps: Math.round(n * 1000 / (now - t0)), worstMs: Math.round(worst) }); return; }
         const a = (now - t0) / ms * Math.PI * 2; this.camera.position.set(Math.cos(a) * r * 0.8, r * 0.55, Math.sin(a) * r * 0.8); this.camera.lookAt(this.target);
         this.renderer.render(this.scene, this.camera); n++; requestAnimationFrame(step);
       };
@@ -596,7 +704,7 @@ export class Board3DRenderer {
   /** Orbit `frames` frames and time each one to completion (a 1-px read-back
    *  waits for the GPU). Median and p90 in ms. For measurement, not for the UI. */
   bench(frames = 60, pixelRatio?: number) {
-    const prevPr = this.renderer.getPixelRatio(); if (pixelRatio) { this.renderer.setPixelRatio(pixelRatio); this.resize(); }
+    const prevPr = this.renderer.getPixelRatio(); if (pixelRatio) { this.benchPr = pixelRatio; this.renderer.setPixelRatio(pixelRatio); this.resize(); }
     const gl = this.renderer.getContext(), px = new Uint8Array(4), t: number[] = [];
     const r = this.camera.position.length(), base = Math.atan2(this.camera.position.z, this.camera.position.x);
     for (let k = 0; k < frames; k++) {
@@ -604,7 +712,7 @@ export class Board3DRenderer {
       const t0 = performance.now(); this.renderer.render(this.scene, this.camera); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); t.push(performance.now() - t0);
     }
     t.sort((x, y) => x - y); this.dirty = true;
-    if (pixelRatio) { this.renderer.setPixelRatio(prevPr); this.resize(); }
+    if (pixelRatio) { this.benchPr = null; this.renderer.setPixelRatio(prevPr); this.resize(); }
     return { median: +t[t.length >> 1].toFixed(2), p90: +t[Math.floor(t.length * 0.9)].toFixed(2), ...this.stats() };
   }
 
@@ -614,7 +722,7 @@ export class Board3DRenderer {
     const w = Math.max(1, this.host.clientWidth), h = Math.max(1, this.host.clientHeight);
     this.renderer.setSize(w, h, false); this.camera.aspect = w / h; this.camera.updateProjectionMatrix(); this.dirty = true;
     if (this.labelMat) this.labelMat.uniforms.viewportH.value = this.renderer.domElement.height;
-    for (const lm of this.lineMats ?? []) lm.resolution.set(this.renderer.domElement.width, this.renderer.domElement.height);
+    for (const lm of this.lineMats) lm.resolution.set(this.renderer.domElement.width, this.renderer.domElement.height);
   }
   private tick(): void {
     if (this.anim) {
@@ -624,7 +732,7 @@ export class Board3DRenderer {
       if (k >= 1) { this.anim = null; this.movingUntil = performance.now() + 180; } this.dirty = true;
     }
     const now = performance.now(), moving = this.anim !== null || now < this.movingUntil;
-    const pr = moving ? Math.min(1, this.fullPr) : this.fullPr;
+    const pr = this.benchPr ?? (moving ? Math.min(1, this.fullPr) : this.fullPr);
     if (pr !== this.renderer.getPixelRatio()) { this.renderer.setPixelRatio(pr); this.resize(); }
     if (!this.dirty) return;
     this.dirty = false;
@@ -641,26 +749,32 @@ export class Board3DRenderer {
   }
 }
 
-/** Round sprites for constant-size markers (a dot for net lands, a ring for the picked pin). */
+/** Round sprites for constant-size markers (a dot for net lands, a ring for the picked pin). Made
+ *  once and shared: a selection is redrawn often, and a texture per redraw leaked. Never disposed. */
+const MARKER_TEX: Partial<Record<'dot' | 'ring', THREE.CanvasTexture>> = {};
 function markerTexture(kind: 'dot' | 'ring'): THREE.CanvasTexture {
+  let t = MARKER_TEX[kind]; if (t) return t;
   const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d')!;
-  g.strokeStyle = 'rgba(0,0,0,0.85)'; g.fillStyle = '#fff';
-  if (kind === 'dot') { g.beginPath(); g.arc(32, 32, 24, 0, Math.PI * 2); g.fill(); g.lineWidth = 6; g.stroke(); }
-  else { g.lineWidth = 16; g.beginPath(); g.arc(32, 32, 22, 0, Math.PI * 2); g.stroke(); g.strokeStyle = '#fff'; g.lineWidth = 9; g.stroke(); }
-  return new THREE.CanvasTexture(c);
+  g.fillStyle = g.strokeStyle = '#fff';
+  if (kind === 'dot') { g.beginPath(); g.arc(32, 32, 22, 0, Math.PI * 2); g.fill(); }
+  else { g.lineWidth = 7; g.beginPath(); g.arc(32, 32, 24, 0, Math.PI * 2); g.stroke(); }
+  t = new THREE.CanvasTexture(c); MARKER_TEX[kind] = t; return t;
 }
-/** Selection colours, chosen far from anything a board has. */
-const SEL = { net: 0xff2bd6, pin: 0x00e5ff, part: 0xa66bff };
 
 function disposeTree(root: THREE.Object3D): void {
   root.traverse(o => {
     if (o instanceof THREE.Mesh || o instanceof THREE.LineSegments || o instanceof THREE.Points) {
       o.geometry.dispose();
       const mats = Array.isArray(o.material) ? o.material : [o.material];
-      for (const m of mats) { (m as THREE.MeshStandardMaterial).map?.dispose(); if (m instanceof THREE.ShaderMaterial) (m.uniforms.map?.value as THREE.Texture | undefined)?.dispose(); if (!SHARED.has(m)) m.dispose(); }
+      for (const m of mats) {
+        const map = (m as THREE.MeshStandardMaterial).map; if (map && !isMarkerTexture(map)) map.dispose();
+        if (m instanceof THREE.ShaderMaterial) (m.uniforms.map?.value as THREE.Texture | undefined)?.dispose();
+        if (!SHARED.has(m)) m.dispose();
+      }
     }
   });
   root.clear();
 }
 // part-model materials are module-wide and shared between views: never dispose them
 const SHARED = new Set<THREE.Material>(Object.values(MAT));
+const isMarkerTexture = (t: THREE.Texture) => Object.values(MARKER_TEX).includes(t as THREE.CanvasTexture);

@@ -27,7 +27,7 @@ export default function Board3DView({ tabId }: { tabId: number }) {
   const sel = tab?.selection;
   const [tip, setTip] = useState<{ x: number; y: number; title: string; body: string } | null>(null);
   useSyncExternalStore(c => view3dStore.subscribe(c), () => view3dStore.snapshot());
-  const dragMode = view3dStore.uiOf(tabId).drag;
+  const dragMode = view3dStore.uiOf(tabId).drag, settings = view3dStore.settings, netLineMode = tab?.netLineMode ?? 'off';
 
   useEffect(() => {
     let r: Board3DRenderer;
@@ -37,8 +37,11 @@ export default function Board3DView({ tabId }: { tabId: number }) {
     if (import.meta.env.DEV) (window as unknown as { __board3d?: { renderer: Board3DRenderer; tabId: number } }).__board3d = { renderer: r, tabId };
     return () => { view3dStore.register(tabId, null); r.dispose(); rRef.current = null; setReady(false); };
   }, [tabId]);
+  // settings before the model: a build reads them, and a persisted change must not rebuild the labels a second time
+  useEffect(() => { if (ready) rRef.current!.applySettings(settings); }, [ready, settings]);
   useEffect(() => { if (ready && model) { rRef.current!.setModel(model); const pr = view3dStore.uiOf(tabId).preset; if (pr !== 'iso') rRef.current!.view(pr); } }, [ready, model, tabId]);
   useEffect(() => { if (ready) rRef.current!.setLeftDrag(dragMode); }, [ready, dragMode]);
+  useEffect(() => { if (ready) rRef.current!.setNetLineMode(netLineMode); }, [ready, netLineMode]);
   useEffect(() => { if (ready && model) rRef.current!.setSelection(sel?.partIndex ?? null, sel?.highlightedNet ?? null, sel?.pinIndex ?? null); }, [ready, model, sel?.partIndex, sel?.highlightedNet, sel?.pinIndex]);
 
   // a click is a press that did not travel; a drag orbits

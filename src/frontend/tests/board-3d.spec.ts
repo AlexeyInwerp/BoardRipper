@@ -165,3 +165,32 @@ test('3D view: a drag turns about the point pressed, and circles never tilt the 
   const roll = await page.evaluate(() => (window as unknown as { __board3d: { renderer: { cameraState(): { roll: number } } } }).__board3d.renderer.cameraState().roll);
   expect(Math.abs(roll)).toBeLessThan(0.01);
 });
+
+test('3D view: net lines follow the ribbon mode; the settings menu changes colours and persists', async ({ page }) => {
+  await openBoard(page);
+  await page.getByTestId('view3d-btn').click();
+  await page.waitForFunction(() => ((window as unknown as W).__board3d?.renderer.drawnParts ?? 0) > 0, null, { timeout: 30000 });
+  type R = { selectionStats(): { netLineSegments: number; markers: number; outlines: number; litLands: number } };
+  const stats = () => page.evaluate(() => (window as unknown as { __board3d: { renderer: R } }).__board3d.renderer.selectionStats());
+  // light a net with several parts on it (not GND: lines are skipped there)
+  await page.evaluate(() => {
+    const st = (window as unknown as { __boardStore: { board: { parts: { pins: { net: string }[] }[] }; selectPin(i: number, k: number): void } }).__boardStore;
+    const cnt = new Map<string, number>(); st.board.parts.forEach(p => p.pins.forEach(q => q.net && cnt.set(q.net, (cnt.get(q.net) ?? 0) + 1)));
+    const net = [...cnt.entries()].filter(([n, c]) => c >= 4 && c <= 40 && !/GND/i.test(n)).sort((a, b) => b[1] - a[1])[0][0];
+    const i = st.board.parts.findIndex(p => p.pins.some(q => q.net === net)); st.selectPin(i, st.board.parts[i].pins.findIndex(q => q.net === net));
+  });
+  await page.waitForTimeout(400);
+  const off = await stats(); expect(off.netLineSegments).toBe(0); expect(off.litLands).toBeGreaterThan(1); expect(off.outlines).toBeGreaterThan(1);
+  await page.getByTestId('netlines-btn').click(); await page.waitForTimeout(400);   // star
+  expect((await stats()).netLineSegments).toBeGreaterThan(0);
+  await page.getByTestId('netlines-btn').click(); await page.waitForTimeout(400);   // chain
+  expect((await stats()).netLineSegments).toBeGreaterThan(0);
+  // the settings menu: pick a net colour, it persists across a reload of the store
+  await page.getByTestId('board-3d-settings').click();
+  await expect(page.getByTestId('view3d-settings-menu')).toBeVisible();
+  await page.getByTestId('view3d-netColour-magenta').click();
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('boardripper-view3d') ?? '{}').netColour)).toBe('magenta');
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => localStorage.removeItem('boardripper-view3d'));
+});
+
