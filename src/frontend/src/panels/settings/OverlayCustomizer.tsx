@@ -42,7 +42,7 @@ const stubCtx: SlotCtx = {
     hasTraces: true,
   },
   rendererRef: { current: null },
-  bareAction: 'pan',
+  bareAction: 'pan', is3d: false,
 };
 
 /* A few slots cannot stand in for themselves in the editor: the diode button

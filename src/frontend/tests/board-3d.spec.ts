@@ -21,7 +21,7 @@ async function openBoard(page: Page) {
 }
 
 type Cam = { dist: number; target: [number, number, number]; leftDrag: 'orbit' | 'pan' };
-type W = { __board3d?: { renderer: { cameraState(): Cam; drawnParts: number; screenOf(i: number): [number, number] | null; part(i: number): { name: string; est: { family: string } } | undefined } }; __boardStore?: { selection: { partIndex: number | null }; board: { parts: { name: string; pins: unknown[] }[] } } };
+type W = { __board3d?: { renderer: { cameraState(): Cam; screenOfPin(a: number, b: number): [number, number] | null; drawnParts: number; screenOf(i: number): [number, number] | null; part(i: number): { name: string; est: { family: string } } | undefined } }; __boardStore?: { selection: { partIndex: number | null }; board: { parts: { name: string; pins: unknown[] }[] } } };
 
 test('3D view: toggle, draws estimated parts, a click selects, back to 2D', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
@@ -62,7 +62,9 @@ test('3D view: zoom, pan and drag-mode controls', async ({ page }) => {
   await page.getByTestId('board-3d-zoom-out').click(); await page.waitForTimeout(600);
   expect((await cam()).dist).toBeGreaterThan(d1 * 1.2);
   const t0 = (await cam()).target;
-  await page.getByTestId('board-3d-pan-right').click(); await page.waitForTimeout(600);
+  const hostBox = (await page.locator('.board-3d-host').boundingBox())!;
+  await page.mouse.move(hostBox.x + hostBox.width / 2, hostBox.y + hostBox.height / 2);
+  await page.keyboard.press('ArrowRight'); await page.waitForTimeout(600);
   const t1 = (await cam()).target; expect(Math.hypot(t1[0] - t0[0], t1[1] - t0[1], t1[2] - t0[2])).toBeGreaterThan(0.5);
   await page.getByTestId('board-3d-fit').click(); await page.waitForTimeout(600);
   expect(Math.hypot(...(await cam()).target)).toBeLessThan(0.01);
@@ -77,3 +79,33 @@ test('3D view: zoom, pan and drag-mode controls', async ({ page }) => {
   await page.getByTestId('board-3d-drag-mode').click();
   expect((await cam()).leftDrag).toBe('pan');
 });
+
+test('3D view: the ribbon carries the 3D controls; a click on a land lights its net', async ({ page }) => {
+  await openBoard(page);
+  await page.getByTestId('view3d-btn').click();
+  await page.waitForFunction(() => ((window as unknown as W).__board3d?.renderer.drawnParts ?? 0) > 0, null, { timeout: 30000 });
+  // 2D-only ribbon buttons step aside, the Side switch turns into the camera switch
+  await expect(page.getByTestId('side-switch-3d')).toBeVisible();
+  await expect(page.getByTestId('side-switch')).toHaveCount(0);
+  await expect(page.getByTestId('butterfly-btn')).toHaveCount(0);
+  await expect(page.locator('.board-3d-toolbar')).toHaveCount(0);
+  // a test point (a land with no body), else a two-pin chip's end cap (a body over its own land), on either side
+  const pick = await page.evaluate(() => {
+    const st = (window as unknown as { __boardStore: { board: { parts: { name: string; side: string; pins: { net: string }[] }[] } } }).__boardStore;
+    let i = st.board.parts.findIndex(p => p.pins.length === 1 && p.pins[0].net && /^TP/.test(p.name));
+    if (i < 0) i = st.board.parts.findIndex(p => p.pins.length === 2 && p.pins.every(q => q.net) && /^[RC]\d/.test(p.name));
+    return { i, side: st.board.parts[i]?.side, net: st.board.parts[i]?.pins[0].net };
+  });
+  test.skip(pick.i < 0, 'no test point or chip on this board');
+  const sideBtn = pick.side === 'bottom' ? 'board-3d-bottom' : 'board-3d-top';
+  await page.getByTestId(sideBtn).click(); await page.waitForTimeout(700);
+  await expect(page.getByTestId(sideBtn)).toHaveAttribute('aria-pressed', 'true');
+  const target = { ...pick, xy: await page.evaluate(i => (window as unknown as W).__board3d!.renderer.screenOfPin(i, 0), pick.i) };
+  expect(target.xy).not.toBeNull();
+  await page.mouse.click(target.xy![0], target.xy![1]);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __boardStore: { selection: { highlightedNet: string | null } } }).__boardStore.selection.highlightedNet)).toBe(target.net);
+  // back to 2D: the ribbon is the 2D one again
+  await page.getByTestId('view3d-btn').click();
+  await expect(page.getByTestId('side-switch')).toBeVisible();
+});
+

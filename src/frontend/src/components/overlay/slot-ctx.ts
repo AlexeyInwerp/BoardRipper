@@ -31,5 +31,7 @@ export interface SlotCtx {
     hasTraces: boolean;
   };
   rendererRef: React.RefObject<BoardRenderer | null>;
+  /** This tab shows the 3D view: slots with a 3D meaning switch to it, 2D-only slots hide. */
+  is3d: boolean;
   bareAction: 'pan' | 'zoom';
 }

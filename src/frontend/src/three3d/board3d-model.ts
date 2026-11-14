@@ -33,7 +33,7 @@ export interface Board3DModel {
   parts: Board3DPart[];
   pads: Board3DPad[];
   /** Copper traces for the board-face texture, scene mm, per outer side. */
-  traces: { side: 'top' | 'bottom'; x1: number; z1: number; x2: number; z2: number; w: number }[];
+  traces: { side: 'top' | 'bottom'; x1: number; z1: number; x2: number; z2: number; w: number; net: string }[];
   /** Silkscreen polylines, scene mm (only where the format's silkscreen is printed art). */
   silk: { side: 'top' | 'bottom'; pts: [number, number][] }[];
   /** Mounting holes and drills, scene mm. */
@@ -44,6 +44,8 @@ export interface Board3DModel {
   toScene(p: Point): [number, number];
   /** Pins of a part, scene mm, with side — for net highlight markers. */
   pinsOf(index: number): { x: number; z: number; side: 'top' | 'bottom'; net: string; r: number }[];
+  /** The land under each pin of a part (same order as its pins), scene mm — for picking and the net highlight. */
+  pinPads(index: number): (Board3DPad | null)[];
 }
 
 /** Formats whose silkscreen paths are printed art, not assembly outlines. */
@@ -95,6 +97,7 @@ export function buildBoard3DModel(board: BoardData): Board3DModel {
   // carry only a pin radius, and a round pad under a chip's end cap reads wrong)
   const pads: Board3DPad[] = [];
   const estByIndex = new Map(parts.map(p => [p.index, p.est]));
+  const pinPadMap = new Map<number, (Board3DPad | null)[]>();
   const pushPad = (b: BBox, side: Board3DPad['side'], w: number | undefined, h: number | undefined, a: number | undefined, round: boolean, drill: number | undefined) => {
     const yb = B(b); const [x, z] = toScene({ x: (yb.minX + yb.maxX) / 2, y: (yb.minY + yb.maxY) / 2 });
     pads.push({ x, z, w: (w ?? b.maxX - b.minX) * MM, h: (h ?? b.maxY - b.minY) * MM, angle: (yUp ? 1 : -1) * (a ?? 0), round, side, drill: (drill ?? 0) * MM });
@@ -103,23 +106,40 @@ export function buildBoard3DModel(board: BoardData): Board3DModel {
   else board.parts.forEach((pt, index) => {
     if (pt.hidden) return;
     const est = estByIndex.get(index);
+    const list: (Board3DPad | null)[] = []; pinPadMap.set(index, list);
     for (const q of pt.pins) {
+      const before = pads.length;
       const roundFamily = est && ['bga', 'testpoint', 'fiducial', 'hole'].includes(est.family);
-      if (q.padBounds) { pushPad(q.padBounds, q.side, q.padWidth, q.padHeight, q.padAngleDeg, q.padShape === 'round' || (!q.padShape && !!roundFamily), q.drill); continue; }
+      if (q.padBounds) { pushPad(q.padBounds, q.side, q.padWidth, q.padHeight, q.padAngleDeg, q.padShape === 'round' || (!q.padShape && !!roundFamily), q.drill); list.push(pads[before]); continue; }
       const t = est && !q.drill ? terminalPad(est, P(q.position), q.radius * MM) : null;
       const [x, z] = toScene(P(q.position));
       if (t) pads.push({ x, z, w: t.w, h: t.h, angle: t.angle, round: false, side: q.side, drill: 0 });
       else pads.push({ x, z, w: q.radius * 2 * MM, h: q.radius * 2 * MM, angle: 0, round: true, side: q.side, drill: (q.drill ?? 0) * MM });
+      list.push(pads[before]);
     }
   });
   for (const p of pads) if (p.drill > 0.25) holes.push({ x: p.x, z: p.z, rx: p.drill / 2, rz: p.drill / 2 });
+  if (board.pads?.length) { // the file's own pad list: find the pad each pin sits in
+    const cell = 1, grid = new Map<string, Board3DPad[]>(), key = (x: number, z: number) => `${Math.floor(x / cell)},${Math.floor(z / cell)}`;
+    for (const p of pads) { const k = key(p.x, p.z); let l = grid.get(k); if (!l) grid.set(k, (l = [])); l.push(p); }
+    board.parts.forEach((pt, index) => {
+      if (pt.hidden) return;
+      pinPadMap.set(index, pt.pins.map(q => {
+        const [x, z] = toScene(P(q.position)); let best: Board3DPad | null = null, bd = Infinity;
+        for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const p of grid.get(`${Math.floor(x / cell) + i},${Math.floor(z / cell) + j}`) ?? []) {
+          if (p.side !== 'both' && p.side !== q.side) continue; const d = Math.hypot(p.x - x, p.z - z); if (d < bd && d < Math.max(p.w, p.h) / 2 + 0.05) { bd = d; best = p; }
+        }
+        return best;
+      }));
+    });
+  }
 
   // traces on the outer layers, for the board-face texture
   const nLayers = board.layerNames?.length ?? 0;
   const traces: Board3DModel['traces'] = [];
   for (const t of board.traces ?? []) {
     const L = t.layer ?? 0; const side = L === 0 ? 'top' : nLayers > 1 && L === nLayers - 1 ? 'bottom' : null; if (!side) continue;
-    const [x1, z1] = toScene(P(t.start)), [x2, z2] = toScene(P(t.end)); traces.push({ side, x1, z1, x2, z2, w: t.width * MM });
+    const [x1, z1] = toScene(P(t.start)), [x2, z2] = toScene(P(t.end)); traces.push({ side, x1, z1, x2, z2, w: t.width * MM, net: t.net });
   }
   const silk = PRINTED_SILK.has(board.format) ? (board.silkscreen ?? []).map(s => ({ side: s.side, pts: s.points.map(p => toScene(P(p))) })) : [];
 
@@ -133,6 +153,7 @@ export function buildBoard3DModel(board: BoardData): Board3DModel {
     outlines, cutouts, parts, pads, traces, silk, holes,
     primarySide: board.primarySide === 'bottom' ? 'bottom' : 'top',
     toScene, pinsOf,
+    pinPads: (index: number) => pinPadMap.get(index) ?? [],
   };
 }
 

@@ -330,6 +330,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
     },
     rendererRef,
     bareAction,
+    is3d,
   };
 
   if (tabId == null) {

@@ -12,7 +12,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import type { Board3DModel, Board3DPart } from './board3d-model';
+import type { Board3DModel, Board3DPad, Board3DPart } from './board3d-model';
 import { buildPartModel, MAT } from './part-models';
 
 export type View3DPreset = 'iso' | 'top' | 'bottom';
@@ -88,6 +88,7 @@ export class Board3DRenderer {
     this.pickBoxes = []; this.partByIndex.clear();
     this.buildBoard(model);
     this.buildParts(model);
+    this.buildPickGrids(model);
     const span = Math.max(model.width, model.height);
     Object.assign(this.key.shadow.camera, { left: -span * 0.7, right: span * 0.7, top: span * 0.7, bottom: -span * 0.7, near: 1, far: span * 6 });
     this.key.position.set(-0.4 * span, span * 1.5, 0.5 * span); this.key.shadow.camera.updateProjectionMatrix();
@@ -182,21 +183,78 @@ export class Board3DRenderer {
     this.dirty = true;
   }
 
+  // ───────────── pick grids (pads by pin, traces), 1 mm cells ─────────────
+  private padGrid = new Map<string, { part: number; pin: number; pad: Board3DPad }[]>();
+  private traceGrid = new Map<string, number[]>();
+  private static cellKey(x: number, z: number) { return `${Math.floor(x)},${Math.floor(z)}`; }
+  private buildPickGrids(m: Board3DModel): void {
+    this.padGrid.clear(); this.traceGrid.clear();
+    for (const pt of m.parts) m.pinPads(pt.index).forEach((pad, pin) => {
+      if (!pad) return; const r = Math.max(pad.w, pad.h) / 2;
+      for (let x = Math.floor(pad.x - r); x <= Math.floor(pad.x + r); x++) for (let z = Math.floor(pad.z - r); z <= Math.floor(pad.z + r); z++) {
+        const k = `${x},${z}`; let l = this.padGrid.get(k); if (!l) this.padGrid.set(k, (l = [])); l.push({ part: pt.index, pin, pad });
+      }
+    });
+    m.traces.forEach((t, i) => {
+      const n = Math.max(1, Math.ceil(Math.hypot(t.x2 - t.x1, t.z2 - t.z1)));
+      let last = '';
+      for (let k = 0; k <= n; k++) { const key = Board3DRenderer.cellKey(t.x1 + (t.x2 - t.x1) * k / n, t.z1 + (t.z2 - t.z1) * k / n); if (key === last) continue; last = key; let l = this.traceGrid.get(key); if (!l) this.traceGrid.set(key, (l = [])); l.push(i); }
+    });
+  }
+  private static inPad(pad: Board3DPad, x: number, z: number, margin: number): boolean {
+    const dx = x - pad.x, dz = z - pad.z;
+    if (pad.round) return Math.hypot(dx, dz) <= Math.max(pad.w, pad.h) / 2 + margin;
+    const a = pad.angle * Math.PI / 180, lx = dx * Math.cos(a) - dz * Math.sin(a), lz = dx * Math.sin(a) + dz * Math.cos(a); // scene z = −board y
+    return Math.abs(lx) <= pad.w / 2 + margin && Math.abs(lz) <= pad.h / 2 + margin;
+  }
+
+  /** What is under a screen point: a part body, a pin (its land, or the part of a
+   *  body standing on it — a chip's end cap), or a trace's net on the visible face. */
+  pickAt(clientX: number, clientY: number): { part: number | null; pin: number | null; net: string | null } {
+    const m = this.model; if (!m) return { part: null, pin: null, net: null };
+    const r = this.canvas.getBoundingClientRect();
+    this.ray.setFromCamera(new THREE.Vector2((clientX - r.left) / r.width * 2 - 1, -(clientY - r.top) / r.height * 2 + 1), this.camera);
+    const fromAbove = this.camera.position.y >= this.controls.target.y;
+    const side: 'top' | 'bottom' = fromAbove ? 'top' : 'bottom';
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), fromAbove ? -TOP : TOP), onFace = new THREE.Vector3();
+    const faceHit = this.ray.ray.intersectPlane(plane, onFace);
+    const hit = this.ray.intersectObjects(this.pickBoxes, false)[0];
+    if (hit) {
+      // a click on the body over one of the part's own lands picks that pin (end caps, gull-wing feet)
+      const index = hit.object.userData.index as number, pads = m.pinPads(index);
+      for (const pt of [hit.point, faceHit ? onFace : null]) {
+        if (!pt) continue;
+        const pin = pads.findIndex(p => p && Board3DRenderer.inPad(p, pt.x, pt.z, 0.05));
+        if (pin >= 0 && pads.filter(Boolean).length > 1) return { part: index, pin, net: null };
+      }
+      return { part: index, pin: null, net: null };
+    }
+    if (!faceHit) return { part: null, pin: null, net: null };
+    // bare face: a land (test points, exposed pads), else copper under the mask
+    for (const c of this.padGrid.get(Board3DRenderer.cellKey(onFace.x, onFace.z)) ?? [])
+      if ((c.pad.side === side || c.pad.side === 'both') && Board3DRenderer.inPad(c.pad, onFace.x, onFace.z, 0.08)) return { part: c.part, pin: c.pin, net: null };
+    let best: string | null = null, bd = Infinity;
+    for (const i of this.traceGrid.get(Board3DRenderer.cellKey(onFace.x, onFace.z)) ?? []) {
+      const t = m.traces[i]; if (t.side !== side || !t.net) continue;
+      const ex = t.x2 - t.x1, ez = t.z2 - t.z1, L2 = ex * ex + ez * ez || 1, u = Math.max(0, Math.min(1, ((onFace.x - t.x1) * ex + (onFace.z - t.z1) * ez) / L2));
+      const d = Math.hypot(onFace.x - t.x1 - ex * u, onFace.z - t.z1 - ez * u);
+      if (d <= t.w / 2 + 0.08 && d < bd) { bd = d; best = t.net; }
+    }
+    return { part: null, pin: null, net: best };
+  }
+
   // ───────────── selection ─────────────
-  setSelection(partIndex: number | null, net: string | null): void {
+  setSelection(partIndex: number | null, net: string | null, pinIndex: number | null = null): void {
     disposeTree(this.hlRoot);
     const m = this.model; if (!m) return;
+    if (net) this.hlRoot.add(this.netPads(m, net, partIndex, pinIndex));
     if (net) {
       const lit = new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.45, depthWrite: false });
-      const dot = new THREE.MeshBasicMaterial({ color: 0xfff27a });
       for (const [index, { box }] of this.partByIndex) {
         const pins = m.pinsOf(index).filter(q => q.net === net); if (!pins.length) continue;
         const s = box.getSize(new THREE.Vector3()).addScalar(0.15), b = new THREE.Mesh(new THREE.BoxGeometry(s.x, s.y, s.z), lit); b.position.copy(box.getCenter(new THREE.Vector3())); b.renderOrder = 5; this.hlRoot.add(b);
       }
-      // pins on the net with no body drawn over them (test points, pads)
-      for (const pt of m.parts) for (const q of m.pinsOf(pt.index)) if (q.net === net && !this.partByIndex.has(pt.index)) {
-        const d = new THREE.Mesh(new THREE.CylinderGeometry(q.r, q.r, 0.05, 16), dot); d.position.set(q.x, q.side === 'top' ? TOP + 0.04 : -TOP - 0.04, q.z); this.hlRoot.add(d);
-      }
+
     }
     if (partIndex !== null) {
       const e = this.partByIndex.get(partIndex);
@@ -208,6 +266,30 @@ export class Board3DRenderer {
       }
     }
     this.dirty = true;
+  }
+
+  /** The lands of every pin on `net`, lit on their face; the clicked pin's land brighter. */
+  private netPads(m: Board3DModel, net: string, partIndex: number | null, pinIndex: number | null): THREE.Group {
+    const g = new THREE.Group(), lit: THREE.BufferGeometry[] = [], hot: THREE.BufferGeometry[] = [];
+    for (const pt of m.parts) {
+      const pins = m.pinsOf(pt.index), pads = m.pinPads(pt.index);
+      pins.forEach((q, i) => {
+        if (q.net !== net) return;
+        const pad = pads[i] ?? { x: q.x, z: q.z, w: q.r * 2, h: q.r * 2, angle: 0, round: true, side: q.side, drill: 0 };
+        const faces = pad.side === 'both' ? ['top', 'bottom'] : [q.side];
+        for (const f of faces) {
+          // facing out of its face (+y on top, −y below), then turned like the land: same footprint either side
+          const c = pad.round ? new THREE.CircleGeometry(Math.max(pad.w, pad.h) / 2 + 0.03, 20) : new THREE.PlaneGeometry(pad.w + 0.06, pad.h + 0.06);
+          c.rotateX(f === 'top' ? -Math.PI / 2 : Math.PI / 2); c.rotateY(pad.angle * Math.PI / 180);
+          c.translate(pad.x, f === 'top' ? TOP + 0.012 : -TOP - 0.012, pad.z); (pt.index === partIndex && i === pinIndex ? hot : lit).push(c);
+        }
+      });
+    }
+    for (const [list, color] of [[lit, 0xffd23f], [hot, 0xffffff]] as const) {
+      if (!list.length) continue; const merged = mergeGeometries(list.map(x => x.index ? x.toNonIndexed() : x)); list.forEach(x => x.dispose()); if (!merged) continue;
+      const mesh = new THREE.Mesh(merged, new THREE.MeshBasicMaterial({ color, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 })); mesh.renderOrder = 4; g.add(mesh);
+    }
+    return g;
   }
 
   /** Centre the camera on a part without changing the viewing angle. */
@@ -288,6 +370,12 @@ export class Board3DRenderer {
     return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height];
   }
   get drawnParts(): number { return this.partByIndex.size; }
+  /** Screen position (client px) of a pin's land on its face — for tests. */
+  screenOfPin(part: number, pin: number): [number, number] | null {
+    const pad = this.model?.pinPads(part)[pin]; if (!pad) return null;
+    const side = pad.side === 'bottom' ? -1 : 1, v = new THREE.Vector3(pad.x, side * (TOP + 0.01), pad.z).project(this.camera), r = this.canvas.getBoundingClientRect();
+    return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height];
+  }
   /** Camera distance and target, for tests. */
   cameraState(): { dist: number; target: [number, number, number]; leftDrag: 'orbit' | 'pan' } {
     const t = this.controls.target; return { dist: this.camera.position.distanceTo(t), target: [t.x, t.y, t.z], leftDrag: this.controls.mouseButtons.LEFT === THREE.MOUSE.PAN ? 'pan' : 'orbit' };

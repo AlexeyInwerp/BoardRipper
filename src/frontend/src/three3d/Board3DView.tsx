@@ -4,13 +4,13 @@
  * selection from boardStore and writes clicks back through the ordinary
  * selection actions, so the 2D view, the sidebar and cross-probing follow.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { IconArrowDown, IconArrowLeft, IconArrowRight, IconArrowUp, IconFocusCentered, IconHandStop, IconRotate360, IconZoomIn, IconZoomOut } from '@tabler/icons-react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { view3dStore } from '../store/view3d-store';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { uiZoom } from '../store/ui-zoom';
 import { buildBoard3DModel } from './board3d-model';
-import { Board3DRenderer, type View3DPreset } from './Board3DRenderer';
+import { Board3DRenderer } from './Board3DRenderer';
 
 const EVIDENCE: Record<string, string> = { package: 'from the package name', geometry: 'estimated from the pins', fallback: 'size unknown — body from the pins' };
 
@@ -27,20 +27,21 @@ export default function Board3DView({ tabId, bareScroll = 'zoom' }: { tabId: num
   const model = useMemo(() => (board ? buildBoard3DModel(board) : null), [board]);
   const sel = tab?.selection;
   const [tip, setTip] = useState<{ x: number; y: number; title: string; body: string } | null>(null);
-  const [dragMode, setDragMode] = useState<'orbit' | 'pan'>('orbit');
+  useSyncExternalStore(c => view3dStore.subscribe(c), () => view3dStore.snapshot());
+  const dragMode = view3dStore.uiOf(tabId).drag;
 
   useEffect(() => {
     let r: Board3DRenderer;
     try { r = new Board3DRenderer(hostRef.current!); }
     catch (err) { setFailed(err instanceof Error ? err.message : String(err)); return; }
-    rRef.current = r; setReady(true);
+    rRef.current = r; setReady(true); view3dStore.register(tabId, r);
     if (import.meta.env.DEV) (window as unknown as { __board3d?: { renderer: Board3DRenderer; tabId: number } }).__board3d = { renderer: r, tabId };
-    return () => { r.dispose(); rRef.current = null; setReady(false); };
+    return () => { view3dStore.register(tabId, null); r.dispose(); rRef.current = null; setReady(false); };
   }, [tabId]);
-  useEffect(() => { if (ready && model) rRef.current!.setModel(model); }, [ready, model]);
+  useEffect(() => { if (ready && model) { rRef.current!.setModel(model); const pr = view3dStore.uiOf(tabId).preset; if (pr !== 'iso') rRef.current!.view(pr); } }, [ready, model, tabId]);
   useEffect(() => { if (ready) rRef.current!.setLeftDrag(dragMode); }, [ready, dragMode]);
   useEffect(() => { if (ready) rRef.current!.setWheelPans(bareScroll === 'pan'); }, [ready, bareScroll]);
-  useEffect(() => { if (ready && model) rRef.current!.setSelection(sel?.partIndex ?? null, sel?.highlightedNet ?? null); }, [ready, model, sel?.partIndex, sel?.highlightedNet]);
+  useEffect(() => { if (ready && model) rRef.current!.setSelection(sel?.partIndex ?? null, sel?.highlightedNet ?? null, sel?.pinIndex ?? null); }, [ready, model, sel?.partIndex, sel?.highlightedNet, sel?.pinIndex]);
 
   // a click is a press that did not travel; a drag orbits
   const down = useRef<[number, number] | null>(null);
@@ -48,11 +49,15 @@ export default function Board3DView({ tabId, bareScroll = 'zoom' }: { tabId: num
   const onPointerUp = (e: React.PointerEvent) => {
     const d = down.current; down.current = null; const r = rRef.current;
     if (!d || !r || e.button !== 0 || Math.hypot(e.clientX - d[0], e.clientY - d[1]) > (e.pointerType === 'touch' ? 12 : 5)) return;
-    const idx = r.pick(e.clientX, e.clientY);
+    const hit = r.pickAt(e.clientX, e.clientY);
     if (boardStore.activeTabId !== tabId) boardStore.switchTab(tabId);
-    boardStore.selectPart(idx);
+    // the same three outcomes a 2D click has: a pin (its net lights), a part, a net from copper
+    if (hit.part !== null && hit.pin !== null) boardStore.selectPin(hit.part, hit.pin);
+    else if (hit.part !== null) boardStore.selectPart(hit.part);
+    else if (hit.net) boardStore.highlightNet(hit.net);
+    else boardStore.selectPart(null);
   };
-  const onDoubleClick = (e: React.MouseEvent) => { const r = rRef.current; const idx = r?.pick(e.clientX, e.clientY); if (r && idx != null) r.focusPart(idx); };
+  const onDoubleClick = (e: React.MouseEvent) => { const r = rRef.current; const idx = r?.pickAt(e.clientX, e.clientY).part; if (r && idx != null) r.focusPart(idx); };
   const hoverFrame = useRef(0);
   const onPointerMove = (e: React.PointerEvent) => {
     if (e.pointerType === 'touch' || e.buttons) { if (tip) setTip(null); return; }
@@ -60,14 +65,20 @@ export default function Board3DView({ tabId, bareScroll = 'zoom' }: { tabId: num
     cancelAnimationFrame(hoverFrame.current);
     hoverFrame.current = requestAnimationFrame(() => {
       const r = rRef.current, wrap = wrapRef.current; if (!r || !wrap) return;
-      const idx = r.pick(clientX, clientY), part = idx != null ? r.part(idx) : undefined;
+      const hit = r.pickAt(clientX, clientY), part = hit.part != null ? r.part(hit.part) : undefined;
+      const z0 = uiZoom(), rect0 = wrap.getBoundingClientRect();
+      if (!part && hit.part != null && hit.pin != null) { // a land with no body: a test point, an exposed pad
+        const pin = board?.parts[hit.part]?.pins[hit.pin];
+        setTip({ x: (clientX - rect0.left) / z0 + 14, y: (clientY - rect0.top) / z0 + 14, title: `${board?.parts[hit.part]?.name ?? ''} · pin ${pin?.number ?? ''}`, body: `net ${pin?.net || '—'}` }); return;
+      }
+      if (!part && hit.net) { setTip({ x: (clientX - rect0.left) / z0 + 14, y: (clientY - rect0.top) / z0 + 14, title: `Trace · ${hit.net}`, body: 'click to light the net' }); return; }
       if (!part) { setTip(null); return; }
+      const pinNote = hit.pin != null ? (() => { const pin = board?.parts[hit.part!]?.pins[hit.pin]; return ` · pin ${pin?.number ?? ''} → ${pin?.net || '—'}`; })() : '';
       const e2 = part.est, z = uiZoom(), rect = wrap.getBoundingClientRect();
       const what = `${e2.family}${e2.size ? ' ' + e2.size : ''}${e2.kind && e2.kind !== 'chip' && e2.family === 'chip' ? ' · ' + e2.kind : ''}`;
-      setTip({ x: (clientX - rect.left) / z + 14, y: (clientY - rect.top) / z + 14, title: `${part.name} · ${what}`, body: `${e2.L.toFixed(2)} × ${e2.W.toFixed(2)} × ${e2.H.toFixed(2)} mm — ${EVIDENCE[e2.evidence]}: ${e2.why}` });
+      setTip({ x: (clientX - rect.left) / z + 14, y: (clientY - rect.top) / z + 14, title: `${part.name} · ${what}${pinNote}`, body: `${e2.L.toFixed(2)} × ${e2.W.toFixed(2)} × ${e2.H.toFixed(2)} mm — ${EVIDENCE[e2.evidence]}: ${e2.why}` });
     });
   };
-  const view = (p: View3DPreset) => rRef.current?.view(p);
   const PAN = 120; // px per arrow press
   const zoom = (f: number) => rRef.current?.zoomBy(f);
   const pan = (dx: number, dy: number) => rRef.current?.panBy(dx, dy, true);
@@ -94,31 +105,6 @@ export default function Board3DView({ tabId, bareScroll = 'zoom' }: { tabId: num
         onKeyDown={onKeyDown}
         tabIndex={0}
       />
-      <div className="board-3d-toolbar">
-        <button className="board-netlines-toggle" data-testid="board-3d-iso" onClick={() => view('iso')} title="Angled view">Iso</button>
-        <button className="board-netlines-toggle" data-testid="board-3d-top" onClick={() => view('top')} title="Look at the top side">Top</button>
-        <button className="board-netlines-toggle" data-testid="board-3d-bottom" onClick={() => view('bottom')} title="Look at the bottom side">Bottom</button>
-        <span className="board-3d-sep" />
-        <button className="board-netlines-toggle" data-testid="board-3d-zoom-out" onClick={() => zoom(1 / 0.75)} title="Zoom out (−)"><IconZoomOut size={16} /></button>
-        <button className="board-netlines-toggle" data-testid="board-3d-zoom-in" onClick={() => zoom(0.75)} title="Zoom in (+)"><IconZoomIn size={16} /></button>
-        <button className="board-netlines-toggle" data-testid="board-3d-fit" onClick={() => rRef.current?.fit()} title="Fit the board (0)"><IconFocusCentered size={16} /></button>
-        <span className="board-3d-sep" />
-        <button className="board-netlines-toggle" data-testid="board-3d-pan-left" onClick={() => pan(PAN, 0)} title="Pan left (←)"><IconArrowLeft size={16} /></button>
-        <button className="board-netlines-toggle" data-testid="board-3d-pan-up" onClick={() => pan(0, PAN)} title="Pan up (↑)"><IconArrowUp size={16} /></button>
-        <button className="board-netlines-toggle" data-testid="board-3d-pan-down" onClick={() => pan(0, -PAN)} title="Pan down (↓)"><IconArrowDown size={16} /></button>
-        <button className="board-netlines-toggle" data-testid="board-3d-pan-right" onClick={() => pan(-PAN, 0)} title="Pan right (→)"><IconArrowRight size={16} /></button>
-        <span className="board-3d-sep" />
-        <button
-          className={`board-netlines-toggle ${dragMode === 'pan' ? 'active' : ''}`}
-          data-testid="board-3d-drag-mode"
-          aria-pressed={dragMode === 'pan'}
-          onClick={() => setDragMode(m => (m === 'orbit' ? 'pan' : 'orbit'))}
-          title={dragMode === 'orbit' ? 'Drag turns the board · right-drag pans — click: drag pans' : 'Drag pans · right-drag turns the board — click: drag turns'}
-        >
-          {dragMode === 'orbit' ? <IconRotate360 size={16} /> : <IconHandStop size={16} />}
-        </button>
-        <span className="board-3d-note">{dragMode === 'orbit' ? 'Drag to turn · right-drag to pan' : 'Drag to pan · right-drag to turn'} · {bareScroll === 'pan' ? 'scroll pans, pinch zooms' : 'scroll zooms at the pointer'} · double-click a part to centre it · parts are estimated from the file</span>
-      </div>
       {failed && (
         <div className="board-3d-loading" data-testid="board-3d-failed">The 3D view needs WebGL 2, which this browser could not provide.</div>
       )}

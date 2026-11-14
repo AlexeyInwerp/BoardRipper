@@ -69,7 +69,8 @@ export function buildPartModel(e: PartEstimate): THREE.Group | null {
     }
     case 'chip3t': { const r = Math.min(W, H) * 0.12; g.add(rbox(L * 0.98, H, W, r, MAT.mlcc, 0, H / 2)); for (const s of [-1, 1]) g.add(rbox(L * 0.2, H * 1.02, W * 1.02, r, MAT.tin, s * (L / 2 - L * 0.1), H / 2)); g.add(box(L * 0.22, H * 1.02, W * 1.04, MAT.tin, 0, H / 2)); break; }
     case 'molded-cap': g.add(rbox(L * 0.86, H, W, 0.18, MAT.polymer, 0, H / 2)); for (const s of [-1, 1]) g.add(box(L * 0.1, H * 0.45, W * 0.55, MAT.tin, s * (L / 2 - L * 0.05), H * 0.225)); g.add(box(L * 0.12, 0.02, W * 0.9, MAT.print, -L * 0.3, H + 0.005)); break;
-    case 'inductor': g.add(rbox(L, H, W, Math.min(L, W) * 0.12, MAT.ferrite, 0, H / 2)); for (const s of [-1, 1]) g.add(box(L * 0.16, 0.1, W * 0.6, MAT.tin, s * (L / 2 - L * 0.08), 0.05)); break;
+    // molded power inductors have nearly square edges: a small radius, not a pillow
+    case 'inductor': g.add(rbox(L, H, W, Math.min(0.2, Math.min(L, W) * 0.04), MAT.ferrite, 0, H / 2)); for (const s of [-1, 1]) g.add(box(L * 0.16, 0.1, W * 0.6, MAT.tin, s * (L / 2 - L * 0.08), 0.05)); break;
     case 'sod123': case 'sod323': g.add(rbox(L, H - 0.05, W, 0.08, MAT.epoxy, 0, 0.05 + (H - 0.05) / 2)); g.add(box(L * 0.14, 0.02, W * 0.98, MAT.band, -L * 0.33, H + 0.005)); for (const s of [-1, 1]) gull(g, 0, s, L / 2, 0.7, H * 0.4, W * 0.45, 'x'); break;
     case 'sot23': case 'sot23-5': {
       g.add(rbox(L, H - 0.1, W, 0.06, MAT.epoxy, 0, 0.1 + (H - 0.1) / 2));
