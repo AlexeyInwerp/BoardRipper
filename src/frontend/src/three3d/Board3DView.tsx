@@ -14,8 +14,7 @@ import { Board3DRenderer } from './Board3DRenderer';
 
 const EVIDENCE: Record<string, string> = { package: 'from the package name', geometry: 'estimated from the pins', fallback: 'size unknown — body from the pins' };
 
-/** `bareScroll`: the app's binding for a plain wheel / two-finger scroll — the 3D view follows it. */
-export default function Board3DView({ tabId, bareScroll = 'zoom' }: { tabId: number; bareScroll?: 'pan' | 'zoom' }) {
+export default function Board3DView({ tabId }: { tabId: number }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const rRef = useRef<Board3DRenderer | null>(null);
@@ -40,7 +39,6 @@ export default function Board3DView({ tabId, bareScroll = 'zoom' }: { tabId: num
   }, [tabId]);
   useEffect(() => { if (ready && model) { rRef.current!.setModel(model); const pr = view3dStore.uiOf(tabId).preset; if (pr !== 'iso') rRef.current!.view(pr); } }, [ready, model, tabId]);
   useEffect(() => { if (ready) rRef.current!.setLeftDrag(dragMode); }, [ready, dragMode]);
-  useEffect(() => { if (ready) rRef.current!.setWheelPans(bareScroll === 'pan'); }, [ready, bareScroll]);
   useEffect(() => { if (ready && model) rRef.current!.setSelection(sel?.partIndex ?? null, sel?.highlightedNet ?? null, sel?.pinIndex ?? null); }, [ready, model, sel?.partIndex, sel?.highlightedNet, sel?.pinIndex]);
 
   // a click is a press that did not travel; a drag orbits
@@ -92,7 +90,7 @@ export default function Board3DView({ tabId, bareScroll = 'zoom' }: { tabId: num
   };
 
   return (
-    <div className="board-3d" ref={wrapRef} data-testid="board-3d">
+    <div className="board-3d" ref={wrapRef} data-testid="board-3d" data-wheel-own="">
       <div
         ref={hostRef}
         className="board-3d-host"

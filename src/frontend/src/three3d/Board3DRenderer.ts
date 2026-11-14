@@ -14,6 +14,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Board3DModel, Board3DPad, Board3DPart } from './board3d-model';
 import { buildPartModel, MAT } from './part-models';
+import { buildLabelMesh, type LabelSpec } from './part-labels';
 
 export type View3DPreset = 'iso' | 'top' | 'bottom';
 const T = 1.6, TOP = T / 2;
@@ -28,6 +29,8 @@ export class Board3DRenderer {
   private partsRoot = new THREE.Group();
   private pickRoot = new THREE.Group();
   private hlRoot = new THREE.Group();
+  private labelRoot = new THREE.Group();
+  private labelMat: THREE.ShaderMaterial | null = null;
   private model: Board3DModel | null = null;
   private pickBoxes: THREE.Mesh[] = [];
   private partByIndex = new Map<number, { part: Board3DPart; box: THREE.Box3 }>();
@@ -53,7 +56,7 @@ export class Board3DRenderer {
     this.renderer.setPixelRatio(this.fullPr);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap; // soft: the map is drawn once, only the board face samples it
     // the key light is fixed to the board and only the camera moves: draw the shadow map once per board
     this.renderer.shadowMap.autoUpdate = false;
     this.scene.background = new THREE.Color(0x16181c);
@@ -61,11 +64,11 @@ export class Board3DRenderer {
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     pmrem.dispose();
     this.scene.environmentIntensity = 0.4;
-    const key = new THREE.DirectionalLight(0xffffff, 1.3); key.position.set(-0.4, 1, 0.5); key.castShadow = true; key.shadow.mapSize.set(2048, 2048); key.shadow.bias = -0.0004;
+    const key = new THREE.DirectionalLight(0xffffff, 1.3); key.position.set(-0.4, 1, 0.5); key.castShadow = true; key.shadow.mapSize.set(4096, 4096); key.shadow.bias = -0.0002; key.shadow.normalBias = 0.03; key.shadow.radius = 3;
     const under = new THREE.DirectionalLight(0xffffff, 0.9); under.position.set(-0.3, -1, 0.4);
     this.scene.add(key, key.target, under, new THREE.HemisphereLight(0xffffff, 0x444448, 0.45));
     this.key = key;
-    this.scene.add(this.boardRoot, this.partsRoot, this.pickRoot, this.hlRoot);
+    this.scene.add(this.boardRoot, this.partsRoot, this.pickRoot, this.hlRoot, this.labelRoot);
     this.controls = new OrbitControls(this.camera, this.canvas);
     this.controls.enableDamping = true; this.controls.screenSpacePanning = true;
     this.controls.zoomToCursor = true; // the wheel zooms towards the point under the pointer, as in 2D
@@ -84,11 +87,12 @@ export class Board3DRenderer {
   setModel(model: Board3DModel): void {
     const t0 = performance.now();
     this.model = model;
-    for (const root of [this.boardRoot, this.partsRoot, this.pickRoot, this.hlRoot]) disposeTree(root);
+    for (const root of [this.boardRoot, this.partsRoot, this.pickRoot, this.hlRoot, this.labelRoot]) disposeTree(root);
     this.pickBoxes = []; this.partByIndex.clear();
     this.buildBoard(model);
     this.buildParts(model);
     this.buildPickGrids(model);
+    this.buildLabels(model);
     const span = Math.max(model.width, model.height);
     Object.assign(this.key.shadow.camera, { left: -span * 0.7, right: span * 0.7, top: span * 0.7, bottom: -span * 0.7, near: 1, far: span * 6 });
     this.key.position.set(-0.4 * span, span * 1.5, 0.5 * span); this.key.shadow.camera.updateProjectionMatrix();
@@ -109,7 +113,8 @@ export class Board3DRenderer {
     const slabGeo = new THREE.ExtrudeGeometry(shapes, { depth: T, bevelEnabled: false, curveSegments: 16 });
     slabGeo.rotateX(-Math.PI / 2); slabGeo.translate(0, -TOP, 0);
     const slab = new THREE.Mesh(slabGeo, [new THREE.MeshStandardMaterial({ color: 0x0f1a13, roughness: 0.45 }), new THREE.MeshStandardMaterial({ color: 0x8a7d5c, roughness: 0.85 })]);
-    slab.castShadow = slab.receiveShadow = true; this.boardRoot.add(slab);
+    // the slab must not shadow its own face: that was the speckle (shadow acne) over the whole board
+    slab.receiveShadow = true; this.boardRoot.add(slab);
     const faceGeo = new THREE.ShapeGeometry(shapes, 16); faceGeo.rotateX(-Math.PI / 2);
     for (const side of ['top', 'bottom'] as const) {
       const mat = new THREE.MeshStandardMaterial({ map: this.faceTexture(m, side), roughness: 0.42, side: side === 'top' ? THREE.FrontSide : THREE.BackSide, polygonOffset: true, polygonOffsetFactor: -1 });
@@ -183,6 +188,21 @@ export class Board3DRenderer {
     this.dirty = true;
   }
 
+  /** Every drawn part's name on its outer face, along its long axis. */
+  private buildLabels(m: Board3DModel): void {
+    const specs: LabelSpec[] = [];
+    for (const [, { part, box }] of this.partByIndex) {
+      const e = part.est, bottom = part.side === 'bottom', c = box.getCenter(new THREE.Vector3());
+      const long = Math.max(e.L, e.W), short = Math.min(e.L, e.W);
+      specs.push({ text: part.name, x: c.x, y: bottom ? box.min.y - 0.012 : box.max.y + 0.012, z: c.z, height: Math.min(short * 0.6, 1.4), maxLength: long * 0.9, angleDeg: e.L >= e.W ? e.rotDeg : e.rotDeg + 90, side: part.side });
+    }
+    void m;
+    const mesh = buildLabelMesh(specs); if (!mesh) return;
+    this.labelMat = mesh.material as THREE.ShaderMaterial; this.labelMat.uniforms.viewportH.value = this.renderer.domElement.height;
+    this.labelRoot.add(mesh);
+  }
+  setLabelsVisible(on: boolean): void { this.labelRoot.visible = on; this.dirty = true; }
+
   // ───────────── pick grids (pads by pin, traces), 1 mm cells ─────────────
   private padGrid = new Map<string, { part: number; pin: number; pad: Board3DPad }[]>();
   private traceGrid = new Map<string, number[]>();
@@ -248,22 +268,22 @@ export class Board3DRenderer {
     disposeTree(this.hlRoot);
     const m = this.model; if (!m) return;
     if (net) this.hlRoot.add(this.netPads(m, net, partIndex, pinIndex));
-    if (net) {
-      const lit = new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.45, depthWrite: false });
-      for (const [index, { box }] of this.partByIndex) {
-        const pins = m.pinsOf(index).filter(q => q.net === net); if (!pins.length) continue;
-        const s = box.getSize(new THREE.Vector3()).addScalar(0.15), b = new THREE.Mesh(new THREE.BoxGeometry(s.x, s.y, s.z), lit); b.position.copy(box.getCenter(new THREE.Vector3())); b.renderOrder = 5; this.hlRoot.add(b);
-      }
-
+    // red, so it stands out from every body colour on a board (green mask, tan MLCCs, gold lands, grey inductors)
+    const RED = 0xff2d2d;
+    const shell = (box: THREE.Box3, pad: number, opacity: number, edge: number) => {
+      const sz = box.getSize(new THREE.Vector3()).addScalar(pad), c = box.getCenter(new THREE.Vector3()), geo = new THREE.BoxGeometry(sz.x, Math.max(sz.y, 0.3), sz.z);
+      const fill = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: RED, transparent: true, opacity, depthWrite: false })); fill.position.copy(c); fill.renderOrder = 5; this.hlRoot.add(fill);
+      // depth-tested: a top-side part's outline must not show through the board when seen from below
+      const lines = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: edge })); lines.position.copy(c); lines.renderOrder = 10; this.hlRoot.add(lines);
+    };
+    if (net) for (const [index, { box }] of this.partByIndex) {
+      if (index === partIndex || !m.pinsOf(index).some(q => q.net === net)) continue;
+      shell(box, 0.15, 0.5, RED);
     }
     if (partIndex !== null) {
       const e = this.partByIndex.get(partIndex);
       const box = e?.box ?? (() => { const pins = m.pinsOf(partIndex); if (!pins.length) return null; const b = new THREE.Box3(); for (const q of pins) b.expandByPoint(new THREE.Vector3(q.x, q.side === 'top' ? TOP : -TOP, q.z)); return b.expandByScalar(0.3); })();
-      if (box) {
-        const s = box.getSize(new THREE.Vector3()).addScalar(0.4);
-        const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(s.x, Math.max(s.y, 0.3), s.z)), new THREE.LineBasicMaterial({ color: 0xffff44, depthTest: false }));
-        edges.position.copy(box.getCenter(new THREE.Vector3())); edges.renderOrder = 10; this.hlRoot.add(edges);
-      }
+      if (box) shell(box, 0.3, 0.62, 0xffffff);
     }
     this.dirty = true;
   }
@@ -285,7 +305,7 @@ export class Board3DRenderer {
         }
       });
     }
-    for (const [list, color] of [[lit, 0xffd23f], [hot, 0xffffff]] as const) {
+    for (const [list, color] of [[lit, 0xff2d2d], [hot, 0xffffff]] as const) {
       if (!list.length) continue; const merged = mergeGeometries(list.map(x => x.index ? x.toNonIndexed() : x)); list.forEach(x => x.dispose()); if (!merged) continue;
       const mesh = new THREE.Mesh(merged, new THREE.MeshBasicMaterial({ color, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 })); mesh.renderOrder = 4; g.add(mesh);
     }
@@ -329,11 +349,9 @@ export class Board3DRenderer {
     this.controls.mouseButtons.RIGHT = mode === 'pan' ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
     this.controls.touches.ONE = mode === 'pan' ? THREE.TOUCH.PAN : THREE.TOUCH.ROTATE;
   }
-  /** Bare wheel / two-finger scroll pans when the app's scroll binding says pan; pinch (ctrlKey) always zooms. */
-  setWheelPans(pan: boolean): void { this.wheelPans = pan; }
-  private wheelPans = false;
+  /** In 3D a plain wheel / two-finger swipe pans and a pinch (ctrlKey) or ⌘/Ctrl+wheel zooms at the pointer; drag turns. */
   private onWheel = (e: WheelEvent) => {
-    if (!this.wheelPans || e.ctrlKey || e.metaKey) return; // OrbitControls zooms
+    if (e.ctrlKey || e.metaKey) return; // OrbitControls zooms towards the cursor
     e.preventDefault(); e.stopImmediatePropagation();
     const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.canvas.clientHeight : 1;
     if (e.shiftKey && !e.deltaX) this.panBy(-e.deltaY * k, 0); else this.panBy(-e.deltaX * k, -e.deltaY * k);
@@ -422,6 +440,7 @@ export class Board3DRenderer {
     // (also called on a resolution switch: setPixelRatio needs a setSize to take effect)
     const w = Math.max(1, this.host.clientWidth), h = Math.max(1, this.host.clientHeight);
     this.renderer.setSize(w, h, false); this.camera.aspect = w / h; this.camera.updateProjectionMatrix(); this.dirty = true;
+    if (this.labelMat) this.labelMat.uniforms.viewportH.value = this.renderer.domElement.height;
   }
   private tick(): void {
     if (this.anim) {
@@ -439,7 +458,7 @@ export class Board3DRenderer {
   }
   dispose(): void {
     this.disposed = true; cancelAnimationFrame(this.raf); this.canvas.removeEventListener('wheel', this.onWheel, { capture: true }); this.ro.disconnect(); this.controls.dispose();
-    for (const root of [this.boardRoot, this.partsRoot, this.pickRoot, this.hlRoot]) disposeTree(root);
+    for (const root of [this.boardRoot, this.partsRoot, this.pickRoot, this.hlRoot, this.labelRoot]) disposeTree(root);
     this.renderer.dispose(); this.renderer.forceContextLoss(); this.canvas.remove();
   }
 }
@@ -449,7 +468,7 @@ function disposeTree(root: THREE.Object3D): void {
     if (o instanceof THREE.Mesh || o instanceof THREE.LineSegments) {
       o.geometry.dispose();
       const mats = Array.isArray(o.material) ? o.material : [o.material];
-      for (const m of mats) { (m as THREE.MeshStandardMaterial).map?.dispose(); if (!SHARED.has(m)) m.dispose(); }
+      for (const m of mats) { (m as THREE.MeshStandardMaterial).map?.dispose(); if (m instanceof THREE.ShaderMaterial) (m.uniforms.map?.value as THREE.Texture | undefined)?.dispose(); if (!SHARED.has(m)) m.dispose(); }
     }
   });
   root.clear();

@@ -109,3 +109,19 @@ test('3D view: the ribbon carries the 3D controls; a click on a land lights its 
   await expect(page.getByTestId('side-switch')).toBeVisible();
 });
 
+test('3D view: a scroll pans, Ctrl+scroll zooms', async ({ page }) => {
+  await openBoard(page);
+  await page.getByTestId('view3d-btn').click();
+  await page.waitForFunction(() => ((window as unknown as W).__board3d?.renderer.drawnParts ?? 0) > 0, null, { timeout: 30000 });
+  await page.waitForTimeout(600);
+  const cam = () => page.evaluate(() => (window as unknown as W).__board3d!.renderer.cameraState());
+  const box = (await page.locator('.board-3d-host').boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  const a = await cam(); await page.mouse.wheel(0, 150); await page.waitForTimeout(400);
+  const b = await cam();
+  expect(Math.hypot(b.target[0] - a.target[0], b.target[1] - a.target[1], b.target[2] - a.target[2])).toBeGreaterThan(0.2);
+  expect(Math.abs(b.dist - a.dist)).toBeLessThan(a.dist * 0.02);   // a pan, not a zoom
+  await page.keyboard.down('Control'); await page.mouse.wheel(0, -300); await page.keyboard.up('Control'); await page.waitForTimeout(500);
+  expect((await cam()).dist).toBeLessThan(b.dist * 0.95);
+});
+
