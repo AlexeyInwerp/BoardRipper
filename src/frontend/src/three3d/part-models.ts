@@ -43,7 +43,8 @@ const geo = (key: string, make: () => THREE.BufferGeometry) => { let g = cache.g
 const k3 = (...v: number[]) => v.map(n => n.toFixed(3)).join(',');
 function mesh(g: THREE.BufferGeometry, m: THREE.Material, x: number, y: number, z: number): THREE.Mesh { const o = new THREE.Mesh(g, m); o.position.set(x, y, z); return o; }
 const box = (w: number, h: number, d: number, m: THREE.Material, x = 0, y = 0, z = 0) => mesh(geo('b' + k3(w, h, d), () => new THREE.BoxGeometry(w, h, d)), m, x, y, z);
-const rbox = (w: number, h: number, d: number, r: number, m: THREE.Material, x = 0, y = 0, z = 0) =>
+// rounded edges only where they can show: a sub-0.6 mm box is drawn plain (2 k of the M1 board's parts)
+const rbox = (w: number, h: number, d: number, r: number, m: THREE.Material, x = 0, y = 0, z = 0) => Math.min(w, h, d) < 0.6 ? box(w, h, d, m, x, y, z) :
   mesh(geo('r' + k3(w, h, d, r), () => new RoundedBoxGeometry(w, h, d, 2, Math.max(0.001, Math.min(r, w / 2, h / 2, d / 2) * 0.99))), m, x, y, z);
 const cyl = (r: number, h: number, m: THREE.Material, x = 0, y = 0, z = 0, seg = 24) => mesh(geo('c' + k3(r, h) + seg, () => new THREE.CylinderGeometry(r, r, h, seg)), m, x, y, z);
 

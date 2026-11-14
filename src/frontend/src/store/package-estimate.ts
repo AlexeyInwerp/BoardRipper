@@ -135,23 +135,39 @@ const wrap = (d: number) => ((d % 360) + 540) % 360 - 180;
 
 /** Grid angle of a pin cloud, folded to [-45, 45): circular mean of 4θ over
  *  nearest-neighbour vectors. */
-function gridAngle(pts: V[]): number {
-  // only the shortest neighbour links: a SOT-23's lone pin reaches its
-  // neighbours diagonally and would skew the mean by ~20°
-  const nn = pts.map((p, i) => Math.min(...pts.map((q, j) => (i === j ? Infinity : Math.hypot(q.x - p.x, q.y - p.y) || Infinity))));
-  const keep = Math.min(...nn) * 1.15;
-  let cs = 0, sn = 0;
-  for (let i = 0; i < pts.length; i++) {
-    if (nn[i] > keep) continue;
-    let best = Infinity, bv: V | null = null;
-    for (let j = 0; j < pts.length; j++) {
-      if (i === j) continue;
-      const dx = pts[j].x - pts[i].x, dy = pts[j].y - pts[i].y, d = dx * dx + dy * dy;
-      if (d > 1e-6 && d < best) { best = d; bv = { x: dx, y: dy }; }
+/** Nearest neighbour of every point (vector to it and its length), through a
+ *  uniform grid — a 3,300-ball GPU took a second with the all-pairs search. */
+function nearestNeighbours(pts: V[]): { d: number; v: V | null }[] {
+  const n = pts.length; if (n < 2) return pts.map(() => ({ d: Infinity, v: null }));
+  // cells of about one pin each; a row of pins has no area, so the span sets the floor
+  const b = bboxOf(pts), span = Math.max(b.x1 - b.x0, b.y1 - b.y0, 1e-3), cell = Math.max(Math.sqrt((b.x1 - b.x0) * (b.y1 - b.y0) / n) * 1.5, span / n * 1.5);
+  const W = Math.floor((b.x1 - b.x0) / cell) + 1, H = Math.floor((b.y1 - b.y0) / cell) + 1;
+  const grid = new Map<number, number[]>();
+  pts.forEach((p, i) => { const k = Math.floor((p.y - b.y0) / cell) * W + Math.floor((p.x - b.x0) / cell); let l = grid.get(k); if (!l) grid.set(k, (l = [])); l.push(i); });
+  return pts.map((p, i) => {
+    const cx = Math.floor((p.x - b.x0) / cell), cy = Math.floor((p.y - b.y0) / cell); let best = Infinity, bv: V | null = null;
+    for (let r = 0; r <= Math.max(W, H); r++) {   // ring r: cells at Chebyshev distance exactly r
+      for (let gy = cy - r; gy <= cy + r; gy++) {
+        if (gy < 0 || gy >= H) continue;
+        const edge = gy === cy - r || gy === cy + r;
+        for (let gx = cx - r; gx <= cx + r; gx += edge ? 1 : 2 * r || 1) {
+          if (gx < 0 || gx >= W) continue;
+          for (const j of grid.get(gy * W + gx) ?? []) { if (j === i) continue; const dx = pts[j].x - p.x, dy = pts[j].y - p.y, d = Math.hypot(dx, dy); if (d > 1e-6 && d < best) { best = d; bv = { x: dx, y: dy }; } }
+        }
+      }
+      if (bv && best <= r * cell) break; // anything beyond ring r is at least r cells away
     }
-    if (!bv) continue;
-    const t = Math.atan2(bv.y, bv.x) * 4; cs += Math.cos(t); sn += Math.sin(t);
-  }
+    return { d: best, v: bv };
+  });
+}
+
+/** Grid angle of a pin cloud, folded to [-45, 45): circular mean of 4θ over
+ *  nearest-neighbour vectors. Only the shortest links count: a SOT-23's lone
+ *  pin reaches its neighbours diagonally and would skew the mean by ~20°. */
+function gridAngle(pts: V[]): number {
+  const nn = nearestNeighbours(pts); const keep = Math.min(...nn.map(e => e.d)) * 1.15;
+  let cs = 0, sn = 0;
+  for (const { d, v } of nn) { if (!v || d > keep) continue; const t = Math.atan2(v.y, v.x) * 4; cs += Math.cos(t); sn += Math.sin(t); }
   const deg = Math.atan2(sn, cs) / 4 * 180 / Math.PI;
   return Math.abs(deg) < 0.5 ? 0 : deg;
 }
@@ -425,7 +441,7 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
 
   // No-lead / leaded ICs and grids, on the signal pins.
   {
-    const b = bboxOf(sloc); const xs = clusters(sloc.map(v => v.x), tol), ys = clusters(sloc.map(v => v.y), tol);
+    const b = bboxOf(sloc);
     const onEdge = (v: V) => Math.abs(v.x - b.x0) < tol || Math.abs(v.x - b.x1) < tol || Math.abs(v.y - b.y0) < tol || Math.abs(v.y - b.y1) < tol;
     const perimeter = sloc.every(onEdge);
     const ep = big.length === 1 && Math.hypot(f0.loc[big[0]].x, f0.loc[big[0]].y) < 0.25 * Math.max(b.x1 - b.x0, b.y1 - b.y0);

@@ -37,16 +37,25 @@ export class Board3DRenderer {
   private ro: ResizeObserver;
   private ray = new THREE.Raycaster();
   private disposed = false;
+  // Dynamic resolution: the view is fill-bound (16 ms a frame at 2× on an M1, 8 ms at 1×), so it
+  // draws at 1× while the camera moves and once at full resolution when it settles.
+  private fullPr = 1;
+  private movingUntil = 0;
 
-  constructor(private host: HTMLElement) {
+  private host: HTMLElement;
+  constructor(host: HTMLElement) {
+    this.host = host;
     this.canvas = document.createElement('canvas');
     this.canvas.className = 'board-3d-canvas';
     host.appendChild(this.canvas);
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    this.fullPr = Math.min(devicePixelRatio, 2);
+    this.renderer.setPixelRatio(this.fullPr);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    // the key light is fixed to the board and only the camera moves: draw the shadow map once per board
+    this.renderer.shadowMap.autoUpdate = false;
     this.scene.background = new THREE.Color(0x16181c);
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
@@ -59,7 +68,7 @@ export class Board3DRenderer {
     this.scene.add(this.boardRoot, this.partsRoot, this.pickRoot, this.hlRoot);
     this.controls = new OrbitControls(this.camera, this.canvas);
     this.controls.enableDamping = true; this.controls.screenSpacePanning = true;
-    this.controls.addEventListener('change', () => { this.dirty = true; });
+    this.controls.addEventListener('change', () => { this.dirty = true; this.movingUntil = performance.now() + 180; });
     this.ro = new ResizeObserver(() => this.resize()); this.ro.observe(host);
     this.resize();
     const loop = () => { if (this.disposed) return; this.raf = requestAnimationFrame(loop); this.tick(); };
@@ -68,7 +77,9 @@ export class Board3DRenderer {
   private key: THREE.DirectionalLight;
 
   // ───────────── board ─────────────
+  private buildMs = 0;
   setModel(model: Board3DModel): void {
+    const t0 = performance.now();
     this.model = model;
     for (const root of [this.boardRoot, this.partsRoot, this.pickRoot, this.hlRoot]) disposeTree(root);
     this.pickBoxes = []; this.partByIndex.clear();
@@ -79,6 +90,8 @@ export class Board3DRenderer {
     this.key.position.set(-0.4 * span, span * 1.5, 0.5 * span); this.key.shadow.camera.updateProjectionMatrix();
     this.camera.far = span * 20; this.camera.updateProjectionMatrix();
     this.view('iso', false);
+    this.renderer.shadowMap.needsUpdate = true;
+    this.buildMs = Math.round(performance.now() - t0);
   }
 
   private buildBoard(m: Board3DModel): void {
@@ -95,7 +108,7 @@ export class Board3DRenderer {
     slab.castShadow = slab.receiveShadow = true; this.boardRoot.add(slab);
     const faceGeo = new THREE.ShapeGeometry(shapes, 16); faceGeo.rotateX(-Math.PI / 2);
     for (const side of ['top', 'bottom'] as const) {
-      const mat = new THREE.MeshPhysicalMaterial({ map: this.faceTexture(m, side), roughness: 0.45, clearcoat: 0.35, clearcoatRoughness: 0.45, side: side === 'top' ? THREE.FrontSide : THREE.BackSide, polygonOffset: true, polygonOffsetFactor: -1 });
+      const mat = new THREE.MeshStandardMaterial({ map: this.faceTexture(m, side), roughness: 0.42, side: side === 'top' ? THREE.FrontSide : THREE.BackSide, polygonOffset: true, polygonOffsetFactor: -1 });
       const face = new THREE.Mesh(faceGeo, mat); face.position.y = side === 'top' ? TOP + 0.002 : -TOP - 0.002; face.receiveShadow = true; this.boardRoot.add(face);
     }
   }
@@ -120,7 +133,7 @@ export class Board3DRenderer {
     for (const pt of m.parts) if (pt.est.family === 'hole') { const [x, z] = m.toScene({ x: pt.est.cx, y: pt.est.cy }); c.beginPath(); c.ellipse(U(x), V(z), pt.est.L * ppm / 2, pt.est.W * ppm / 2, 0, 0, Math.PI * 2); c.fill(); }
     c.strokeStyle = '#ecebe4'; c.lineWidth = Math.max(1, 0.14 * ppm); c.lineJoin = 'round';
     for (const s of m.silk) if (s.side === side) { c.beginPath(); s.pts.forEach(([x, z], i) => (i ? c.lineTo(U(x), V(z)) : c.moveTo(U(x), V(z)))); c.stroke(); }
-    const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+    const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy()); // 16× costs at grazing angles over a whole board face
     // ShapeGeometry UVs are the shape's (x, −z) in mm
     tex.repeat.set(1 / m.width, 1 / m.height); tex.offset.set(0.5, 0.5);
     return tex;
@@ -148,17 +161,20 @@ export class Board3DRenderer {
     }
     // one mesh per material
     tmp.updateMatrixWorld(true);
-    const groups = new Map<THREE.Material, THREE.BufferGeometry[]>();
+    const groups = new Map<THREE.Material, THREE.BufferGeometry[]>(), flat = new Map<THREE.Material, THREE.BufferGeometry[]>();
     tmp.traverse(o => {
       if (!(o instanceof THREE.Mesh)) return;
-      const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
+      const g = o.geometry.clone();
       for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
       g.applyMatrix4(o.matrixWorld);
-      const mat = o.material as THREE.Material; let list = groups.get(mat); if (!list) groups.set(mat, (list = [])); list.push(g);
+      // mergeGeometries needs all-indexed or all-non-indexed: one bucket each per material
+      const key = o.material as THREE.Material; const bucket = g.index ? groups : flat;
+      let list = bucket.get(key); if (!list) bucket.set(key, (list = [])); list.push(g);
     });
-    for (const [mat, list] of groups) {
+    for (const [mat, list] of [...groups, ...flat]) {
       const merged = mergeGeometries(list); list.forEach(g => g.dispose()); if (!merged) continue;
-      const mesh = new THREE.Mesh(merged, mat); mesh.castShadow = mesh.receiveShadow = true; this.partsRoot.add(mesh);
+      // parts cast onto the board; they do not receive (a shadow lookup per part pixel for little to see)
+      const mesh = new THREE.Mesh(merged, mat); mesh.castShadow = true; this.partsRoot.add(mesh);
     }
     this.dirty = true;
   }
@@ -232,8 +248,45 @@ export class Board3DRenderer {
   }
   get drawnParts(): number { return this.partByIndex.size; }
 
+  /** Draw calls, triangles and buffers of the last frame, and the build time. */
+  stats() {
+    const i = this.renderer.info;
+    let verts = 0; this.partsRoot.traverse(o => { if (o instanceof THREE.Mesh) verts += o.geometry.attributes.position.count; });
+    return { calls: i.render.calls, triangles: i.render.triangles, geometries: i.memory.geometries, textures: i.memory.textures, partVertices: verts, buildMs: this.buildMs };
+  }
+  /** Frames actually delivered during a continuous `ms`-long orbit, paced by
+   *  requestAnimationFrame like real use (no read-back stalls). */
+  fps(ms = 2000, pixelRatio?: number): Promise<{ fps: number; worstMs: number }> {
+    const prevPr = this.renderer.getPixelRatio(); if (pixelRatio) { this.renderer.setPixelRatio(pixelRatio); this.resize(); }
+    const r = this.camera.position.length(), t0 = performance.now(); let n = 0, last = t0, worst = 0;
+    return new Promise(res => {
+      const step = () => {
+        const now = performance.now(); worst = Math.max(worst, now - last); last = now;
+        if (now - t0 > ms) { if (pixelRatio) { this.renderer.setPixelRatio(prevPr); this.resize(); } this.dirty = true; res({ fps: Math.round(n * 1000 / (now - t0)), worstMs: Math.round(worst) }); return; }
+        const a = (now - t0) / ms * Math.PI * 2; this.camera.position.set(Math.cos(a) * r * 0.8, r * 0.55, Math.sin(a) * r * 0.8); this.camera.lookAt(this.controls.target);
+        this.renderer.render(this.scene, this.camera); n++; requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    });
+  }
+  /** Orbit `frames` frames and time each one to completion (a 1-px read-back
+   *  waits for the GPU). Median and p90 in ms. For measurement, not for the UI. */
+  bench(frames = 60, pixelRatio?: number) {
+    const prevPr = this.renderer.getPixelRatio(); if (pixelRatio) { this.renderer.setPixelRatio(pixelRatio); this.resize(); }
+    const gl = this.renderer.getContext(), px = new Uint8Array(4), t: number[] = [];
+    const r = this.camera.position.length(), base = Math.atan2(this.camera.position.z, this.camera.position.x);
+    for (let k = 0; k < frames; k++) {
+      const a = base + k * 2 * Math.PI / frames; this.camera.position.set(Math.cos(a) * r * 0.8, r * 0.55, Math.sin(a) * r * 0.8); this.camera.lookAt(this.controls.target);
+      const t0 = performance.now(); this.renderer.render(this.scene, this.camera); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); t.push(performance.now() - t0);
+    }
+    t.sort((x, y) => x - y); this.dirty = true;
+    if (pixelRatio) { this.renderer.setPixelRatio(prevPr); this.resize(); }
+    return { median: +t[t.length >> 1].toFixed(2), p90: +t[Math.floor(t.length * 0.9)].toFixed(2), ...this.stats() };
+  }
+
   // ───────────── loop ─────────────
   private resize(): void {
+    // (also called on a resolution switch: setPixelRatio needs a setSize to take effect)
     const w = Math.max(1, this.host.clientWidth), h = Math.max(1, this.host.clientHeight);
     this.renderer.setSize(w, h, false); this.camera.aspect = w / h; this.camera.updateProjectionMatrix(); this.dirty = true;
   }
@@ -241,9 +294,12 @@ export class Board3DRenderer {
     if (this.anim) {
       const k = Math.min(1, (performance.now() - this.anim.t0) / 450), e = 1 - Math.pow(1 - k, 3);
       this.camera.position.lerpVectors(this.anim.from, this.anim.to, e); this.controls.target.lerpVectors(this.anim.tf, this.anim.tt, e);
-      if (k >= 1) this.anim = null; this.dirty = true;
+      if (k >= 1) { this.anim = null; this.movingUntil = performance.now() + 180; } this.dirty = true;
     }
     this.controls.update();
+    const now = performance.now(), moving = this.anim !== null || now < this.movingUntil;
+    const pr = moving ? Math.min(1, this.fullPr) : this.fullPr;
+    if (pr !== this.renderer.getPixelRatio()) { this.renderer.setPixelRatio(pr); this.resize(); }
     if (!this.dirty) return;
     this.dirty = false;
     this.renderer.render(this.scene, this.camera);

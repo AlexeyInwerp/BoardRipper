@@ -317,17 +317,81 @@ The same parameters drive a shader on the trace instances: per-vertex distance,
 side and width, active net id as a uniform — no geometry rebuild when the lit net
 changes, only when its source pin does.
 
-## Performance budget
+## Performance (prototype, measured 2026-11-14)
 
-| Board | Parts | Segments | Target |
-|---|---:|---:|---|
-| P3HCJ (Allegro, 8 layers) | 2,165 | 40,636 | 60 fps orbit on an M1, 30 on A12Z |
-| NVIDIA4090 (GenCAD) | 3,282 | 515,390 | 60 fps M1; on A12Z build traces per layer on demand |
-| A1862 (XZZ, plain) | 7,917 | 0 | 60 fps both |
+The prototype is in the app: ribbon cube button → `three3d/Board3DView.tsx`
+(lazy chunk) → `Board3DRenderer`. Measured with `tests/board-3d-perf.spec.ts`
+(`BR_3D_PERF=1`) on an M1 MacBook through ANGLE/Metal, 1600 × 1000 at 2× pixel
+ratio.
 
-Scene build off the main thread where possible (estimates and instance buffers
-in the parse worker), with the existing background-load banner during the
-build. Shadows are one directional light, off in touch performance mode.
+| Board | Parts drawn | Triangles before → after | Build before → after | Frame rate during orbit (2× / 1×) |
+|---|---:|---:|---:|---:|
+| Tomu (KiCad) | 38 | 26 k → 3.4 k | 0.13 → 0.05 s | 59 / 60 fps |
+| MacBook Air M1 (XZZ) | 2,368 | 1.52 M → 181 k | 1.96 → 0.41 s | 60 / 60 fps |
+| LA-P161 (Allegro) | 3,194 | 1.60 M → 327 k | 1.67 → 0.63 s | 58 / 60 fps |
+| NVIDIA 4090 (GenCAD) | 3,238 | 1.91 M → 411 k | 2.48 → 0.93 s | 58 / 60 fps |
+| iMac Pro (XZZ) | 6,055 | 3.41 M → 496 k | 3.45 → 0.73 s | 59 / 60 fps |
+
+What each round changed:
+
+1. **Geometry.**
+   - Parts are merged per material with their indices kept; the first cut
+     de-indexed everything and tripled the vertices.
+   - Bodies under 0.6 mm are drawn as plain boxes, since rounded edges cannot
+     show at that size. These are the 0201s and 0402s that make up most of a
+     laptop board.
+   - The shadow map is drawn once per board, not every frame. The light is
+     fixed to the board and only the camera moves.
+
+   Result: 8–9× fewer triangles, ~10× fewer vertices, 3–5× faster build.
+2. **Pixels.** After round 1 the view is fill-bound: 16 ms a frame at 2× and
+   8 ms at 1×, even for the 3.4 k-triangle Tomu. So:
+   - it draws at 1× while the camera moves and once at full resolution 180 ms
+     after it settles;
+   - the board face is a standard material, not a clearcoat one;
+   - only the board receives shadows;
+   - anisotropic filtering is capped at 4×.
+
+   The worst frame during an orbit drops from 35–85 ms to ~20 ms. That
+   headroom is what a tablet GPU (A12Z, 3–4× slower) needs.
+3. **CPU.** The estimator's nearest-neighbour search was all-pairs: one second
+   for a 3,328-ball GPU. A uniform grid now does it: 1,042 → 52 ms for the
+   whole NVIDIA board, 38 ms for the M1 board.
+
+Still open:
+- The remaining open time on NVIDIA 4090 is the 2D renderer still building
+  its 515 k-trace scene when 3D is switched on, not 3D work.
+- The model build (0.4–0.9 s) runs on the main thread; it can move to the
+  parse worker.
+- Instancing repeated chips would cut memory further, but draw calls are
+  already 27–31.
+
+## Voxels instead of geometry?
+
+Reviewed, not recommended for the board itself:
+
+- **Resolution.** A 01005 is 0.4 × 0.2 mm and the board must stay sharp
+  zoomed in to a single part. At 0.05 mm voxels the M1 board
+  (188 × 46 mm, parts up to 3 mm) is a 3760 × 920 × 92 grid: 318 M cells
+  dense, still 10–20 M surface voxels in a sparse octree. That is roughly
+  40–80 MB, against ~10 MB for the 181 k-triangle mesh. Voxel edges would also
+  staircase at exactly the zoom levels repair work uses.
+- **Cost model.** A GPU rasterises 0.2–0.5 M triangles in well under a
+  millisecond. Ray-marching a sparse voxel tree costs tens of steps per pixel.
+  At 6 M pixels that is 100–400 M steps a frame, and this view is already
+  pixel-bound.
+- **Content.** Board parts are boxes, cylinders and extrusions, which a few
+  triangles describe exactly. Voxels pay off for volumetric or organic data
+  (CT scans, sculpting, destruction). Nothing here is volumetric.
+
+Two related ideas do fit, and are worth keeping:
+- **Heightfield impostor (far LOD).** Bake each side into a 2.5D height and
+  colour texture (about 4096 × 1000) and draw the board as one relief-mapped
+  quad. Cost is fixed per pixel whatever the part count, so it suits a
+  zoomed-out 6,000-part board on a tablet. Switch to geometry when zoomed in.
+- **Layer textures for the stack.** Inner copper as one 2D texture per layer
+  on thin slabs, as the face texture is now. 515 k traces become a few
+  textures instead of geometry.
 
 ## Phases
 
@@ -335,8 +399,10 @@ build. Shadows are one directional light, off in touch performance mode.
    script; evidence shown in the Info panel (useful before any 3D exists).
 2. **2D signal animation** — overlay, distance field, effect setting, reduced
    motion, iPad measurement at 6× throttle.
-3. **3D plain** — three.js chunk, slab + outline, model library, instanced
-   parts, picking through `hitTest`, store parity, ribbon toggle, camera presets.
+3. **3D plain** — prototype done 2026-11-14 (see Performance): three.js chunk,
+   slab + outline + baked face textures, generated models merged per material,
+   picking, shared selection and net highlight, ribbon toggle, camera presets.
+   Open: picking through the 2D `hitTest`, touch tuning, model build in a worker.
 4. **3D multi-layer** — stacked copper (instanced capsules), pours, vias,
    explode, X-ray, Layers tab binding.
 5. **3D signal** — shader effects, air wires on plain boards.
