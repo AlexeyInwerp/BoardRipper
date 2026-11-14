@@ -18,6 +18,7 @@ import { HistoryButtons }   from './slots/HistoryButtons';
 import { MinimapButton, SlideModeButton } from './slots/SlideButtons';
 import { ButterflyButton, RotateCcwButton, RotateCwButton, TracesButton, TransformMenuButton } from './slots/TransformButtons';
 import { LegendButton } from './slots/LegendButton';
+import { View3DButton } from './slots/View3DButton';
 
 /**
  * Returns the rendered ReactNode for a given slot id. Any `sep${number}`
@@ -48,6 +49,7 @@ export function renderOverlaySlot(id: OverlaySlotId, ctx: SlotCtx): ReactNode {
     case 'netsDropdown':  return <NetsDropdown ctx={ctx} />;
     case 'sideFlipAxis':  return null;               // drawn inside SideSwitch
     case 'legendHelp':    return <LegendButton />;
+    case 'view3d':        return <View3DButton ctx={ctx} />;
   }
 }
 

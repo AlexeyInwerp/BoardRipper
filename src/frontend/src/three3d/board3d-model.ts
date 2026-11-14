@@ -1,0 +1,126 @@
+/**
+ * What the 3D view draws, as plain data — no three.js here, so it is cheap to
+ * test and could move to a worker.
+ *
+ * Frames. Files come Y-up or Y-down (the format's `flipY`, the same flag the 2D
+ * renderer reads). Everything below works in one Y-up board frame (mils), so
+ * the estimator's angles and "which side" conventions mean one thing; the
+ * scene is mm, centred on the board, with scene z = −y (Y-up board seen from
+ * above, +x right, +z towards the viewer).
+ */
+import type { BoardData, BBox, Part, Pin, Point } from '../parsers/types';
+import { getFormat } from '../parsers/registry';
+import { estimatePart, type PartEstimate } from '../store/package-estimate';
+
+export const MM = 0.0254;
+
+export interface Board3DPart {
+  /** Index into the tab's `board.parts` — the selection index. */
+  index: number;
+  name: string;
+  side: 'top' | 'bottom';
+  est: PartEstimate;
+}
+
+export interface Board3DPad { x: number; z: number; w: number; h: number; angle: number; round: boolean; side: 'top' | 'bottom' | 'both'; drill: number }
+
+export interface Board3DModel {
+  /** Board size in mm. */
+  width: number; height: number;
+  /** Outer outline contours and cut-outs, scene mm [x, z]. */
+  outlines: [number, number][][];
+  cutouts: [number, number][][];
+  parts: Board3DPart[];
+  pads: Board3DPad[];
+  /** Copper traces for the board-face texture, scene mm, per outer side. */
+  traces: { side: 'top' | 'bottom'; x1: number; z1: number; x2: number; z2: number; w: number }[];
+  /** Silkscreen polylines, scene mm (only where the format's silkscreen is printed art). */
+  silk: { side: 'top' | 'bottom'; pts: [number, number][] }[];
+  /** Mounting holes and drills, scene mm. */
+  holes: { x: number; z: number; rx: number; rz: number }[];
+  /** The side the user calls Top (the file's `primarySide`). */
+  primarySide: 'top' | 'bottom';
+  /** Board frame (Y-up mils) → scene mm. */
+  toScene(p: Point): [number, number];
+  /** Pins of a part, scene mm, with side — for net highlight markers. */
+  pinsOf(index: number): { x: number; z: number; side: 'top' | 'bottom'; net: string; r: number }[];
+}
+
+/** Formats whose silkscreen paths are printed art, not assembly outlines. */
+const PRINTED_SILK = new Set(['EAGLE_BRD', 'KICAD']);
+
+export function buildBoard3DModel(board: BoardData): Board3DModel {
+  const yUp = board.flipY ?? getFormat(board.format)?.flipY ?? false;
+  const fy = (y: number) => (yUp ? y : -y);
+  const P = (p: Point): Point => ({ x: p.x, y: fy(p.y) });
+  const B = (b: BBox): BBox => (yUp ? b : { minX: b.minX, maxX: b.maxX, minY: -b.maxY, maxY: -b.minY });
+
+  // outline → contours, in the Y-up frame
+  const contours: Point[][] = []; let cur: Point[] = [];
+  for (const p of board.outline) { if (Number.isNaN(p.x) || Number.isNaN(p.y)) { if (cur.length > 2) contours.push(cur); cur = []; } else cur.push(P(p)); }
+  if (cur.length > 2) contours.push(cur);
+  const visibleParts = board.parts.filter(p => !p.hidden && p.pins.length);
+  if (!contours.length) { // no outline: the parts' box plus a margin
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const pt of visibleParts) for (const q of pt.pins) { const y = fy(q.position.y); x0 = Math.min(x0, q.position.x); x1 = Math.max(x1, q.position.x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    const m = 120; contours.push([{ x: x0 - m, y: y0 - m }, { x: x1 + m, y: y0 - m }, { x: x1 + m, y: y1 + m }, { x: x0 - m, y: y1 + m }]);
+  }
+  const bb = (c: Point[]) => c.reduce((b, p) => ({ x0: Math.min(b.x0, p.x), x1: Math.max(b.x1, p.x), y0: Math.min(b.y0, p.y), y1: Math.max(b.y1, p.y) }), { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity });
+  const boxes = contours.map(bb);
+  const all = boxes.reduce((b, c) => ({ x0: Math.min(b.x0, c.x0), x1: Math.max(b.x1, c.x1), y0: Math.min(b.y0, c.y0), y1: Math.max(b.y1, c.y1) }));
+  const cx = (all.x0 + all.x1) / 2, cy = (all.y0 + all.y1) / 2;
+  const toScene = (p: Point): [number, number] => [(p.x - cx) * MM, -(p.y - cy) * MM];
+  // a contour inside another's box is a cut-out
+  const inside = (i: number) => boxes.some((o, j) => j !== i && o.x0 <= boxes[i].x0 && o.x1 >= boxes[i].x1 && o.y0 <= boxes[i].y0 && o.y1 >= boxes[i].y1 && (o.x1 - o.x0) * (o.y1 - o.y0) > (boxes[i].x1 - boxes[i].x0) * (boxes[i].y1 - boxes[i].y0));
+  const outlines: [number, number][][] = [], cutouts: [number, number][][] = [];
+  contours.forEach((c, i) => (inside(i) ? cutouts : outlines).push(c.map(toScene)));
+
+  // parts: estimate in the Y-up frame
+  const yUpPart = (pt: Part): Part => yUp ? pt : {
+    ...pt, origin: P(pt.origin), bounds: B(pt.bounds), angleDeg: pt.angleDeg === undefined ? undefined : -pt.angleDeg,
+    pins: pt.pins.map((q: Pin): Pin => ({ ...q, position: P(q.position), padBounds: q.padBounds && B(q.padBounds), padAngleDeg: q.padAngleDeg === undefined ? undefined : -q.padAngleDeg, padPolygon: q.padPolygon?.map(P) })),
+  };
+  const parts: Board3DPart[] = [];
+  const holes: Board3DModel['holes'] = [];
+  board.parts.forEach((pt, index) => {
+    if (pt.hidden || !pt.pins.length) return;
+    const est = estimatePart(yUpPart(pt), { usePackage: true });
+    const side = pt.side === 'bottom' ? 'bottom' : 'top';
+    parts.push({ index, name: pt.name, side, est });
+    if (est.family === 'hole') { const [x, z] = toScene({ x: est.cx, y: est.cy }); holes.push({ x, z, rx: (est.p.drill || est.L * 0.5) / 2, rz: (est.p.drill || est.W * 0.5) / 2 }); }
+  });
+
+  // pads: the file's list, else one per pin
+  const pads: Board3DPad[] = [];
+  const pushPad = (b: BBox, side: Board3DPad['side'], w: number | undefined, h: number | undefined, a: number | undefined, round: boolean, drill: number | undefined) => {
+    const yb = B(b); const [x, z] = toScene({ x: (yb.minX + yb.maxX) / 2, y: (yb.minY + yb.maxY) / 2 });
+    pads.push({ x, z, w: (w ?? b.maxX - b.minX) * MM, h: (h ?? b.maxY - b.minY) * MM, angle: (yUp ? 1 : -1) * (a ?? 0), round, side, drill: (drill ?? 0) * MM });
+  };
+  if (board.pads?.length) for (const p of board.pads) pushPad(p.bounds, p.side, p.width, p.height, p.angleDeg, p.shape === 'round', p.drill);
+  else for (const pt of board.parts) if (!pt.hidden) for (const q of pt.pins) {
+    const b = q.padBounds ?? { minX: q.position.x - q.radius, maxX: q.position.x + q.radius, minY: q.position.y - q.radius, maxY: q.position.y + q.radius };
+    pushPad(b, q.side, q.padWidth, q.padHeight, q.padAngleDeg, !q.padBounds, q.drill);
+  }
+  for (const p of pads) if (p.drill > 0.25) holes.push({ x: p.x, z: p.z, rx: p.drill / 2, rz: p.drill / 2 });
+
+  // traces on the outer layers, for the board-face texture
+  const nLayers = board.layerNames?.length ?? 0;
+  const traces: Board3DModel['traces'] = [];
+  for (const t of board.traces ?? []) {
+    const L = t.layer ?? 0; const side = L === 0 ? 'top' : nLayers > 1 && L === nLayers - 1 ? 'bottom' : null; if (!side) continue;
+    const [x1, z1] = toScene(P(t.start)), [x2, z2] = toScene(P(t.end)); traces.push({ side, x1, z1, x2, z2, w: t.width * MM });
+  }
+  const silk = PRINTED_SILK.has(board.format) ? (board.silkscreen ?? []).map(s => ({ side: s.side, pts: s.points.map(p => toScene(P(p))) })) : [];
+
+  const pinsOf = (index: number) => {
+    const pt = board.parts[index]; if (!pt) return [];
+    return pt.pins.map(q => { const [x, z] = toScene(P(q.position)); return { x, z, side: (q.side === 'bottom' ? 'bottom' : 'top') as 'top' | 'bottom', net: q.net, r: Math.max(q.radius * MM, 0.12) }; });
+  };
+
+  return {
+    width: (all.x1 - all.x0) * MM, height: (all.y1 - all.y0) * MM,
+    outlines, cutouts, parts, pads, traces, silk, holes,
+    primarySide: board.primarySide === 'bottom' ? 'bottom' : 'top',
+    toScene, pinsOf,
+  };
+}

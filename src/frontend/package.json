@@ -39,7 +39,8 @@
     "pixi-viewport": "^6.0.3",
     "pixi.js": "^8.17.0",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "three": "^0.170.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
@@ -49,6 +50,7 @@
     "@types/pako": "^2.0.4",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.170.0",
     "@vitejs/plugin-react": "^5.1.1",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",

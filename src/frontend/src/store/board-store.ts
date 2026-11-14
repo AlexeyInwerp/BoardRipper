@@ -712,6 +712,12 @@ class BoardStore extends Emitter {
     return this._tabs.find(t => t.id === tabId) ?? null;
   }
 
+  /** The board of a specific tab as the renderer draws it (the derived view). */
+  viewBoardFor(tabId: number): BoardData | null {
+    const tab = this.getTab(tabId);
+    return tab ? ensureDerivedBoard(tab) : null;
+  }
+
   get activeTab(): BoardTab | null {
     return this._tabs.find(t => t.id === this._activeTabId) ?? null;
   }

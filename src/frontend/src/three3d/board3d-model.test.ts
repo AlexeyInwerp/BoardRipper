@@ -1,0 +1,31 @@
+import { describe, it, expect } from 'vitest';
+import type { BoardData, Part, Pin } from '../parsers/types';
+import { buildBoard3DModel } from './board3d-model';
+
+const pin = (n: string, x: number, y: number, net = 'N' + n): Pin => ({ name: n, number: n, position: { x, y }, radius: 10, side: 'top', net });
+const part = (name: string, pins: Pin[]): Part => ({ name, side: 'top', type: 'smd', origin: pins[0].position, pins, bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 } });
+function board(format: string, flipY: boolean | undefined): BoardData {
+  const outline = [{ x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 1000, y: 500 }, { x: 0, y: 500 }];
+  // a SOT-23 near the top edge (y = 450 in the file's own frame): two pins on the lower row
+  const sot = part('Q1', [pin('1', 200 - 37, 450 - 40), pin('2', 200 + 37, 450 - 40), pin('3', 200, 450 + 40)]);
+  return { format, flipY, outline, parts: [sot, part('R1', [pin('1', 600, 100), pin('2', 663, 100)])], nails: [], nets: new Map(), bounds: { minX: 0, minY: 0, maxX: 1000, maxY: 500 } };
+}
+
+describe('board3d model', () => {
+  it('centres the board in mm and estimates its parts', () => {
+    const m = buildBoard3DModel(board('KICAD', true));
+    expect(m.width).toBeCloseTo(25.4); expect(m.height).toBeCloseTo(12.7);
+    expect(m.parts.map(p => p.est.family)).toEqual(['sot23', 'chip']);
+  });
+  it('puts a Y-up file\'s high y away from the viewer, a Y-down file\'s towards', () => {
+    const up = buildBoard3DModel(board('KICAD', true)), down = buildBoard3DModel(board('KICAD', false));
+    const z = (m: typeof up) => m.toScene({ x: m.parts[0].est.cx, y: m.parts[0].est.cy })[1];
+    expect(z(up)).toBeLessThan(0);    // y = 450 of 500, Y-up: the far half of the board
+    expect(z(down)).toBeGreaterThan(0); // the same numbers read Y-down: the near half
+  });
+  it('turns a Y-down SOT-23 the same way as the 2D view shows it', () => {
+    // in a Y-down file the two-pin row (smaller y) is the upper row on screen; mirrored to Y-up it is the upper row too
+    const down = buildBoard3DModel(board('KICAD', false)).parts[0].est.rotDeg, up = buildBoard3DModel(board('KICAD', true)).parts[0].est.rotDeg;
+    expect(Math.abs(((down - up) % 360 + 360) % 360 - 180)).toBeLessThan(1);
+  });
+});

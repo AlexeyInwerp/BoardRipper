@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback, useSyncExternalStore } from 'react';
+import { useRef, useEffect, useState, useCallback, useSyncExternalStore, lazy, Suspense } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { BoardRenderer } from '../renderer/BoardRenderer';
 import { BoardLegend } from '../components/BoardLegend';
@@ -26,6 +26,9 @@ import { ResizeModeBanner } from '../components/ResizeModeBanner';
 import { BoardMinimap } from '../components/BoardMinimap';
 import { SlideLayer } from '../components/slide/SlideLayer';
 import { slideStore } from '../store/slide-store';
+import { view3dStore } from '../store/view3d-store';
+// the 3D view and three.js load only when a tab first switches to 3D
+const Board3DView = lazy(() => import('../three3d/Board3DView'));
 import {
   registerBoardSearchHandler,
   registerBoardSidebarTabHandler,
@@ -41,6 +44,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   const [liveRenderer, setLiveRenderer] = useState<BoardRenderer | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const slideOn = useSyncExternalStore(c => slideStore.subscribe(c), () => slideStore.snapshot()).enabled;
+  const is3d = useSyncExternalStore(c => view3dStore.subscribe(c), () => view3dStore.snapshot()).has(tabId ?? -1);
   const { tabs } = useBoardStore();
   const thisTab = tabId != null ? tabs.find(t => t.id === tabId) : undefined;
   const netLineMode = thisTab?.netLineMode ?? 'off';
@@ -350,9 +354,14 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
         </div>
       )}
       <ResizeModeBanner />
-      <SlideLayer tabId={tabId} renderer={liveRenderer} rootRef={rootRef} hostRef={containerRef} fileName={tabFileName} />
-      <BoardMinimap renderer={liveRenderer} tabId={tabId} mode={slideOn ? 'always' : minimapMode(renderSettings)} />
-      <BoardLegend tabId={tabId} sidebarOpen={sidebarOpen} rootRef={rootRef} />
+      {is3d && thisTab?.board && (
+        <Suspense fallback={<div className="board-3d board-3d-loading">Loading 3D view…</div>}>
+          <Board3DView tabId={tabId} />
+        </Suspense>
+      )}
+      {!is3d && <SlideLayer tabId={tabId} renderer={liveRenderer} rootRef={rootRef} hostRef={containerRef} fileName={tabFileName} />}
+      {!is3d && <BoardMinimap renderer={liveRenderer} tabId={tabId} mode={slideOn ? 'always' : minimapMode(renderSettings)} />}
+      {!is3d && <BoardLegend tabId={tabId} sidebarOpen={sidebarOpen} rootRef={rootRef} />}
       <div className="board-sidebar-toggle-group">
         <button
           className={`board-sidebar-toggle ${sidebarOpen ? 'active' : ''}`}

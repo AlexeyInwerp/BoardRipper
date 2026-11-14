@@ -26,7 +26,7 @@ export type NamedSlotId =
   | 'sideSwitch' | 'butterfly' | 'rotateCCW' | 'rotateCW' | 'transformMenu' | 'history'
   | 'pdfFollow' | 'scrollMode' | 'fitBoard' | 'minimap' | 'slides'
   | 'hoverInfo' | 'netDim' | 'netLines' | 'ghosts' | 'diodeValues' | 'traces'
-  | 'partsDropdown' | 'netsDropdown' | 'sideFlipAxis' | 'legendHelp';
+  | 'partsDropdown' | 'netsDropdown' | 'sideFlipAxis' | 'legendHelp' | 'view3d';
 
 export type SeparatorSlotId = `sep${number}`;
 export type OverlaySlotId = NamedSlotId | SeparatorSlotId;
@@ -37,7 +37,7 @@ const NAMED_SLOT_IDS: ReadonlySet<NamedSlotId> = new Set([
   'sideSwitch', 'butterfly', 'rotateCCW', 'rotateCW', 'transformMenu', 'history',
   'pdfFollow', 'scrollMode', 'fitBoard', 'minimap', 'slides',
   'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues', 'traces',
-  'partsDropdown', 'netsDropdown', 'sideFlipAxis', 'legendHelp',
+  'partsDropdown', 'netsDropdown', 'sideFlipAxis', 'legendHelp', 'view3d',
 ]);
 
 /** Human names, used by the ribbon's right-click menu and the Settings
@@ -50,6 +50,7 @@ export const SLOT_LABELS: Readonly<Record<NamedSlotId, string>> = {
   rotateCW:      'Rotate right',
   transformMenu: 'More transforms',
   history:       'History',
+  view3d:        '3D view',
   traces:        'Traces',
   pdfFollow:     'Follow PDF',
   scrollMode:    'Scroll mode',
@@ -119,6 +120,9 @@ export const DEFAULT_OVERLAY_LAYOUT: ReadonlyArray<Readonly<OverlaySlot>> = [
   // Back / Forward through the navigation history (2026-09-29). Placed after
   // the transforms so reconcileOverlayLayout lands it there for existing users.
   { id: 'history',       visible: true },
+  // 3D view of this tab (2026-11-14): a view mode, so it sits with the
+  // transforms rather than with the view aids.
+  { id: 'view3d',        visible: true },
   { id: 'sep0',          visible: true },
   { id: 'pdfFollow',     visible: true },
   { id: 'scrollMode',    visible: true },

@@ -191,11 +191,17 @@ export function parsePackageName(name: string, ref: string): PkgHint | null {
   if (/USB.?C|TYPE.?C/.test(n)) return { family: 'usb-c', label: 'USB-C receptacle' };
   if (/LED.?3535|WS2812.*3535/.test(n)) return { family: 'led3535', label: 'RGB LED 3535' };
   if (/LED.?5050|WS2812B?$/.test(n)) return { family: 'led3535', dims: { L: 5, W: 5, H: 1.6 }, label: 'RGB LED 5050' };
+  if (/LED/.test(n) && !chip) return { family: 'led3535', label: 'LED package' };
   if (/SOD-?123/.test(n)) return { family: 'sod123', label: 'SOD-123' };
   if (/SOD-?323/.test(n)) return { family: 'sod323', label: 'SOD-323' };
   if (/SOT-?23-?[56]|SOT-?353|SC-?70-?5/.test(n)) return { family: 'sot23-5', label: 'SOT-23-5' };
   if (/SOT-?23/.test(n)) return { family: 'sot23', label: 'SOT-23' };
-  let m = n.match(/QFN-?(\d+)[_-]?(\d+(?:\.\d+)?)(?:X(\d+(?:\.\d+)?))?MM/);
+  // IPC-7351 names: QFN50P500X500X90-33N = pitch 0.50, body 5.00 × 5.00 × 0.90 mm
+  let m = n.match(/(QFN|SON|DFN|SOP|SOIC|TSSOP)(\d+)P(\d+)X(\d+)(?:X(\d+))?/);
+  if (m) { const fam: Family = m[1] === 'QFN' ? 'qfn' : m[1] === 'SON' || m[1] === 'DFN' ? 'son' : 'soic'; return { family: fam, dims: { L: +m[3] / 100, W: +m[4] / 100, H: m[5] ? +m[5] / 100 : fam === 'soic' ? 1.5 : 0.8 }, label: `${m[1]} ${+m[3] / 100}×${+m[4] / 100} @ ${+m[2] / 100}` }; }
+  m = n.match(/(?:XTAL|CRYSTAL|OSC)[_-]?(\d)(\d)(\d)(\d)(?!\d)/);
+  if (m) return { family: 'crystal', dims: { L: +(m[1] + '.' + m[2]), W: +(m[3] + '.' + m[4]), H: 0.8 }, label: `crystal ${m[1]}${m[2]}${m[3]}${m[4]}` };
+  m = n.match(/QFN-?(\d+)[_-]?(\d+(?:\.\d+)?)(?:X(\d+(?:\.\d+)?))?MM/);
   if (m) return { family: 'qfn', dims: { L: +m[2], W: +(m[3] ?? m[2]), H: 0.9 }, label: `QFN-${m[1]} ${m[2]} mm` };
   m = n.match(/[UVWX]?(?:SON|DFN)-?(\d+)[_-]?(\d+(?:\.\d+)?)X(\d+(?:\.\d+)?)/);
   if (m) return { family: 'son', dims: { L: +m[2], W: +m[3], H: 0.55 }, label: `SON-${m[1]} ${m[2]}×${m[3]}` };
@@ -311,7 +317,8 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
     if (pa && opposite && Math.abs(pa.x * pb.x + pa.y * pb.y) < 0.15 * ax * ay) {
       const lo = Math.min(ax, ay), hi = Math.max(ax, ay), long = ax >= ay ? pa : pb;
       const deg = Math.atan2(long.y, long.x) * 180 / Math.PI; const f = { cx: c.x, cy: c.y };
-      if (hi / lo < 1.3) { const s = Math.max(2, mm(hi) + 0.6); return out({ family: 'coax', L: s, W: s, H: 1.2, cx: f.cx, cy: f.cy, rotDeg: deg }, `4 pins in a plus, equal arms ${mm(lo).toFixed(1)} mm → RF coax receptacle`); }
+      if (hi / lo < 1.3 && mm(hi) > 1.5) { const s = Math.max(2, mm(hi) + 0.6); return out({ family: 'coax', L: s, W: s, H: 1.2, cx: f.cx, cy: f.cy, rotDeg: deg }, `4 pins in a plus, equal arms ${mm(lo).toFixed(1)} mm → RF coax receptacle`); }
+      if (hi / lo < 1.3) return out({ family: 'led3535', L: mm(hi) + 0.4, W: mm(hi) + 0.4, H: 0.6, cx: f.cx, cy: f.cy, rotDeg: deg }, `4 pins in a small plus (${mm(hi).toFixed(1)} mm) → small 4-pin package (LED, sensor)`, 'fallback');
       const L = mm(hi) * 1.25 + 0.15, W = Math.max(mm(lo) * 1.4, L * 0.5);
       return out({ family: 'chip3t', kind: 'C', L, W, H: W * 0.9, cx: f.cx, cy: f.cy, rotDeg: deg }, `4 pins in a plus, arms ${hi.toFixed(0)}/${lo.toFixed(0)} mil → 3-terminal capacitor`);
     }
@@ -380,6 +387,14 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
     for (const [sig, tabs] of [[g1, g2], [g2, g1]]) if (tabs.length >= 2 && tabs.length <= 4 && sig.length >= 2) { const r = connTry(sig, tabs); if (r) return r; }
   }
 
+  // Contacts with no body over them — PCB-edge USB fingers, touch pads, battery
+  // contacts: every pad ≥ 1.5 mm, or ≥ 40 % of them long fingers. After the connector
+  // checks: a JST PH's signal pads are fingers too.
+  const padMin = (q: Pin) => mm(Math.min(q.padWidth ?? q.radius * 2, q.padHeight ?? q.radius * 2)), padMax = (q: Pin) => mm(Math.max(q.padWidth ?? q.radius * 2, q.padHeight ?? q.radius * 2));
+  const fingers = pins.filter(q => padMax(q) >= 3 && padMin(q) >= 0.8).length;
+  if (!hint && n >= 3 && (pins.every(q => padMin(q) >= 1.5) || (fingers >= 3 && fingers >= 0.4 * n))) {
+    const c = center(); return out({ family: 'none', L: 0, W: 0, H: 0, cx: c.x, cy: c.y, rotDeg: 0 }, `${n} pads, ${fingers ? fingers + ' of them contact fingers ≥ 3 mm' : 'all ≥ 1.5 mm'} → contacts, no body`);
+  }
   // Four pins at rectangle corners: crystal / tact switch / 3535 LED by refdes.
   if (n === 4 || (hint && ['crystal', 'button', 'button-ra', 'led3535'].includes(hint.family))) {
     const f = frame(pins, f0.deg); const b = bboxOf(f.loc);
@@ -388,9 +403,10 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
     const fam: Family = hint?.family ?? (/^(Y|X|XT|XTAL|OSC)$/.test(pre) ? 'crystal' : /^(SW|S|BTN|KEY|K)$/.test(pre) ? 'button' : /^(LED|D)$/.test(pre) ? 'led3535' : 'box');
     const c = { x: f.cx, y: f.cy };
     if (fam === 'crystal') return out({ family: fam, L: hint?.dims?.L ?? w + 0.7, W: hint?.dims?.W ?? h + 0.5, H: 0.8, cx: c.x, cy: c.y, rotDeg: deg }, `4 pins at the corners of ${w.toFixed(1)}×${h.toFixed(1)} mm, refdes ${ref} → crystal`);
+    if (fam === 'button' && h < 0.8) return out({ family: 'none', L: 0, W: 0, H: 0, cx: c.x, cy: c.y, rotDeg: deg }, `4 pins in a line, refdes ${ref}: no switch body fits — pads only`);
     if (fam === 'button') return out({ family: fam, L: w + 0.1, W: Math.max(h + 1.0, 2.6), H: 1.9, cx: c.x, cy: c.y, rotDeg: deg }, `4 pins at the corners of ${w.toFixed(1)}×${h.toFixed(1)} mm, refdes ${ref} → tact switch`);
     if (fam === 'button-ra') return out({ family: fam, L: w + 0.6, W: 3.5, H: 2.2, cx: c.x, cy: c.y, rotDeg: deg }, pkgWhy);
-    if (fam === 'led3535') { const s = hint?.dims?.L ?? (Math.max(w, h) > 3.6 ? 5 : 3.5); return out({ family: fam, L: s, W: s, H: hint?.dims?.H ?? 0.9, cx: c.x, cy: c.y, rotDeg: deg }, `4 pins on a ${w.toFixed(1)}×${h.toFixed(1)} mm rectangle, refdes ${ref} → RGB LED ${s === 5 ? 5050 : 3535}`); }
+    if (fam === 'led3535') { const s = hint?.dims?.L ?? (Math.max(w, h) > 3.6 ? 5 : Math.max(w, h) > 2.2 ? 3.5 : Math.max(1, Math.max(w, h) + 0.5)); return out({ family: fam, L: s, W: s, H: hint?.dims?.H ?? 0.9, cx: c.x, cy: c.y, rotDeg: deg }, `4 pins on a ${w.toFixed(1)}×${h.toFixed(1)} mm rectangle, refdes ${ref} → RGB LED ${s === 5 ? 5050 : 3535}`); }
   }
 
   // Three / five pins: SOT-23 family (2+1, 3+2 at 0.95 mm).
@@ -420,7 +436,8 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
     // rotate a square/rect body so pin 1 sits at (-x, +y)
     const pin1Turn = (f: Frame) => { if (pin1 < 0) return 0; const v = f.loc[pin1]; return v.x <= 0 && v.y >= 0 ? 0 : v.x <= 0 ? 90 : v.y >= 0 ? -90 : 180; };
     const sides = [b.x0, b.x1].map(x => sloc.filter(v => Math.abs(v.x - x) < tol).length).concat([b.y0, b.y1].map(y => sloc.filter(v => Math.abs(v.y - y) < tol).length));
-    if (hint?.family === 'qfn' || (!hint && perimeter && sides.every(s => s >= 3))) {
+    const smallPads = mm(median(small.map(i => sizes[i]))) < 1.5;
+    if (hint?.family === 'qfn' || (!hint && perimeter && smallPads && sides.every(s => s >= 3))) {
       const L = hint?.dims?.L ?? spanX + 0.8, W = hint?.dims?.W ?? spanY + 0.8;
       return out({ family: 'qfn', L, W, H: hint?.dims?.H ?? 0.9, cx: f0.cx, cy: f0.cy, rotDeg: wrap(f0.deg + pin1Turn(f0)), p: { perSide: Math.round(small.length / 4), pitch: pitchX || pitchY, ep: ep ? 1 : 0 } },
         `${small.length} pins on four sides @ ${(pitchX || pitchY).toFixed(2)}${ep ? ' + centre pad' : ''} → QFN ${L.toFixed(1)}×${W.toFixed(1)}`);
@@ -448,8 +465,8 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
       const f = frame(pins, f0.deg + extra, small); const sl = small.map(i => f.loc[i]);
       const gx = clusters(sl.map(v => v.x), tol), gy = clusters(sl.map(v => v.y), tol);
       if (gx.length >= 4 && gy.length >= 4 && small.length >= 16 && small.length >= 0.3 * gx.length * gy.length) {
-        const B = bboxOf(sl), p = mm(pitchOf(gx.map(c => c.c)));
-        return out({ family: 'bga', L: mm(B.x1 - B.x0) + 1.6, W: mm(B.y1 - B.y0) + 1.6, H: 1.2, cx: f.cx, cy: f.cy, rotDeg: wrap(f.deg), p: { cols: gx.length, rows: gy.length, pitch: p, balls: small.length } },
+        const B = bboxOf(sl), p = mm(pitchOf(gx.map(c => c.c))), margin = Math.min(1.6, Math.max(0.4, p * 1.5)); // chip-scale packages end close to their outer balls
+        return out({ family: 'bga', L: mm(B.x1 - B.x0) + margin, W: mm(B.y1 - B.y0) + margin, H: 1.2, cx: f.cx, cy: f.cy, rotDeg: wrap(f.deg), p: { cols: gx.length, rows: gy.length, pitch: p, balls: small.length } },
           `${small.length} balls on a ${gx.length}×${gy.length} grid @ ${p.toFixed(2)} → BGA`);
       }
     }
