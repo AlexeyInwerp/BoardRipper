@@ -78,6 +78,8 @@ td.n { text-align: right; font-variant-numeric: tabular-nums; }
       <div class="panel-tab on" data-panel="parts">
         <h2>Generated models</h2>
         <p>Every model is built from <b>(kind, L, W, H, pins)</b> at load time — no mesh files ship. Sizes are EIA nominal, heights typical. Hover a part for its numbers.</p>
+        <div class="seg" id="g-row"><button data-v="chips" class="on">Chips &amp; ICs</button><button data-v="conn">Connectors</button><button data-v="bga">Large BGA</button><button data-v="all">All</button></div>
+        <div class="row"><label>Names on parts</label><input type="checkbox" id="g-names" checked></div>
         <div class="row"><label>Show land pattern (pads)</label><input type="checkbox" id="g-pads" checked></div>
         <div class="row"><label>1 mm grid</label><input type="checkbox" id="g-grid" checked></div>
         <h2>Size from pin span — measured</h2>
@@ -91,6 +93,8 @@ td.n { text-align: right; font-variant-numeric: tabular-nums; }
           <tr><td>1206</td><td>3.2×1.6</td><td class="n">56</td><td class="n">105–120</td></tr>
         </table>
         <p>Thresholds at 14 / 26 / 43 / 60 / 90 / 150 mil: <b>98.1 %</b> (9,673 of 9,859) agree with the package name. Misses are one size off (0402↔0603 hand-solder footprints).</p>
+        <h2>Connectors and large BGAs</h2>
+        <p><b>FPC/ZIF</b>: one row at 0.3–0.5 mm plus two large hold-down pads behind the row ends. <b>Board-to-board</b>: two close rows at 0.35–0.4 mm plus end tabs. <b>Headers</b>: drilled rows at 2.54 / 2.0 / 1.27. <b>BGA</b>: any full or depopulated grid; body = grid + margin. Lid / bare die / overmould is a style guess (ball count, name), shown as such.</p>
         <h2>Two independent questions</h2>
         <p><b>Size</b> comes from geometry (span, pad width). <b>Kind</b> — resistor, capacitor, bead, diode — comes from the package name, else the refdes prefix (R/C/L/FB/D…), else a neutral chip.</p>
       </div>
@@ -110,6 +114,7 @@ td.n { text-align: right; font-variant-numeric: tabular-nums; }
           <label><input type="checkbox" data-l="3" checked> <span style="color:var(--l4)">L4</span></label>
         </div>
         <div class="row"><label>Parts</label><input type="checkbox" id="b-parts" checked></div>
+        <div class="row"><label>Names on parts</label><input type="checkbox" id="b-names" checked></div>
         <h2>View</h2>
         <div class="seg" id="b-cam"><button data-v="iso">Iso</button><button data-v="top">Top</button><button data-v="bottom">Bottom</button><button data-v="edge">Edge</button></div>
         <h2>Highlight net</h2>
@@ -138,6 +143,7 @@ td.n { text-align: right; font-variant-numeric: tabular-nums; }
         <h2>Signal effect</h2>
         <div class="seg" id="fx"><button data-v="0">Static</button><button data-v="1" class="on">Flow dashes</button><button data-v="2">Skewed</button><button data-v="3">Comet</button></div>
         <div class="row"><label>Speed</label><input type="range" id="fx-speed" min="0" max="12" step="0.1" value="3"></div>
+        <div class="row"><label>Contrast</label><input type="range" id="fx-contrast" min="0" max="1" step="0.01" value="0.8"></div>
         <div class="row"><label>Dim others</label><input type="range" id="fx-dim" min="0" max="1" step="0.01" value="0.75"></div>
         <div class="row"><label>Glow</label><input type="checkbox" id="fx-glow" checked></div>
         <div class="row"><label>Flow from source pin</label><input type="checkbox" id="fx-dir" checked></div>
@@ -224,7 +230,7 @@ function chipC(size, mat = M.mlcc) {
   const { L, W, Hc: H } = EIA[size]; const g = new THREE.Group(); const r = Math.min(W, H) * 0.12;
   g.add(rbox(L * 0.98, H, W, r, mat, 0, H / 2));
   for (const s of [-1, 1]) g.add(rbox(L * 0.24, H * 1.02, W * 1.02, r, M.tin, s * (L / 2 - L * 0.12), H / 2));
-  return { group: g, pads: chipPads(L, W), label: `C ${size}`, dims: `${L}×${W}×${H} mm` };
+  return { group: g, pads: chipPads(L, W), label: `C ${size}`, ink: mat === M.bead ? '#e8e8e8' : '#2a2016', dims: `${L}×${W}×${H} mm` };
 }
 function bead(size) { const m = chipC(size, M.bead); m.label = `FB ${size}`; return m; }
 function led(size) {
@@ -232,14 +238,14 @@ function led(size) {
   g.add(box(L * 0.96, H, W, M.led, 0, H / 2));
   g.add(box(L * 0.7, 0.25, W * 0.8, M.lens, 0, H + 0.125));
   for (const s of [-1, 1]) g.add(box(L * 0.16, H * 1.02, W * 1.02, M.tin, s * (L / 2 - L * 0.08), H / 2));
-  return { group: g, pads: chipPads(L, W), label: `LED ${size}`, dims: `${L}×${W}×0.6 mm` };
+  return { group: g, pads: chipPads(L, W), label: `LED ${size}`, ink: '#333', top: { y: 0.35, L: L * 0.9, W: W * 0.3, z: W * 0.3 }, dims: `${L}×${W}×0.6 mm` };
 }
 function tantalum(caseName) {
   const D = { A: [3.2, 1.6, 1.6], B: [3.5, 2.8, 1.9] }[caseName]; const [L, W, H] = D; const g = new THREE.Group();
   g.add(rbox(L * 0.8, H, W, 0.15, M.tant, 0, H / 2 + 0.02));
   g.add(box(L * 0.14, 0.02, W * 0.85, M.tantBand, L * 0.27, H + 0.03));
   for (const s of [-1, 1]) { g.add(box(0.08, H * 0.55, W * 0.6, M.tin, s * (L / 2 - 0.04), H * 0.275)); g.add(box(0.8, 0.06, W * 0.6, M.tin, s * (L / 2 - 0.4), 0.03)); }
-  return { group: g, pads: [{ x: -L * 0.38, z: 0, w: L * 0.4, d: W * 0.9, name: '1' }, { x: L * 0.38, z: 0, w: L * 0.4, d: W * 0.9, name: '2' }], label: `Tant ${caseName} (${caseName === 'A' ? 3216 : 3528})`, dims: `${L}×${W}×${H} mm` };
+  return { group: g, pads: [{ x: -L * 0.38, z: 0, w: L * 0.4, d: W * 0.9, name: '1' }, { x: L * 0.38, z: 0, w: L * 0.4, d: W * 0.9, name: '2' }], ink: '#3a2a00', label: `Tant ${caseName} (${caseName === 'A' ? 3216 : 3528})`, dims: `${L}×${W}×${H} mm` };
 }
 function electrolytic(dia = 6.3, h = 5.4) {
   const g = new THREE.Group(); const r = dia / 2; const base = 0.6;
@@ -247,7 +253,7 @@ function electrolytic(dia = 6.3, h = 5.4) {
   const can = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h - base, 48), M.alu); can.position.y = base + (h - base) / 2; can.castShadow = true; g.add(can);
   const stripe = new THREE.Mesh(new THREE.CylinderGeometry(r * 1.01, r * 1.01, h - base - 0.3, 48, 1, true, Math.PI * 0.85, Math.PI * 0.3), M.sleeve); stripe.position.y = base + (h - base - 0.3) / 2; g.add(stripe);
   for (const a of [0, Math.PI / 2]) { const c = box(dia * 0.7, 0.03, 0.12, M.dot, 0, h + 0.01); c.rotation.y = a; g.add(c); }
-  return { group: g, pads: [{ x: -2.4, z: 0, w: 3.0, d: 1.6, name: '2' }, { x: 2.4, z: 0, w: 3.0, d: 1.6, name: '1' }], label: `Alu ${dia}×${h}`, dims: `Ø${dia}×${h} mm` };
+  return { group: g, pads: [{ x: -2.4, z: 0, w: 3.0, d: 1.6, name: '2' }, { x: 2.4, z: 0, w: 3.0, d: 1.6, name: '1' }], label: `Alu ${dia}×${h}`, ink: '#222', dims: `Ø${dia}×${h} mm` };
 }
 function inductor(s = 4, h = 2) {
   const g = new THREE.Group();
@@ -261,7 +267,7 @@ function crystal() {
   g.add(rbox(L * 0.92, 0.5, W * 0.9, 0.12, M.alu, 0, 0.3 + 0.25));
   const pads = [];
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) pads.push({ x: sx * 1.1, z: sz * 0.8, w: 1.0, d: 0.9, name: String(pads.length + 1) });
-  return { group: g, pads, label: 'Xtal 3225', dims: '3.2×2.5×0.8 mm' };
+  return { group: g, pads, label: 'Xtal 3225', ink: '#222', dims: '3.2×2.5×0.8 mm' };
 }
 // Gull-wing lead: from body side at height hy, out to tip at distance `out` beyond body edge.
 function gull(g, x, side, bodyHalf, out, hy, w, axis = 'z') {
@@ -287,7 +293,7 @@ function soic(pinsPerSide, pitch, L, W, H, label, out = 1.05, lw = 0.42) {
     pads.push({ x, z: W / 2 + out * 0.75, w: lw * 1.4, d: out * 1.3, name: String(i + 1) });
   }
   for (let i = 0; i < pinsPerSide; i++) { const x = -x0 - i * pitch; pads.push({ x, z: -(W / 2 + out * 0.75), w: lw * 1.4, d: out * 1.3, name: String(pinsPerSide + i + 1) }); }
-  return { group: g, pads, label, dims: `${L}×${W}×${H} mm, ${pinsPerSide * 2} pins @ ${pitch}` };
+  return { group: g, pads, label, top: { y: H, L: L * 0.8, W: W * 0.75, z: 0 }, dims: `${L}×${W}×${H} mm, ${pinsPerSide * 2} pins @ ${pitch}` };
 }
 function sot23(five = false) {
   const L = 2.9, W = 1.6, H = 1.1; const g = new THREE.Group();
@@ -345,7 +351,95 @@ function header(n = 4) {
     g.add(box(0.64, 9, 0.64, M.gold, x, 1.5));
     pads.push({ x, z: 0, w: 1.7, d: 1.7, round: i > 0, name: String(i + 1), tht: true });
   }
-  return { group: g, pads, label: `Header 1×${n}`, dims: `${L.toFixed(2)}×2.54 · THT` };
+  return { group: g, pads, label: `Header 1×${n}`, top: { y: 2.5, L, W: 1.4, z: 0 }, dims: `${L.toFixed(2)}×2.54 · THT` };
+}
+M.die = new THREE.MeshStandardMaterial({ color: 0x27303d, metalness: 0.6, roughness: 0.12 });
+M.lid = new THREE.MeshStandardMaterial({ color: 0xbfc4ca, metalness: 0.9, roughness: 0.45 });
+M.fcSub = new THREE.MeshStandardMaterial({ color: 0x3b3a26, roughness: 0.55 });
+M.lcp = new THREE.MeshStandardMaterial({ color: 0xcfc19c, roughness: 0.6 });
+M.act = new THREE.MeshStandardMaterial({ color: 0x3e2b20, roughness: 0.5 });
+M.nylon = new THREE.MeshStandardMaterial({ color: 0xf1ede2, roughness: 0.7 });
+M.slot = new THREE.MeshStandardMaterial({ color: 0x0b0b0c, roughness: 0.9 });
+// Large BGA: grid nx×ny (holeCols/holeCore depopulate), style = mold | die (flip-chip, bare silicon) | lid (heat spreader).
+function bgaBig({ nx, ny = nx, pitch = 0.8, style = 'mold', holeCols = [], holeCore = 0, label }) {
+  const g = new THREE.Group(); const Lx = nx * pitch + 1.6, Lz = ny * pitch + 1.6;
+  const ballR = pitch * 0.27, ballH = ballR * 1.5, sub = style === 'mold' ? 0.3 : 0.75;
+  g.add(box(Lx, sub, Lz, style === 'mold' ? M.subst : M.fcSub, 0, ballH + sub / 2));
+  const top = ballH + sub;
+  if (style === 'mold') g.add(rbox(Lx - 0.5, 0.75, Lz - 0.5, 0.12, M.epoxy, 0, top + 0.375));
+  if (style === 'die') {
+    const dx = Lx * 0.46, dz = Lz * 0.4; g.add(box(dx, 0.7, dz, M.die, 0, top + 0.35));
+    const caps = new THREE.InstancedMesh(new THREE.BoxGeometry(0.6, 0.3, 0.3), M.mlcc, 24); const m4 = new THREE.Matrix4(); let c = 0;
+    for (let i = 0; i < 6; i++) for (const s of [-1, 1]) { m4.makeTranslation(-dx / 2 + (i + 0.5) * dx / 6, top + 0.15, s * (dz / 2 + 0.9)); caps.setMatrixAt(c++, m4); m4.makeTranslation(s * (dx / 2 + 1.1), top + 0.15, -dz / 2 + (i + 0.5) * dz / 6); caps.setMatrixAt(c++, m4); }
+    g.add(caps);
+  }
+  if (style === 'lid') { g.add(rbox(Lx - 2.4, 0.6, Lz - 2.4, 0.4, M.lid, 0, top + 0.3)); g.add(box(Lx - 1.6, 0.12, Lz - 1.6, M.epoxy, 0, top + 0.06)); }
+  const pads = [], pos = []; const ox = -(nx - 1) * pitch / 2, oz = -(ny - 1) * pitch / 2; const rows = 'ABCDEFGHJKLMNPRTUVWY';
+  for (let r = 0; r < ny; r++) for (let c = 0; c < nx; c++) {
+    if (holeCols.includes(c)) continue;
+    if (holeCore && Math.abs(c - (nx - 1) / 2) < holeCore / 2 && Math.abs(r - (ny - 1) / 2) < holeCore / 2) continue;
+    const x = ox + c * pitch, z = oz + r * pitch; pos.push([x, z]);
+    pads.push({ x, z, w: pitch * 0.45, d: pitch * 0.45, round: true, name: (r < 20 ? rows[r] : 'A' + rows[r - 20]) + (c + 1) });
+  }
+  const balls = new THREE.InstancedMesh(new THREE.SphereGeometry(ballR, 10, 7), M.tin, pos.length); const m4 = new THREE.Matrix4();
+  pos.forEach(([x, z], i) => { m4.makeTranslation(x, ballH * 0.55, z); balls.setMatrixAt(i, m4); }); balls.castShadow = true; g.add(balls);
+  return { group: g, pads, label, ink: style === 'lid' ? '#202226' : '#e8e8e8', top: style === 'die' ? null : undefined, dims: `${Lx.toFixed(1)}×${Lz.toFixed(1)} mm, ${pos.length} balls @ ${pitch}` };
+}
+// FPC / FFC ZIF, flip-lock actuator at the back, leads out of the front, two hold-down tabs.
+function fpcZif(n = 24, pitch = 0.5) {
+  const g = new THREE.Group(); const L = (n - 1) * pitch + 3.4, D = 3.6, H = 1.0;
+  g.add(box(L - 0.6, H * 0.7, D * 0.62, M.lcp, 0, H * 0.35, -0.2));
+  g.add(box(L - 1.6, 0.18, D * 0.2, M.slot, 0, H * 0.7 + 0.01, D * 0.12));
+  g.add(rbox(L - 1.0, 0.32, D * 0.36, 0.08, M.act, 0, H * 0.78, -D * 0.33));
+  const pads = []; const o = -(n - 1) * pitch / 2;
+  const leads = new THREE.InstancedMesh(new THREE.BoxGeometry(pitch * 0.4, 0.08, 0.9), M.gold, n); const m4 = new THREE.Matrix4();
+  for (let i = 0; i < n; i++) { const x = o + i * pitch; m4.makeTranslation(x, 0.04, D * 0.31 + 0.35); leads.setMatrixAt(i, m4); pads.push({ x, z: D * 0.31 + 0.55, w: pitch * 0.55, d: 1.3, name: String(i + 1) }); }
+  g.add(leads);
+  for (const s of [-1, 1]) { g.add(box(0.4, H * 0.75, 1.6, M.tin, s * (L / 2 - 0.2), H * 0.375, -0.5)); pads.push({ x: s * (L / 2 - 0.1), z: -0.5, w: 1.2, d: 2.0, name: s < 0 ? 'MH1' : 'MH2' }); }
+  return { group: g, pads, label: `FPC ZIF ${n}p @ ${pitch}`, ink: '#2a2218', top: { y: H * 0.7, L: L - 1.6, W: D * 0.3, z: -0.2 }, dims: `${L.toFixed(1)}×${D}×${H} mm, flip-lock` };
+}
+// Board-to-board receptacle (phone style): two rows in a slot, metal end tabs.
+function b2b(n = 20, pitch = 0.4) {
+  const g = new THREE.Group(); const L = (n - 1) * pitch + 2.2, W = 2.6, H = 0.8;
+  g.add(rbox(L, H, W, 0.08, M.epoxy, 0, H / 2));
+  g.add(box(L - 1.6, 0.05, W * 0.5, M.slot, 0, H + 0.002));
+  g.add(box(L - 2.0, 0.06, W * 0.14, M.epoxy, 0, H + 0.01));
+  const pads = []; const o = -(n - 1) * pitch / 2;
+  const cts = new THREE.InstancedMesh(new THREE.BoxGeometry(pitch * 0.45, 0.04, 0.35), M.gold, n * 2); const m4 = new THREE.Matrix4(); let c = 0;
+  for (let i = 0; i < n; i++) for (const s of [-1, 1]) {
+    const x = o + i * pitch; m4.makeTranslation(x, H + 0.03, s * W * 0.17); cts.setMatrixAt(c++, m4);
+    pads.push({ x, z: s * (W / 2 + 0.15), w: pitch * 0.55, d: 0.7, name: String(s < 0 ? i + 1 : n + i + 1) });
+  }
+  g.add(cts);
+  for (const s of [-1, 1]) { g.add(box(0.35, H * 0.9, W * 0.9, M.tin, s * (L / 2 - 0.12), H * 0.45)); pads.push({ x: s * (L / 2 - 0.05), z: 0, w: 0.6, d: W * 1.0, name: s < 0 ? 'T1' : 'T2' }); }
+  return { group: g, pads, label: `B2B 2×${n} @ ${pitch}`, top: { y: H, L: L - 1.8, W: 0.5, z: W * 0.38 }, dims: `${L.toFixed(1)}×${W}×${H} mm` };
+}
+function header2(n = 5) {
+  const g = new THREE.Group(); const p = 2.54, L = n * p;
+  g.add(box(L, 2.5, 2 * p, M.epoxy, 0, 1.25));
+  const pads = [];
+  for (let i = 0; i < n; i++) for (const s of [-1, 1]) { const x = -(n - 1) * p / 2 + i * p, z = s * p / 2; g.add(box(0.64, 9, 0.64, M.gold, x, 1.5, z)); pads.push({ x, z, w: 1.7, d: 1.7, round: i + s > -1, name: String(i * 2 + (s > 0 ? 2 : 1)), tht: true }); }
+  return { group: g, pads, label: `Header 2×${n}`, top: { y: 2.5, L, W: 1.2, z: 0 }, dims: `${L.toFixed(2)}×5.08 · THT` };
+}
+// JST SH style wire-to-board, side entry, 1.0 mm.
+function jstSH(n = 4) {
+  const g = new THREE.Group(); const L = (n - 1) + 3, D = 4.25, H = 2.9;
+  g.add(box(L, H, D, M.nylon, 0, H / 2));
+  g.add(box(L - 1.2, H - 1.0, 0.1, M.slot, 0, H / 2 + 0.1, -D / 2 - 0.01));
+  const pads = [];
+  for (let i = 0; i < n; i++) { const x = -(n - 1) / 2 + i; g.add(box(0.3, 0.1, 0.8, M.tin, x, 0.05, D / 2 + 0.3)); pads.push({ x, z: D / 2 + 0.5, w: 0.6, d: 1.55, name: String(i + 1) }); }
+  for (const s of [-1, 1]) { g.add(box(0.3, 1.2, 1.8, M.tin, s * (L / 2 + 0.1), 0.6, -0.6)); pads.push({ x: s * (L / 2 + 0.3), z: -0.6, w: 1.2, d: 1.8, name: s < 0 ? 'MP1' : 'MP2' }); }
+  return { group: g, pads, label: `JST SH ${n}p @ 1.0`, ink: '#333', dims: `${L}×${D}×${H} mm, side entry` };
+}
+function usbC() {
+  const g = new THREE.Group(); const L = 8.94, D = 7.35, H = 3.26;
+  const shell = rbox(L, H, D, 1.4, M.alu, 0, H / 2); g.add(shell);
+  g.add(rbox(L - 0.9, H - 0.9, 0.2, 1.0, M.slot, 0, H / 2, D / 2 + 0.005));
+  g.add(box(L - 3.2, 0.7, 0.21, M.epoxy, 0, H / 2, D / 2 + 0.02));
+  const pads = [];
+  for (let i = 0; i < 12; i++) pads.push({ x: -2.75 + i * 0.5, z: -D / 2 - 0.5, w: 0.3, d: 1.0, name: 'S' + (i + 1) });
+  for (const [x, z] of [[-4.32, -2.3], [4.32, -2.3], [-4.32, 1.9], [4.32, 1.9]]) pads.push({ x, z, w: 1.6, d: 1.6, round: true, tht: true, name: 'SH' });
+  return { group: g, pads, label: 'USB-C receptacle', ink: '#202226', dims: `${L}×${D}×${H} mm, 16 + shell` };
 }
 function testPad() { return { group: new THREE.Group(), pads: [{ x: 0, z: 0, w: 1.0, d: 1.0, round: true, name: '1' }], label: 'Test pad', dims: 'Ø1.0 mm, no body' }; }
 function fallback(L, W, n) {
@@ -353,39 +447,75 @@ function fallback(L, W, n) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(L, H, W), M.ghost); m.position.y = H / 2; g.add(m);
   const e = new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry), new THREE.LineBasicMaterial({ color: 0xf05252 })); e.position.y = H / 2; g.add(e);
   const pads = []; for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2; pads.push({ x: Math.cos(a) * L * 0.4, z: Math.sin(a) * W * 0.4, w: 0.5, d: 0.5, name: String(i + 1) }); }
-  return { group: g, pads, label: `Unknown ${n}-pin`, dims: `${L}×${W}, height guessed` };
+  return { group: g, pads, label: `Unknown ${n}-pin`, ink: '#f05252', dims: `${L}×${W}, height guessed` };
 }
 
-function addPadMeshes(g, pads, y = 0.0) {
-  for (const p of pads) {
-    const m = p.round ? new THREE.Mesh(new THREE.CylinderGeometry(p.w / 2, p.w / 2, 0.035, 24), M.pad) : new THREE.Mesh(new THREE.BoxGeometry(p.w, 0.035, p.d), M.pad);
-    m.position.set(p.x, y + 0.0175, p.z); m.receiveShadow = true; g.add(m);
+function addPadMeshes(g, pads) {
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion();
+  for (const [list, geo] of [[pads.filter(p => !p.round), new THREE.BoxGeometry(1, 0.035, 1)], [pads.filter(p => p.round), new THREE.CylinderGeometry(0.5, 0.5, 0.035, 20)]]) {
+    if (!list.length) continue;
+    const im = new THREE.InstancedMesh(geo, M.pad, list.length);
+    list.forEach((p, i) => { m4.compose(new THREE.Vector3(p.x, 0.0175, p.z), q, new THREE.Vector3(p.w, 1, p.round ? p.w : p.d)); im.setMatrixAt(i, m4); });
+    im.receiveShadow = true; g.add(im);
   }
+}
+
+// ───────────────────────────── names on parts ─────────────────────────────
+// A refdes printed on the body's top face. Size fits the face; ink contrasts the body.
+const nameDecals = [];
+function addName(model, text) {
+  const g = model.group; if (!text || !g.children.length) return;
+  const keep = [g.position.clone(), g.rotation.clone()]; g.position.set(0, 0, 0); g.rotation.set(0, 0, 0); g.updateMatrixWorld(true);
+  let t = model.top;
+  if (!t) { const bb = new THREE.Box3().setFromObject(g); if (bb.isEmpty()) return; const s = bb.getSize(new THREE.Vector3()), c = bb.getCenter(new THREE.Vector3()); t = { y: bb.max.y, L: s.x * 0.8, W: s.z * 0.8, z: c.z }; }
+  if (model.top === null) { const bb = new THREE.Box3().setFromObject(g); t = { y: bb.max.y, L: 4, W: 2.6, z: 0 }; }
+  const along = t.L >= t.W, faceL = along ? t.L : t.W, faceW = along ? t.W : t.L;
+  const cv = document.createElement('canvas'); const c2 = cv.getContext('2d'); const fpx = 96;
+  c2.font = `600 ${fpx}px ui-monospace, Menlo, monospace`; const tw = c2.measureText(text).width;
+  cv.width = Math.ceil(tw + fpx * 0.4); cv.height = Math.ceil(fpx * 1.25);
+  c2.font = `600 ${fpx}px ui-monospace, Menlo, monospace`; c2.fillStyle = model.ink || '#e8e8e8'; c2.textAlign = 'center'; c2.textBaseline = 'middle';
+  c2.fillText(text, cv.width / 2, cv.height / 2);
+  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
+  const aspect = cv.width / cv.height; let h = Math.min(faceW * 0.85, faceL * 0.92 / aspect, Math.max(0.45, faceW * 0.32), 2.0); const w = h * aspect;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+  m.rotation.x = -Math.PI / 2; if (!along) m.rotation.z = Math.PI / 2;
+  m.position.set(0, t.y + 0.012, t.z || 0); m.renderOrder = 4; g.add(m); nameDecals.push(m);
+  g.position.copy(keep[0]); g.rotation.copy(keep[1]); g.updateMatrixWorld(true);
+}
+const galleryCounter = {};
+function galleryName(it) {
+  const pre = /^R /.test(it.label) ? 'R' : /^C |Tant|Alu/.test(it.label) ? 'C' : /^FB/.test(it.label) ? 'FB' : /LED|SOD/.test(it.label) ? 'D' : /Xtal/.test(it.label) ? 'Y' : /Power L/.test(it.label) ? 'L' : /Header|JST|FPC|B2B|USB/.test(it.label) ? 'J' : /SOT/.test(it.label) ? 'Q' : /Test/.test(it.label) ? '' : 'U';
+  if (!pre) return ''; galleryCounter[pre] = (galleryCounter[pre] || 0) + 1; return pre + galleryCounter[pre];
 }
 
 // ───────────────────────────── gallery scene ─────────────────────────────
 const gallery = new THREE.Scene();
 gallery.background = new THREE.Color(0x15171b);
 gallery.environment = envTex;
-const gCam = new THREE.PerspectiveCamera(32, 1, 0.1, 500);
+const gCam = new THREE.PerspectiveCamera(32, 1, 1, 500);
 gCam.position.set(0, 60, 54);
 const sunG = new THREE.DirectionalLight(0xffffff, 1.4); sunG.position.set(-20, 40, 15); sunG.castShadow = true;
-Object.assign(sunG.shadow.camera, { left: -40, right: 40, top: 30, bottom: -30, far: 120 }); sunG.shadow.mapSize.set(2048, 2048); sunG.shadow.bias = -0.0005;
+Object.assign(sunG.shadow.camera, { left: -70, right: 70, top: 75, bottom: -45, far: 160 }); sunG.shadow.mapSize.set(2048, 2048); sunG.shadow.bias = -0.0005;
 gallery.add(sunG, new THREE.AmbientLight(0xffffff, 0.15));
-const mat = new THREE.Mesh(new THREE.PlaneGeometry(90, 60), new THREE.MeshStandardMaterial({ color: 0x1d5b2f, roughness: 0.5 }));
-mat.rotation.x = -Math.PI / 2; mat.receiveShadow = true; gallery.add(mat);
-const grid = new THREE.GridHelper(90, 90, 0x3d7a4f, 0x2a6a3c); grid.position.y = 0.002; gallery.add(grid);
+const mat = new THREE.Mesh(new THREE.PlaneGeometry(140, 120), new THREE.MeshStandardMaterial({ color: 0x1d5b2f, roughness: 0.5 }));
+mat.rotation.x = -Math.PI / 2; mat.position.set(0, -0.02, 20); mat.receiveShadow = true; gallery.add(mat);
+const grid = new THREE.GridHelper(140, 140, 0x3d7a4f, 0x2a6a3c); grid.position.set(0, -0.01, 20); gallery.add(grid);
 
 const galleryRows = [
   { title: 'Chip resistors', z: -16, items: ['01005', '0201', '0402', '0603', '0805', '1206', '1210', '2010', '2512'].map(s => chipR(s)) },
   { title: 'MLCC', z: -9, items: ['01005', '0201', '0402', '0603', '0805', '1206', '1210'].map(s => chipC(s)) },
   { title: 'Polarised / power / misc', z: 0, items: [bead('0603'), led('0603'), sod(2.7, 1.6, 1.1, 'SOD-123'), sod(1.7, 1.25, 0.9, 'SOD-323'), tantalum('A'), tantalum('B'), crystal(), inductor(), electrolytic(), testPad()] },
-  { title: 'ICs / connectors', z: 13, items: [sot23(), sot23(true), soic(4, 1.27, 4.9, 3.9, 1.5, 'SOIC-8'), soic(8, 0.65, 5.0, 4.4, 1.0, 'TSSOP-16', 0.8, 0.25), qfn(), bga(), header(), fallback(4, 3, 7)] },
+  { title: 'ICs', z: 13, items: [sot23(), sot23(true), soic(4, 1.27, 4.9, 3.9, 1.5, 'SOIC-8'), soic(8, 0.65, 5.0, 4.4, 1.0, 'TSSOP-16', 0.8, 0.25), qfn(), bga(), fallback(4, 3, 7)] },
+  { title: 'Connectors', z: 30, items: [header(), header2(), jstSH(), fpcZif(24, 0.5), fpcZif(40, 0.3), b2b(20, 0.4), usbC()] },
+  { title: 'Large BGA', z: 52, items: [
+    bgaBig({ nx: 9, ny: 16, pitch: 0.8, holeCols: [3, 4, 5], label: 'LPDDR FBGA-96 (mould)' }),
+    bgaBig({ nx: 19, pitch: 0.8, style: 'die', holeCore: 5, label: 'SoC FCBGA-336 (bare die)' }),
+    bgaBig({ nx: 33, pitch: 0.65, style: 'lid', label: 'CPU FCBGA-1089 (lid)' }) ] },
 ];
 const galleryPadGroups = []; const galleryLabels = []; const galleryPick = [];
 for (const row of galleryRows) {
   const widths = row.items.map(it => new THREE.Box3().setFromObject(it.group).getSize(new THREE.Vector3()).x || 1.5);
-  const gap = row.z === 13 ? 4 : 2.5;
+  const gap = row.z >= 13 ? 4 : 2.5;
   const total = widths.reduce((a, b) => a + b, 0) + gap * (widths.length - 1);
   let x = -total / 2;
   row.items.forEach((it, i) => {
@@ -394,9 +524,11 @@ for (const row of galleryRows) {
     const pg = new THREE.Group(); addPadMeshes(pg, it.pads); pg.position.copy(it.group.position); gallery.add(pg); galleryPadGroups.push(pg);
     const bb = new THREE.Box3().setFromObject(it.group);
     galleryLabels.push({ text: it.label, pos: new THREE.Vector3(cx, 0, Math.max(bb.max.z, row.z + 0.6) + 0.6) });
-    it.group.traverse(o => { if (o.isMesh) { o.userData.item = it; galleryPick.push(o); } });
+    addName(it, galleryName(it));
+    it.group.traverse(o => { if (o.isMesh && !nameDecals.includes(o)) { o.userData.item = it; galleryPick.push(o); } });
   });
   galleryLabels.push({ text: row.title, pos: new THREE.Vector3(-total / 2 - 1.5, 0, row.z), row: true });
+  row.width = total;
 }
 
 // ───────────────────────────── board data (synthetic, 4 layers) ─────────────────────────────
@@ -440,6 +572,8 @@ place('D2', led('0603'), 21, 12, 0, 'top', 'pkg', 'package "LED_0603"');
 place('U4', fallback(4, 3, 7), 6, 13.5, 0, 'top', 'fallback', '7 pins, no package, no pattern match → body = pin box + margin, height 1 mm');
 place('TP1', testPad(), 15, 14, 0, 'top', 'geom', '1 pin, no body');
 place('TP2', testPad(), -15, -14, 0, 'top', 'geom', '1 pin, no body');
+place('J2', fpcZif(20, 0.5), -4, -14.4, 180, 'top', 'geom', '20 pads in one row @ 0.5 + 2 large pads behind the row ends → FPC ZIF');
+place('J3', b2b(14, 0.4), -16, 4, 90, 'bottom', 'geom', '2 rows × 14 @ 0.4, rows 2.9 mm apart + 2 end tabs → board-to-board');
 // decoupling ring around U1
 const ring = [[-13.5, -4], [-13.5, 0], [-13.5, 4], [-2.5, -4], [-2.5, 0], [-2.5, 4], [-10, -6.5], [-6, -6.5], [-10, 4.6], [-6, 4.6]];
 ring.forEach(([x, z], i) => {
@@ -460,7 +594,7 @@ place('R20', chipR('0402'), 14, 3, 0, 'bottom', 'pkg', 'package "R_0402"');
 const boardScene = new THREE.Scene();
 boardScene.background = new THREE.Color(0x111316);
 boardScene.environment = envTex;
-const bCam = new THREE.PerspectiveCamera(35, 1, 0.1, 800);
+const bCam = new THREE.PerspectiveCamera(35, 1, 1, 400);
 const sun = new THREE.DirectionalLight(0xffffff, 1.5); sun.position.set(-25, 50, 20); sun.castShadow = true;
 Object.assign(sun.shadow.camera, { left: -35, right: 35, top: 25, bottom: -25, far: 150 }); sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0004;
 const sun2 = new THREE.DirectionalLight(0xffffff, 0.6); sun2.position.set(20, -40, -10);
@@ -474,6 +608,7 @@ boardScene.add(topParts, botParts);
 const pins = new Map(); // "U1.A1" → {x,z,layer:0|3|'tht', part}
 const padInst = [];    // {x,z,w,d,round,angle,layer,net,key}
 const pickables = [];
+for (const p of P) addName(p.model, p.ref);
 for (const p of P) {
   const g = p.model.group; g.position.set(p.x, 0, p.side === 'top' ? p.z : -p.z); g.rotation.y = p.rot * Math.PI / 180;
   (p.side === 'top' ? topParts : botParts).add(g);
@@ -546,6 +681,11 @@ connect('PP3V3', 'U5.4', 'R20.1', [3], 0.2);
 connect('LED_EN', 'Q2.1', 'D2.1', [0, 3, 0], 0.15);
 connect('USB_D_P', 'J1.2', 'U1.A1', [0, 2, 0], 0.18);
 connect('USB_D_N', 'J1.3', 'U1.B1', [0, 2, 0], 0.18);
+connect('MIPI_D0_P', 'J2.6', 'U1.A5', [0], 0.12);
+connect('MIPI_D0_N', 'J2.7', 'U1.A6', [0], 0.12);
+connect('MIPI_CLK', 'J2.9', 'U1.A8', [0, 2, 0], 0.12);
+connect('B2B_SPI_CS', 'J3.5', 'U2.14', [3, 2, 0], 0.15);
+connect('B2B_PWR', 'J3.20', 'L1.2', [3, 2, 0], 0.4);
 for (const k of ['C10.2', 'C11.2', 'C13.2', 'C14.2', 'C30.2', 'C31.2', 'C1.2', 'U3.4', 'Q1.2', 'J1.4', 'Y1.1', 'U2.EP', 'C50.2', 'C51.2'])
   stitch('GND', k, 0.6 * (rand() > 0.5 ? 1 : -1), 0.6);
 // decor buses: parallel 45° buses on L3 and L4 (and some on L1)
@@ -588,22 +728,23 @@ function distanceField(n, sourceKey) {
 // ───── trace shader ─────
 const sigUniforms = {
   uTime: { value: 0 }, uSpeed: { value: 3 }, uMode: { value: 1 }, uActive: { value: -1 }, uDim: { value: 0.75 },
-  uPeriod: { value: 1.1 }, uSkew: { value: 2.2 }, uHot: { value: new THREE.Color(0xffa400) }, uHot2: { value: new THREE.Color(0xfff6b0) },
+  uPeriod: { value: 1.1 }, uSkew: { value: 2.2 }, uContrast: { value: 0.8 }, uHot: { value: new THREE.Color(0xffa400) }, uHot2: { value: new THREE.Color(0xfff6b0) },
 };
 const vert = `
 attribute float aDist; attribute float aSide; attribute float aWidth; attribute float aNet;
 varying float vDist; varying float vSide; varying float vWidth; varying float vNet;
 void main(){ vDist=aDist; vSide=aSide; vWidth=aWidth; vNet=aNet; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`;
 const fragCommon = `
-uniform float uTime,uSpeed,uMode,uActive,uDim,uPeriod,uSkew; uniform vec3 uHot,uHot2;
+uniform float uTime,uSpeed,uMode,uActive,uDim,uPeriod,uSkew,uContrast; uniform vec3 uHot,uHot2;
 varying float vDist; varying float vSide; varying float vWidth; varying float vNet;
 float band(float f){ return smoothstep(0.0,0.06,f)*(1.0-smoothstep(0.48,0.54,f)); }
 vec3 signal(){
   float d = vDist - uTime*uSpeed;
+  float lo = mix(0.5, 0.05, uContrast); float hi = mix(1.1, 1.6, uContrast);
   if (uMode < 0.5) return uHot2*0.9 + uHot*0.25;
-  if (uMode < 1.5) { float s = band(fract(d/uPeriod)); return mix(uHot*0.42, uHot2*1.25, s); }
-  if (uMode < 2.5) { float s = band(fract((d + vSide*vWidth*uSkew)/(uPeriod*0.8))); return mix(uHot*0.30, uHot2*1.3, s); }
-  float f = fract(d/(uPeriod*5.0)); return uHot*0.35 + uHot2*pow(f,7.0)*1.7;
+  if (uMode < 1.5) { float s = band(fract(d/uPeriod)); return mix(uHot*lo, uHot2*hi, s); }
+  if (uMode < 2.5) { float f = fract((d + vSide*vWidth*uSkew)/(uPeriod*0.8)); float s = smoothstep(0.0,0.03,f)*(1.0-smoothstep(0.5,0.53,f)); return mix(uHot*lo*0.8, uHot2*hi, s); }
+  float f = fract(d/(uPeriod*5.0)); return uHot*lo + uHot2*pow(f,7.0)*hi*1.1;
 }
 bool isActive(){ return uActive >= 0.0 && abs(vNet-uActive) < 0.5; }`;
 function traceMaterial(color, opacity = 1) {
@@ -624,7 +765,7 @@ void main(){
 const glowMaterial = new THREE.ShaderMaterial({
   uniforms: sigUniforms, vertexShader: vert, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
   fragmentShader: fragCommon + `
-void main(){ if (!isActive()) discard; float f = 1.0 - abs(vSide)*2.0; f = f*f; gl_FragColor = vec4(signal()*f*0.55, 1.0);
+void main(){ if (!isActive()) discard; float f = 1.0 - abs(vSide)*2.0; f = f*f; gl_FragColor = vec4(mix(uHot, uHot2, 0.25)*f*0.45, 1.0);
   #include <colorspace_fragment>
 }`,
 });
@@ -635,24 +776,75 @@ function netDist(name) {
   if (!distCache.has(key)) distCache.set(key, distanceField(n, src));
   return distCache.get(key);
 }
-// Build ribbons per layer; widthScale > 1 for the glow mesh.
+// ── Chains: a net's segments on one layer joined end to end wherever a node has
+// exactly two neighbours and the width does not change. A chain is drawn as ONE
+// mitred strip, so the pattern parameter (distance along, side across) is
+// continuous through every bend — per-segment ribbons overlap at corners and the
+// two skewed patterns fight there.
+function netChains(n, layer) {
+  const edges = [], adj = new Map(), P = new Map();
+  for (const s of n.segs) {
+    if (s.layer !== layer) continue;
+    const a = nodeKey(layer, s.a), b = nodeKey(layer, s.b); if (a === b) continue;
+    P.set(a, s.a); P.set(b, s.b); const e = { i: edges.length, a, b, w: s.w }; edges.push(e);
+    for (const k of [a, b]) (adj.get(k) || adj.set(k, []).get(k)).push(e);
+  }
+  const used = new Set(), chains = [];
+  const walk = (start, e) => {
+    const keys = [start]; let cur = start; const w = e.w;
+    while (e && !used.has(e.i) && e.w === w) {
+      used.add(e.i); cur = e.a === cur ? e.b : e.a; keys.push(cur);
+      const nb = adj.get(cur); if (nb.length !== 2) break; e = nb.find(x => !used.has(x.i));
+    }
+    chains.push({ layer, w, pts: keys.map(k => ({ x: P.get(k).x, z: P.get(k).z, key: k })) });
+  };
+  for (const [k, list] of adj) if (list.length !== 2) for (const e of list) if (!used.has(e.i)) walk(k, e);
+  for (const e of edges) if (!used.has(e.i)) walk(e.a, e);
+  return chains;
+}
+const chainsByNet = new Map();
+for (const [name, n] of nets) { const out = []; for (let L = 0; L < 4; L++) out.push(...netChains(n, L)); chainsByNet.set(name, out); }
+function chainDists(name, ch) {
+  const df = netDist(name); const D = []; let acc = 0;
+  ch.pts.forEach((p, i) => { if (i) acc += Math.hypot(p.x - ch.pts[i - 1].x, p.z - ch.pts[i - 1].z); D.push(df.get(p.key) ?? acc); });
+  return D;
+}
+// Mitred strip: left/right edge points per vertex (side +0.5 = left), plus round
+// caps whose rim carries its own (distance, side) so the pattern runs onto them.
+function stripGeom(pts, D, w) {
+  const m = pts.length - 1, hw = w / 2, T = [], N = [];
+  for (let i = 0; i < m; i++) { const dx = pts[i + 1].x - pts[i].x, dz = pts[i + 1].z - pts[i].z, l = Math.hypot(dx, dz) || 1; T.push([dx / l, dz / l]); N.push([-dz / l, dx / l]); }
+  const L = [], R = [];
+  for (let i = 0; i <= m; i++) {
+    let n, sc = 1;
+    if (i === 0) n = N[0]; else if (i === m) n = N[m - 1];
+    else { const a = N[i - 1], b = N[i]; const nx = a[0] + b[0], nz = a[1] + b[1], l = Math.hypot(nx, nz); if (l < 1e-6) n = b; else { n = [nx / l, nz / l]; sc = 1 / Math.max(n[0] * b[0] + n[1] * b[1], 0.35); } }
+    L.push({ x: pts[i].x + n[0] * hw * sc, z: pts[i].z + n[1] * hw * sc }); R.push({ x: pts[i].x - n[0] * hw * sc, z: pts[i].z - n[1] * hw * sc });
+  }
+  const cap = (i, t, n, dNb) => {
+    const sg = D[i] >= dNb ? 1 : -1, rim = [];
+    for (let k = 0; k <= 10; k++) {
+      const a = -Math.PI / 2 + k / 10 * Math.PI, ox = Math.cos(a) * t[0] * hw + Math.sin(a) * n[0] * hw, oz = Math.cos(a) * t[1] * hw + Math.sin(a) * n[1] * hw;
+      rim.push({ x: pts[i].x + ox, z: pts[i].z + oz, side: (ox * n[0] + oz * n[1]) / w, d: D[i] + sg * (ox * t[0] + oz * t[1]) });
+    }
+    return rim;   // runs from the right edge, round the end, to the left edge
+  };
+  return { L, R, start: cap(0, [-T[0][0], -T[0][1]], N[0], D[1]), end: cap(m, T[m - 1], N[m - 1], D[m - 1]) };
+}
 function buildTraceGeometry(layer, widthScale = 1) {
   const pos = [], dist = [], side = [], width = [], nid = [];
-  const pushV = (x, z, d, s, w, id) => { pos.push(x, 0, z); dist.push(d); side.push(s); width.push(w); nid.push(id); };
-  for (const [name, n] of nets) {
-    const id = netId.get(name); const df = netDist(name);
-    for (const s of n.segs) {
-      if (s.layer !== layer) continue;
-      const w = s.w * widthScale; const dx = s.b.x - s.a.x, dz = s.b.z - s.a.z; const len = Math.hypot(dx, dz) || 1;
-      const nx = -dz / len * w / 2, nz = dx / len * w / 2;
-      let da = df.get(nodeKey(layer, s.a)), db = df.get(nodeKey(layer, s.b));
-      if (da === undefined || db === undefined) { da = 0; db = len; }
-      const q = [[s.a.x + nx, s.a.z + nz, da, 0.5], [s.a.x - nx, s.a.z - nz, da, -0.5], [s.b.x + nx, s.b.z + nz, db, 0.5], [s.b.x - nx, s.b.z - nz, db, -0.5]];
-      for (const i of [0, 1, 2, 2, 1, 3]) pushV(q[i][0], q[i][1], q[i][2], q[i][3], s.w, id);
-      for (const [p, d] of [[s.a, da], [s.b, db]]) for (let k = 0; k < 10; k++) {   // round joints
-        const a0 = k / 10 * Math.PI * 2, a1 = (k + 1) / 10 * Math.PI * 2;
-        pushV(p.x, p.z, d, 0, s.w, id); pushV(p.x + Math.cos(a0) * w / 2, p.z + Math.sin(a0) * w / 2, d, widthScale > 1 ? 0.5 : 0, s.w, id); pushV(p.x + Math.cos(a1) * w / 2, p.z + Math.sin(a1) * w / 2, d, widthScale > 1 ? 0.5 : 0, s.w, id);
+  const V = (p, d, s, w, id) => { pos.push(p.x, 0, p.z); dist.push(d); side.push(s); width.push(w); nid.push(id); };
+  for (const [name, chains] of chainsByNet) {
+    const id = netId.get(name);
+    for (const ch of chains) {
+      if (ch.layer !== layer) continue;
+      const D = chainDists(name, ch), G = stripGeom(ch.pts, D, ch.w * widthScale), w = ch.w;
+      for (let i = 0; i < ch.pts.length - 1; i++) {
+        V(G.L[i], D[i], 0.5, w, id); V(G.R[i], D[i], -0.5, w, id); V(G.L[i + 1], D[i + 1], 0.5, w, id);
+        V(G.L[i + 1], D[i + 1], 0.5, w, id); V(G.R[i], D[i], -0.5, w, id); V(G.R[i + 1], D[i + 1], -0.5, w, id);
       }
+      for (const [rim, c, d] of [[G.start, ch.pts[0], D[0]], [G.end, ch.pts[ch.pts.length - 1], D[D.length - 1]]])
+        for (let k = 0; k < rim.length - 1; k++) { V(c, d, 0, w, id); V(rim[k], rim[k].d, rim[k].side, w, id); V(rim[k + 1], rim[k + 1].d, rim[k + 1].side, w, id); }
     }
   }
   const g = new THREE.BufferGeometry();
@@ -713,7 +905,7 @@ const padMeshes = [0, 1, 2, 3].map(L => {
   const mk = (geo, arr) => {
     const inst = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({ color: 0xd9b25a, metalness: 0.85, roughness: 0.35 }), Math.max(arr.length, 1));
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
-    arr.forEach((p, i) => { e.set(0, p.angle, 0); q.setFromEuler(e); m4.compose(new THREE.Vector3(p.x, L === 3 ? -0.02 : 0.02, p.z), q, new THREE.Vector3(p.w, 1, p.round ? p.w : p.d)); inst.setMatrixAt(i, m4); inst.setColorAt(i, new THREE.Color(0xd9b25a)); });
+    arr.forEach((p, i) => { e.set(0, p.angle, 0); q.setFromEuler(e); m4.compose(new THREE.Vector3(p.x, L === 3 ? -0.05 : 0.05, p.z), q, new THREE.Vector3(p.w, 1, p.round ? p.w : p.d)); inst.setMatrixAt(i, m4); inst.setColorAt(i, new THREE.Color(0xd9b25a)); });
     inst.count = arr.length; inst.userData.pads = arr; inst.receiveShadow = true; layerGroups[L].add(inst); pickables.push(inst); return inst;
   };
   const rg = new THREE.BoxGeometry(1, 0.035, 1), cg = new THREE.CylinderGeometry(0.5, 0.5, 0.035, 20);
@@ -724,6 +916,7 @@ const padMeshes = [0, 1, 2, 3].map(L => {
 const slabGeo = new THREE.ExtrudeGeometry(boardShape(), { depth: 1.6, bevelEnabled: false, curveSegments: 24 });
 slabGeo.rotateX(-Math.PI / 2); slabGeo.translate(0, -0.8, 0);
 const slabMats = [M.mask.clone(), M.fr4.clone()];
+slabMats.forEach(m => Object.assign(m, { polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2 }));
 const slab = new THREE.Mesh(slabGeo, slabMats); slab.receiveShadow = true; boardScene.add(slab);
 const sheetGeo = new THREE.ShapeGeometry(boardShape(), 24); sheetGeo.rotateX(-Math.PI / 2);
 const sheets = [0, 1, 2, 3].map(L => { const m = new THREE.Mesh(sheetGeo, new THREE.MeshBasicMaterial({ color: 0x9c8a55, transparent: true, opacity: 0.1, depthWrite: false, side: THREE.DoubleSide })); m.position.y = L === 3 ? 0.02 : -0.03; layerGroups[L].add(m); return m; });
@@ -755,7 +948,7 @@ function applyLayout() {
     sheets[L].visible = multi && (S.explode > 0.02 || S.xray);
   }
   pour.visible = multi;
-  topParts.position.y = layerY(0) + 0.04; botParts.position.y = layerY(3) - 0.04;
+  topParts.position.y = layerY(0) + 0.07; botParts.position.y = layerY(3) - 0.07;
   topParts.visible = botParts.visible = S.parts;
   evBoxes.visible = S.ev && S.parts;
   evBoxes.children.forEach(b => { b.position.y = b.userData.side === 'top' ? b.userData.y0 + topParts.position.y : -b.userData.y0 + botParts.position.y; });
@@ -768,11 +961,12 @@ function applyLayout() {
 evBoxes.children.forEach(b => { b.userData.y0 = b.userData.side === 'top' ? b.position.y : -b.position.y; });
 
 // ───────────────────────────── controls / cameras ─────────────────────────────
-const gCtl = new OrbitControls(gCam, canvas); gCtl.target.set(0, 0, -1.5); gCtl.enableDamping = true;
-const bCtl = new OrbitControls(bCam, canvas); bCtl.enableDamping = true; bCtl.enabled = false;
+const gCtl = new OrbitControls(gCam, canvas); gCtl.target.set(0, 0, -1.5); gCtl.enableDamping = true; gCtl.minDistance = 3;
+const bCtl = new OrbitControls(bCam, canvas); bCtl.enableDamping = true; bCtl.enabled = false; bCtl.minDistance = 4; bCtl.maxDistance = 200;
 const camViews = { iso: [[-30, 38, 48], [0, 0, 0]], top: [[0, 62, 0.01], [0, 0, 0]], bottom: [[0, -62, 0.01], [0, 0, 0]], edge: [[0, 4, 62], [0, 0, 0]] };
 let camAnim = null;
-function goCam(v) { const [p, t] = camViews[v]; camAnim = { from: bCam.position.clone(), to: new THREE.Vector3(...p), t0: performance.now(), tf: bCtl.target.clone(), tt: new THREE.Vector3(...t) }; }
+function goCamOn(cam, ctl, p, t) { camAnim = { cam, ctl, from: cam.position.clone(), to: new THREE.Vector3(...p), t0: performance.now(), tf: ctl.target.clone(), tt: new THREE.Vector3(...t) }; }
+function goCam(v) { const [p, t] = camViews[v]; goCamOn(bCam, bCtl, p, t); }
 bCam.position.set(...camViews.iso[0]);
 
 function resize() {
@@ -804,6 +998,15 @@ document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () =>
 sigctl.style.display = 'none';
 $('#g-pads').onchange = e => galleryPadGroups.forEach(g => (g.visible = e.target.checked));
 $('#g-grid').onchange = e => (grid.visible = e.target.checked);
+const setNames = on => { nameDecals.forEach(m => (m.visible = on)); $('#g-names').checked = $('#b-names').checked = on; };
+$('#g-names').onchange = e => setNames(e.target.checked); $('#b-names').onchange = e => setNames(e.target.checked);
+seg('#g-row', v => {
+  const row = { chips: null, conn: galleryRows[4], bga: galleryRows[5] }[v];
+  if (v === 'chips') return goCamOn(gCam, gCtl, [0, 60, 54], [0, 0, -1.5]);
+  if (v === 'all') return goCamOn(gCam, gCtl, [0, 120, 110], [0, 0, 20]);
+  const d = Math.max(row.width * 0.75, 30); goCamOn(gCam, gCtl, [0, d * 0.85, row.z + d * 0.75], [0, 0, row.z]);
+});
+$('#fx-contrast').oninput = e => (sigUniforms.uContrast.value = +e.target.value);
 seg('#b-mode', v => { S.mode = v; $('#b-mode-note').textContent = v === 'multi' ? 'KiCad · Allegro · Altium · EAGLE · TVW · GenCAD: copper per layer, vias, pours.' : 'BVR · BRD · BDV · FZ · XZZ: pins and parts only. The board is a slab; parts are estimated. Nets light pins only — there is no copper to animate.'; $('#b-explode').disabled = v !== 'multi'; applyLayout(); });
 $('#b-explode').oninput = e => { S.explode = +e.target.value; applyLayout(); };
 $('#b-xray').onchange = e => { S.xray = e.target.checked; applyLayout(); };
@@ -899,9 +1102,9 @@ function draw2D(t) {
   ctx.fillStyle = '#16191d'; ctx.fill(); ctx.strokeStyle = '#e5d36a'; ctx.lineWidth = 1.2 * dpr; ctx.stroke();
   // static scene: all traces in layer colours (this is the part the WebGL renderer already draws)
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  for (const L of [3, 2, 1, 0]) for (const n of nets.values()) for (const s of n.segs) if (s.layer === L) {
-    ctx.strokeStyle = css(LAYER_COLORS[L]); ctx.globalAlpha = L === 0 ? 0.9 : 0.55; ctx.lineWidth = Math.max(s.w * k, 1);
-    ctx.beginPath(); ctx.moveTo(...toS(s.a.x, s.a.z)); ctx.lineTo(...toS(s.b.x, s.b.z)); ctx.stroke();
+  for (const L of [3, 2, 1, 0]) for (const chains of chainsByNet.values()) for (const ch of chains) if (ch.layer === L) {
+    ctx.strokeStyle = css(LAYER_COLORS[L]); ctx.globalAlpha = L === 0 ? 0.9 : 0.55; ctx.lineWidth = Math.max(ch.w * k, 1);
+    ctx.beginPath(); ch.pts.forEach((p, i) => (i ? ctx.lineTo(...toS(p.x, p.z)) : ctx.moveTo(...toS(p.x, p.z)))); ctx.stroke();
   }
   ctx.globalAlpha = 1;
   for (const p of padInst) { if (p.layer !== 0 && p.layer !== 3) continue; const [x, y] = toS(p.x, p.z); ctx.fillStyle = p.layer === 0 ? '#c9b26a' : '#5d7da8'; ctx.fillRect(x - p.w * k / 2, y - (p.round ? p.w : p.d) * k / 2, p.w * k, (p.round ? p.w : p.d) * k); }
@@ -909,46 +1112,43 @@ function draw2D(t) {
   if (!S.active) return;
   // ── overlay: everything below is what the new per-frame overlay canvas would draw ──
   const dim = sigUniforms.uDim.value; ctx.fillStyle = `rgba(8,9,11,${dim * 0.82})`; ctx.fillRect(0, 0, c2.width, c2.height);
-  const n = nets.get(S.active); const df = netDist(S.active);
+  const n = nets.get(S.active);
   const unit = S2.units === 'screen' ? dpr : k / 16;     // px per "dash unit"
-  const period = 18 * unit, speed = sigUniforms.uSpeed.value * 6 * unit, mode = sigUniforms.uMode.value;
-  const glow = glowMeshes[0].material.visible;
-  const hot = '#ffa400', hot2 = '#fff6b0';
-  const segsOn = n.segs.map(s => ({ s, da: df.get(nodeKey(s.layer, s.a)) ?? 0, db: df.get(nodeKey(s.layer, s.b)) ?? 0 }));
-  for (const { s } of segsOn) {   // base + glow
-    const w = Math.max(s.w * k, 2 * dpr);
-    if (glow) { ctx.strokeStyle = 'rgba(255,170,0,0.22)'; ctx.lineWidth = w + 9 * dpr; ctx.beginPath(); ctx.moveTo(...toS(s.a.x, s.a.z)); ctx.lineTo(...toS(s.b.x, s.b.z)); ctx.stroke(); }
-    ctx.strokeStyle = mode === 0 ? hot2 : 'rgba(255,164,0,0.55)'; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(...toS(s.a.x, s.a.z)); ctx.lineTo(...toS(s.b.x, s.b.z)); ctx.stroke();
-  }
-  if (mode !== 0) for (const { s, da, db } of segsOn) {
-    const [ax, ay] = toS(s.a.x, s.a.z), [bx, by] = toS(s.b.x, s.b.z); const len = Math.hypot(bx - ax, by - ay); if (len < 0.5) continue;
-    const ux = (bx - ax) / len, uy = (by - ay) / len; const w = Math.max(s.w * k, 2 * dpr);
-    // distance along path in screen units at each end (direction-aware)
-    const pa = da * k, pb = db * k; const dir = pb >= pa ? 1 : -1;
-    const phase = t * speed;
+  const period = 18 * unit, speed = sigUniforms.uSpeed.value * 6 * unit, mode = sigUniforms.uMode.value, phase = t * speed;
+  const glow = glowMeshes[0].material.visible, con = sigUniforms.uContrast.value;
+  const hot2 = '#fff6b0', lo = 0.5 + (0.05 - 0.5) * con;
+  const baseCol = `rgb(${Math.round(255 * lo)},${Math.round(164 * lo)},0)`;
+  // A polygon whose vertices carry g = distance·k + side·skew; keep the part with lo ≤ g ≤ hi.
+  const clipG = (poly, t0, above) => { const out = []; for (let i = 0; i < poly.length; i++) { const a = poly[i], b = poly[(i + 1) % poly.length]; const ia = above ? a.g >= t0 : a.g <= t0, ib = above ? b.g >= t0 : b.g <= t0; if (ia) out.push(a); if (ia !== ib) { const f = (t0 - a.g) / (b.g - a.g); out.push({ x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, g: t0 }); } } return out; };
+  const band = (poly, s0, s1) => { const c = clipG(clipG(poly, s0, true), s1, false); if (c.length < 3) return; ctx.moveTo(c[0].x, c[0].y); for (let i = 1; i < c.length; i++) ctx.lineTo(c[i].x, c[i].y); ctx.closePath(); };
+  const outline = G => [...G.L, ...[...G.end].reverse(), ...[...G.R].reverse(), ...G.start];
+  const fillPoly = (pts, style) => { ctx.fillStyle = style; ctx.beginPath(); pts.forEach((p, i) => { const [x, y] = toS(p.x, p.z); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.closePath(); ctx.fill(); };
+  for (const ch of chainsByNet.get(S.active)) {
+    const D = chainDists(S.active, ch), wmm = Math.max(ch.w, 2 * dpr / k), wpx = wmm * k;
+    if (glow) fillPoly(outline(stripGeom(ch.pts, D, wmm + 10 * dpr / k)), 'rgba(255,170,0,0.2)');
+    const G = stripGeom(ch.pts, D, wmm);
+    fillPoly(outline(G), mode === 0 ? hot2 : baseCol);
+    if (mode === 0) continue;
+    const sk = mode === 2 ? wpx * 1.1 : 0, per = mode === 2 ? period * 0.8 : period;
+    const P = (p, d, sd) => { const [x, y] = toS(p.x, p.z); return { x, y, g: d * k + sd * sk }; };
+    const polys = [];
+    for (let i = 0; i < ch.pts.length - 1; i++) polys.push([P(G.R[i], D[i], -0.5), P(G.L[i], D[i], 0.5), P(G.L[i + 1], D[i + 1], 0.5), P(G.R[i + 1], D[i + 1], -0.5)]);
+    for (const [rim, c, d] of [[G.start, ch.pts[0], D[0]], [G.end, ch.pts[ch.pts.length - 1], D[D.length - 1]]])
+      for (let j = 0; j < rim.length - 1; j++) polys.push([P(c, d, 0), P(rim[j], rim[j].d, rim[j].side), P(rim[j + 1], rim[j + 1].d, rim[j + 1].side)]);
+    ctx.beginPath();
     if (mode === 1 || mode === 2) {
-      const skew = mode === 2 ? w * 1.1 : 0; const per = mode === 2 ? period * 0.8 : period;
-      ctx.fillStyle = hot2;
-      // dash i covers path distance [i*per + phase, i*per + phase + per/2]
-      const lo = Math.min(pa, pb), hi = Math.max(pa, pb);
-      for (let i = Math.floor((lo - phase) / per) - 1; i * per + phase < hi + per; i++) {
-        const d0 = Math.max(i * per + phase, lo), d1 = Math.min(i * per + phase + per / 2, hi); if (d1 <= d0) continue;
-        const s0 = dir > 0 ? d0 - pa : pa - d0, s1 = dir > 0 ? d1 - pa : pa - d1;
-        const nx = -uy * w / 2, ny = ux * w / 2, sk = skew * dir;
-        ctx.beginPath();
-        ctx.moveTo(ax + ux * (s0 + sk / 2) + nx, ay + uy * (s0 + sk / 2) + ny); ctx.lineTo(ax + ux * (s1 + sk / 2) + nx, ay + uy * (s1 + sk / 2) + ny);
-        ctx.lineTo(ax + ux * (s1 - sk / 2) - nx, ay + uy * (s1 - sk / 2) - ny); ctx.lineTo(ax + ux * (s0 - sk / 2) - nx, ay + uy * (s0 - sk / 2) - ny);
-        ctx.closePath(); ctx.fill();
-      }
+      for (const poly of polys) { const gs = poly.map(v => v.g), g0 = Math.min(...gs), g1 = Math.max(...gs);
+        for (let i = Math.floor((g0 - phase) / per) - 1; i * per + phase <= g1; i++) band(poly, i * per + phase, i * per + phase + per * 0.5); }
+      ctx.fillStyle = hot2; ctx.fill();
     } else {
-      const steps = Math.max(2, Math.ceil(len / (3 * dpr)));
-      for (let j = 0; j < steps; j++) {
-        const f0 = j / steps, f1 = (j + 1) / steps; const d = pa + (pb - pa) * (f0 + f1) / 2;
-        let f = ((d - phase) / (period * 5)) % 1; if (f < 0) f += 1; const a = Math.pow(f, 7);
-        if (a < 0.02) continue; ctx.strokeStyle = `rgba(255,246,176,${a})`; ctx.lineWidth = w; ctx.lineCap = 'butt';
-        ctx.beginPath(); ctx.moveTo(ax + (bx - ax) * f0, ay + (by - ay) * f0); ctx.lineTo(ax + (bx - ax) * f1, ay + (by - ay) * f1); ctx.stroke();
+      const L5 = period * 5, step = L5 / 24;
+      for (let b = 0; b < 24; b++) {
+        const a = Math.pow((b + 0.5) / 24, 7); if (a < 0.02) continue;
+        ctx.beginPath();
+        for (const poly of polys) { const gs = poly.map(v => v.g), g0 = Math.min(...gs), g1 = Math.max(...gs);
+          for (let i = Math.floor((g0 - phase) / L5) - 1; i * L5 + phase <= g1; i++) band(poly, i * L5 + phase + b * step, i * L5 + phase + (b + 1) * step); }
+        ctx.fillStyle = `rgba(255,246,176,${a})`; ctx.fill();
       }
-      ctx.lineCap = 'round';
     }
   }
   for (const v of n.vias) { const [x, y] = toS(v.x, v.z); ctx.fillStyle = hot2; ctx.beginPath(); ctx.arc(x, y, (0.36 + 0.05 * Math.sin(t * 4)) * k, 0, 7); ctx.fill(); ctx.fillStyle = '#3a2a00'; ctx.beginPath(); ctx.arc(x, y, 0.15 * k, 0, 7); ctx.fill(); }
@@ -974,7 +1174,7 @@ function frame() {
   doHover();
   if (camAnim) {
     const k = Math.min(1, (performance.now() - camAnim.t0) / 600), e = 1 - Math.pow(1 - k, 3);
-    bCam.position.lerpVectors(camAnim.from, camAnim.to, e); bCtl.target.lerpVectors(camAnim.tf, camAnim.tt, e); if (k >= 1) camAnim = null;
+    camAnim.cam.position.lerpVectors(camAnim.from, camAnim.to, e); camAnim.ctl.target.lerpVectors(camAnim.tf, camAnim.tt, e); if (k >= 1) camAnim = null;
   }
   if (S.tab === 'parts') { gCtl.update(); renderer.render(gallery, gCam); placeLabels(); }
   else if (S.tab === 'board') { bCtl.update(); renderer.render(boardScene, bCam); }
