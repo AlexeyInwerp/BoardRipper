@@ -1,7 +1,8 @@
 # 3D mode — design and plan
 
 2026-11-14 · status: proposal, mockup for review
-Mockup: [2026-11-14-3d-mode-mockup.html](2026-11-14-3d-mode-mockup.html) (open in a browser; three.js from jsDelivr)
+Mockups: [2026-11-14-3d-mode-mockup.html](2026-11-14-3d-mode-mockup.html) (models, layer stack, signal looks) and
+[2026-11-14-3d-compare-mockup.html](2026-11-14-3d-compare-mockup.html) (a real board rendered over its product photos — see *Validated against photos*)
 
 ## What it is
 
@@ -54,22 +55,38 @@ it (mockup ▸ Board 3D ▸ Evidence overlay).
    family out of names like `C_0402_1005Metric`, `VX_R0402_SMALL`, `CHIP0603R`,
    `CAP_SMD_7343`, `SOT23-5`, `BGA100C80P10X10`. Metric codes (1005, 1608…)
    map to imperial. A table of known families → model parameters.
-2. **Two-pin geometry**: pin span (centre to centre) picks the EIA size; pad
-   width across the axis separates 1206 from 1210. Measured against the package
-   name on 9,859 two-pin parts (6 boards, KiCad/Allegro/GenCAD): **98.1 %
-   agree** with thresholds at 14 / 26 / 43 / 60 / 90 / 150 / 215 / 280 mil.
-   The misses are one size off (0402↔0603 hand-solder footprints, 0603↔0805).
+2. **Two-pin geometry**: three measurements, each from the pins or pads —
+   **span** (centre to centre), **gap** between the pads' inner edges, and
+   **pad width** across the axis — each mapped to an EIA size, then a 2-of-3
+   vote. Span alone is 97.9 % right on the corpus but collapses on hand-solder
+   footprints, whose pads reach outward (KiCad `*_HandSolder`: 5 %; Adafruit's
+   `0603-NO`: 19 %, read as 0805). Gap and width barely change between
+   footprint styles. Measured against the package name on 9,881 two-pin parts
+   (7 boards: KiCad, Allegro, GenCAD, EAGLE):
 
-   | EIA | n | span p10–p50–p90 (mil) | pad along / across (median) |
-   |---|---:|---|---|
-   | 0201 | 1,360 | 18 – 19.5 – 23 | 13 / 14 |
-   | 0402 | 6,427 | 30 – 32 – 36 | 22 / 26 |
-   | 0603 | 1,477 | 52 – 53 – 55 | 27 / 39 |
-   | 0805 | 534 | 63 – 75 – 75 | 36 / 59 |
-   | 1206 | 56 | 105 – 105 – 120 | 44 / 69 |
+   | Board | n | span only | vote |
+   |---|---:|---:|---:|
+   | tomu-fpga (KiCad) | 24 | 100 | 100 |
+   | starfish (KiCad, hand-solder) | 150 | 5.3 | 96.0 |
+   | P3HCJ (Allegro) | 1,570 | 100 | 100 |
+   | NVIDIA4090 (GenCAD) | 2,856 | 99.8 | 99.8 |
+   | LA-P161 (Allegro) | 2,896 | 98.9 | 100 |
+   | LA-E331P (Allegro) | 2,353 | 100 | 100 |
+   | Feather RP2040 (EAGLE) | 32 | 18.8 | 100 |
+   | **all** | 9,881 | 97.9 | **99.9** |
 
-   Rule of thumb from the same data: span ≈ 0.82·L, pad along ≈ 0.5·L, pad
-   across ≈ 1.3·W. The mockup draws its land patterns from these.
+   Thresholds (mil) — span 14/26/43/60/90/150/215/280, gap 4/8.5/21.5/32/50/90,
+   width 9/17/31/45/62/85/115. Plain boardviews without pad sizes (BVR, BRD,
+   XZZ) fall back to span alone.
+
+   | EIA | span p10–p50–p90 | gap (median) | width (median) |
+   |---|---|---:|---:|
+   | 0201 | 18 – 19.5 – 23 | 7 | 14 |
+   | 0402 | 30 – 32 – 36 | 10–17 | 20–26 |
+   | 0603 | 52 – 53 – 55 | 25–31 | 35–39 |
+   | 0805 | 63 – 75 – 75 | 31–43 | 49–59 |
+   | 1206 | 105 – 105 – 120 | 61–79 | 63–69 |
+
 3. **Multi-pin pattern** (no package name): classify the pin cloud.
    - full or depopulated 2-D grid, equal pitch → BGA (pitch, rows, cols → body)
    - pins on four sides of a square/rect, pitch 0.4–0.8 mm, ± centre pad → QFN/QFP
@@ -99,12 +116,54 @@ those fall to geometry-only and a neutral body.
 
 ### Where it lives
 
-`src/frontend/src/store/package-estimate.ts` — pure,
-`(part, board) → { kind, family, size?, L, W, H, rotationDeg, pads?, evidence, why }`,
-memoised per `BoardData`, no three.js import, so the Info panel, the MCP
+`src/frontend/src/store/package-estimate.ts` (prototype exists) — pure,
+`estimatePart(part, { usePackage }) → { family, kind?, size?, L, W, H, cx, cy, rotDeg, p, populated, evidence, why }`,
+to be memoised per `BoardData`, no three.js import, so the Info panel, the MCP
 `part_info` tool and the legend can use it without 3D. Unit tests plus a corpus
 script (the measurement above, kept in `scripts/`) that reports agreement per
 format so a threshold change shows its cost.
+
+## Validated against photos
+
+Board: **Adafruit Feather RP2040** (EAGLE, open source, 61 parts, 2 layers) —
+chosen because the design files and two clean product photos (top-down and
+angled) are public. The board is rendered from `estimatePart` alone, and the
+camera is solved from the four mounting holes in each photo (position, aim and
+field of view; reprojection error 0.2 px top, 1.1 px angled, of 1200 × 900),
+so the render lies exactly on the photo and a wipe compares them part by part.
+
+- **Against the photo, estimating from package names:** 55 of 58 parts match
+  (kind, size, place, orientation, look), 3 are close — USB-C (overhang
+  offset tuned on this board), JST PH battery connector (housing simplified),
+  right-angle switch (body a little tall). None wrong.
+- **Pins only** (what BVR/BRD/XZZ allow) agrees with the package names on 56
+  of 58. The two misses can't be decided from pins: an unfitted SWD footprint
+  (`…_NOCREAM`) is drawn as a SOIC, and the right-angle BOOTSEL switch as an
+  upright one. A third difference is the kind of a chip: the red LED's refdes is
+  `L`, so pins-only draws an inductor.
+- **What the comparison changed:**
+  - Span alone sized every Adafruit 0603 as 0805, which led to the span/gap/width vote.
+  - A SOT-23 came out turned 20°, because the lone pin skewed the grid angle.
+  - A JST PH's signal pads are larger than its tabs, so tabs are now found by pad shape, not by size.
+  - EAGLE bitmap silkscreen layers (200/201) do not swap sides when the part is mirrored.
+- **Board look:** mask, copper under the mask, ENIG pads, silkscreen
+  (including EAGLE's bitmap logos, 24,566 rectangles) are baked into one
+  texture per side — one quad, no per-feature geometry. This is the plan for the
+  app: the silkscreen texture comes for free from `silkscreen` paths and board
+  text.
+
+Reproduce (board files and photos stay local, under `samples/3d-compare/`):
+
+```sh
+B=https://raw.githubusercontent.com/adafruit/Adafruit-Feather-RP2040-PCB/main
+curl -so samples/3d-compare/rp2040.brd "$B/Adafruit%20Feather%20RP2040.brd"
+for i in 04 05 06; do curl -so samples/3d-compare/4884-$i.jpg https://cdn-shop.adafruit.com/1200x900/4884-$i.jpg; done
+cd src/frontend && npx vite-node ../../scripts/board-3d-export.ts -- ../../samples/3d-compare/rp2040.brd ../../samples/3d-compare/feather-rp2040.js "Adafruit Feather RP2040"
+```
+
+Next: a denser board with photos, ideally a laptop board with an Allegro file and an
+XZZ boardview of the same revision, to measure BGAs, pin-only formats and the
+families (FPC, B2B, large BGA) this board doesn't have.
 
 ## Renderer
 
