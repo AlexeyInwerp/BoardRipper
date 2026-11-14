@@ -96,7 +96,12 @@ export function buildPartModel(e: PartEstimate): THREE.Group | null {
       g.add(box(L, 0.36, W, MAT.subst, 0, 0.28));
       // Apple M-series: SoC under a lid with two memory dies along the long edge. Only for that kind of
       // package — ≥ 2,000 balls at ≤ 0.55 mm pitch and ≥ 400 mm²; Intel CPUs, Tegra, GPUs are plain moulded boxes
-      if (L * W > 400 && (p.balls ?? 0) >= 2000 && (p.pitch ?? 1) <= 0.55) { g.add(rbox(L * 0.8, 0.5, W * 0.6, 0.3, MAT.lid, 0, 0.71, -W * 0.14)); for (const sx of [-1, 1]) g.add(rbox(L * 0.42, 0.7, W * 0.27, 0.1, MAT.epoxy, sx * L * 0.22, 0.81, W * 0.33)); }
+      // substrate top at 0.46; the lid is the highest point (as on the real M1), the memory dies lower beside it
+      if (L * W > 400 && (p.balls ?? 0) >= 2000 && (p.pitch ?? 1) <= 0.55) {
+        g.add(box(L * 0.84, 0.06, W * 0.66, MAT.epoxy, 0, 0.49, -W * 0.13)); // sealant rim under the lid
+        g.add(rbox(L * 0.8, 0.62, W * 0.62, 0.35, MAT.lid, 0, 0.46 + 0.31, -W * 0.13));
+        for (const sx of [-1, 1]) g.add(rbox(L * 0.42, 0.42, W * 0.25, 0.08, MAT.epoxy, sx * L * 0.22, 0.46 + 0.21, W * 0.34));
+      }
       else g.add(rbox(L - 0.6, 0.6, W - 0.6, 0.1, MAT.epoxy, 0, 0.76));
       break;
     }
