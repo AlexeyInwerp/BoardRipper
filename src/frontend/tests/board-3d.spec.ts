@@ -141,21 +141,26 @@ test('3D view: turning is free — a drag carries on over the top to the undersi
   expect((await cam()).pos[1]).toBeLessThan(0);
 });
 
-test('3D view: a drag turns about the selected part, else the board centre', async ({ page }) => {
+test('3D view: a drag turns about the point pressed, and circles never tilt the board', async ({ page }) => {
   await openBoard(page);
   await page.getByTestId('view3d-btn').click();
   await page.waitForFunction(() => ((window as unknown as W).__board3d?.renderer.drawnParts ?? 0) > 0, null, { timeout: 30000 });
   await page.waitForTimeout(700);
   const box = (await page.locator('.board-3d-host').boundingBox())!;
-  const drag = async () => { const x = box.x + box.width / 2, y = box.y + box.height / 2; await page.mouse.move(x - 120, y); await page.mouse.down(); for (let k = 1; k <= 12; k++) await page.mouse.move(x - 120 + k * 20, y + k * 6); await page.mouse.up(); await page.waitForTimeout(300); };
-  // the pivot stays put on screen: project it before and after a drag
-  const proj = (p: [number, number, number] | null) => page.evaluate(pp => (window as unknown as { __board3d: { renderer: { project(p: [number, number, number]): [number, number] } } }).__board3d.renderer.project(pp ?? [0, 0, 0]), p);
-  const c0 = await proj(null); await drag(); const c1 = await proj(null);
-  expect(Math.hypot(c1[0] - c0[0], c1[1] - c0[1])).toBeLessThan(2);   // board centre did not move on screen
-  const sel = await page.evaluate(() => { const w = window as unknown as { __boardStore: { board: { parts: { pins: unknown[] }[] }; selectPart(i: number): void }; __board3d: { renderer: { partCentre(i: number): [number, number, number] | null } } };
-    const i = w.__boardStore.board.parts.findIndex((p, k) => p.pins.length > 8 && w.__board3d.renderer.partCentre(k)); w.__boardStore.selectPart(i); return w.__board3d.renderer.partCentre(i); });
-  await page.waitForTimeout(300);
-  const s0 = await proj(sel); await drag(); const s1 = await proj(sel);
-  expect(Math.hypot(s1[0] - s0[0], s1[1] - s0[1])).toBeLessThan(2);   // the selected part is the pivot
+  // press off-centre on the board and drag: that point is the pivot and stays where it was pressed
+  const x0 = box.x + box.width * 0.42, y0 = box.y + box.height * 0.55;
+  await page.mouse.move(x0, y0); await page.mouse.down();
+  for (let k = 1; k <= 15; k++) await page.mouse.move(x0 + k * 14, y0 + k * 5);
+  await page.mouse.up(); await page.waitForTimeout(300);
+  const pivot = await page.evaluate(() => (window as unknown as { __board3d: { renderer: { lastPivot: [number, number, number] | null } } }).__board3d.renderer.lastPivot);
+  expect(pivot).not.toBeNull();
+  const at = await page.evaluate(p => (window as unknown as { __board3d: { renderer: { project(p: [number, number, number]): [number, number] } } }).__board3d.renderer.project(p), pivot!);
+  expect(Math.hypot(at[0] - x0, at[1] - y0)).toBeLessThan(3);
+  // five circles of the pointer: a turntable has no roll to accumulate
+  const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+  await page.mouse.move(cx + 120, cy); await page.mouse.down();
+  for (let k = 1; k <= 5 * 36; k++) { const a = k * Math.PI / 18; await page.mouse.move(cx + 120 * Math.cos(a), cy + 120 * Math.sin(a)); }
+  await page.mouse.up(); await page.waitForTimeout(300);
+  const roll = await page.evaluate(() => (window as unknown as { __board3d: { renderer: { cameraState(): { roll: number } } } }).__board3d.renderer.cameraState().roll);
+  expect(Math.abs(roll)).toBeLessThan(0.01);
 });
-

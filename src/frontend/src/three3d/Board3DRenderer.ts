@@ -369,17 +369,27 @@ export class Board3DRenderer {
   private drag: { mode: 'turn' | 'pan'; pivot: THREE.Vector3 } | null = null;
   private pinch: { dist: number; mid: [number, number] } | null = null;
   private onContextMenu = (e: Event) => e.preventDefault();
-  /** Where turning pivots: the selected part's centre, else the board centre. */
-  private pivot(): THREE.Vector3 {
+  /** Where turning pivots: the point pressed — a part's surface, or the board face under the
+   *  pointer — else the selected part's centre, else the board centre. */
+  private pivotAt(clientX: number, clientY: number): THREE.Vector3 {
+    const r = this.canvas.getBoundingClientRect();
+    this.ray.setFromCamera(new THREE.Vector2((clientX - r.left) / r.width * 2 - 1, -(clientY - r.top) / r.height * 2 + 1), this.camera);
+    const hit = this.ray.intersectObjects([...this.pickBoxes, ...this.boardRoot.children], false)[0];
+    if (hit) return hit.point.clone();
+    const onBoard = this.ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), new THREE.Vector3());
+    if (onBoard && this.model && Math.abs(onBoard.x) < this.model.width && Math.abs(onBoard.z) < this.model.height) return onBoard;
     const sel = this.selectedPart !== null ? this.partByIndex.get(this.selectedPart) : undefined;
     return sel ? sel.box.getCenter(new THREE.Vector3()) : new THREE.Vector3();
   }
+  /** The last pivot a turn used — for tests. */
+  lastPivot: [number, number, number] | null = null;
   private onPointerDown = (e: PointerEvent) => {
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     try { this.canvas.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
     if (this.pointers.size === 2) { this.drag = null; this.pinch = this.pinchState(); return; }
     const panButton = e.button === 1 || (e.button === 2) === (this.leftDrag === 'orbit') || (e.button === 0 && e.shiftKey);
-    this.drag = { mode: panButton ? 'pan' : 'turn', pivot: this.pivot() };
+    const pivot = panButton ? new THREE.Vector3() : this.pivotAt(e.clientX, e.clientY);
+    this.drag = { mode: panButton ? 'pan' : 'turn', pivot }; if (!panButton) this.lastPivot = [pivot.x, pivot.y, pivot.z];
     this.anim = null;
   };
   private pinchState() { const [a, b] = [...this.pointers.values()]; return { dist: Math.hypot(a.x - b.x, a.y - b.y), mid: [(a.x + b.x) / 2, (a.y + b.y) / 2] as [number, number] }; }
@@ -401,11 +411,17 @@ export class Board3DRenderer {
     if (this.pointers.size < 2) this.pinch = null;
     if (this.pointers.size === 0) this.drag = null;
   };
-  /** Turn the whole camera frame about `pivot`: horizontal drag about the screen's vertical axis,
-   *  vertical drag about its horizontal one — no pole, no lookAt jump when the pivot is off-centre. */
+  /** Turntable about `pivot`: a horizontal drag spins about the board's normal, a vertical drag
+   *  tips about the screen's horizontal axis. Spinning about the camera's own axes (a trackball)
+   *  builds up roll when the pointer moves in circles — the board tilted further and further.
+   *  The tip is not clamped, so there is no pole to get stuck at; the whole camera frame turns
+   *  about the pivot, so the pivot stays under the pointer. */
   turnBy(dx: number, dy: number, pivot: THREE.Vector3): void {
-    const k = 0.006, right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0), up = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 1);
-    const q = new THREE.Quaternion().setFromAxisAngle(up, -dx * k).multiply(new THREE.Quaternion().setFromAxisAngle(right, -dy * k));
+    const k = 0.006, upright = this.camera.up.y >= 0 ? 1 : -1; // past the pole the board is seen upside down: keep the spin following the pointer
+    const spin = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -dx * k * upright);
+    const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0).applyQuaternion(spin);
+    right.y = 0; if (right.lengthSq() < 1e-8) right.set(1, 0, 0); right.normalize(); // keep the tip axis level, so no roll creeps in
+    const q = new THREE.Quaternion().setFromAxisAngle(right, -dy * k).multiply(spin);
     this.camera.position.sub(pivot).applyQuaternion(q).add(pivot);
     this.target.sub(pivot).applyQuaternion(q).add(pivot);
     this.camera.up.applyQuaternion(q);
@@ -463,8 +479,9 @@ export class Board3DRenderer {
     return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height];
   }
   /** Camera distance and target, for tests. */
-  cameraState(): { dist: number; target: [number, number, number]; pos: [number, number, number]; leftDrag: 'orbit' | 'pan' } {
-    const t = this.target, c = this.camera.position; return { dist: c.distanceTo(t), target: [t.x, t.y, t.z], pos: [c.x, c.y, c.z], leftDrag: this.leftDrag };
+  cameraState(): { dist: number; target: [number, number, number]; pos: [number, number, number]; leftDrag: 'orbit' | 'pan'; roll: number } {
+    const t = this.target, c = this.camera.position, right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
+    return { dist: c.distanceTo(t), target: [t.x, t.y, t.z], pos: [c.x, c.y, c.z], leftDrag: this.leftDrag, roll: right.y };
   }
 
   /** Draw calls, triangles and buffers of the last frame, and the build time. */
