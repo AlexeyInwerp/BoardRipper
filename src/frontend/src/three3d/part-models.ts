@@ -13,6 +13,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import type { PartEstimate } from '../store/package-estimate';
+import { PACKAGES, type PackageSpec } from '../store/cpu-packages';
 
 const std = (color: number, roughness: number, metalness = 0) => new THREE.MeshStandardMaterial({ color, roughness, metalness });
 export const MAT = {
@@ -25,6 +26,14 @@ export const MAT = {
   epoxy: std(0x1d1d20, 0.62),
   steel: std(0xc8ccd2, 0.3, 0.95),
   lid: std(0xc9ccd1, 0.38, 0.9),
+  silicon: std(0x30343a, 0.18, 0.55),
+  siliconTop: std(0x3c4148, 0.12, 0.7),
+  underfill: std(0x202124, 0.7),
+  substIntel: std(0x2d5637, 0.55),
+  substNv: std(0x1e4d3a, 0.55),
+  substAmd: std(0x2a4f3a, 0.55),
+  interposer: std(0x3a3d44, 0.4, 0.3),
+  hbm: std(0x262a30, 0.3, 0.5),
   ledBody: std(0xf4f4ee, 0.55),
   band: std(0xb8bcc2, 0.5),
   dot: std(0x55565a, 0.4),
@@ -53,6 +62,39 @@ function gull(g: THREE.Group, x: number, side: number, half: number, out: number
   const t = 0.13, k1 = out * 0.35, k2 = out * 0.55;
   for (const [a, b, c, off, y] of [[k1, t, w, half + k1 / 2, hy], [t, hy, w, half + k1, hy / 2], [k2, t, w, half + k1 + k2 / 2, t / 2]] as const)
     g.add(axis === 'z' ? box(c, b, a, MAT.tin, x, y, side * off) : box(a, b, c, MAT.tin, side * off, y, x));
+}
+
+/** A known CPU / GPU / SoC package: its substrate, bare dies with underfill, lid or stiffener ring, die-side caps.
+ *  Record frame: x along L, y along W toward A1's edge; the model's local −z is that +y. Balls collapsed to 0.36 mm. */
+export function buildPackage(g: THREE.Group, spec: PackageSpec): void {
+  const { L, W } = spec.body, sub = spec.body.sub ?? 1.0, ballH = Math.min(0.36, spec.pitch * 0.5);
+  const substMat = { intel: MAT.substIntel, nvidia: MAT.substNv, amd: MAT.substAmd, apple: MAT.epoxy }[spec.vendor];
+  g.add(box(L, sub, W, substMat, 0, ballH + sub / 2));
+  const top = ballH + sub; let baseTop = top;
+  if (spec.interposer) { const ip = spec.interposer; g.add(box(ip.w, ip.h, ip.d, MAT.interposer, ip.x ?? 0, top + ip.h / 2, -(ip.y ?? 0))); baseTop = top + ip.h; }
+  for (const d of spec.dies ?? []) {
+    const h = d.h ?? 0.75, y0 = d.onInterposer ? baseTop : top;
+    g.add(box(d.w + 0.5, 0.12, d.d + 0.5, MAT.underfill, d.x, y0 + 0.06, -d.y));
+    g.add(box(d.w, h, d.d, d.kind === 'mem' ? MAT.hbm : MAT.silicon, d.x, y0 + h / 2, -d.y));
+    g.add(box(d.w * 0.98, 0.01, d.d * 0.98, MAT.siliconTop, d.x, y0 + h + 0.005, -d.y));
+  }
+  if (spec.socket) { // LGA socket: plastic frame around the pad field, the lidded CPU inside it
+    const q = spec.socket, iw = q.w - 2 * q.t, id = q.d - 2 * q.t;
+    for (const sz of [-1, 1]) g.add(box(q.w, q.h, q.t, MAT.epoxy, 0, q.h / 2, sz * (q.d / 2 - q.t / 2)));
+    for (const sx of [-1, 1]) g.add(box(q.t, q.h, id, MAT.epoxy, sx * (q.w / 2 - q.t / 2), q.h / 2, 0));
+    g.add(box(iw, 0.6, id, MAT.dark, 0, 0.3));
+  }
+  if (spec.lid) { const l = spec.lid; g.add(box(l.w + 0.6, 0.08, l.d + 0.6, MAT.epoxy, l.x ?? 0, top + 0.04, -(l.y ?? 0))); g.add(rbox(l.w, l.h, l.d, 0.35, MAT.lid, l.x ?? 0, top + l.h / 2, -(l.y ?? 0))); }
+  if (spec.ring) {
+    const q = spec.ring, t = q.t ?? 2.4, h = q.h ?? 0.6, id = q.d - 2 * t;
+    for (const sz of [-1, 1]) g.add(box(q.w, h, t, MAT.lid, 0, top + h / 2, sz * (q.d / 2 - t / 2)));
+    for (const sx of [-1, 1]) g.add(box(t, h, id, MAT.lid, sx * (q.w / 2 - t / 2), top + h / 2, 0));
+  }
+  for (const c of spec.caps ?? []) {
+    const n = c.n, p = c.pitch ?? 0.8, along = c.dir === 'y', cw = c.size === '0201' ? 0.6 : 1.0, cd = c.size === '0201' ? 0.3 : 0.5;
+    for (let i = 0; i < n; i++) { const t = (i - (n - 1) / 2) * p; g.add(box(along ? cw : cd, cd, along ? cd : cw, MAT.mlcc, c.x + (along ? 0 : t), top + cd / 2, -(c.y + (along ? t : 0)))); }
+  }
+  g.add(box(0.8, 0.02, 0.8, MAT.print, -L / 2 + 1.2, top + 0.01, -(W / 2 - 1.2))); // A1 mark
 }
 
 /** The model for one estimate, or null when the family draws nothing in 3D
@@ -92,6 +134,8 @@ export function buildPartModel(e: PartEstimate): THREE.Group | null {
       break;
     }
     case 'bga': {
+      const spec = e.pkg ? PACKAGES.find(s => s.id === e.pkg) : undefined;
+      if (spec) { buildPackage(g, spec); break; }
       // substrate on collapsed balls: 0.1 mm off the board, not floating
       g.add(box(L, 0.36, W, MAT.subst, 0, 0.28));
       // Apple M-series: SoC under a lid with two memory dies along the long edge. Only for that kind of

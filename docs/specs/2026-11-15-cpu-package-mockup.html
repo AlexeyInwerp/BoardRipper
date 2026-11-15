@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CPU / GPU package models — mockup</title>
+<style>
+:root { --bg: #121417; --panel: #1b1e23; --panel2: #23272e; --line: #31363f; --text: #e6e8eb; --muted: #9aa1ab; --accent: #f5b301; --ok: #3ecf6e; --warn: #f0a33a; --bad: #f05252; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; overflow: hidden; }
+#app { display: grid; grid-template-rows: 40px 1fr; height: 100%; }
+header { display: flex; align-items: center; gap: 8px; padding: 0 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
+header h1 { font-size: 13px; font-weight: 600; margin: 0 12px 0 0; color: var(--muted); }
+header select { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; font: inherit; min-width: 380px; }
+header .seg { display: flex; gap: 4px; margin-left: auto; }
+.seg button { background: var(--panel2); border: 1px solid var(--line); color: var(--muted); border-radius: 6px; padding: 4px 10px; cursor: pointer; font: inherit; font-size: 12px; }
+.seg button.on { color: #111; background: var(--accent); border-color: var(--accent); }
+main { display: grid; grid-template-columns: 1fr 420px; min-height: 0; }
+#view { position: relative; min-width: 0; min-height: 0; }
+#c3d { display: block; width: 100%; height: 100%; }
+#hud { position: absolute; left: 12px; bottom: 10px; color: var(--muted); font-size: 12px; pointer-events: none; }
+aside { background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; padding: 12px 14px 24px; }
+aside h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 16px 0 8px; font-weight: 600; }
+aside h2:first-child { margin-top: 2px; }
+aside p { color: var(--muted); margin: 6px 0; }
+#map { display: block; width: 392px; height: 300px; background: #0f1a12; border: 1px solid var(--line); border-radius: 6px; }
+table { border-collapse: collapse; width: 100%; font-size: 12px; }
+th, td { text-align: left; padding: 3px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; white-space: nowrap; }
+td.n { text-align: right; font-variant-numeric: tabular-nums; }
+.ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+.legend span { display: inline-flex; align-items: center; gap: 5px; margin-right: 10px; color: var(--muted); }
+.sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+code { background: var(--panel2); padding: 1px 4px; border-radius: 4px; font-size: 11px; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }
+</script>
+<script src="2026-11-15-cpu-package-ballmaps.js"></script>
+<script src="2026-11-15-cpu-package-specs.js"></script>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Package models</h1>
+    <select id="pick"></select>
+    <label style="color:var(--muted);margin-left:8px"><input type="checkbox" id="caps" checked> die-side caps</label>
+    <label style="color:var(--muted)"><input type="checkbox" id="realballs" checked> balls from the board</label>
+    <div class="seg" id="views"><button data-v="iso" class="on">Iso</button><button data-v="top">Top</button><button data-v="side">Side</button><button data-v="under">Under</button></div>
+  </header>
+  <main>
+    <div id="view"><canvas id="c3d"></canvas><div id="hud"></div></div>
+    <aside>
+      <h2>Ball map from the board</h2>
+      <canvas id="map" width="784" height="600"></canvas>
+      <p id="mapnote"></p>
+      <div class="legend"><span><i class="sw" style="background:#e6c87a"></i>ball</span><span><i class="sw" style="background:#7fb3ff"></i>CPU/GPU die</span><span><i class="sw" style="background:#ff9f6b"></i>PCH / I/O die</span><span><i class="sw" style="background:#b48cff"></i>memory</span><span><i class="sw" style="border:1px solid #ccc"></i>lid / ring</span></div>
+      <h2>Lookup</h2>
+      <table id="match"></table>
+      <h2>Package record</h2>
+      <table id="spec"></table>
+      <h2>Notes</h2>
+      <p id="notes"></p>
+    </aside>
+  </main>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const SPECS = window.PACKAGE_SPECS, MAPS = window.BALLMAPS;
+const canvas = document.getElementById('c3d');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.0;
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+const pmrem = new THREE.PMREMGenerator(renderer); const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x121417); scene.environment = envTex;
+const cam = new THREE.PerspectiveCamera(35, 1, 0.1, 1000);
+const ctl = new OrbitControls(cam, canvas); ctl.enableDamping = true;
+const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(-30, 60, 25); sun.castShadow = true;
+Object.assign(sun.shadow.camera, { left: -45, right: 45, top: 45, bottom: -45, far: 200 }); sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0004;
+scene.add(sun, new THREE.DirectionalLight(0xffffff, 0.5).translateX(30).translateY(-20).translateZ(-10), new THREE.AmbientLight(0xffffff, 0.15));
+const board = new THREE.Mesh(new THREE.PlaneGeometry(160, 160), new THREE.MeshStandardMaterial({ color: 0x1d5b2f, roughness: 0.5 })); board.rotation.x = -Math.PI / 2; board.receiveShadow = true; scene.add(board);
+
+const std = (color, roughness, metalness = 0) => new THREE.MeshStandardMaterial({ color, roughness, metalness });
+const M = {
+  tin: std(0xd9dde2, 0.28, 1), nickel: std(0xc4c7cc, 0.3, 0.95), silicon: std(0x30343a, 0.18, 0.55), siliconTop: std(0x3c4148, 0.12, 0.7),
+  underfill: std(0x202124, 0.7), substIntel: std(0x2d5637, 0.55), substNv: std(0x1e4d3a, 0.55), substAmd: std(0x2a4f3a, 0.55), substApple: std(0x17181b, 0.5), substBlack: std(0x17181b, 0.5),
+  mlcc: std(0x9c7f5c, 0.75), epoxy: std(0x1d1d20, 0.62), pad: std(0xd9b25a, 0.35, 0.9), interposer: std(0x3a3d44, 0.4, 0.3), hbm: std(0x262a30, 0.3, 0.5), ink: std(0xdcdcd4, 0.6),
+};
+const box = (w, h, d, m, x = 0, y = 0, z = 0) => { const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); o.position.set(x, y, z); o.castShadow = o.receiveShadow = true; return o; };
+const rbox = (w, h, d, r, m, x = 0, y = 0, z = 0) => { const o = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 3, Math.min(r, w / 2, h / 2, d / 2) * 0.99), m); o.position.set(x, y, z); o.castShadow = o.receiveShadow = true; return o; };
+
+/** Model from a package record. Local frame: x along body L, z along body W (toward −board y), y up. Balls at y 0..ballH, substrate above. */
+function buildPackage(spec, map, opts) {
+  const g = new THREE.Group();
+  const { L, W } = spec.body, sub = spec.body.sub ?? 1.0, ballH = Math.min(0.45, spec.pitch * 0.55);
+  // balls
+  const pts = (opts.realBalls && map) ? map.xy : gridBalls(spec);
+  const r = spec.pitch * 0.33, geoB = new THREE.SphereGeometry(r, 10, 8); const inst = new THREE.InstancedMesh(geoB, M.tin, pts.length / 2);
+  const mtx = new THREE.Matrix4(); const sy = ballH / (2 * r);
+  for (let i = 0; i < pts.length; i += 2) { mtx.makeScale(1, sy, 1); mtx.setPosition(pts[i] * 0.05, ballH / 2, -pts[i + 1] * 0.05); inst.setMatrixAt(i / 2, mtx); }
+  inst.castShadow = true; g.add(inst);
+  // substrate
+  const substMat = { intel: M.substIntel, nvidia: M.substNv, amd: M.substAmd, apple: M.substApple }[spec.vendor] ?? M.substBlack;
+  g.add(box(L, sub, W, substMat, 0, ballH + sub / 2));
+  const top = ballH + sub;
+  // dies: bare silicon with underfill fillet; die (x, y) in mm from the package centre, body frame, y toward body "north" (= local −z)
+  const dieMat = { cpu: M.silicon, gpu: M.silicon, pch: M.silicon, io: M.silicon, mem: M.hbm, base: M.interposer }[0] ;
+  const dieColor = { cpu: 0x7fb3ff, gpu: 0x7fb3ff, pch: 0xff9f6b, io: 0xff9f6b, mem: 0xb48cff, base: 0x9aa1ab };
+  let baseTop = top;
+  if (spec.interposer) { const ip = spec.interposer; g.add(box(ip.w, ip.h, ip.d, M.interposer, ip.x ?? 0, top + ip.h / 2, -(ip.y ?? 0))); baseTop = top + ip.h; }
+  for (const d of spec.dies ?? []) {
+    const h = d.h ?? 0.75, y0 = d.onInterposer ? baseTop : top;
+    g.add(box(d.w + 0.5, 0.12, d.d + 0.5, M.underfill, d.x, y0 + 0.06, -d.y));
+    const m = d.kind === 'mem' ? M.hbm : M.silicon; g.add(box(d.w, h, d.d, m, d.x, y0 + h / 2, -d.y));
+    g.add(box(d.w * 0.98, 0.01, d.d * 0.98, M.siliconTop, d.x, y0 + h + 0.005, -d.y));
+  }
+  if (spec.socket) { // LGA socket: plastic frame around the pad field, the lidded CPU inside it
+    const q = spec.socket, iw = q.w - 2 * q.t, id = q.d - 2 * q.t;
+    for (const sz of [-1, 1]) g.add(box(q.w, q.h, q.t, M.epoxy, 0, q.h / 2, sz * (q.d / 2 - q.t / 2)));
+    for (const sx of [-1, 1]) g.add(box(q.t, q.h, id, M.epoxy, sx * (q.w / 2 - q.t / 2), q.h / 2, 0));
+    g.add(box(iw, 0.6, id, M.underfill, 0, 0.3));
+  }
+  // lid: nickel-plated copper over everything, with a sealant rim
+  if (spec.lid) { const l = spec.lid; g.add(box(l.w + 0.6, 0.08, l.d + 0.6, M.epoxy, l.x ?? 0, top + 0.04, -(l.y ?? 0))); g.add(rbox(l.w, l.h, l.d, 0.35, M.nickel, l.x ?? 0, top + l.h / 2, -(l.y ?? 0))); }
+  // stiffener ring (NVIDIA / large AMD): a flat metal frame around the die area
+  if (spec.ring) { const q = spec.ring, t = q.t ?? 2.4, h = q.h ?? 0.6; const ow = q.w, od = q.d, iw = ow - 2 * t, id = od - 2 * t;
+    g.add(box(ow, h, t, M.nickel, 0, top + h / 2, -(od / 2 - t / 2))); g.add(box(ow, h, t, M.nickel, 0, top + h / 2, (od / 2 - t / 2)));
+    g.add(box(t, h, id, M.nickel, -(ow / 2 - t / 2), top + h / 2, 0)); g.add(box(t, h, id, M.nickel, (ow / 2 - t / 2), top + h / 2, 0)); }
+  // die-side caps: rows of 0402/0201 between/around the dies
+  if (opts.caps && spec.caps) for (const c of spec.caps) { const n = c.n ?? 6, p = c.pitch ?? 0.8, along = c.dir === 'y'; for (let i = 0; i < n; i++) { const t = (i - (n - 1) / 2) * p; const x = c.x + (along ? 0 : t), y = c.y + (along ? t : 0); const cw = c.size === '0201' ? 0.6 : 1.0, cd = c.size === '0201' ? 0.3 : 0.5, ch = cd; g.add(box(along ? cw : cd, ch, along ? cd : cw, M.mlcc, x, top + ch / 2, -y)); } } // caps lie across the row
+  // orientation mark: a small triangle / dot near pin A1 corner (−x, +y)
+  g.add(box(0.8, 0.02, 0.8, M.ink, -L / 2 + 1.2, top + 0.01, -(W / 2 - 1.2)));
+  return g;
+}
+function gridBalls(spec) { // no sample: a grid over the record's span, thinned to the record's count
+  const [sx, sy] = spec.span; const n = Math.round(sx / spec.pitch) + 1, m = Math.round(sy / spec.pitch) + 1; const keep = Math.min(1, spec.balls / (n * m)); const out = []; let acc = 0;
+  for (let i = 0; i < n; i++) for (let j = 0; j < m; j++) { acc += keep; if (acc < 1) continue; acc -= 1; out.push(Math.round((i - (n - 1) / 2) * spec.pitch * 20), Math.round((j - (m - 1) / 2) * spec.pitch * 20)); }
+  return out;
+}
+
+// ── lookup: the rule the app will use. Boardviews may omit unconnected balls (Ice Lake-U: 1344 of 1526 listed), so the
+// ball count is a ceiling, and the span + pitch carry the match. Either orientation.
+function matchPackage(meas) {
+  const cands = [];
+  for (const s of SPECS) {
+    const dp = Math.abs(s.pitch - meas.pitch); if (dp > 0.06) continue;
+    const sx = s.span?.[0] ?? (s.body.L - 2 * (s.edge ?? 1.0)), sy = s.span?.[1] ?? (s.body.W - 2 * (s.edge ?? 1.0));
+    const fit = (a, b) => Math.abs(a - meas.spanX) + Math.abs(b - meas.spanY);
+    const ds = Math.min(fit(sx, sy), fit(sy, sx)); if (ds > 1.2) continue; // SPAN_TOL in cpu-packages.ts
+    if (meas.balls > s.balls * 1.02 || meas.balls < s.balls * 0.8) continue;
+    const score = ds + 20 * dp + (meas.balls === s.balls ? 0 : 0.5 + 2 * (1 - meas.balls / s.balls));
+    cands.push({ s, score, ds, dp, turned: fit(sx, sy) > fit(sy, sx) });
+  }
+  return cands.sort((a, b) => a.score - b.score);
+}
+
+// ── page
+const pick = document.getElementById('pick');
+const groups = {};
+for (const s of SPECS) (groups[s.vendor] ??= []).push(s);
+for (const [v, list] of Object.entries(groups)) { const og = document.createElement('optgroup'); og.label = v.toUpperCase(); for (const s of list) { const o = document.createElement('option'); o.value = s.id; o.textContent = `${s.name} — ${s.balls} balls @ ${s.pitch}, ${s.body.L}×${s.body.W}${s.mapId ? '' : ' (no board sample)'}`; og.appendChild(o); } pick.appendChild(og); }
+let model = null, view = 'iso';
+function show(id) {
+  const spec = SPECS.find(s => s.id === id); const map = MAPS.find(m => m.id === spec.mapId);
+  if (model) scene.remove(model);
+  model = buildPackage(spec, map, { caps: document.getElementById('caps').checked, realBalls: document.getElementById('realballs').checked }); scene.add(model);
+  drawMap(spec, map); fillTables(spec, map); setView(view, spec);
+  document.getElementById('hud').textContent = `${spec.name} · ${spec.body.L} × ${spec.body.W} × ${spec.body.H ?? '?'} mm · ${spec.style}`;
+  location.hash = id;
+}
+function setView(v, spec = SPECS.find(s => s.id === pick.value)) {
+  view = v; document.querySelectorAll('#views button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+  const R = Math.max(spec.body.L, spec.body.W) * 1.6;
+  const pos = { iso: [R * 0.8, R * 0.75, R * 0.8], top: [0, R * 1.3, 0.001], side: [R * 1.3, R * 0.12, 0], under: [R * 0.3, -R * 0.9, R * 0.6] }[v];
+  cam.position.set(...pos); ctl.target.set(0, 0.6, 0); cam.near = 0.1; ctl.update();
+}
+function drawMap(spec, map) {
+  const c = document.getElementById('map'), x = c.getContext('2d'); x.clearRect(0, 0, c.width, c.height); x.fillStyle = '#0f1a12'; x.fillRect(0, 0, c.width, c.height);
+  const L = spec.body.L, W = spec.body.W; const sc = Math.min((c.width - 40) / L, (c.height - 40) / W); const ox = c.width / 2, oy = c.height / 2;
+  const X = v => ox + v * sc, Y = v => oy - v * sc;
+  x.strokeStyle = '#3a6a44'; x.lineWidth = 2; x.strokeRect(X(-L / 2), Y(W / 2), L * sc, W * sc);
+  const pts = map ? map.xy : gridBalls(spec); x.fillStyle = '#e6c87a'; const r = Math.max(1, spec.pitch * sc * 0.3);
+  for (let i = 0; i < pts.length; i += 2) { x.beginPath(); x.arc(X(pts[i] * 0.05), Y(pts[i + 1] * 0.05), r, 0, Math.PI * 2); x.fill(); }
+  const col = { cpu: '#7fb3ff', gpu: '#7fb3ff', pch: '#ff9f6b', io: '#ff9f6b', mem: '#b48cff', base: '#9aa1ab' };
+  x.lineWidth = 2;
+  if (spec.interposer) { const ip = spec.interposer; x.strokeStyle = '#9aa1ab'; x.setLineDash([4, 3]); x.strokeRect(X((ip.x ?? 0) - ip.w / 2), Y((ip.y ?? 0) + ip.d / 2), ip.w * sc, ip.d * sc); x.setLineDash([]); }
+  for (const d of spec.dies ?? []) { x.strokeStyle = col[d.kind] ?? '#fff'; x.strokeRect(X(d.x - d.w / 2), Y(d.y + d.d / 2), d.w * sc, d.d * sc); x.fillStyle = col[d.kind]; x.font = '11px sans-serif'; x.fillText(d.label ?? d.kind, X(d.x - d.w / 2) + 3, Y(d.y + d.d / 2) + 12); }
+  if (spec.lid) { const l = spec.lid; x.strokeStyle = '#ccc'; x.setLineDash([6, 4]); x.strokeRect(X((l.x ?? 0) - l.w / 2), Y((l.y ?? 0) + l.d / 2), l.w * sc, l.d * sc); x.setLineDash([]); }
+  if (spec.socket) { const q = spec.socket; x.strokeStyle = '#888'; x.setLineDash([3, 3]); x.strokeRect(X(-q.w / 2), Y(q.d / 2), q.w * sc, q.d * sc); x.setLineDash([]); }
+  if (spec.ring) { const q = spec.ring, t = q.t ?? 2.4; x.strokeStyle = '#ccc'; x.setLineDash([6, 4]); x.strokeRect(X(-q.w / 2), Y(q.d / 2), q.w * sc, q.d * sc); x.strokeRect(X(-q.w / 2 + t), Y(q.d / 2 - t), (q.w - 2 * t) * sc, (q.d - 2 * t) * sc); x.setLineDash([]); }
+  x.fillStyle = '#ddd'; x.font = '12px sans-serif'; x.fillText(map ? `${map.label} — ${map.refdes} in ${map.source}` : 'no sample board: synthesized full grid', 8, c.height - 8);
+  document.getElementById('mapnote').textContent = map ? `${map.balls} balls listed @ ${map.pitch} mm, field ${map.spanX} × ${map.spanY} mm${map.package ? ', file names it ' + map.package : ''}.` : '';
+}
+function fillTables(spec, map) {
+  const st = document.getElementById('spec');
+  const dies = (spec.dies ?? []).map(d => `${d.label ?? d.kind} ${d.w}×${d.d}${d.h ? '×' + d.h : ''} mm at (${d.x}, ${d.y})`).join('<br>') || '—';
+  st.innerHTML = [['Name', spec.name], ['Vendor', spec.vendor], ['Balls', `${spec.balls} @ ${spec.pitch} mm${spec.grid ? ' · ' + spec.grid.join('×') + ' grid' : ''}`], ['Body', `${spec.body.L} × ${spec.body.W} × ${spec.body.H ?? '?'} mm`], ['Style', spec.style], ['Dies', dies], ['Lid / ring', spec.lid ? `lid ${spec.lid.w}×${spec.lid.d}×${spec.lid.h}` : spec.ring ? `ring ${spec.ring.w}×${spec.ring.d}, ${spec.ring.t ?? 2.4} wide` : '—'], ['Used by', spec.used ?? '—'], ['Source', (spec.sources ?? []).map(s => `<a href="${s}" style="color:#7fb3ff">${new URL(s).host}</a>`).join(', ') || '—'], ['Confidence', spec.confidence ?? '—']].map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('');
+  const mt = document.getElementById('match');
+  if (!map) { mt.innerHTML = '<tr><td class="warn">No board sample to test the lookup on.</td></tr>'; }
+  else { const c = matchPackage({ balls: map.balls, pitch: map.pitch, spanX: map.spanX, spanY: map.spanY });
+    mt.innerHTML = `<tr><th>Measured</th><td>${map.balls} balls, ${map.pitch} mm, ${map.spanX} × ${map.spanY} mm</td></tr>` + (c.length ? c.slice(0, 4).map((r, i) => `<tr><th>${i ? 'also' : 'Match'}</th><td class="${i ? '' : r.s.id === spec.id ? 'ok' : 'bad'}">${r.s.name} <span style="color:var(--muted)">score ${r.score.toFixed(2)}, span Δ ${r.ds.toFixed(1)} mm${r.turned ? ', turned 90°' : ''}${map.balls !== r.s.balls ? `, ${r.s.balls - map.balls} balls not listed` : ''}</span></td></tr>`).join('') : '<tr><td class="bad">no match</td></tr>'); }
+  document.getElementById('notes').innerHTML = spec.notes ?? '';
+}
+pick.addEventListener('change', () => show(pick.value));
+document.getElementById('caps').addEventListener('change', () => show(pick.value));
+document.getElementById('realballs').addEventListener('change', () => show(pick.value));
+document.querySelectorAll('#views button').forEach(b => b.addEventListener('click', () => setView(b.dataset.v)));
+const first = location.hash.slice(1); pick.value = SPECS.some(s => s.id === first) ? first : SPECS[0].id; show(pick.value);
+function resize() { const w = canvas.clientWidth, h = canvas.clientHeight; renderer.setSize(w, h, false); cam.aspect = w / h; cam.updateProjectionMatrix(); }
+new ResizeObserver(resize).observe(canvas.parentElement); resize();
+renderer.setAnimationLoop(() => { ctl.update(); renderer.render(scene, cam); });
+// Verdict table for the review: every ballmap through the lookup
+window.lookupAll = () => MAPS.map(m => { const c = matchPackage({ balls: m.balls, pitch: m.pitch, spanX: m.spanX, spanY: m.spanY })[0]; return `${m.id}: ${c ? c.s.name : '—'}`; }).join('\n');
+</script>
+</body>
+</html>

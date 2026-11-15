@@ -1,0 +1,229 @@
+/**
+ * CPU / GPU / SoC package records — what sits on top of a large BGA, so the 3D
+ * view can draw a Skylake-U as two bare dies beside each other, a GeForce as a
+ * die in a stiffener ring, a Ryzen as a die in its frame, instead of a flat
+ * box the size of the ball field.
+ *
+ * Lookup is by what a boardview reliably carries: the ball **pitch** and the
+ * ball field's **span** (outer ball centres), with the ball count as a check.
+ * The count alone cannot be the key: a boardview may omit unconnected balls
+ * (the MacBook Pro A2251's Ice Lake-U lists 1,344 of its 1,526), and GA102 /
+ * AD102 share one 3,328-ball footprint. Either orientation matches.
+ *
+ * Dimensions in mm. Die positions are in the package's own frame: x along the
+ * body length L, y along the width W, origin at the package centre, A1 at
+ * (−x, +y). Sources and confidence per record; "span" is measured on a sample
+ * board when one exists (scripts/cpu-package-ballmaps.ts), else derived from
+ * the body with the edge margin. Research: docs/specs/2026-11-15-cpu-packages.md.
+ */
+
+export type DieKind = 'cpu' | 'gpu' | 'pch' | 'io' | 'mem' | 'base';
+export interface PackageDie { kind: DieKind; label?: string; x: number; y: number; w: number; d: number; h?: number; onInterposer?: boolean }
+export interface CapRow { x: number; y: number; n: number; dir: 'x' | 'y'; pitch?: number; size?: '0402' | '0201' }
+export interface PackageSpec {
+  id: string;
+  vendor: 'intel' | 'amd' | 'nvidia' | 'apple';
+  name: string;
+  /** Nominal ball count. */
+  balls: number;
+  /** Nearest-neighbour pitch (minimum pitch on a multi-pitch field). */
+  pitch: number;
+  body: { L: number; W: number; H?: number; sub?: number };
+  /** Outer ball-centre span [along L, along W]; measured where a sample exists. */
+  span: [number, number];
+  style: string;
+  dies?: PackageDie[];
+  lid?: { w: number; d: number; h: number; x?: number; y?: number };
+  ring?: { w: number; d: number; t?: number; h?: number };
+  /** An LGA socket on the pad field: plastic frame (outer w × d, wall t, height h) around a lidded CPU drawn by `lid`. */
+  socket?: { w: number; d: number; t: number; h: number };
+  interposer?: { w: number; d: number; h: number; x?: number; y?: number };
+  caps?: CapRow[];
+  used?: string;
+  sources?: string[];
+  confidence?: string;
+  notes?: string;
+  /** Ball-map entry id in the mockup (docs/specs/2026-11-15-cpu-package-ballmaps.js). */
+  mapId?: string;
+}
+
+export interface PackageMeasure { balls: number; pitch: number; spanX: number; spanY: number }
+export interface PackageMatch { spec: PackageSpec; /** The field's X axis is the body's W (turn the model 90°). */ turned: boolean; score: number; missingBalls: number }
+
+const SPAN_TOL = 1.2; // mm, summed over both axes — under one ball pitch of slack per axis (an LGA1151 pad field is 1.3 from Polaris)
+const PITCH_TOL = 0.06;
+
+/** Best record for a measured ball field, or null. Span and pitch decide; a count above the nominal rules a record
+ *  out, a count below it costs a little (balls the file left out). */
+export function matchPackage(m: PackageMeasure, specs: readonly PackageSpec[] = PACKAGES): PackageMatch | null {
+  let best: PackageMatch | null = null;
+  for (const s of specs) {
+    const dp = Math.abs(s.pitch - m.pitch); if (dp > PITCH_TOL) continue;
+    const fit = (a: number, b: number) => Math.abs(a - m.spanX) + Math.abs(b - m.spanY);
+    const straight = fit(s.span[0], s.span[1]), turned = fit(s.span[1], s.span[0]);
+    const ds = Math.min(straight, turned); if (ds > SPAN_TOL) continue;
+    if (m.balls > s.balls * 1.01 || m.balls < s.balls * 0.8) continue;
+    const missing = Math.max(0, s.balls - m.balls);
+    const score = ds + 20 * dp + (missing ? 0.5 + 2 * missing / s.balls : 0);
+    if (!best || score < best.score) best = { spec: s, turned: turned < straight, score, missingBalls: missing };
+  }
+  return best;
+}
+
+// Die rectangles: a die's published area is turned into a rectangle with the aspect of its die shot where known,
+// else near-square. Spans without a sample board are body − 2 × 1.0 mm (edge margin of a typical FC-BGA).
+const sq = (area: number, aspect = 1) => ({ w: +Math.sqrt(area * aspect).toFixed(1), d: +Math.sqrt(area / aspect).toFixed(1) });
+
+export const PACKAGES: PackageSpec[] = [
+  // ── Intel mobile — "Balls Anywhere" fields (no regular grid), bare flip-chip dies, land-side caps in the depopulated
+  // centre. Body sizes and pitches from Intel datasheets (doc numbers in `sources`); die areas from third-party die
+  // shots (±5 %); die *positions* from package photos. CPU die on the A1 side, PCH beside it along L.
+  { id: 'intel-bga1515', vendor: 'intel', name: 'Intel BGA1515 (Skylake-Y / Kaby Lake-Y / Amber Lake-Y)', balls: 1515, pitch: 0.4, body: { L: 20, W: 16.5, H: 1.0, sub: 0.6 }, span: [18.7, 15.2], style: 'two bare dies (CPU + PCH-LP)',
+    dies: [{ kind: 'cpu', label: 'CPU', x: -3.6, y: 0, w: 10.3, d: 9.6, h: 0.45 }, { kind: 'pch', label: 'PCH-LP', x: 5.2, y: 0, w: 5.6, d: 9.0, h: 0.45 }],
+    used: 'Core m3/m5/m7-6Yxx, i5/i7-7Yxx, i5-8210Y, i7-8500Y; MacBook 12", MacBook Air 2018–19', mapId: 'bga1515', sources: ['https://cdrdv2.intel.com/v1/dl/getContent/332990'], confidence: 'count, pitch, body primary (Intel 332990 Table 8-1); span measured (A1932); PCH die size guessed' },
+  { id: 'intel-bga1356', vendor: 'intel', name: 'Intel BGA1356 (Skylake-U / Kaby Lake-U / Kaby Lake-R)', balls: 1356, pitch: 0.65, body: { L: 42, W: 24, H: 1.3, sub: 0.8 }, span: [40.7, 22.8], style: 'two bare dies (CPU + PCH-LP), land-side caps',
+    dies: [{ kind: 'cpu', label: 'CPU', x: -5.0, y: 0, w: 11.0, d: 10.0, h: 0.6 }, { kind: 'pch', label: 'PCH-LP', x: 6.5, y: 0, w: 7.4, d: 11.6, h: 0.6 }],
+    caps: [{ x: -14.5, y: 0, n: 8, dir: 'y', pitch: 1.2 }, { x: 14.5, y: 0, n: 8, dir: 'y', pitch: 1.2 }],
+    used: 'i3/i5/i7-6xxxU, 7xxxU, i5-8250U/i7-8650U; MacBook Pro 13" 2016–17 (A1706/A1708), Dell XPS 13 9350–9360', mapId: 'bga1356', sources: ['https://cdrdv2.intel.com/v1/dl/getContent/332990'], confidence: 'count, pitch, body primary (Intel 332990); span measured on seven boards; dies: 2+2 die 98.6 mm², quad 123 mm² — drawn between; Iris SKUs add an eDRAM die (not drawn)' },
+  { id: 'intel-bga1440', vendor: 'intel', name: 'Intel BGA1440 (Skylake-H → Comet Lake-H)', balls: 1440, pitch: 0.65, body: { L: 42, W: 28, H: 1.49, sub: 0.8 }, span: [40.7, 26.8], style: 'one bare die, die-side caps; PCH-H separate',
+    dies: [{ kind: 'cpu', label: 'CPU', x: 0, y: 0, w: 13.7, d: 10.9, h: 0.65 }], caps: [{ x: -10.5, y: 0, n: 8, dir: 'y', pitch: 1.2 }, { x: 10.5, y: 0, n: 8, dir: 'y', pitch: 1.2 }],
+    used: 'i7-6700HQ, 7700HQ, 8750H, 9980HK, 10750H; Dell XPS 15 9550–9500, MacBook Pro 15" 2016–19 (A1707/A1990/A2141), Mac mini 2018', mapId: 'bga1440', sources: ['https://cdrdv2.intel.com/v1/dl/getContent/337344', 'https://cdrdv2-public.intel.com/334408/6th-gen-core-pentium-celeron-xeon-e3-v5-processor-h-s-u-series-eds-addendum.pdf'], confidence: 'count, pitch, body, height primary (Intel 337344, 334408); span measured on nine boards; die drawn at the 6-core 150 mm²' },
+  { id: 'intel-bga1528', vendor: 'intel', name: 'Intel BGA1528 (Coffee Lake-U 28 W / Whiskey Lake-U / Comet Lake-U)', balls: 1528, pitch: 0.65, body: { L: 46, W: 24, H: 1.3, sub: 0.8 }, span: [44.7, 22.7], style: 'two bare dies (CPU + PCH-LP), land-side caps',
+    dies: [{ kind: 'cpu', label: 'CPU', x: -6.0, y: 0, w: 12.3, d: 10.0, h: 0.6 }, { kind: 'pch', label: 'PCH-LP', x: 7.5, y: 0, w: 7.4, d: 11.6, h: 0.6 }],
+    caps: [{ x: -16.5, y: 0, n: 8, dir: 'y', pitch: 1.2 }, { x: 16.5, y: 0, n: 8, dir: 'y', pitch: 1.2 }],
+    used: 'i5-8259U/i7-8559U, i5-8265U/i7-8565U, i5-10210U/i7-10710U; MacBook Pro 13" 2018–20 (A1989/A2159/A2289), ThinkPad X1 Carbon Gen 7', mapId: 'bga1528', sources: ['https://cdrdv2.intel.com/v1/dl/getContent/337344', 'https://cdrdv2.intel.com/v1/dl/getContent/338023'], confidence: 'count, pitch, body primary (Intel 337344/338023); span measured on six boards; 28 W GT3e SKUs carry a third (eDRAM) die, not drawn' },
+  { id: 'intel-bga1526', vendor: 'intel', name: 'Intel BGA1526 (Ice Lake-U)', balls: 1526, pitch: 0.65, body: { L: 50, W: 25, H: 1.3, sub: 0.8 }, span: [44.0, 23.2], style: 'two bare dies (CPU + PCH-LP), land-side caps',
+    dies: [{ kind: 'cpu', label: 'CPU', x: -5.5, y: 0, w: 11.4, d: 10.7, h: 0.6 }, { kind: 'pch', label: 'PCH-LP', x: 6.5, y: 0, w: 5.7, d: 9.4, h: 0.6 }],
+    caps: [{ x: -16.5, y: 0, n: 8, dir: 'y', pitch: 1.2 }, { x: 16.5, y: 0, n: 8, dir: 'y', pitch: 1.2 }],
+    used: 'i3-1005G1, i5-1035G7, i7-1065G7; MacBook Pro 13" 2020 4-port (A2251), Dell XPS 13 9300', mapId: 'bga1526', sources: ['https://www.intel.com/content/www/us/en/products/sku/196597/intel-core-i71065g7-processor-8m-cache-up-to-3-90-ghz/specifications.html'],
+    confidence: 'count and body from ARK; pitch secondary; the only sample (A2251 XZZ) lists 1,344 balls over 44.0 × 23.2 mm, which is the span recorded — a file listing all 1,526 may span more and miss', notes: 'Die sizes measured by third parties: CPU 11.44 × 10.71 mm, PCH-LP 5.74 × 9.42 mm.' },
+  { id: 'intel-bga1449', vendor: 'intel', name: 'Intel BGA1449 (Tiger Lake UP3 / H35)', balls: 1449, pitch: 0.65, body: { L: 45.5, W: 25, H: 1.185, sub: 0.6 }, span: [44.1, 23.6], style: 'two bare dies (CPU + PCH-LP), land-side caps',
+    dies: [{ kind: 'cpu', label: 'CPU', x: -5.0, y: 0, w: 13.6, d: 10.7, h: 0.55 }, { kind: 'pch', label: 'PCH-LP', x: 7.5, y: 0, w: 6.0, d: 9.5, h: 0.55 }],
+    used: 'i5-1135G7, i7-1165G7, i7-1185G7, i7-11375H; Dell XPS 13 9310, Surface Pro 8', sources: ['https://cdrdv2.intel.com/v1/dl/getContent/631121'], confidence: 'count, pitch, body, height primary (Intel 631121 Table 14-1); no sample — span derived (body − 1.4 mm); CPU die 13.6 × 10.7 secondary, PCH guessed' },
+  { id: 'intel-bga1598', vendor: 'intel', name: 'Intel BGA1598 (Tiger Lake UP4)', balls: 1598, pitch: 0.4, body: { L: 26.5, W: 18.5, H: 0.963, sub: 0.5 }, span: [25.3, 17.3], style: 'two bare dies (CPU + PCH-LP)',
+    dies: [{ kind: 'cpu', label: 'CPU', x: -4.0, y: 0, w: 13.6, d: 10.7, h: 0.45 }, { kind: 'pch', label: 'PCH-LP', x: 7.5, y: 0, w: 6.0, d: 9.5, h: 0.45 }],
+    used: 'i5-1130G7, i7-1160G7, i7-1180G7; ThinkPad X1 Nano Gen 1', sources: ['https://cdrdv2.intel.com/v1/dl/getContent/631121'], confidence: 'count, pitch, body, height primary (Intel 631121); no sample — span derived' },
+  { id: 'intel-bga1787', vendor: 'intel', name: 'Intel BGA1787 (Tiger Lake-H45)', balls: 1787, pitch: 0.65, body: { L: 50, W: 26.5, H: 1.41, sub: 0.7 }, span: [48.6, 25.1], style: 'one bare die, land-side caps; PCH-H separate',
+    dies: [{ kind: 'cpu', label: 'CPU', x: 0, y: 0, w: 15.7, d: 12.1, h: 0.65 }], caps: [{ x: -12.5, y: 0, n: 8, dir: 'y', pitch: 1.2 }, { x: 12.5, y: 0, n: 8, dir: 'y', pitch: 1.2 }],
+    used: 'i5-11400H, i7-11800H, i9-11980HK; Dell XPS 15 9510, Legion 5 Pro 2021', sources: ['https://cdrdv2.intel.com/v1/dl/getContent/631121'], confidence: 'count, pitch, body primary (Intel 631121; height 1.41 from the table, §1.2 says 1.325); no sample — span derived; die ≈190 mm² secondary' },
+  { id: 'intel-bga1744', vendor: 'intel', name: 'Intel BGA1744 (Alder Lake-P/H/U15, Raptor Lake-P/H/U)', balls: 1744, pitch: 0.65, body: { L: 50, W: 25, H: 1.185, sub: 0.594 }, span: [49.2, 24.5], style: 'two bare dies (CPU + PCH-P), land-side caps',
+    dies: [{ kind: 'cpu', label: 'CPU', x: -5.5, y: 0, w: 10.6, d: 20.5, h: 0.55 }, { kind: 'pch', label: 'PCH-P', x: 6.5, y: 0, w: 7.0, d: 7.7, h: 0.55 }],
+    caps: [{ x: 15.5, y: 0, n: 10, dir: 'y', pitch: 1.2 }, { x: -16, y: 0, n: 10, dir: 'y', pitch: 1.2 }],
+    used: 'i7-1260P, i7-12700H, i7-1255U, i7-1360P, i7-13700H, Core 7 150U; Dell XPS 13 Plus 9320, XPS 15 9520/9530', mapId: 'bga1744', sources: ['https://cdrdv2-public.intel.com/655258/655258-011.pdf', 'https://cdrdv2.intel.com/v1/dl/getContent/743844'], confidence: 'count, pitch, body, substrate, height primary (Intel 655258 / 743844 Table 99); span measured (LA-P161P); 6+8 die 217 mm² ≈ 10.6 × 20.5 and PCH-P ≈ 54 mm² secondary; the 2+8 U die is smaller' },
+  { id: 'intel-bga1781', vendor: 'intel', name: 'Intel BGA1781 (Alder Lake-U 9 W)', balls: 1781, pitch: 0.4, body: { L: 28.5, W: 19, H: 1.033, sub: 0.5 }, span: [27.3, 17.8], style: 'two bare dies (CPU + PCH-P)',
+    dies: [{ kind: 'cpu', label: 'CPU', x: -4.0, y: 0, w: 9.5, d: 15.5, h: 0.45 }, { kind: 'pch', label: 'PCH-P', x: 7.0, y: 0, w: 7.0, d: 7.7, h: 0.45 }],
+    used: 'i5-1230U, i7-1250U, i7-1260U; Dell XPS 13 9315', sources: ['https://cdrdv2-public.intel.com/655258/655258-011.pdf'], confidence: 'count, pitch, body, height primary (Intel 655258); no sample — span derived; 2+8 die size guessed' },
+  { id: 'intel-bga1792', vendor: 'intel', name: 'Intel BGA1792 (Raptor Lake-PX)', balls: 1792, pitch: 0.62, body: { L: 40, W: 25, H: 1.171, sub: 0.6 }, span: [38.8, 23.8], style: 'two bare dies (CPU + PCH-PX)',
+    dies: [{ kind: 'cpu', label: 'CPU', x: -4.5, y: 0, w: 10.6, d: 20.5, h: 0.55 }, { kind: 'pch', label: 'PCH-PX', x: 7.0, y: 0, w: 7.0, d: 7.7, h: 0.55 }],
+    used: 'optional 40 × 25 form factor of some 13th-gen P/H SKUs', sources: ['https://cdrdv2.intel.com/v1/dl/getContent/743844'], confidence: 'count, pitch, body, height primary (Intel 743844 Table 100); no sample — span derived' },
+  { id: 'intel-bga1964', vendor: 'intel', name: 'Intel BGA1964 (Alder Lake-HX / Raptor Lake-HX)', balls: 1964, pitch: 0.8, body: { L: 45, W: 37.5, H: 2.005, sub: 1.119 }, span: [43.2, 35.2], style: 'one bare desktop die, die-side caps, regular 0.8 mm grid; PCH-S separate',
+    dies: [{ kind: 'cpu', label: 'CPU', x: 0, y: 0, w: 23.8, d: 10.8, h: 0.75 }], caps: [{ x: 0, y: 9.5, n: 12, dir: 'x', pitch: 1.3 }, { x: 0, y: -9.5, n: 12, dir: 'x', pitch: 1.3 }],
+    used: 'i9-12900HX, i9-13980HX, i9-14900HX; MSI Raider GE78 HX, Dell Precision 7670', sources: ['https://cdrdv2-public.intel.com/655258/655258-011.pdf', 'https://cdrdv2.intel.com/v1/dl/getContent/743844'], confidence: 'count, pitch, body, substrate, height primary (Intel 655258 / 743844 Table 98 — the 1.185 in §1.2 is a copy error); no sample — span derived; RPL-S 8+16 die 257 mm² ≈ 23.8 × 10.8 secondary' },
+  { id: 'intel-bga2049', vendor: 'intel', name: 'Intel BGA2049 (Meteor Lake-U/H, Arrow Lake-H/U)', balls: 2049, pitch: 0.65, body: { L: 50, W: 25, H: 1.245, sub: 0.644 }, span: [48.7, 23.7], style: 'Foveros: four tiles + filler on a base tile, bare',
+    interposer: { w: 23.5, d: 11.3, h: 0.25, x: -3, y: 0 },
+    dies: [{ kind: 'io', label: 'SoC', x: -11.0, y: 0, w: 7.6, d: 10.6, h: 0.35, onInterposer: true }, { kind: 'cpu', label: 'Compute', x: -3.5, y: 2.4, w: 7.2, d: 5.4, h: 0.35, onInterposer: true }, { kind: 'gpu', label: 'GPU', x: -3.5, y: -2.8, w: 7.2, d: 4.6, h: 0.35, onInterposer: true }, { kind: 'pch', label: 'IOE', x: 4.7, y: 0, w: 6.6, d: 4.0, h: 0.35, onInterposer: true }],
+    used: 'Core Ultra 5 125H/U, 7 155H/165H, 9 185H, Ultra 5 225H, 7 255H, 9 285H; Dell XPS 14 9440, Yoga Pro 9i Gen 10', sources: ['https://cdrdv2.intel.com/v1/dl/getContent/792044', 'https://cdrdv2.intel.com/v1/dl/getContent/842704'], confidence: 'count, pitch, body, substrate, height primary (Intel 792044 / 842704 Table 10); no sample — span derived; tile sizes from Locuza/TechInsights estimates, placement from photos; Arrow Lake-H tiles unknown, drawn as Meteor Lake' },
+  { id: 'intel-bga2551', vendor: 'intel', name: 'Intel BGA2551 (Meteor Lake-U Type 4)', balls: 2551, pitch: 0.37, body: { L: 23, W: 19, H: 0.675, sub: 0.24 }, span: [22.0, 18.0], style: 'Foveros tiles on a thin base, bare, low-temperature solder',
+    interposer: { w: 23.5, d: 11.3, h: 0.15, x: -0.5, y: 0 }, dies: [{ kind: 'io', label: 'SoC', x: -8.5, y: 0, w: 7.6, d: 10.6, h: 0.25, onInterposer: true }, { kind: 'cpu', label: 'Compute', x: -1.0, y: 2.4, w: 7.2, d: 5.4, h: 0.25, onInterposer: true }, { kind: 'gpu', label: 'GPU', x: -1.0, y: -2.8, w: 7.2, d: 4.6, h: 0.25, onInterposer: true }, { kind: 'pch', label: 'IOE', x: 7.2, y: 0, w: 6.6, d: 4.0, h: 0.25, onInterposer: true }],
+    used: 'Core Ultra 5 134U, 7 164U', sources: ['https://cdrdv2.intel.com/v1/dl/getContent/792044'], confidence: 'count, pitch (0.37 corner / 0.40 under the tile), body, height primary (Intel 792044 Table 11); no sample — span derived' },
+  { id: 'intel-bga2114', vendor: 'intel', name: 'Intel BGA2114 (Arrow Lake-HX)', balls: 2114, pitch: 0.65, body: { L: 37.5, W: 30.2, H: 2.0, sub: 1.1 }, span: [36.2, 28.9], style: 'Foveros: desktop Arrow Lake tiles on a base tile, bare; PCH separate',
+    interposer: { w: 21.5, d: 14.1, h: 0.3 }, dies: [{ kind: 'cpu', label: 'Compute', x: -5.5, y: 0, w: 9.8, d: 12.0, h: 0.4, onInterposer: true }, { kind: 'io', label: 'SoC', x: 4.5, y: 2.8, w: 10.4, d: 8.3, h: 0.4, onInterposer: true }, { kind: 'gpu', label: 'GPU', x: 2.0, y: -4.0, w: 5.0, d: 4.6, h: 0.4, onInterposer: true }, { kind: 'pch', label: 'IOE', x: 7.5, y: -4.0, w: 5.2, d: 4.7, h: 0.4, onInterposer: true }],
+    used: 'Core Ultra 5 235HX, 7 255HX, 9 275HX/285HX; Legion Pro 7i Gen 10, MSI Raider 18 HX', sources: ['https://cdrdv2-public.intel.com/834774/834774_024.pdf'], confidence: 'count and body primary (Intel 834774 spec update); pitch unpublished — 0.65 inferred (0.8 cannot hold 2,114 balls on 37.5 × 30.2); height guessed from the HX line; tiles as the desktop 285K' },
+  { id: 'intel-bga2833', vendor: 'intel', name: 'Intel BGA2833 (Lunar Lake, Core Ultra 200V)', balls: 2833, pitch: 0.5, body: { L: 27.5, W: 27, H: 1.58, sub: 0.584 }, span: [26.3, 25.8], style: 'Foveros stack + two LPDDR5X packages on the substrate, bare',
+    interposer: { w: 15.5, d: 14, h: 0.25, x: -5, y: 0 }, dies: [{ kind: 'cpu', label: 'Compute', x: -7.5, y: 0, w: 10.2, d: 13.0, h: 0.35, onInterposer: true }, { kind: 'pch', label: 'PCT', x: 0.0, y: 3.2, w: 4.6, d: 6.0, h: 0.35, onInterposer: true }, { kind: 'base', label: 'filler', x: 0.0, y: -3.5, w: 4.6, d: 6.0, h: 0.35, onInterposer: true }, { kind: 'mem', label: 'LPDDR5X', x: 8.0, y: 6.4, w: 9.5, d: 11.0, h: 0.95 }, { kind: 'mem', label: 'LPDDR5X', x: 8.0, y: -6.4, w: 9.5, d: 11.0, h: 0.95 }],
+    used: 'Core Ultra 5 226V–9 288V; Dell XPS 13 9350 (2024), Asus Zenbook S 14', sources: ['https://cdrdv2-public.intel.com/829568/829568-004.pdf', 'https://www.hc2024.hotchips.org/assets/program/conference/day1/56_HC2024.Intel.AGihon.final.pdf'], confidence: 'count, pitch, body, substrate, heights primary (Intel 829568 Table 10: 1.34 mm with 2 × 8 GB, 1.58 with 2 × 16 GB DRAM); no sample — span derived; tile sizes secondary, DRAM placement from photos' },
+  { id: 'intel-fcbga1338', vendor: 'intel', name: 'Intel FCBGA1338 (Jasper Lake)', balls: 1338, pitch: 0.593, body: { L: 35, W: 24, H: 1.406, sub: 0.8 }, span: [33.8, 22.8], style: 'two bare dies (compute + PCH)',
+    dies: [{ kind: 'cpu', label: 'SoC', x: -4.5, y: 0, w: 9.0, d: 8.5, h: 0.6 }, { kind: 'pch', label: 'PCH', x: 5.5, y: 0, w: 6.0, d: 7.5, h: 0.6 }],
+    used: 'Celeron N4500/N5100, Pentium Silver N6000; Vivobook Go 15 E510', sources: ['https://cdrdv2-public.intel.com/633935/633935-006.pdf'], confidence: 'count, pitch, body, height primary (Intel 633935 Table 1-1); no sample — span derived; die sizes guessed' },
+  // older Intel parts the local corpus carries
+  { id: 'intel-bga1364', vendor: 'intel', name: 'Intel BGA1364 (Haswell-H / Broadwell-H)', balls: 1364, pitch: 0.7, body: { L: 37.5, W: 32, H: 1.5, sub: 0.8 }, span: [35.9, 30.6], style: 'one bare die, die-side caps; PCH-H separate',
+    dies: [{ kind: 'cpu', label: 'CPU', x: 0, y: 0, w: 15.5, d: 11.5, h: 0.65 }], caps: [{ x: -11, y: 0, n: 8, dir: 'y', pitch: 1.2 }, { x: 11, y: 0, n: 8, dir: 'y', pitch: 1.2 }],
+    used: 'i7-4700HQ–4980HQ, i7-5700HQ; MacBook Pro 15" 2013–15 (A1398), iMac 21.5" 2014–15', mapId: 'bga1364', confidence: 'ball field measured on nine boards (Allegro HASWELL_BGA_1364P); body from the span; die drawn at the 4+3e GT3e size' },
+  { id: 'intel-bga1168', vendor: 'intel', name: 'Intel BGA1168 (Haswell-ULT / Broadwell-U)', balls: 1168, pitch: 0.65, body: { L: 40, W: 24, H: 1.3, sub: 0.8 }, span: [38.7, 22.7], style: 'two bare dies (CPU + PCH-LP), land-side caps',
+    dies: [{ kind: 'cpu', label: 'CPU', x: -5.5, y: 0, w: 11.0, d: 10.0, h: 0.6 }, { kind: 'pch', label: 'PCH-LP', x: 6.5, y: 0, w: 7.0, d: 10.5, h: 0.6 }],
+    caps: [{ x: -14, y: 0, n: 8, dir: 'y', pitch: 1.2 }, { x: 14, y: 0, n: 8, dir: 'y', pitch: 1.2 }],
+    used: 'i5-4250U–4650U, i5-5250U–5350U; MacBook Air 2013–17, MacBook Pro 13" 2013–15 (A1502)', mapId: 'bga1168', confidence: 'ball field measured on twelve boards (Allegro SHARK-BAY-ULT_BGA_1168P); body from the span' },
+  { id: 'intel-bga1380', vendor: 'intel', name: 'Intel BGA1380 (Bay Trail-M/D)', balls: 1380, pitch: 0.4, body: { L: 17, W: 17, H: 1.2, sub: 0.6 }, span: [16.0, 16.0], style: 'one bare die',
+    dies: [{ kind: 'cpu', label: 'SoC', x: 0, y: 0, w: 9.0, d: 9.0, h: 0.5 }], used: 'Celeron N2830/N2940, Pentium N3530', mapId: 'bga1380', confidence: 'ball field measured (Allegro BGA1380-INTEL-VALLEYVIEW); body from the span; die guessed' },
+  // desktop sockets on the pad field (iMac, Mac Pro): the socket body and a lidded CPU
+  { id: 'intel-lga1151', vendor: 'intel', name: 'Intel LGA1151 / LGA1200 socket', balls: 1200, pitch: 0.914, body: { L: 37.5, W: 37.5, H: 4.4, sub: 0.0 }, span: [36.6, 37.9], style: 'LGA socket with a lidded CPU',
+    socket: { w: 44, d: 44, t: 3.2, h: 2.4 }, lid: { w: 32, d: 32, h: 2.0 }, used: 'iMac 21.5"/27" 2015–20 (A1418/A1419/A2115), desktop Skylake → Rocket Lake', mapId: 'lga1151', sources: ['https://cdrdv2.intel.com/v1/dl/getContent/337344'], confidence: 'pad field measured on five iMac boards (1,151 / 1,200 pads @ 0.914 mm); socket body approximate' },
+  { id: 'intel-lga2066', vendor: 'intel', name: 'Intel LGA2066 socket', balls: 2066, pitch: 1.0, body: { L: 52.5, W: 45, H: 5.0, sub: 0.0 }, span: [51.4, 45.9], style: 'LGA socket with a lidded CPU',
+    socket: { w: 58, d: 51, t: 3.5, h: 2.8 }, lid: { w: 48, d: 42, h: 2.2 }, used: 'iMac Pro A1862 (Xeon W), Skylake-X / Cascade Lake-X desktops', mapId: 'lga2066', confidence: 'pad field measured (A1862); socket body approximate' },
+
+  // ── AMD mobile — every FP/FL package is a lidless flip-chip die (or dies) inside a peripheral stiffener frame
+  // (AMD XAPP1377); the ball field is multi-pitch, so pitch here is the minimum. No AMD board in the local corpus.
+  { id: 'amd-fp5', vendor: 'amd', name: 'AMD FP5 (Raven Ridge / Picasso / Dali)', balls: 1140, pitch: 0.7, body: { L: 35, W: 25, H: 1.38, sub: 0.9 }, span: [33, 23], style: 'bare die in a stiffener frame',
+    dies: [{ kind: 'cpu', label: 'APU', x: 0, y: 0, ...sq(210, 1.1), h: 0.6 }], ring: { w: 33.5, d: 23.5, t: 1.6, h: 0.65 },
+    used: 'Ryzen 2000U/3000U, Athlon 300U, Ryzen Embedded V1000/R1000', sources: ['https://en.wikichip.org/wiki/amd/packages/fp5'], confidence: 'secondary (WikiChip); 0.7 mm minimum pitch, multi-pitch field' },
+  { id: 'amd-fp6', vendor: 'amd', name: 'AMD FP6 / FP7 / FP7r2 (Renoir → Hawk Point)', balls: 1140, pitch: 0.65, body: { L: 35, W: 25, H: 1.38, sub: 0.9 }, span: [33, 23], style: 'bare die in a stiffener frame',
+    dies: [{ kind: 'cpu', label: 'APU', x: 0, y: 0, ...sq(178, 1.1), h: 0.6 }], ring: { w: 33.5, d: 23.5, t: 1.6, h: 0.65 },
+    used: 'Ryzen 4000 / 5000 (FP6), Ryzen 6000 / 7035 / 7040 / 8040 (FP7, FP7r2), Ryzen Embedded V2000 / V3000 / 8000', sources: ['https://en.wikichip.org/wiki/amd/packages/fp6', 'https://www.amd.com/content/dam/amd/en/documents/products/embedded/ryzen/ryzen-embedded-v3000-series-product-brief.pdf', 'https://www.amd.com/content/dam/amd/en/documents/products/embedded/ryzen/amd-ryzen-embedded-8000-product-brief.pdf', 'https://docs.amd.com/r/en-US/xapp1377-heatsinks-thermal/Embedded-x86-BGA-Packages-Ryzen-and-EPYC-Covers-FPx-FLx-and-SPx'],
+    confidence: 'primary count, pitch, body, height (AMD V3000 / Embedded 8000 briefs: 1140 balls, 0.65 mm, 25 × 35 × 1.38, lidless); no sample — span derived; die 156–210 mm² secondary',
+    notes: 'FP6, FP7 and FP7r2 share one body and ball count and cannot be told apart from the ball field; the model is the same (one die in a frame).' },
+  { id: 'amd-fp8', vendor: 'amd', name: 'AMD FP8 (Phoenix / Hawk Point / Strix Point / Krackan)', balls: 1377, pitch: 0.65, body: { L: 40, W: 25, H: 1.4, sub: 0.9 }, span: [38, 23], style: 'bare die in a stiffener frame',
+    dies: [{ kind: 'cpu', label: 'APU', x: 0, y: 0, ...sq(232.5, 1.2), h: 0.6 }], ring: { w: 38.5, d: 23.5, t: 1.6, h: 0.65 },
+    used: 'Ryzen 7040 (FP8 SKUs), 8040, Ryzen AI 300, Ryzen AI 7 350', sources: ['https://hothardware.com/news/strix-point-bga-2077-leak', 'https://newsroom.amd.com/news/2026/1/5/amd-introduces-ryzen-ai-embedded-processor-portfol/'], confidence: 'body primary (AMD press release 25×40); 1377 balls from a leaked AMD document; pitch unpublished — 0.65 assumed' },
+  { id: 'amd-fp11', vendor: 'amd', name: 'AMD FP11 (Strix Halo, Ryzen AI Max)', balls: 2077, pitch: 0.65, body: { L: 45, W: 37.5, H: 1.5, sub: 0.9 }, span: [43, 35.5], style: 'three bare dies on a fan-out interposer, stiffener frame',
+    interposer: { w: 36, d: 22, h: 0.15 },
+    dies: [{ kind: 'io', label: 'IOD + GPU', x: 0, y: 0, w: 19.2, d: 16.0, h: 0.6, onInterposer: true }, { kind: 'cpu', label: 'CCD', x: -14.5, y: 0, w: 7.3, d: 9.1, h: 0.6, onInterposer: true }, { kind: 'cpu', label: 'CCD', x: 14.5, y: 0, w: 7.3, d: 9.1, h: 0.6, onInterposer: true }], ring: { w: 43.5, d: 36, t: 1.8, h: 0.8 },
+    used: 'Ryzen AI Max 385 / 390 / Max+ 395', sources: ['https://www.techpowerup.com/324271/amd-strix-halo-a-large-rectangular-bga-package-the-size-of-an-lga1700-processor', 'https://www.techinsights.com/blog/amd-ryzen-series-strix-halo-advanced-packaging-quick-look-analysis'], confidence: 'body and count from a leaked AMD document; die sizes from an annotated die shot; pitch unpublished — 0.65 assumed' },
+  { id: 'amd-fl1', vendor: 'amd', name: 'AMD FL1 (Dragon Range / Fire Range HX)', balls: 1763, pitch: 0.65, body: { L: 40, W: 40, H: 1.6, sub: 1.0 }, span: [38, 38], style: 'desktop chiplets, bare, no IHS',
+    dies: [{ kind: 'io', label: 'cIOD', x: 0, y: -6, w: 12.6, d: 9.7, h: 0.6 }, { kind: 'cpu', label: 'CCD', x: -5.2, y: 6.5, w: 9.6, d: 7.4, h: 0.6 }, { kind: 'cpu', label: 'CCD', x: 5.2, y: 6.5, w: 9.6, d: 7.4, h: 0.6 }], ring: { w: 38.5, d: 38.5, t: 1.8, h: 0.8 },
+    used: 'Ryzen 7045HX, 8045HX, 9955HX', sources: ['https://www.techpowerup.com/303007/amd-launches-ryzen-7045hx-series-16-core-dragon-range-enthusiast-mobile-processors'], confidence: 'body secondary (40×40), 1763 balls from one database; chiplet placement as on desktop Raphael; pitch unpublished — 0.65 assumed' },
+
+  // ── AMD GPUs — bare flip-chip die, centred, in a perimeter stiffener frame. Spans measured on sample boards.
+  { id: 'amd-polaris', vendor: 'amd', name: 'AMD Polaris 10 / 20 (RX 470–590, Radeon Pro 570X–580X)', balls: 1401, pitch: 0.9, body: { L: 39.5, W: 39.5, H: 2.3, sub: 1.4 }, span: [37.4, 37.4], style: 'bare die in a stiffener frame',
+    dies: [{ kind: 'gpu', label: 'Polaris', x: 0, y: 0, ...sq(232), h: 0.8 }], ring: { w: 38, d: 38, t: 2.6, h: 0.8 }, caps: [{ x: 0, y: 11, n: 10, dir: 'x', pitch: 1.3 }, { x: 0, y: -11, n: 10, dir: 'x', pitch: 1.3 }],
+    used: 'RX 480/580 (MSI RX 580 sample), iMac 2017 A1419 Radeon Pro 580', mapId: 'polaris', confidence: 'ball field measured on two boards (GenCAD names it BGA_ELLESMEREL4); body from the span; die 232 mm² secondary' },
+  { id: 'amd-vega10', vendor: 'amd', name: 'AMD Vega 10 (Vega 56/64, iMac Pro)', balls: 2013, pitch: 1.0, body: { L: 47.5, W: 47.5, H: 3.0, sub: 1.5 }, span: [44.8, 44.9], style: 'GPU + two HBM2 stacks on an interposer, stiffener frame',
+    interposer: { w: 33, d: 31, h: 0.1 }, dies: [{ kind: 'gpu', label: 'Vega 10', x: 4.5, y: 0, w: 21.0, d: 23.0, h: 0.8, onInterposer: true }, { kind: 'mem', label: 'HBM2', x: -10.5, y: 6.5, w: 7.8, d: 11.9, h: 0.9, onInterposer: true }, { kind: 'mem', label: 'HBM2', x: -10.5, y: -6.5, w: 7.8, d: 11.9, h: 0.9, onInterposer: true }],
+    ring: { w: 46, d: 46, t: 3.5, h: 0.9 }, used: 'iMac Pro A1862 (Radeon Pro Vega 56/64), RX Vega 56/64', mapId: 'vega10', confidence: 'ball field measured (A1862); 47.5 mm body and the interposer layout from public teardowns; die rectangles approximate' },
+  { id: 'amd-imac2019-gpu', vendor: 'amd', name: 'AMD Vega 12 class (iMac 2019 A2115 GPU)', balls: 1928, pitch: 0.8, body: { L: 42, W: 42, H: 2.6, sub: 1.4 }, span: [39.9, 39.9], style: 'GPU + two HBM2 stacks on an interposer, stiffener frame',
+    interposer: { w: 28, d: 26, h: 0.1 }, dies: [{ kind: 'gpu', label: 'GPU', x: 3.5, y: 0, w: 15, d: 17, h: 0.8, onInterposer: true }, { kind: 'mem', label: 'HBM2', x: -8.5, y: 6.2, w: 7.8, d: 11.9, h: 0.9, onInterposer: true }, { kind: 'mem', label: 'HBM2', x: -8.5, y: -6.2, w: 7.8, d: 11.9, h: 0.9, onInterposer: true }],
+    ring: { w: 40.5, d: 40.5, t: 3.0, h: 0.9 }, used: 'iMac 27" 2019 Radeon Pro Vega 48', mapId: 'imac2019-gpu', confidence: 'ball field measured; identity inferred from the board (the Polaris models of that iMac carry the 1401-ball part); layout guessed from Vega 12' },
+
+  // ── NVIDIA — bare flip-chip die, centred, perimeter stiffener frame, caps between die and frame (every public photo;
+  // no NVIDIA document describes it). Ball pitches are measured on sample boards: the web has none.
+  { id: 'nv-bga908', vendor: 'nvidia', name: 'NVIDIA 128-bit laptop GPU, 29 mm (GK107/GK208, GM107, GP107)', balls: 908, pitch: 0.8, body: { L: 29, W: 29, H: 2.0, sub: 1.1 }, span: [27.4, 27.4], style: 'bare die in a stiffener frame',
+    dies: [{ kind: 'gpu', label: 'GPU', x: 0, y: 0, ...sq(140), h: 0.7 }], ring: { w: 27.8, d: 27.8, t: 2.2, h: 0.7 }, caps: [{ x: 0, y: 8.6, n: 8, dir: 'x', pitch: 1.2 }, { x: 0, y: -8.6, n: 8, dir: 'x', pitch: 1.2 }],
+    used: 'GT 640M/650M/750M (N13P/N13M), 920M–940MX (N16S), GTX 960M (N15P-GT, GM107), GTX 1050/1050 Ti (N17P-G0/G1, GP107), iMac GK107', mapId: 'n17p', sources: ['https://www.notebookcheck.net/NVIDIA-GeForce-GTX-960M.138006.0.html'],
+    confidence: 'ball field measured on five boards (N13P-GS, N13M, N15P-GT, N17P-G0 package names); die drawn at ~140 mm² (GM107 148, GP107 132)' },
+  { id: 'nv-gb4b', vendor: 'nvidia', name: 'NVIDIA GB4B-256 (TU116 / TU106 / TU104, 37.5 mm)', balls: 2228, pitch: 0.7, body: { L: 37.5, W: 37.5, H: 2.4, sub: 1.3 }, span: [35.7, 35.7], style: 'bare die in a stiffener frame',
+    dies: [{ kind: 'gpu', label: 'GPU', x: 0, y: 0, ...sq(445), h: 0.8 }], ring: { w: 36.3, d: 36.3, t: 2.6, h: 0.8 }, caps: [{ x: 0, y: 14.2, n: 12, dir: 'x', pitch: 1.2 }, { x: 0, y: -14.2, n: 12, dir: 'x', pitch: 1.2 }],
+    used: 'GTX 1660 Ti (N18E-G0), RTX 2060/2070 (N18E-G1/G2), RTX 2080 (N18E-G3); desktop RTX 2060–2080', mapId: 'ga106', sources: ['https://www.nvidia.com/content/dam/cpmassets/folder2/NPN-09335-001_v01.pdf', 'https://www.nvidia.com/content/dam/cpmassets/folder2/NPN-09746-001_v01.pdf'],
+    confidence: 'count and body primary (NVIDIA NPN sheets: 2228 balls, 37.5 mm); pitch measured on the MSI MS-V385 sample (GenCAD BGA_2228_P070_375X375); die drawn at TU106 size' },
+  { id: 'nv-gn22-x4', vendor: 'nvidia', name: 'NVIDIA GN22-X4 (GB206 laptop, RTX 5060 class)', balls: 2088, pitch: 0.65, body: { L: 33, W: 33, H: 2.3, sub: 1.2 }, span: [31.2, 31.2], style: 'bare die in a stiffener frame',
+    dies: [{ kind: 'gpu', label: 'GB206', x: 0, y: 0, ...sq(181), h: 0.75 }], ring: { w: 31.8, d: 31.8, t: 2.4, h: 0.75 }, caps: [{ x: 0, y: 9.8, n: 10, dir: 'x', pitch: 1.1 }, { x: 0, y: -9.8, n: 10, dir: 'x', pitch: 1.1 }],
+    used: 'RTX 5060 laptop (GN22-X4), RTX 5070 laptop (GN22-X6)', mapId: 'gn22', sources: ['https://wccftech.com/nvidia-next-gen-geforce-rtx-50-blackwell-laptop-gpu-lineup-gddr7-leak-2025-launch/'],
+    confidence: 'ball field measured on LA-P161P (Allegro GN22-X4-A1_FCBGA_2088P); body from the span; die 181 mm² secondary' },
+  { id: 'nv-fcbga1745', vendor: 'nvidia', name: 'NVIDIA 256-bit GPU, 40 mm (GK104, GM204)', balls: 1745, pitch: 0.8, body: { L: 40, W: 40, H: 2.6, sub: 1.4 }, span: [38.4, 38.4], style: 'bare die in a stiffener frame',
+    dies: [{ kind: 'gpu', label: 'GPU', x: 0, y: 0, ...sq(340), h: 0.8 }], ring: { w: 38.8, d: 38.8, t: 2.8, h: 0.8 }, caps: [{ x: 0, y: 13.5, n: 12, dir: 'x', pitch: 1.2 }, { x: 0, y: -13.5, n: 12, dir: 'x', pitch: 1.2 }],
+    used: 'GTX 680MX/775M/780M (GK104), GTX 970M/980M (GM204, N16E), iMac 2012–2013 GK104', mapId: 'gk104', sources: ['https://videocardz.com/58101/nvidia-gp104-and-first-polaris-gpu-supposedly-spotted-on-zauba'],
+    confidence: 'ball field measured on the iMac A1418 D8 (GK104); GM204 FCBGA-1745 / 40 mm secondary; die drawn between GK104 294 and GM204 398 mm²' },
+  { id: 'nv-bga3328', vendor: 'nvidia', name: 'NVIDIA GA102 / AD102 (RTX 3080–4090, 51 mm)', balls: 3328, pitch: 0.8, body: { L: 51, W: 51, H: 3.0, sub: 1.6 }, span: [49.4, 49.4], style: 'bare die in a stiffener frame',
+    dies: [{ kind: 'gpu', label: 'GPU', x: 0, y: 0, w: 24.7, d: 24.7, h: 0.8 }], ring: { w: 49.5, d: 49.5, t: 3.2, h: 0.8 }, caps: [{ x: 0, y: 16.5, n: 16, dir: 'x', pitch: 1.2 }, { x: 0, y: -16.5, n: 16, dir: 'x', pitch: 1.2 }, { x: 16.5, y: 0, n: 16, dir: 'y', pitch: 1.2 }, { x: -16.5, y: 0, n: 16, dir: 'y', pitch: 1.2 }],
+    used: 'RTX 3080/3090 (GA102), RTX 4090/4080 desktop (AD102/AD103 share the body class)', mapId: 'ad102', confidence: 'ball field measured on two boards (GenCAD BGA_3328_P080_P090_510X510: 0.8/0.9 mm mixed pitch, 51 × 51); die 608–628 mm²' },
+
+  // ── Intel PCH (separate chips on H-series boards) — small bare flip-chip die, no lid.
+  { id: 'intel-pch-h-837', vendor: 'intel', name: 'Intel 100/200-series PCH-H (Sunrise Point / Union Point)', balls: 837, pitch: 0.543, body: { L: 23, W: 23, H: 1.3, sub: 0.8 }, span: [22.0, 22.0], style: 'bare die',
+    dies: [{ kind: 'pch', label: 'PCH', x: 0, y: 0, w: 8.5, d: 8.5, h: 0.6 }], used: 'HM170/HM175/QM170… on Skylake-H / Kaby Lake-H boards', mapId: 'pch-skl-h', confidence: 'ball field measured (Allegro SKY-S-PCH_BGA_837P); die size guessed' },
+  { id: 'intel-pch-h-874', vendor: 'intel', name: 'Intel 300-series PCH-H (Cannon Point-H)', balls: 874, pitch: 0.535, body: { L: 23.8, W: 24.8, H: 1.3, sub: 0.8 }, span: [22.6, 23.6], style: 'bare die',
+    dies: [{ kind: 'pch', label: 'PCH', x: 0, y: 0, w: 9, d: 9, h: 0.6 }], used: 'HM370/QM370/CM246 on Coffee Lake-H boards', mapId: 'pch-cnp-h', confidence: 'ball field measured (Allegro CNP-H_BGA_874P); die size guessed' },
+
+  // ── Apple silicon — SoC under a nickel lid, LPDDR packages beside it on the substrate. Measured on the XZZ boardviews.
+  { id: 'apple-m1', vendor: 'apple', name: 'Apple M1 (A2337 / A2338 / A2348)', balls: 2502, pitch: 0.5, body: { L: 28.5, W: 24, H: 2.4, sub: 0.9 }, span: [27.0, 22.5], style: 'lidded SoC + 2 LPDDR4X packages',
+    lid: { w: 15.5, d: 15.5, h: 1.1, x: -5.5, y: 0 }, dies: [{ kind: 'mem', label: 'LPDDR4X', x: 8.0, y: 5.5, w: 9, d: 10, h: 0.9 }, { kind: 'mem', label: 'LPDDR4X', x: 8.0, y: -5.5, w: 9, d: 10, h: 0.9 }],
+    used: 'MacBook Air/Pro M1, Mac mini M1', mapId: 'm1', confidence: 'ball field measured; lid and memory placement from photos of the package' },
+  { id: 'apple-m2', vendor: 'apple', name: 'Apple M2 (A2681 / A2338 2022 / A2941)', balls: 2565, pitch: 0.483, body: { L: 28.5, W: 24.5, H: 2.4, sub: 0.9 }, span: [27.0, 23.0], style: 'lidded SoC + 2 LPDDR5 packages',
+    lid: { w: 16, d: 16, h: 1.1, x: -5.5, y: 0 }, dies: [{ kind: 'mem', label: 'LPDDR5', x: 8.0, y: 5.7, w: 9, d: 10.5, h: 0.9 }, { kind: 'mem', label: 'LPDDR5', x: 8.0, y: -5.7, w: 9, d: 10.5, h: 0.9 }],
+    used: 'MacBook Air M2 13/15, MacBook Pro 13 M2', confidence: 'ball field measured; layout from photos' },
+  { id: 'apple-m1pro', vendor: 'apple', name: 'Apple M1 Pro (A2442 / A2485)', balls: 2971, pitch: 0.635, body: { L: 57, W: 25, H: 2.6, sub: 1.0 }, span: [55.2, 23.4], style: 'lidded SoC + 2 LPDDR5 packages',
+    lid: { w: 24, d: 22, h: 1.2, x: 0, y: 0 }, dies: [{ kind: 'mem', label: 'LPDDR5', x: -20.5, y: 0, w: 11, d: 20, h: 0.9 }, { kind: 'mem', label: 'LPDDR5', x: 20.5, y: 0, w: 11, d: 20, h: 0.9 }],
+    used: 'MacBook Pro 14/16 2021 M1 Pro', confidence: 'ball field measured; layout from photos' },
+  { id: 'apple-m1max', vendor: 'apple', name: 'Apple M1 Max (A2442 / A2485)', balls: 4183, pitch: 0.635, body: { L: 57, W: 36, H: 2.6, sub: 1.0 }, span: [55.2, 34.4], style: 'lidded SoC + 4 LPDDR5 packages',
+    lid: { w: 24, d: 22, h: 1.2, x: 0, y: 0 }, dies: [{ kind: 'mem', label: 'LPDDR5', x: -20.5, y: 8, w: 11, d: 14, h: 0.9 }, { kind: 'mem', label: 'LPDDR5', x: -20.5, y: -8, w: 11, d: 14, h: 0.9 }, { kind: 'mem', label: 'LPDDR5', x: 20.5, y: 8, w: 11, d: 14, h: 0.9 }, { kind: 'mem', label: 'LPDDR5', x: 20.5, y: -8, w: 11, d: 14, h: 0.9 }],
+    used: 'MacBook Pro 14/16 2021 M1 Max', mapId: 'm1max', confidence: 'ball field measured; layout from photos' },
+  { id: 'apple-t2', vendor: 'apple', name: 'Apple T2 (2018–2020 Intel Macs)', balls: 1406, pitch: 0.381, body: { L: 15.8, W: 16.2, H: 1.2, sub: 0.7 }, span: [14.4, 14.8], style: 'bare die',
+    dies: [{ kind: 'cpu', label: 'T2', x: 0, y: 0, w: 9, d: 9.5, h: 0.5 }], used: 'MacBook Air/Pro 2018–2020, iMac Pro, Mac mini 2018', mapId: 't2', confidence: 'ball field measured on seven boards; die size guessed' },
+];
