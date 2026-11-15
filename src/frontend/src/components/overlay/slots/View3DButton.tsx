@@ -1,5 +1,5 @@
 import { useState, useSyncExternalStore } from 'react';
-import { IconAdjustments, IconCube, IconFocusCentered, IconHandStop, IconRotate360, IconStackBack, IconStackFront, IconZoomIn, IconZoomOut, IconView360 } from '@tabler/icons-react';
+import { IconAdjustments, IconCube, IconCubeOff, IconFocusCentered, IconHandStop, IconRotate360, IconStackBack, IconStackFront, IconZoomIn, IconZoomOut, IconView360 } from '@tabler/icons-react';
 import { view3dStore, QUALITY_PRESETS, type SelColour, type View3DQuality, type View3DSettings } from '../../../store/view3d-store';
 import { QuickMenu, type QuickMenuItem } from '../../QuickMenu';
 import type { SlotCtx } from '../slot-ctx';
@@ -9,7 +9,7 @@ const use3d = () => useSyncExternalStore(c => view3dStore.subscribe(c), () => vi
 /** Switches this board tab between the 2D view and the 3D one; while in 3D,
  *  zoom out / in, what a drag does (turn ↔ pan) and the 3D settings sit beside it. */
 export function View3DButton({ ctx }: { ctx: SlotCtx }) {
-  const on = use3d().has(ctx.tabId);
+  const on = use3d().has(ctx.tabId); const s3 = view3dStore.settings;
   const ui = view3dStore.uiOf(ctx.tabId);
   const h = () => view3dStore.handle(ctx.tabId);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -36,6 +36,15 @@ export function View3DButton({ ctx }: { ctx: SlotCtx }) {
             title={ui.drag === 'orbit' ? 'Drag turns the board, right-drag pans · click: drag pans' : 'Drag pans, right-drag turns the board · click: drag turns'}
           >
             {ui.drag === 'orbit' ? <IconRotate360 size={16} /> : <IconHandStop size={16} />}
+          </button>
+          <button
+            className={`board-netlines-toggle ${s3.parts !== 'solid' ? 'active' : ''}`}
+            data-testid="board-3d-parts"
+            aria-pressed={s3.parts !== 'solid'}
+            onClick={() => view3dStore.setSettings({ parts: s3.parts === 'solid' ? 'ghost' : s3.parts === 'ghost' ? 'off' : 'solid' })}
+            title={s3.parts === 'solid' ? 'Parts solid · click: ghost them' : s3.parts === 'ghost' ? 'Parts ghosted · click: hide them' : 'Parts hidden · click: show them'}
+          >
+            {s3.parts === 'off' ? <IconCubeOff size={16} /> : <IconCube size={16} style={s3.parts === 'ghost' ? { opacity: 0.45 } : undefined} />}
           </button>
           <button
             className={`board-netlines-toggle ${menu ? 'active' : ''}`}
@@ -80,7 +89,11 @@ function View3DSettingsMenu({ x, y, onClose }: { x: number; y: number; onClose: 
     { kind: 'check', label: 'Shadows', checked: s.shadows && QUALITY_PRESETS[s.quality].shadows, disabled: !QUALITY_PRESETS[s.quality].shadows, testId: 'view3d-shadows', onSelect: () => set({ shadows: !s.shadows }) },
     { kind: 'sep' },
     { kind: 'check', label: 'Copper layers in the Layers-tab colours', hint: 'every layer as geometry; the outer faces keep their mask underneath', checked: s.copperLayers, testId: 'view3d-copperLayers', onSelect: () => set({ copperLayers: !s.copperLayers }) },
-    { kind: 'check', label: 'X-ray (see-through board)', checked: s.xray, testId: 'view3d-xray', onSelect: () => set({ xray: !s.xray }) },
+    { kind: 'check', label: 'X-ray (see-through board)', hint: 'always on while the copper layers show', checked: s.xray || s.copperLayers, disabled: s.copperLayers, testId: 'view3d-xray', onSelect: () => set({ xray: !s.xray }) },
+    { kind: 'header', label: 'Parts' },
+    { kind: 'check', label: 'Solid', checked: s.parts === 'solid', testId: 'view3d-parts-solid', onSelect: () => set({ parts: 'solid' }) },
+    { kind: 'check', label: 'Ghosted', hint: 'mostly transparent, so bodies do not mix with the copper', checked: s.parts === 'ghost', testId: 'view3d-parts-ghost', onSelect: () => set({ parts: 'ghost' }) },
+    { kind: 'check', label: 'Hidden', checked: s.parts === 'off', testId: 'view3d-parts-off', onSelect: () => set({ parts: 'off' }) },
     { kind: 'range', label: 'Explode layers', value: Math.round(s.explode * 100), min: 0, max: 100, step: 5, format: v => `${v} %`, testId: 'view3d-explode', onChange: v => set({ explode: v / 100 }) },
     { kind: 'sep' },
     { kind: 'range', label: 'Marker size', value: s.markerPx, min: 6, max: 40, step: 1, format: v => `${v} px`, testId: 'view3d-markerPx', onChange: v => set({ markerPx: v }) },

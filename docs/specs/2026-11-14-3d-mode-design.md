@@ -309,8 +309,13 @@ runs for a board with two or more layers and copper:
   one-sided highlights are tagged with their side and lifted by the top
   face's travel, so what stands on a face rides with it. Net lines between
   the faces stay where they are.
-- **Copper layers** (`copperLayers`): the stack's copper and vias can be
-  switched off to see the plain mask faces again; the slices stay.
+- **Copper layers** (`copperLayers`, off by default): shows the stack's copper
+  and vias in the Layers-tab colours and implies X-ray — showing the stack is
+  showing the inside. Via barrels are translucent so copper under them reads.
+- **Parts** (`parts`: solid / ghost / off): bodies ghosted to 16 % or hidden
+  so they do not mix with the copper; the ribbon's cube button cycles it.
+  Ghosting swaps each body mesh's material for a cached translucent clone,
+  no rebuild; pick boxes stay, so a hidden part can still be clicked.
 
 Not done: picking inner copper (the 2D hit test only knows the outer
 faces), lighting a net on the stack, a real stackup (every file in the

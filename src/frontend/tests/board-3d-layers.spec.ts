@@ -13,7 +13,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.resolve(HERE, '../public/samples/tomu-fpga.kicad_pcb');
 test.use({ launchOptions: { args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] } });
 
-type Stack = { layers: number; copperMeshes: number; pourMeshes: number; vias: number; slices: number; sideOffset: number; layerY: number[] };
+type Stack = { layers: number; copperMeshes: number; pourMeshes: number; vias: number; slices: number; sideOffset: number; layerY: number[]; partsVisible: boolean; xray: boolean };
 type W = { __boardStore: { board: unknown; layerStates: { visible: boolean }[]; toggleLayer(i: number): void }; __board3d?: { renderer: { drawnParts: number; stackInfo(): Stack | null; cameraState(): { dist: number } } } };
 
 async function open3D(page: Page) {
@@ -29,9 +29,20 @@ const stack = (page: Page) => page.evaluate(() => (window as unknown as W).__boa
 test('a 4-layer board gets a stack; X-ray and Explode act on it; the Layers tab hides a layer', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
   await open3D(page);
+  // the stack is built for every multi-layer board; its copper shows once *Copper layers* is on (off by default)
+  await page.getByTestId('board-3d-settings').click(); await page.getByTestId('view3d-copperLayers').click(); await page.keyboard.press('Escape'); await page.waitForTimeout(300);
   const s0 = (await stack(page))!;
   expect(s0.layers).toBe(4); expect(s0.copperMeshes).toBeGreaterThanOrEqual(2); expect(s0.vias).toBeGreaterThan(100); expect(s0.slices).toBe(3);
   expect(s0.sideOffset).toBe(0); expect(s0.layerY[0]).toBeGreaterThan(s0.layerY[3]);
+  expect(s0.xray).toBe(true); // showing the copper layers makes the board see-through on its own
+  // the ribbon's parts button cycles solid → ghost → hidden
+  await page.getByTestId('board-3d-parts').click(); await page.waitForTimeout(200);
+  expect((await stack(page))!.partsVisible).toBe(true);
+  if (process.env.BR_3D_SHOT) await page.screenshot({ path: path.join(process.env.BR_3D_SHOT, 'app-3d-parts-ghost.png') });
+  await page.getByTestId('board-3d-parts').click(); await page.waitForTimeout(200);
+  expect((await stack(page))!.partsVisible).toBe(false);
+  await page.getByTestId('board-3d-parts').click(); await page.waitForTimeout(200);
+  expect((await stack(page))!.partsVisible).toBe(true);
   const dir = process.env.BR_3D_SHOT;
   // explode: the stack spreads, the faces (and their parts) move apart
   await page.getByTestId('board-3d-settings').click();
@@ -40,7 +51,7 @@ test('a 4-layer board gets a stack; X-ray and Explode act on it; the Layers tab 
   await expect.poll(() => stack(page).then(s => s!.sideOffset)).toBeGreaterThan(1);
   const s1 = (await stack(page))!;
   expect(s1.layerY[0] - s1.layerY[3]).toBeGreaterThan((s0.layerY[0] - s0.layerY[3]) * 5);
-  await page.getByTestId('view3d-xray').click();
+  await expect(page.getByTestId('view3d-xray')).toBeDisabled(); // X-ray is implied while the copper layers show
   await page.keyboard.press('Escape');
   await page.waitForTimeout(600);
   if (dir) await page.screenshot({ path: path.join(dir, 'app-3d-layers-exploded.png') });
