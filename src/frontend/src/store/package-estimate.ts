@@ -267,7 +267,13 @@ function connectorEstimate(pins: Pin[], ref: string, drilledCount: number): { fa
   const medA = median(pins.map(q => (q.padWidth && q.padHeight ? q.padWidth * q.padHeight : 4 * q.radius * q.radius)));
   const big = pins.map((_, i) => i).filter(i => { const q = pins[i]; return (q.padWidth && q.padHeight ? q.padWidth * q.padHeight : 4 * q.radius * q.radius) > medA * 3; });
   const sig = big.length < pins.length ? pins.map((_, i) => i).filter(i => !big.includes(i)) : pins.map((_, i) => i);
-  const f0 = frame(pins, gridAngle(sig.map(i => pins[i].position)), sig);
+  // staggered rows (RJ45, USB-A, HDMI) have diagonal nearest neighbours: of the fitted angle and that angle + 45°, keep
+  // the one whose box is tighter, then snap within 4° of a right angle — connectors sit square to the board edge
+  const a0 = gridAngle(sig.map(i => pins[i].position));
+  const boxArea = (deg: number) => { const B = bboxOf(sig.map(i => frame(pins, deg, sig).loc[i])); return (B.x1 - B.x0) * (B.y1 - B.y0); };
+  let deg = boxArea(a0 + 45) < boxArea(a0) * 0.98 ? a0 + 45 : a0;
+  { const r = Math.round(deg / 90) * 90; if (Math.abs(wrap(deg - r)) <= 12) deg = r; } // shell pads skew the fit on a USB-A by up to 11°
+  const f0 = frame(pins, deg, sig);
   // the row axis: whichever of the two frame axes gives fewer, longer rows
   const rowsAt = (f: Frame) => { const sl = sig.map(i => f.loc[i]); const tol = Math.max(6, mm(1) * 0); const ys = clusters(sl.map(v => v.y), Math.max(tol, 8)); return { f, ys, sl }; };
   const a = rowsAt(f0), b = rowsAt(frame(pins, f0.deg + 90, sig));
@@ -468,6 +474,9 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
   if (!hint && n >= 3 && (pins.every(q => padMin(q) >= 1.5) || (fingers >= 3 && fingers >= 0.4 * n))) {
     const c = center(); return out({ family: 'none', L: 0, W: 0, H: 0, cx: c.x, cy: c.y, rotDeg: 0 }, `${n} pads, ${fingers ? fingers + ' of them contact fingers ≥ 3 mm' : 'all ≥ 1.5 mm'} → contacts, no body`);
   }
+  // a connector that no series rule named is still a connector
+  if (connFallback) return asConn(connFallback);
+
   // Four pins at rectangle corners: crystal / tact switch / 3535 LED by refdes.
   if (n === 4 || (hint && ['crystal', 'button', 'button-ra', 'led3535'].includes(hint.family))) {
     const f = frame(pins, f0.deg); const b = bboxOf(f.loc);
@@ -495,9 +504,6 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
         `${n} pins, ${Math.max(lo, hi)}+${Math.min(lo, hi)} rows ${mm(Math.abs(ys[1].c - ys[0].c)).toFixed(1)} mm apart → ${fam === 'sot23' ? 'SOT-23' : 'SOT-23-5'}`);
     }
   }
-
-  // a connector that no series rule named is still a connector
-  if (connFallback) return asConn(connFallback);
 
   // No-lead / leaded ICs and grids, on the signal pins.
   {
