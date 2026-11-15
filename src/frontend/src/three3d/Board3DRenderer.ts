@@ -424,7 +424,7 @@ export class Board3DRenderer {
       }
       this.hlRoot.add(this.netMarkers(m, net, partIndex, pinIndex, NET));
       this.hlRoot.add(this.netLines(m, net, partIndex, pinIndex, NET, px));
-      this.hlRoot.add(this.ghosts(m, net, NET, px));
+      this.hlRoot.add(this.ghosts(m, net, px));
     }
     if (partIndex !== null) {
       const e = this.partByIndex.get(partIndex);
@@ -443,10 +443,12 @@ export class Board3DRenderer {
   }
 
   /** Hidden-side ghosts: the lit net's parts on the face the camera does not see, drawn through the
-   *  board as a translucent box and outline in the net colour, so a net that crosses to the other side
-   *  says where it goes without flipping the board. Disco pulses them. Never on ground. */
+   *  board as a translucent box and outline, so a net that crosses to the other side says where it goes
+   *  without flipping the board. Ghost blue, as in 2D — never the net colour, so a ghost is never taken
+   *  for a part on this face. Disco pulses them. Never on ground. */
   private ghostParts: THREE.Object3D[] = [];
-  private ghosts(m: Board3DModel, net: string, colour: number, px: number): THREE.Group {
+  private ghosts(m: Board3DModel, net: string, px: number): THREE.Group {
+    const colour = GHOST_BLUE;
     const g = new THREE.Group(); this.ghostParts = [];
     if (this.ghostMode === 'off' || isGround(net)) return g;
     for (const [index, { part, box }] of this.partByIndex) {
@@ -814,6 +816,9 @@ function disposeTree(root: THREE.Object3D): void {
   root.clear();
 }
 // part-model materials are module-wide and shared between views: never dispose them
+/** The 2D view's ghosts are 0x44ccff; a step deeper here, so they stay apart from a cyan net. */
+const GHOST_BLUE = 0x3d9bff;
+
 /** Ground, by the user's pin-group rules (the same test the 2D view's ghosts and net lines use), with GND as a floor. */
 const isGround = (net: string) => isGroundNet(renderSettingsStore.settings, net) || /^(A|D|P)?GND/i.test(net);
 
