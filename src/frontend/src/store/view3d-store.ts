@@ -45,6 +45,12 @@ export interface View3DSettings {
   markerPx: number;
   /** Screen width of the selection outlines, px. */
   outlinePx: number;
+  /** Draw every copper layer as geometry in the Layers tab's colours (the outer faces keep their mask texture underneath). */
+  copperLayers: boolean;
+  /** The board's dielectric and faces go translucent so the inner layers show. */
+  xray: boolean;
+  /** 0 = the real stack, 1 = the layers pulled apart (parts ride on the outer faces). */
+  explode: number;
 }
 
 /** What each quality preset sets. `settledPr` caps the full-resolution frame's pixel ratio;
@@ -58,6 +64,7 @@ export const QUALITY_PRESETS: Record<View3DQuality, { settledPr: number; settled
 };
 
 export const DEFAULT_VIEW3D_SETTINGS: View3DSettings = {
+  copperLayers: true, xray: false, explode: 0,
   quality: 'quality',
   netColour: 'cyan', pinColour: 'lime', partColour: 'violet',
   partNames: true, netNames: true, seeThrough: true, shadows: true,
@@ -112,6 +119,7 @@ function loadSettings(): View3DSettings {
     for (const k of ['netColour', 'pinColour', 'partColour'] as const) if (!(s[k] in SEL_COLOURS)) s[k] = DEFAULT_VIEW3D_SETTINGS[k];
     if (!(s.quality in QUALITY_PRESETS)) s.quality = DEFAULT_VIEW3D_SETTINGS.quality;
     s.markerPx = clamp(s.markerPx, 6, 40, DEFAULT_VIEW3D_SETTINGS.markerPx); s.outlinePx = clamp(s.outlinePx, 1, 8, DEFAULT_VIEW3D_SETTINGS.outlinePx);
+    s.explode = clamp(s.explode, 0, 1, 0); s.copperLayers = typeof s.copperLayers === 'boolean' ? s.copperLayers : true; s.xray = s.xray === true;
     return s;
   } catch { return DEFAULT_VIEW3D_SETTINGS; }
 }

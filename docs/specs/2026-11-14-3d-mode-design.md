@@ -281,6 +281,41 @@ layer they touch. Controls:
 - Layer visibility = the Layers tab (one source of truth).
 - Pours dim to 30 % so traces on the same layer read over them.
 
+## Layer stack (2026-11-15)
+
+`buildBoard3DModel` carries every trace with its layer (`copper`), the pours
+(`pours`, outer ring + holes) and the vias with the layer span they join
+(`vias`), plus `layerNames`; a primary-bottom board reads its stack upside
+down so layer 0 is always the user's Top face. `Board3DRenderer.buildStack`
+runs for a board with two or more layers and copper:
+
+- **Copper per layer**: one `InstancedBufferGeometry` of unit quads per layer;
+  the vertex shader builds each segment's rectangle extended by half a width
+  at both ends from `aP1`/`aP2`/`aW`, the fragment shader discards outside
+  the capsule — round caps and joints for free, 515 k segments on the RTX 4090
+  board are one draw per layer. Colour and alpha are uniforms per layer.
+- **Pours**: `ShapeGeometry` with holes, merged per layer, drawn at 35 % in
+  the layer colour under the traces.
+- **Vias**: one `InstancedMesh` of barrels, each scaled to its layer span.
+- **Dielectric**: the slab is cut into one extruded slice per layer gap; the
+  single slab stays hidden. Outer layers sit 12 µm off the faces, inner ones
+  evenly through the thickness.
+- **Layers tab**: visibility and colour per layer, the pinned / selected
+  layer at full alpha with the rest at 20 % (`setLayerStates`, fed by
+  `Board3DView` from the tab's `layerStates`).
+- **X-ray** (`xray`): slices at 22 % and faces at 45 %, no depth write.
+- **Explode** (`explode` 0–1): every resting height is scaled by `1 + 7·e`;
+  the faces, pads, parts (merged per side for this), pick boxes, labels and
+  one-sided highlights are tagged with their side and lifted by the top
+  face's travel, so what stands on a face rides with it. Net lines between
+  the faces stay where they are.
+- **Copper layers** (`copperLayers`): the stack's copper and vias can be
+  switched off to see the plain mask faces again; the slices stay.
+
+Not done: picking inner copper (the 2D hit test only knows the outer
+faces), lighting a net on the stack, a real stackup (every file in the
+corpus spaces its layers evenly).
+
 ## Signal animation
 
 Applies to the lit net (selected pin's net, `focusNet`, cross-probe).
@@ -403,8 +438,10 @@ Two related ideas do fit, and are worth keeping:
    slab + outline + baked face textures, generated models merged per material,
    picking, shared selection and net highlight, ribbon toggle, camera presets.
    Open: picking through the 2D `hitTest`, touch tuning, model build in a worker.
-4. **3D multi-layer** — stacked copper (instanced capsules), pours, vias,
-   explode, X-ray, Layers tab binding.
+4. **3D multi-layer** — shipped 2026-11-15 (first cut, see *Layer stack*
+   below): stacked copper (instanced capsule quads), pours, via barrels,
+   dielectric slices, explode, X-ray, Layers-tab colours / visibility /
+   emphasis. Open: picking inner copper, the signal animation on the stack.
 5. **3D signal** — shader effects, air wires on plain boards.
 6. **Polish** — touch, iPad performance, PNG export (slide mode), settings,
    E2E (public KiCad samples: model counts per family, pick parity with 2D,

@@ -38,6 +38,14 @@ export interface Board3DModel {
   silk: { side: 'top' | 'bottom'; pts: [number, number][] }[];
   /** Mounting holes and drills, scene mm. */
   holes: { x: number; z: number; rx: number; rz: number }[];
+  /** Copper layers, 0 = the user's Top face, in stack order. One entry for a board without layer data. */
+  layerNames: string[];
+  /** Every trace segment with its layer, scene mm — the inner stack (the face textures use `traces`). */
+  copper: { layer: number; x1: number; z1: number; x2: number; z2: number; w: number; net: string }[];
+  /** Copper pours per layer: outer ring and holes, scene mm. */
+  pours: { layer: number; net: string; outer: [number, number][]; holes: [number, number][][] }[];
+  /** Vias: position, drill radius, the layer span they join (through = 0 … last). */
+  vias: { x: number; z: number; r: number; net: string; l0: number; l1: number }[];
   /** The side the user calls Top (the file's `primarySide`). */
   primarySide: 'top' | 'bottom';
   /** Board frame (Y-up mils) → scene mm. */
@@ -149,6 +157,20 @@ export function buildBoard3DModel(board: BoardData): Board3DModel {
   }
   const silk = PRINTED_SILK.has(board.format) ? (board.silkscreen ?? []).map(s => ({ side: S(s.side), pts: s.points.map(p => toScene(P(p))) })) : [];
 
+  // the layer stack: names from the file, else as many layers as the traces use; a primary-bottom board reads
+  // its stack upside down (layer 0 is the user's Top face), like every other side label here
+  const maxTraceLayer = (board.traces ?? []).reduce((m, t) => Math.max(m, t.layer ?? 0), 0);
+  const nL = Math.max(board.layerNames?.length ?? 0, maxTraceLayer + 1, 1);
+  const layerNames = Array.from({ length: nL }, (_, i) => board.layerNames?.[i] ?? (nL === 1 ? 'Copper' : i === 0 ? 'Top' : i === nL - 1 ? 'Bottom' : `Inner ${i}`));
+  const LI = (i: number) => (swap ? nL - 1 - i : i);
+  const copper: Board3DModel['copper'] = [];
+  for (const t of board.traces ?? []) { const [x1, z1] = toScene(P(t.start)), [x2, z2] = toScene(P(t.end)); copper.push({ layer: LI(Math.min(nL - 1, t.layer ?? 0)), x1, z1, x2, z2, w: Math.max(t.width * MM, 0.05), net: t.net }); }
+  const pours: Board3DModel['pours'] = [];
+  for (const sf of board.surfaces ?? []) { if (sf.polygon.length < 3) continue; pours.push({ layer: LI(Math.min(nL - 1, sf.layer ?? 0)), net: sf.net ?? '', outer: sf.polygon.map(p => toScene(P(p))), holes: (sf.voids ?? []).filter(v => v.length >= 3).map(v => v.map(p => toScene(P(p)))) }); }
+  const vias: Board3DModel['vias'] = [];
+  for (const v of board.vias ?? []) { const [x, z] = toScene(P(v.position)); const ls = v.layers.length ? v.layers.map(LI) : [0, nL - 1]; vias.push({ x, z, r: Math.max(v.diameter * MM / 2, 0.08), net: v.net, l0: Math.min(...ls), l1: Math.max(...ls) }); }
+  if (swap) layerNames.reverse();
+
   const pinsOf = (index: number) => {
     const pt = board.parts[index]; if (!pt) return [];
     return pt.pins.map(q => { const [x, z] = toScene(P(q.position)); return { x, z, side: (S(q.side) === 'bottom' ? 'bottom' : 'top') as 'top' | 'bottom', net: q.net, r: Math.max(q.radius * MM, 0.12) }; });
@@ -156,7 +178,7 @@ export function buildBoard3DModel(board: BoardData): Board3DModel {
 
   return {
     width: (all.x1 - all.x0) * MM, height: (all.y1 - all.y0) * MM,
-    outlines, cutouts, parts, pads, traces, silk, holes,
+    outlines, cutouts, parts, pads, traces, silk, holes, layerNames, copper, pours, vias,
     primarySide: board.primarySide === 'bottom' ? 'bottom' : 'top',
     toScene, pinsOf,
     pinPads: (index: number) => pinPadMap.get(index) ?? [],

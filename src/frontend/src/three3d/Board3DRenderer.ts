@@ -38,7 +38,13 @@ export class Board3DRenderer {
   private pickRoot = new THREE.Group();
   private hlRoot = new THREE.Group();
   private labelRoot = new THREE.Group();
+  /** The layer stack of a multi-layer board: dielectric slices, copper per layer, pours, vias. */
+  private stackRoot = new THREE.Group();
+  private stack: { layers: { group: THREE.Group; y: number; copper: THREE.Mesh | null; pour: THREE.Mesh | null }[]; slices: { mesh: THREE.Mesh; y: number }[]; vias: THREE.InstancedMesh | null; faces: THREE.Mesh[]; slab: THREE.Mesh | null } | null = null;
+  private layerStates: { visible: boolean; color: number }[] = [];
+  private layerEmphasis: number | null = null;
   private labelMat: THREE.ShaderMaterial | null = null;
+  private labelMats: THREE.ShaderMaterial[] = [];
   private model: Board3DModel | null = null;
   private pickBoxes: THREE.Mesh[] = [];
   private partByIndex = new Map<number, { part: Board3DPart; box: THREE.Box3 }>();
@@ -103,7 +109,7 @@ export class Board3DRenderer {
     const under = new THREE.DirectionalLight(0xffffff, 0.9); under.position.set(-0.3, -1, 0.4);
     this.scene.add(key, key.target, under, new THREE.HemisphereLight(0xffffff, 0x444448, 0.45));
     this.key = key; this.under = under; this.hemi = this.scene.children.find(o => o instanceof THREE.HemisphereLight) as THREE.HemisphereLight;
-    this.scene.add(this.boardRoot, this.partsRoot, this.pickRoot, this.hlRoot, this.labelRoot);
+    this.scene.add(this.boardRoot, this.stackRoot, this.partsRoot, this.pickRoot, this.hlRoot, this.labelRoot);
     // Our own drag handling, not OrbitControls / TrackballControls: turning is free in every
     // direction (an orbit control clamps at the poles and the board got stuck there), and it
     // pivots about a point we choose — the selected part, else the board centre.
@@ -143,6 +149,7 @@ export class Board3DRenderer {
       this.renderer.shadowMap.enabled = shadows; this.key.castShadow = shadows; this.renderer.shadowMap.needsUpdate = true;
       this.boardRoot.traverse(o => { if (o instanceof THREE.Mesh) for (const m of Array.isArray(o.material) ? o.material : [o.material]) m.needsUpdate = true; });
     }
+    if (prev.copperLayers !== s.copperLayers || prev.xray !== s.xray || prev.explode !== s.explode) { this.applyStack(); if (this.stack && (prev.explode === 0) !== (s.explode === 0)) this.fit(); } // the stack is eight times taller exploded: refit when it opens or closes
     this.dirty = true; // updateXray runs before the next render and resets any fade when see-through is off
     this.setSelection(this.sel.part, this.sel.net, this.sel.pin);
   }
@@ -154,12 +161,16 @@ export class Board3DRenderer {
 
   // ───────────── board ─────────────
   private buildMs = 0;
+  private boardShapes: THREE.Shape[] = [];
+  private slabMesh: THREE.Mesh | null = null;
+  private faceMeshes: THREE.Mesh[] = [];
   setModel(model: Board3DModel): void {
     const t0 = performance.now();
     this.model = model;
-    for (const root of [this.boardRoot, this.partsRoot, this.pickRoot, this.hlRoot, this.labelRoot]) disposeTree(root);
-    this.pickBoxes = []; this.partByIndex.clear();
+    for (const root of [this.boardRoot, this.stackRoot, this.partsRoot, this.pickRoot, this.hlRoot, this.labelRoot]) disposeTree(root);
+    this.pickBoxes = []; this.partByIndex.clear(); this.stack = null; this.padMeshes = []; this.sideOffset = 0;
     this.buildBoard(model);
+    this.buildStack(model);
     this.buildParts(model);
     this.buildPickGrids(model);
     this.buildLabels(model);
@@ -187,12 +198,12 @@ export class Board3DRenderer {
     // solder mask is semi-matt: a broad, dull highlight, not a mirror — roughness 0.8 and a quarter of the room light
     const slab = new THREE.Mesh(slabGeo, [new THREE.MeshStandardMaterial({ color: 0x09130d, roughness: 0.8, envMapIntensity: 0.25 }), new THREE.MeshStandardMaterial({ color: 0x6e6448, roughness: 0.95, envMapIntensity: 0.1 })]);
     // the slab must not shadow its own face: that was the speckle (shadow acne) over the whole board
-    slab.receiveShadow = true; this.boardRoot.add(slab);
-    const faceGeo = new THREE.ShapeGeometry(shapes, 16); faceGeo.rotateX(-Math.PI / 2);
+    slab.receiveShadow = true; this.boardRoot.add(slab); this.boardShapes = shapes; this.slabMesh = slab;
+    const faceGeo = new THREE.ShapeGeometry(shapes, 16); faceGeo.rotateX(-Math.PI / 2); this.faceMeshes = [];
     for (const side of ['top', 'bottom'] as const) {
       const mat = new THREE.MeshStandardMaterial({ map: this.faceTexture(m, side), roughness: 0.8, envMapIntensity: 0.25, side: side === 'top' ? THREE.FrontSide : THREE.BackSide, polygonOffset: true, polygonOffsetFactor: -1 });
-      const face = new THREE.Mesh(faceGeo, mat); face.position.y = side === 'top' ? TOP + 0.002 : -TOP - 0.002; face.receiveShadow = true; this.boardRoot.add(face);
-      this.boardRoot.add(this.padMesh(m, side));
+      const face = new THREE.Mesh(faceGeo, mat); face.position.y = side === 'top' ? TOP + 0.002 : -TOP - 0.002; face.receiveShadow = true; this.boardRoot.add(face); this.faceMeshes.push(face);
+      const pads = this.padMesh(m, side); pads.userData.side = side; this.boardRoot.add(pads); this.padMeshes.push(pads);
     }
   }
 
@@ -255,6 +266,90 @@ export class Board3DRenderer {
     this.padMaterial = mat; return mat;
   }
 
+  // ───────────── layer stack ─────────────
+  /** Layer i's resting height: the outer layers on the faces, the inner ones evenly spaced through the slab. */
+  private layerY(i: number, n: number): number { return n <= 1 ? TOP + 0.01 : TOP - i * T / (n - 1) + (i === 0 ? 0.012 : i === n - 1 ? -0.012 : 0); }
+  /** A multi-layer board's stack: one group per copper layer (traces as capsule-shaded instanced quads, pours as
+   *  polygons), vias as barrels between their layers, and the slab cut into dielectric slices between the layers so
+   *  the stack can be pulled apart (`explode`) and seen through (`xray`). A board with one layer keeps its slab. */
+  private buildStack(m: Board3DModel): void {
+    const n = m.layerNames.length; if (n < 2 || !(m.copper.length || m.pours.length)) return;
+    const stack: NonNullable<typeof this.stack> = { layers: [], slices: [], vias: null, faces: this.faceMeshes, slab: this.slabMesh };
+    const quad = new THREE.PlaneGeometry(1, 1); // (u, v) corners in x/y; the shader builds the capsule quad from them
+    for (let i = 0; i < n; i++) {
+      const group = new THREE.Group(); const y = this.layerY(i, n); group.position.y = y; this.stackRoot.add(group);
+      const segs = m.copper.filter(c => c.layer === i); let copper: THREE.Mesh | null = null;
+      if (segs.length) {
+        const g = new THREE.InstancedBufferGeometry(); g.index = quad.index; g.setAttribute('position', quad.attributes.position); g.setAttribute('uv', quad.attributes.uv); g.instanceCount = segs.length;
+        const a = new Float32Array(segs.length * 2), b = new Float32Array(segs.length * 2), w = new Float32Array(segs.length);
+        segs.forEach((c, k) => { a[k * 2] = c.x1; a[k * 2 + 1] = c.z1; b[k * 2] = c.x2; b[k * 2 + 1] = c.z2; w[k] = c.w; });
+        g.setAttribute('aP1', new THREE.InstancedBufferAttribute(a, 2)); g.setAttribute('aP2', new THREE.InstancedBufferAttribute(b, 2)); g.setAttribute('aW', new THREE.InstancedBufferAttribute(w, 1));
+        const B = new THREE.Box3(); for (const c of segs) { B.expandByPoint(new THREE.Vector3(c.x1, 0, c.z1)); B.expandByPoint(new THREE.Vector3(c.x2, 0, c.z2)); } B.min.y = -0.1; B.max.y = 0.1; g.boundingBox = B; g.boundingSphere = B.getBoundingSphere(new THREE.Sphere());
+        copper = new THREE.Mesh(g, Board3DRenderer.copperMaterial()); copper.frustumCulled = false; copper.renderOrder = 2; group.add(copper);
+      }
+      let pour: THREE.Mesh | null = null; const ps = m.pours.filter(q => q.layer === i);
+      if (ps.length) {
+        const geos: THREE.BufferGeometry[] = [];
+        for (const q of ps) { const sh = new THREE.Shape(); q.outer.forEach(([x, z], k) => (k ? sh.lineTo(x, -z) : sh.moveTo(x, -z))); for (const h of q.holes) { const ph = new THREE.Path(); h.forEach(([x, z], k) => (k ? ph.lineTo(x, -z) : ph.moveTo(x, -z))); sh.holes.push(ph); } try { const sg = new THREE.ShapeGeometry(sh, 4); sg.rotateX(-Math.PI / 2); geos.push(sg.index ? sg.toNonIndexed() : sg); } catch { /* a degenerate pour */ } }
+        const merged = geos.length ? mergeGeometries(geos) : null; geos.forEach(g => g.dispose());
+        if (merged) { pour = new THREE.Mesh(merged, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })); pour.renderOrder = 1; group.add(pour); }
+      }
+      stack.layers.push({ group, y, copper, pour });
+    }
+    // dielectric: one slice between each pair of layers; together they are the slab, which is hidden
+    if (this.slabMesh) this.slabMesh.visible = false;
+    for (let i = 0; i < n - 1; i++) {
+      const y0 = this.layerY(i, n), y1 = this.layerY(i + 1, n), th = y0 - y1 - 0.024;
+      const geo = new THREE.ExtrudeGeometry(this.boardShapes, { depth: th, bevelEnabled: false, curveSegments: 16 }); geo.rotateX(-Math.PI / 2); geo.translate(0, -th / 2, 0);
+      const mesh = new THREE.Mesh(geo, [new THREE.MeshStandardMaterial({ color: 0x6e6448, roughness: 0.95, envMapIntensity: 0.1 }), new THREE.MeshStandardMaterial({ color: 0x6e6448, roughness: 0.95, envMapIntensity: 0.1 })]);
+      mesh.receiveShadow = true; const y = (y0 + y1) / 2; mesh.position.y = y; this.stackRoot.add(mesh); stack.slices.push({ mesh, y });
+    }
+    if (m.vias.length) {
+      const barrel = new THREE.CylinderGeometry(1, 1, 1, 10, 1, false); const inst = new THREE.InstancedMesh(barrel, new THREE.MeshStandardMaterial({ color: 0xc9a24a, metalness: 0.8, roughness: 0.35 }), m.vias.length);
+      const mtx = new THREE.Matrix4(); m.vias.forEach((v, k) => { const y0 = this.layerY(v.l0, n), y1 = this.layerY(v.l1, n); mtx.makeScale(v.r, Math.max(0.05, y0 - y1 + 0.03), v.r); mtx.setPosition(v.x, (y0 + y1) / 2, v.z); inst.setMatrixAt(k, mtx); });
+      inst.frustumCulled = false; this.stackRoot.add(inst); stack.vias = inst;
+    }
+    this.stack = stack; this.applyStack();
+  }
+  /** One material for every copper layer; the colour and alpha are per mesh (cloned uniforms). */
+  private static copperMaterial(): THREE.ShaderMaterial {
+    return new THREE.ShaderMaterial({
+      uniforms: { uColor: { value: new THREE.Color(0x3fa65b) }, uAlpha: { value: 1 } }, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      vertexShader: `attribute vec2 aP1; attribute vec2 aP2; attribute float aW; varying vec2 vLoc; varying float vHalf; varying float vLen;
+        void main() { vec2 d = aP2 - aP1; float len = length(d); vec2 dir = len > 1e-6 ? d / len : vec2(1.0, 0.0); vec2 perp = vec2(-dir.y, dir.x); float half_ = aW * 0.5;
+          float u = position.x + 0.5, v = position.y * 2.0; float s = u * (len + aW) - half_; vec2 p = aP1 + dir * s + perp * (v * half_);
+          vLoc = vec2(s, v * half_); vHalf = half_; vLen = len; gl_Position = projectionMatrix * modelViewMatrix * vec4(p.x, 0.0, p.y, 1.0); }`,
+      fragmentShader: `uniform vec3 uColor; uniform float uAlpha; varying vec2 vLoc; varying float vHalf; varying float vLen;
+        void main() { float s = clamp(vLoc.x, 0.0, vLen); float d = length(vLoc - vec2(s, 0.0)); if (d > vHalf) discard; gl_FragColor = vec4(uColor, uAlpha); }`,
+    });
+  }
+  /** The Layers tab's state for this board: visibility and colour per layer, and the emphasised layer (the rest dim). */
+  setLayerStates(states: { visible: boolean; color: number }[], emphasis: number | null): void {
+    this.layerStates = states; this.layerEmphasis = emphasis; this.applyStack();
+  }
+  /** Colours, visibility, X-ray and explode onto the stack — cheap, so every change re-runs it. */
+  private applyStack(): void {
+    const st = this.stack, s = this.settings; if (!st) return;
+    const n = st.layers.length, scale = 1 + s.explode * 7;
+    st.layers.forEach((L, i) => {
+      const state = this.layerStates[i], vis = (state?.visible ?? true) || this.layerEmphasis === i;
+      const color = state?.color ?? 0x3fa65b, alpha = this.layerEmphasis === null || this.layerEmphasis === i ? 1 : 0.2;
+      L.group.visible = s.copperLayers && vis; L.group.position.y = L.y * scale;
+      if (L.copper) { const u = (L.copper.material as THREE.ShaderMaterial).uniforms; (u.uColor.value as THREE.Color).set(color); u.uAlpha.value = alpha; }
+      if (L.pour) { const mat = L.pour.material as THREE.MeshBasicMaterial; mat.color.set(color); mat.opacity = 0.35 * alpha; }
+    });
+    for (const sl of st.slices) { sl.mesh.position.y = sl.y * scale; for (const mat of sl.mesh.material as THREE.MeshStandardMaterial[]) { mat.transparent = s.xray; mat.opacity = s.xray ? 0.22 : 1; mat.depthWrite = !s.xray; mat.needsUpdate = true; } }
+    for (const f of st.faces) { const mat = f.material as THREE.MeshStandardMaterial; mat.transparent = s.xray; mat.opacity = s.xray ? 0.45 : 1; mat.depthWrite = !s.xray; f.position.y = (f.position.y < 0 ? -TOP - 0.002 : TOP + 0.002) * scale; mat.needsUpdate = true; }
+    if (st.vias) { const mtx = new THREE.Matrix4(), v = this.model!.vias; v.forEach((q, k) => { const y0 = this.layerY(q.l0, n) * scale, y1 = this.layerY(q.l1, n) * scale; mtx.makeScale(q.r, Math.max(0.05, y0 - y1 + 0.03), q.r); mtx.setPosition(q.x, (y0 + y1) / 2, q.z); st.vias!.setMatrixAt(k, mtx); }); st.vias.instanceMatrix.needsUpdate = true; st.vias.visible = s.copperLayers; }
+    this.sideOffset = TOP * (scale - 1);
+    for (const g of [this.partsRoot, this.pickRoot, this.hlRoot, this.labelRoot]) g.traverse(o => { if (o.userData.side) o.position.y = (o.userData.side === 'top' ? 1 : -1) * this.sideOffset; });
+    for (const pm of this.padMeshes) pm.position.y = (pm.userData.side === 'top' ? 1 : -1) * this.sideOffset;
+    this.renderer.shadowMap.needsUpdate = true; this.dirty = true;
+  }
+  /** How far the top face (and everything on it) sits above its resting height while exploded; the bottom sits as far below. */
+  private sideOffset = 0;
+  private padMeshes: THREE.Mesh[] = [];
+
   /** Large bodies that stand over their own pins (BGAs, QFNs, connectors…) are kept as their own
    *  meshes with their own materials, so they can turn see-through when zoomed into or selected. */
   private static seeThrough(e: Board3DPart['est']): boolean {
@@ -267,10 +362,10 @@ export class Board3DRenderer {
   private xray: { index: number; ranges: { mesh: THREE.Mesh; start: number; count: number }[]; centre: THREE.Vector3; radius: number; opacity: number }[] = [];
 
   private buildParts(m: Board3DModel): void {
-    const shared = new THREE.Group();
+    const shared = { top: new THREE.Group(), bottom: new THREE.Group() }; // merged per side so an exploded view can lift each face's parts with it
     const pickMat = new THREE.MeshBasicMaterial();
     this.xray = [];
-    const fading: { index: number; holder: THREE.Group; centre: THREE.Vector3; radius: number }[] = [];
+    const fading: { index: number; holder: THREE.Group; centre: THREE.Vector3; radius: number; side: 'top' | 'bottom' }[] = [];
     for (const part of m.parts) {
       const e = part.est; if (!e.populated) continue;
       const g = buildPartModel(e); if (!g) continue;
@@ -286,18 +381,18 @@ export class Board3DRenderer {
       const size = bb.getSize(new THREE.Vector3()).max(new THREE.Vector3(0.2, 0.2, 0.2));
       const pb = new THREE.Mesh(new THREE.BoxGeometry(size.x, size.y, size.z), pickMat);
       pb.position.copy(bb.getCenter(new THREE.Vector3())); pb.visible = false; pb.userData.index = part.index;
-      this.pickRoot.add(pb); this.pickBoxes.push(pb); this.partByIndex.set(part.index, { part, box: bb });
-      if (Board3DRenderer.seeThrough(e)) fading.push({ index: part.index, holder, centre: bb.getCenter(new THREE.Vector3()), radius: size.length() / 2 });
-      else shared.add(holder);
+      pb.userData.side = part.side; this.pickRoot.add(pb); this.pickBoxes.push(pb); this.partByIndex.set(part.index, { part, box: bb });
+      if (Board3DRenderer.seeThrough(e)) fading.push({ index: part.index, holder, centre: bb.getCenter(new THREE.Vector3()), radius: size.length() / 2, side: part.side });
+      else shared[part.side].add(holder);
     }
-    Board3DRenderer.mergeByMaterial([shared], this.partsRoot, mat => mat);
+    for (const side of ['top', 'bottom'] as const) { const g = new THREE.Group(); g.userData.side = side; this.partsRoot.add(g); Board3DRenderer.mergeByMaterial([shared[side]], g, mat => mat); }
     this.buildFadingParts(fading);
     this.dirty = true;
   }
   /** The see-through parts: merged per material like the rest, but with an `aOpacity` vertex
    *  attribute and a material patched to multiply it in; each part keeps its vertex ranges. */
-  private buildFadingParts(parts: { index: number; holder: THREE.Group; centre: THREE.Vector3; radius: number }[]): void {
-    type Bucket = { mat: THREE.Material; indexed: boolean; geos: THREE.BufferGeometry[]; owners: { index: number; count: number }[] };
+  private buildFadingParts(parts: { index: number; holder: THREE.Group; centre: THREE.Vector3; radius: number; side: 'top' | 'bottom' }[]): void {
+    type Bucket = { mat: THREE.Material; indexed: boolean; geos: THREE.BufferGeometry[]; owners: { index: number; count: number }[]; side: 'top' | 'bottom' };
     const buckets = new Map<string, Bucket>();
     for (const p of parts) {
       p.holder.updateMatrixWorld(true);
@@ -306,8 +401,8 @@ export class Board3DRenderer {
         const g = o.geometry.clone();
         for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
         g.applyMatrix4(o.matrixWorld);
-        const mat = o.material as THREE.Material, key = mat.uuid + (g.index ? 'i' : 'f');
-        let b = buckets.get(key); if (!b) buckets.set(key, (b = { mat, indexed: !!g.index, geos: [], owners: [] }));
+        const mat = o.material as THREE.Material, key = mat.uuid + (g.index ? 'i' : 'f') + p.side;
+        let b = buckets.get(key); if (!b) buckets.set(key, (b = { mat, indexed: !!g.index, geos: [], owners: [], side: p.side }));
         b.geos.push(g); b.owners.push({ index: p.index, count: g.attributes.position.count });
       });
     }
@@ -324,7 +419,7 @@ export class Board3DRenderer {
         sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vOpacity;').replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.a *= vOpacity;');
       };
       mat.customProgramCacheKey = () => 'fade';
-      const mesh = new THREE.Mesh(merged, mat); mesh.castShadow = true; this.partsRoot.add(mesh);
+      const mesh = new THREE.Mesh(merged, mat); mesh.castShadow = true; mesh.userData.side = b.side; this.partsRoot.add(mesh);
       let start = 0; for (const o of b.owners) { byIndex.get(o.index)!.ranges.push({ mesh, start, count: o.count }); start += o.count; }
     }
     this.xray = [...byIndex.values()];
@@ -372,7 +467,7 @@ export class Board3DRenderer {
   /** Every drawn part's name on its outer face along its long axis, and — close up — every land's
    *  net name on the land, in the net's own tint. One atlas, one mesh, one draw call. */
   private buildLabels(m: Board3DModel): void {
-    disposeTree(this.labelRoot); this.labelMat = null;
+    disposeTree(this.labelRoot); this.labelMat = null; this.labelMats = [];
     const specs: LabelSpec[] = [];
     if (this.settings.partNames) for (const [, { part, box }] of this.partByIndex) {
       const e = part.est, bottom = part.side === 'bottom', c = box.getCenter(new THREE.Vector3());
@@ -393,9 +488,12 @@ export class Board3DRenderer {
         }
       });
     }
-    const mesh = buildLabelMesh(specs); if (!mesh) return;
-    this.labelMat = mesh.material as THREE.ShaderMaterial; this.labelMat.uniforms.viewportH.value = this.renderer.domElement.height;
-    this.labelRoot.add(mesh);
+    for (const side of ['top', 'bottom'] as const) {
+      const mesh = buildLabelMesh(specs.filter(sp => sp.side === side)); if (!mesh) continue;
+      this.labelMat = mesh.material as THREE.ShaderMaterial; this.labelMat.uniforms.viewportH.value = this.renderer.domElement.height; this.labelMats.push(this.labelMat);
+      mesh.userData.side = side; this.labelRoot.add(mesh);
+    }
+    if (this.sideOffset) this.applyStack();
   }
 
   // ───────────── pick grids (pads by pin, traces), 1 mm cells ─────────────
@@ -495,8 +593,19 @@ export class Board3DRenderer {
     // dim: lights down while a net is lit; the selection is unlit and keeps its colour
     const dim = net && this.dimMode !== 'off' ? 0.3 : 1;
     this.key.intensity = 1.3 * dim; this.under.intensity = 0.9 * dim; this.hemi.intensity = 0.45 * dim; this.scene.environmentIntensity = 0.4 * dim;
-    if (this.labelMat) this.labelMat.uniforms.dim.value = dim === 1 ? 1 : 0.55;
+    for (const lm of this.labelMats) lm.uniforms.dim.value = dim === 1 ? 1 : 0.55;
+    // an exploded view lifts each face's highlights with the face: a highlight whose geometry lies on one side is tagged
+    // with it (net lines between the faces and anything spanning both stay in place)
+    this.hlRoot.traverse(o => { if (o === this.hlRoot || o.userData.side !== undefined || o.userData.face) return; if (!(o instanceof THREE.Mesh)) return; const g = o.geometry; if (!g.boundingBox) g.computeBoundingBox(); const bb = g.boundingBox; if (!bb || bb.isEmpty()) return; const y0 = bb.min.y + o.position.y, y1 = bb.max.y + o.position.y; o.userData.side = y0 > 0 ? 'top' : y1 < 0 ? 'bottom' : null; });
+    this.hlRoot.traverse(o => { if (o.userData.face && !o.userData.side) o.userData.side = o.userData.face; });
+    if (this.sideOffset) this.hlRoot.traverse(o => { if (o.userData.side) o.position.y = (o.userData.side === 'top' ? 1 : -1) * this.sideOffset; });
     this.dirty = true;
+  }
+
+  /** The stack as built — for tests. */
+  stackInfo(): { layers: number; copperMeshes: number; pourMeshes: number; vias: number; slices: number; sideOffset: number; layerY: number[] } | null {
+    const st = this.stack; if (!st) return null;
+    return { layers: st.layers.length, copperMeshes: st.layers.filter(L => L.copper).length, pourMeshes: st.layers.filter(L => L.pour).length, vias: st.vias?.count ?? 0, slices: st.slices.length, sideOffset: this.sideOffset, layerY: st.layers.map(L => L.group.position.y) };
   }
 
   /** Hidden-side ghosts: the lit net's parts on the face the camera does not see, drawn through the
@@ -852,7 +961,7 @@ export class Board3DRenderer {
   /** Screen-pixel sizes the shaders need (label fade, line widths, marker sizes) for a given target size. */
   private pixelScale = 1;
   private setPixelUniforms(w: number, h: number): void {
-    if (this.labelMat) this.labelMat.uniforms.viewportH.value = h;
+    for (const lm of this.labelMats) lm.uniforms.viewportH.value = h;
     if (this.padShader) this.padShader.uniforms.uViewportH.value = h;
     for (const lm of this.lineMats) lm.resolution.set(w, h);
     const scale = h / this.renderer.domElement.height; // 1 at full resolution, 0.5 in the moving target at 2×

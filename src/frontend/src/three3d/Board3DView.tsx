@@ -41,6 +41,10 @@ export default function Board3DView({ tabId }: { tabId: number }) {
   useEffect(() => { if (ready) rRef.current!.applySettings(settings); }, [ready, settings]);
   useEffect(() => { if (ready && model) { rRef.current!.setModel(model); const pr = view3dStore.uiOf(tabId).preset; if (pr !== 'iso') rRef.current!.view(pr); } }, [ready, model, tabId]);
   useEffect(() => { if (ready) rRef.current!.setLeftDrag(dragMode); }, [ready, dragMode]);
+  // the Layers tab drives the stack: visibility and colour per layer, and the pinned / selected layer's emphasis
+  const layerStates = tab?.layerStates ?? [], isActive = boardStore.activeTabId === tabId;
+  const emphasis = isActive ? (boardStore.fixatedLayerIndex ?? boardStore.selectedLayerIndex ?? null) : null;
+  useEffect(() => { if (ready && model) rRef.current!.setLayerStates(layerStates.map(l => ({ visible: l.visible, color: l.color })), emphasis); }, [ready, model, layerStates, emphasis]);
   useEffect(() => { if (ready) rRef.current!.setNetLineMode(netLineMode); }, [ready, netLineMode]);
   useEffect(() => { if (ready) rRef.current!.setGhostMode(ghostMode); }, [ready, ghostMode]);
   useEffect(() => { if (ready) rRef.current!.setDimMode(dimMode); }, [ready, dimMode]);

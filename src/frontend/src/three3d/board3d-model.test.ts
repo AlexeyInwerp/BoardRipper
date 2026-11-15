@@ -29,3 +29,21 @@ describe('board3d model', () => {
     expect(Math.abs(((down - up) % 360 + 360) % 360 - 180)).toBeLessThan(1);
   });
 });
+
+describe('layer stack', () => {
+  it('carries every trace with its layer, pours and vias with their span, and reads a primary-bottom board upside down', () => {
+    const base = { parts: [], outline: [], bounds: { minX: 0, maxX: 1000, minY: 0, maxY: 1000 }, nets: [], format: 'KICAD', flipY: true,
+      layerNames: ['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'],
+      traces: [{ start: { x: 0, y: 0 }, end: { x: 100, y: 0 }, width: 10, net: 'A', layer: 0 }, { start: { x: 0, y: 0 }, end: { x: 100, y: 0 }, width: 10, net: 'B', layer: 3 }],
+      surfaces: [{ polygon: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }], layer: 1, net: 'GND' }],
+      vias: [{ position: { x: 50, y: 50 }, diameter: 12, net: 'A', layers: [] }, { position: { x: 60, y: 50 }, diameter: 12, net: 'A', layers: [0, 1] }],
+    } as unknown as Parameters<typeof buildBoard3DModel>[0];
+    const m = buildBoard3DModel(base);
+    expect(m.layerNames).toEqual(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']);
+    expect(m.copper.map(c => c.layer)).toEqual([0, 3]); expect(m.pours[0].layer).toBe(1);
+    expect(m.vias.map(v => [v.l0, v.l1])).toEqual([[0, 3], [0, 1]]);
+    const flipped = buildBoard3DModel({ ...base, primarySide: 'bottom' } as unknown as Parameters<typeof buildBoard3DModel>[0]);
+    expect(flipped.layerNames).toEqual(['B.Cu', 'In2.Cu', 'In1.Cu', 'F.Cu']);
+    expect(flipped.copper.map(c => c.layer)).toEqual([3, 0]); expect(flipped.pours[0].layer).toBe(2); expect(flipped.vias[1]).toMatchObject({ l0: 2, l1: 3 });
+  });
+});
