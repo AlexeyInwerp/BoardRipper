@@ -78,7 +78,7 @@ function View3DSettingsMenu({ x, y, onClose }: { x: number; y: number; onClose: 
     { kind: 'check', label: 'Net names on pins (close up)', checked: s.netNames, testId: 'view3d-netNames', onSelect: () => set({ netNames: !s.netNames }) },
     { kind: 'check', label: 'Large parts see-through up close', checked: s.seeThrough, testId: 'view3d-seeThrough', onSelect: () => set({ seeThrough: !s.seeThrough }) },
     { kind: 'check', label: 'Shadows', checked: s.shadows && QUALITY_PRESETS[s.quality].shadows, disabled: !QUALITY_PRESETS[s.quality].shadows, testId: 'view3d-shadows', onSelect: () => set({ shadows: !s.shadows }) },
-    { kind: 'separator' },
+    { kind: 'sep' },
     { kind: 'check', label: 'Copper layers in the Layers-tab colours', hint: 'every layer as geometry; the outer faces keep their mask underneath', checked: s.copperLayers, testId: 'view3d-copperLayers', onSelect: () => set({ copperLayers: !s.copperLayers }) },
     { kind: 'check', label: 'X-ray (see-through board)', checked: s.xray, testId: 'view3d-xray', onSelect: () => set({ xray: !s.xray }) },
     { kind: 'range', label: 'Explode layers', value: Math.round(s.explode * 100), min: 0, max: 100, step: 5, format: v => `${v} %`, testId: 'view3d-explode', onChange: v => set({ explode: v / 100 }) },
