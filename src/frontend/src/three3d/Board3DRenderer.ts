@@ -727,9 +727,9 @@ export class Board3DRenderer {
     // the height and the width over the aspect; an angled view foreshortens, so it can sit closer
     const span = Math.max(m.height, m.width / this.camera.aspect) * (preset === 'iso' ? 1.2 : 1.08);
     const dist = span / (2 * Math.tan(this.camera.fov * Math.PI / 360));
-    // the user's Top is the file's primary side
-    const top = (preset === 'top') !== (m.primarySide === 'bottom') ? 1 : -1;
-    const to = preset === 'iso' ? new THREE.Vector3(-0.35, 0.75 * (m.primarySide === 'bottom' ? -1 : 1), 0.75).setLength(dist) : new THREE.Vector3(0, top * dist, 0.001 * dist);
+    // the user's Top is the +y face: the model builder puts the file's primary side there
+    const top = preset === 'top' ? 1 : -1;
+    const to = preset === 'iso' ? new THREE.Vector3(-0.35, 0.75, 0.75).setLength(dist) : new THREE.Vector3(0, top * dist, 0.001 * dist);
     const up = preset === 'iso' ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, -1); // straight at a face: the board's +y is screen-up
     if (animate) this.animateTo(to, new THREE.Vector3(), up);
     else { this.camera.position.copy(to); this.camera.up.copy(up); this.target.set(0, 0, 0); this.camera.lookAt(0, 0, 0); this.camera.updateMatrixWorld(); this.dirty = true; }

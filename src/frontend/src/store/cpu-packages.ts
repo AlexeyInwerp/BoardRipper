@@ -24,7 +24,7 @@ export interface PackageDie { kind: DieKind; label?: string; x: number; y: numbe
 export interface CapRow { x: number; y: number; n: number; dir: 'x' | 'y'; pitch?: number; size?: '0402' | '0201' }
 export interface PackageSpec {
   id: string;
-  vendor: 'intel' | 'amd' | 'nvidia' | 'apple';
+  vendor: 'intel' | 'amd' | 'nvidia' | 'apple' | 'memory';
   name: string;
   /** Nominal ball count. */
   balls: number;
@@ -37,6 +37,8 @@ export interface PackageSpec {
   dies?: PackageDie[];
   lid?: { w: number; d: number; h: number; x?: number; y?: number };
   ring?: { w: number; d: number; t?: number; h?: number };
+  /** A moulded FBGA (memory, NAND): the mould compound covers the whole body to this height above the substrate; `finish` 'silver' for the metallic-looking Apple NAND packages. */
+  mold?: { h: number; finish?: 'black' | 'silver' };
   /** An LGA socket on the pad field: plastic frame (outer w × d, wall t, height h) around a lidded CPU drawn by `lid`. */
   socket?: { w: number; d: number; t: number; h: number };
   interposer?: { w: number; d: number; h: number; x?: number; y?: number };
@@ -66,10 +68,10 @@ export type Turn = 0 | 90 | 180 | 270;
 /** The turn (CCW, degrees) that brings a measured field onto a record's signature, by the smallest L1 distance over
  *  the four right angles. `mirrorY` = the field is seen through the board (a bottom-side part): the package is the
  *  field with y mirrored, which is what the 3D renderer does to a bottom part's model. A symmetric field ties; the
- *  smallest turn wins then. */
-export function orientToSignature(sig: readonly number[], locs: readonly { x: number; y: number }[], mirrorY: boolean): { turn: Turn; fit: number; worst: number } {
+ *  smallest turn wins then. `allowed` restricts the turns — the span already says whether the field is turned 90°. */
+export function orientToSignature(sig: readonly number[], locs: readonly { x: number; y: number }[], mirrorY: boolean, allowed: readonly Turn[] = [0, 90, 180, 270]): { turn: Turn; fit: number; worst: number } {
   let best: { turn: Turn; fit: number } | null = null, worst = 0;
-  for (const turn of [0, 90, 180, 270] as const) {
+  for (const turn of allowed) {
     const pts = locs.map(p => { // package = R(−turn) · field, then the side mirror
       const q = turn === 0 ? p : turn === 90 ? { x: p.y, y: -p.x } : turn === 180 ? { x: -p.x, y: -p.y } : { x: -p.y, y: p.x };
       return mirrorY ? { x: q.x, y: -q.y } : q;
@@ -150,9 +152,9 @@ export const PACKAGES: PackageSpec[] = [
   { id: 'intel-bga1792', vendor: 'intel', name: 'Intel BGA1792 (Raptor Lake-PX)', balls: 1792, pitch: 0.62, body: { L: 40, W: 25, H: 1.171, sub: 0.6 }, span: [38.8, 23.8], style: 'two bare dies (CPU + PCH-PX)',
     dies: [{ kind: 'cpu', label: 'CPU', x: -4.5, y: 0, w: 10.6, d: 20.5, h: 0.55 }, { kind: 'pch', label: 'PCH-PX', x: 7.0, y: 0, w: 7.0, d: 7.7, h: 0.55 }],
     used: 'optional 40 × 25 form factor of some 13th-gen P/H SKUs', sources: ['https://cdrdv2.intel.com/v1/dl/getContent/743844'], confidence: 'count, pitch, body, height primary (Intel 743844 Table 100); no sample — span derived' },
-  { id: 'intel-bga1964', vendor: 'intel', name: 'Intel BGA1964 (Alder Lake-HX / Raptor Lake-HX)', balls: 1964, pitch: 0.8, body: { L: 45, W: 37.5, H: 2.005, sub: 1.119 }, span: [43.2, 35.2], style: 'one bare desktop die, die-side caps, regular 0.8 mm grid; PCH-S separate',
+  { id: 'intel-bga1964', vendor: 'intel', name: 'Intel BGA1964 (Alder Lake-HX / Raptor Lake-HX)', balls: 1964, pitch: 0.8, body: { L: 45, W: 37.5, H: 2.005, sub: 1.119 }, span: [42.4, 36.0], style: 'one bare desktop die, die-side caps, regular 0.8 mm grid; PCH-S separate', mapId: 'bga1964',
     dies: [{ kind: 'cpu', label: 'CPU', x: 0, y: 0, w: 23.8, d: 10.8, h: 0.75 }], caps: [{ x: 0, y: 9.5, n: 12, dir: 'x', pitch: 1.3 }, { x: 0, y: -9.5, n: 12, dir: 'x', pitch: 1.3 }],
-    used: 'i9-12900HX, i9-13980HX, i9-14900HX; MSI Raider GE78 HX, Dell Precision 7670', sources: ['https://cdrdv2-public.intel.com/655258/655258-011.pdf', 'https://cdrdv2.intel.com/v1/dl/getContent/743844'], confidence: 'count, pitch, body, substrate, height primary (Intel 655258 / 743844 Table 98 — the 1.185 in §1.2 is a copy error); no sample — span derived; RPL-S 8+16 die 257 mm² ≈ 23.8 × 10.8 secondary' },
+    used: 'i9-12900HX, i9-13980HX, i9-14900HX; MSI Raider GE78 HX, Dell Precision 7670', sources: ['https://cdrdv2-public.intel.com/655258/655258-011.pdf', 'https://cdrdv2.intel.com/v1/dl/getContent/743844'], confidence: 'count, pitch, body, substrate, height primary (Intel 655258 / 743844 Table 98 — the 1.185 in §1.2 is a copy error); span measured (Lenovo Legion Pro 5 16IRX9, NM-F701); RPL-S 8+16 die 257 mm² ≈ 23.8 × 10.8 secondary' },
   { id: 'intel-bga2049', vendor: 'intel', name: 'Intel BGA2049 (Meteor Lake-U/H, Arrow Lake-H/U)', balls: 2049, pitch: 0.65, body: { L: 50, W: 25, H: 1.245, sub: 0.644 }, span: [48.7, 23.7], style: 'Foveros: four tiles in a row on a base tile, bare',
     interposer: { w: 24.2, d: 11.3, h: 0.25, x: 0, y: 0 },
     dies: [{ kind: 'gpu', label: 'GPU', x: -9.6, y: 0, w: 4.4, d: 10.4, h: 0.35, onInterposer: true }, { kind: 'io', label: 'SoC', x: -2.3, y: 0, w: 9.6, d: 10.4, h: 0.35, onInterposer: true }, { kind: 'cpu', label: 'Compute', x: 5.9, y: 0, w: 6.4, d: 10.4, h: 0.35, onInterposer: true }, { kind: 'pch', label: 'IOE', x: 10.6, y: 0, w: 2.6, d: 10.4, h: 0.35, onInterposer: true }],
@@ -181,9 +183,9 @@ export const PACKAGES: PackageSpec[] = [
   { id: 'intel-bga1380', vendor: 'intel', name: 'Intel BGA1380 (Bay Trail-M/D)', balls: 1380, pitch: 0.4, body: { L: 17, W: 17, H: 1.2, sub: 0.6 }, span: [16.0, 16.0], style: 'one bare die',
     dies: [{ kind: 'cpu', label: 'SoC', x: 0, y: 0, w: 9.0, d: 9.0, h: 0.5 }], used: 'Celeron N2830/N2940, Pentium N3530', mapId: 'bga1380', confidence: 'ball field measured (Allegro BGA1380-INTEL-VALLEYVIEW); body from the span; die guessed' },
   // desktop sockets on the pad field (iMac, Mac Pro): the socket body and a lidded CPU
-  { id: 'intel-lga1151', vendor: 'intel', name: 'Intel LGA1151 / LGA1200 socket', balls: 1200, pitch: 0.914, body: { L: 37.5, W: 37.5, H: 4.4, sub: 0.0 }, span: [36.6, 37.9], style: 'LGA socket with a lidded CPU',
+  { id: 'intel-lga1151', vendor: 'intel', name: 'Intel LGA1151 / LGA1200 socket', balls: 1200, pitch: 0.914, body: { L: 44, W: 44, H: 4.4, sub: 0 }, span: [36.6, 37.9], style: 'LGA socket with a lidded CPU',
     socket: { w: 44, d: 44, t: 3.2, h: 2.4 }, lid: { w: 32, d: 32, h: 2.0 }, used: 'iMac 21.5"/27" 2015–20 (A1418/A1419/A2115), desktop Skylake → Rocket Lake', mapId: 'lga1151', sources: ['https://cdrdv2.intel.com/v1/dl/getContent/337344'], confidence: 'pad field measured on five iMac boards (1,151 / 1,200 pads @ 0.914 mm); socket body approximate' },
-  { id: 'intel-lga2066', vendor: 'intel', name: 'Intel LGA2066 socket', balls: 2066, pitch: 1.0, body: { L: 52.5, W: 45, H: 5.0, sub: 0.0 }, span: [51.4, 45.9], style: 'LGA socket with a lidded CPU',
+  { id: 'intel-lga2066', vendor: 'intel', name: 'Intel LGA2066 socket', balls: 2066, pitch: 1.0, body: { L: 58, W: 51, H: 5.0, sub: 0 }, span: [51.4, 45.9], style: 'LGA socket with a lidded CPU',
     socket: { w: 58, d: 51, t: 3.5, h: 2.8 }, lid: { w: 48, d: 42, h: 2.2 }, used: 'iMac Pro A1862 (Xeon W), Skylake-X / Cascade Lake-X desktops', mapId: 'lga2066', confidence: 'pad field measured (A1862); socket body approximate' },
 
   // ── AMD mobile — every FP/FL package is a lidless flip-chip die (or dies) inside a peripheral stiffener frame
@@ -214,9 +216,65 @@ export const PACKAGES: PackageSpec[] = [
   { id: 'amd-vega10', vendor: 'amd', name: 'AMD Vega 10 (Vega 56/64, iMac Pro)', balls: 2013, pitch: 1.0, body: { L: 47.5, W: 47.5, H: 3.0, sub: 1.5 }, span: [44.8, 44.9], style: 'GPU + two HBM2 stacks on an interposer, stiffener frame',
     interposer: { w: 33, d: 31, h: 0.1 }, dies: [{ kind: 'gpu', label: 'Vega 10', x: 4.5, y: 0, w: 21.0, d: 23.0, h: 0.8, onInterposer: true }, { kind: 'mem', label: 'HBM2', x: -10.5, y: 6.5, w: 7.8, d: 11.9, h: 0.9, onInterposer: true }, { kind: 'mem', label: 'HBM2', x: -10.5, y: -6.5, w: 7.8, d: 11.9, h: 0.9, onInterposer: true }],
     ring: { w: 46, d: 46, t: 3.5, h: 0.9 }, used: 'iMac Pro A1862 (Radeon Pro Vega 56/64), RX Vega 56/64', mapId: 'vega10', confidence: 'ball field measured (A1862); 47.5 mm body and the interposer layout from public teardowns; die rectangles approximate' },
-  { id: 'amd-imac2019-gpu', vendor: 'amd', name: 'AMD Vega 12 class (iMac 2019 A2115 GPU)', balls: 1928, pitch: 0.8, body: { L: 42, W: 42, H: 2.6, sub: 1.4 }, span: [39.9, 39.9], style: 'GPU + two HBM2 stacks on an interposer, stiffener frame',
-    interposer: { w: 28, d: 26, h: 0.1 }, dies: [{ kind: 'gpu', label: 'GPU', x: 3.5, y: 0, w: 15, d: 17, h: 0.8, onInterposer: true }, { kind: 'mem', label: 'HBM2', x: -8.5, y: 6.2, w: 7.8, d: 11.9, h: 0.9, onInterposer: true }, { kind: 'mem', label: 'HBM2', x: -8.5, y: -6.2, w: 7.8, d: 11.9, h: 0.9, onInterposer: true }],
-    ring: { w: 40.5, d: 40.5, t: 3.0, h: 0.9 }, used: 'iMac 27" 2019 Radeon Pro Vega 48', mapId: 'imac2019-gpu', confidence: 'ball field measured; identity inferred from the board (the Polaris models of that iMac carry the 1401-ball part); layout guessed from Vega 12' },
+  { id: 'amd-navi10', vendor: 'amd', name: 'AMD Navi 10 (RX 5600M/5700M, Radeon Pro 5700/5700 XT)', balls: 1928, pitch: 0.8, body: { L: 42.5, W: 42.5, H: 2.6, sub: 1.4 }, span: [39.9, 39.9], style: 'bare die in a stiffener frame',
+    dies: [{ kind: 'gpu', label: 'Navi 10', x: 0, y: 0, ...sq(251), h: 0.8 }], ring: { w: 41, d: 41, t: 3.0, h: 0.8 }, caps: [{ x: 0, y: 12.5, n: 12, dir: 'x', pitch: 1.2 }, { x: 0, y: -12.5, n: 12, dir: 'x', pitch: 1.2 }],
+    used: 'iMac 27" 2020 (A2115 820-01823, Radeon Pro 5700/5700 XT), Dell G5 15 SE (RX 5600M), Alienware Area-51m R2 (RX 5700M)', mapId: 'imac2019-gpu', sources: ['https://www.techpowerup.com/gpu-specs/amd-navi-10.g861'], confidence: 'ball field measured (1,928 balls @ 0.8 mm, 39.9 mm span — TechPowerUp BGA-1928); body from the span; die 251 mm² secondary' },
+  { id: 'amd-pitcairn', vendor: 'amd', name: 'AMD Pitcairn (HD 7970M, R9 M290X, FirePro D300)', balls: 1737, pitch: 0.8, body: { L: 41, W: 41, H: 2.5, sub: 1.3 }, span: [38.6, 38.6], style: 'bare die in a stiffener frame',
+    dies: [{ kind: 'gpu', label: 'Pitcairn', x: 0, y: 0, ...sq(212), h: 0.8 }], ring: { w: 39.5, d: 39.5, t: 2.8, h: 0.8 }, caps: [{ x: 0, y: 11.5, n: 12, dir: 'x', pitch: 1.2 }, { x: 0, y: -11.5, n: 12, dir: 'x', pitch: 1.2 }],
+    used: 'iMac 27" 2014–2015 (A1419 820-4652 / 820-00292, R9 M290X/M295X), Clevo P170EM (HD 7970M)', mapId: 'amd-pitcairn', confidence: 'ball field measured on four iMac boards (1,737 balls — TechPowerUp FCBGA-1737); body from the span; die 212 mm² secondary' },
+
+  // ── AMD mobile GPUs measured on MacBook Pro boards (bare die in a perimeter frame, like every AMD/NVIDIA GPU photo)
+  { id: 'amd-polaris21', vendor: 'amd', name: 'AMD Polaris 21 / Baffin (Radeon Pro 450–560X, RX 460/560)', balls: 769, pitch: 0.65, body: { L: 25, W: 25, H: 2.0, sub: 1.1 }, span: [22.6, 22.6], style: 'bare die in a stiffener frame',
+    dies: [{ kind: 'gpu', label: 'Polaris 21', x: 0, y: 0, ...sq(123), h: 0.7 }], ring: { w: 23, d: 23, t: 2.0, h: 0.7 }, caps: [{ x: 0, y: 7.4, n: 8, dir: 'x', pitch: 1.2 }, { x: 0, y: -7.4, n: 8, dir: 'x', pitch: 1.2 }],
+    used: 'MacBook Pro 15" 2016–2019 (A1707/A1990 Radeon Pro 450/455/460/555X/560X), RX 460/560 laptops', mapId: 'amd-polaris21', confidence: 'ball field measured on three boards (769 balls @ 0.686 mm, 22.6 mm span); body from the span; die 123 mm² secondary' },
+  { id: 'amd-navi14', vendor: 'amd', name: 'AMD Navi 14 (Radeon Pro 5300M/5500M, RX 5500M)', balls: 1125, pitch: 0.8, body: { L: 33, W: 33, H: 2.3, sub: 1.2 }, span: [30.4, 30.4], style: 'bare die in a stiffener frame',
+    dies: [{ kind: 'gpu', label: 'Navi 14', x: 0, y: 0, w: 13.6, d: 11.5, h: 0.75 }], ring: { w: 31, d: 31, t: 2.4, h: 0.75 }, caps: [{ x: 0, y: 9.5, n: 10, dir: 'x', pitch: 1.2 }, { x: 0, y: -9.5, n: 10, dir: 'x', pitch: 1.2 }],
+    used: 'MacBook Pro 16" 2019 (A2141), iMac 27" 2020 (A2115 820-01799), RX 5500M laptops', mapId: 'amd-navi14', confidence: 'ball field measured on two boards (1,125 balls @ 0.787 mm, 30.4 mm span); body from the span; die 158 mm² secondary' },
+  { id: 'amd-capeverde', vendor: 'amd', name: 'AMD Cape Verde (R9 M370X, HD 7770M class)', balls: 962, pitch: 0.8, body: { L: 30, W: 30, H: 2.0, sub: 1.1 }, span: [27.6, 27.6], style: 'bare die in a stiffener frame',
+    dies: [{ kind: 'gpu', label: 'Cape Verde', x: 0, y: 0, ...sq(123), h: 0.7 }], ring: { w: 28, d: 28, t: 2.2, h: 0.7 }, caps: [{ x: 0, y: 8.5, n: 8, dir: 'x', pitch: 1.2 }, { x: 0, y: -8.5, n: 8, dir: 'x', pitch: 1.2 }],
+    used: 'MacBook Pro 15" mid-2015 (A1398 820-00426, R9 M370X); the 2011 HD 6xxxM (Whistler) shares the footprint', mapId: 'amd-capeverde', confidence: 'ball field measured (962 balls @ 0.787 mm, 27.6 mm span — distinct from the NVIDIA 908-ball 29 mm package); body from the span; die 123 mm² secondary' },
+
+  // ── Memory — overmoulded FBGA, body and matrix from vendor mechanical drawings (Micron / Samsung / SK hynix; JEDEC
+  // MO-207 / MO-210 / MO-328). Bodies vary per vendor; the most common one is recorded. Mixed-pitch families carry the
+  // nearest-neighbour pitch. DDR3 and DDR4 x8/x16 share a footprint (only the body differs) — one record each.
+  { id: 'mem-ddr-78', vendor: 'memory', name: 'DDR3 / DDR4 / DDR5 x8 FBGA-78', balls: 78, pitch: 0.8, body: { L: 11, W: 7.5, H: 1.1, sub: 0.25 }, span: [9.6, 6.4], style: 'moulded', mold: { h: 0.75 },
+    used: 'soldered DDR3L/DDR4 on MacBook Air 2013–17, MacBook Pro 2018–19 (A1990), most laptops with soldered RAM', mapId: 'ddr4-78', sources: ['https://classes.engineering.wustl.edu/cse362/images/0/0c/8Gb_DDR4_SDRAM.pdf'], confidence: 'matrix 6 × 13 (cols 1–3, 7–9), 0.8 mm, span 6.4 × 9.6 primary (Micron drawings); body 7.5 × 11 (DDR4/DDR5) — DDR3 is 8 × 10.5, indistinguishable from the field' },
+  { id: 'mem-ddr-96', vendor: 'memory', name: 'DDR3 / DDR4 x16 FBGA-96', balls: 96, pitch: 0.8, body: { L: 14, W: 8, H: 1.1, sub: 0.25 }, span: [12.0, 6.4], style: 'moulded', mold: { h: 0.75 },
+    used: 'soldered DDR3L x16 (MacBook Air 2013), DDR4 x16 on laptops and SBCs', mapId: 'ddr3-96', sources: ['https://classes.engineering.wustl.edu/cse362/images/0/0c/8Gb_DDR4_SDRAM.pdf'], confidence: 'matrix 6 × 16, 0.8 mm, span 6.4 × 12.0 primary; body 8 × 14 (also 7.5 × 13.5, 9 × 14)' },
+  { id: 'mem-ddr5-102', vendor: 'memory', name: 'DDR5 x16 FBGA-102', balls: 102, pitch: 0.8, body: { L: 14, W: 7.5, H: 0.9, sub: 0.25 }, span: [12.8, 6.4], style: 'moulded', mold: { h: 0.6 },
+    used: 'soldered DDR5 x16', sources: ['https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/7969/16gb-ddr5-sdram-dierevd.pdf'], confidence: 'matrix 6 × 17, 0.8 mm, span 6.4 × 12.8 primary (Micron MO-210-AT); no sample' },
+  { id: 'mem-lpddr3-178', vendor: 'memory', name: 'LPDDR3 x32 178-ball', balls: 178, pitch: 0.65, body: { L: 11.5, W: 11, H: 1.0, sub: 0.25 }, span: [10.4, 9.6], style: 'moulded', mold: { h: 0.7 },
+    used: 'MacBook Pro 13" 2016–17 (A1706/A1708), iMac 2014–17; Haswell/Broadwell-U laptops', mapId: 'lpddr3-178', sources: ['https://files.pine64.org/doc/rock64/H9CCNNNCLTMLAR%28Rev1.2%29.pdf'], confidence: 'matrix 12 × 17 (col 7 empty, rows C–R narrower), 0.65 × 0.8 mm, span 10.4 × 9.6 primary; body 11 × 11.5 (Micron, SK hynix)' },
+  { id: 'mem-lpddr3-253', vendor: 'memory', name: 'LPDDR3 x64 253-ball', balls: 253, pitch: 0.5, body: { L: 11.5, W: 11.5, H: 1.1, sub: 0.25 }, span: [8.0, 8.0], style: 'moulded', mold: { h: 0.8 },
+    used: 'MacBook 12" 2015–17 (A1534), MacBook Air 2018–19 (A1932)', mapId: 'lpddr3-253', sources: ['https://www.ickey.cn/static-pf/datasheet/20/d4/b535/20/aa0f3aaf4d1c174d503f4f8fd529288f.pdf'], confidence: 'matrix 17 × 17 with a 6 × 6 central void, 0.5 mm, span 8 × 8 primary (Micron); body 11.5 × 11.5' },
+  { id: 'mem-lpddr4-200', vendor: 'memory', name: 'LPDDR4 / LPDDR4X x32 200-ball', balls: 200, pitch: 0.65, body: { L: 14.5, W: 10, H: 1.0, sub: 0.25 }, span: [13.65, 8.8], style: 'moulded', mold: { h: 0.7 },
+    used: 'Nintendo Switch / Switch Lite, Raspberry Pi 4, phones and tablets', mapId: 'lpddr4-200', sources: ['https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/8606/z42m-embedded-lpddr4x-lpddr4.pdf'], confidence: 'matrix 10 × 22 (cols 6–7 and rows L–M empty), 0.65 × 0.8 mm, span 8.8 × 13.65 primary (JESD209-4 MO-311); body 10 × 14.5 (Micron), 10 × 15 (Samsung, SK hynix)' },
+  { id: 'mem-lpddr4-366', vendor: 'memory', name: 'LPDDR4 / LPDDR4X x64 366-ball', balls: 366, pitch: 0.5, body: { L: 15, W: 15, H: 0.65, sub: 0.2 }, span: [14.0, 14.0], style: 'moulded', mold: { h: 0.45 },
+    used: 'Pinebook Pro, SBCs, Chromebooks', sources: ['https://www.farnell.com/datasheets/3761308.pdf'], confidence: 'matrix 29 × 29 perimeter (rows F–AD only the outer two columns each side), 0.5 mm, span 14 × 14 primary (Micron NK); no sample' },
+  { id: 'mem-lpddr4-376', vendor: 'memory', name: 'LPDDR4X x64 376-ball', balls: 376, pitch: 0.4, body: { L: 14, W: 14, H: 0.71, sub: 0.2 }, span: [13.2, 13.2], style: 'moulded', mold: { h: 0.5 },
+    used: 'thin laptops and tablets (Micron NZ, SK hynix)', sources: ['https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/8606/z42m-embedded-lpddr4x-lpddr4.pdf'], confidence: 'matrix 34 × 34 perimeter, 0.4 mm, span 13.2 × 13.2 primary (Micron); no sample' },
+  { id: 'mem-lpddr4-556', vendor: 'memory', name: 'LPDDR4X x64 556-ball', balls: 556, pitch: 0.4, body: { L: 12.4, W: 12.4, H: 1.1, sub: 0.2 }, span: [11.2, 11.2], style: 'moulded', mold: { h: 0.85 },
+    used: 'laptops 2019–2022 (Micron HJ/TN)', sources: ['https://www.farnell.com/datasheets/3760672.pdf'], confidence: 'matrix 29 × 29 perimeter (rows H–AB only five columns each side), 0.4 mm, span 11.2 × 11.2 primary (Micron); no sample' },
+  { id: 'mem-lpddr5-315', vendor: 'memory', name: 'LPDDR5 / LPDDR5X x32 315-ball', balls: 315, pitch: 0.7, body: { L: 15, W: 12.4, H: 1.1, sub: 0.25 }, span: [14.0, 11.2], style: 'moulded', mold: { h: 0.8 },
+    used: 'phones, tablets, Chromebooks (Micron DS/DV, Samsung K3LKBKB0BM, SK hynix H9JCNNNBK3MLYR)', sources: ['https://www.farnell.com/datasheets/4530575.pdf'], confidence: 'matrix 15 × 21 full, 0.7 × 0.8 mm, span 11.2 × 14.0 primary (Micron); body 12.4 × 15; no sample — distinct from the Apple NAND BGA315 (0.483 mm, 10 × 7 span)' },
+  { id: 'mem-lpddr5-441', vendor: 'memory', name: 'LPDDR5 / LPDDR5X x64 441-ball', balls: 441, pitch: 0.65, body: { L: 14, W: 14, H: 1.1, sub: 0.25 }, span: [13.0, 13.0], style: 'moulded', mold: { h: 0.8 },
+    used: 'laptops 2022+ with soldered LPDDR5 (Micron EK, Samsung K3KL3L30QM)', sources: ['https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/8885/315b-441b-561b-y52q-sdp-ddp-lpddr5x.pdf'], confidence: 'matrix 21 × 21 full, 0.65 mm, span 13 × 13 primary (Micron); body 14 × 14; no sample' },
+  { id: 'mem-lpddr5-496', vendor: 'memory', name: 'LPDDR5X x64 496-ball', balls: 496, pitch: 0.4, body: { L: 14, W: 12.4, H: 0.56, sub: 0.15 }, span: [10.8, 10.4], style: 'moulded', mold: { h: 0.38 },
+    used: 'thin laptops 2023+ (Micron ZX, Samsung K3LK7K70BM)', sources: ['https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/8885/315b-441b-561b-y52q-sdp-ddp-lpddr5x.pdf'], confidence: 'matrix 28 × 27 perimeter, 0.4 mm, span 10.8 × 10.4 primary (Micron); body 14 × 12.4; no sample' },
+  { id: 'mem-gddr5-170', vendor: 'memory', name: 'GDDR5 x32 FBGA-170', balls: 170, pitch: 0.8, body: { L: 14, W: 12, H: 1.1, sub: 0.3 }, span: [12.8, 10.4], style: 'moulded', mold: { h: 0.75 },
+    used: 'GTX 900M/10-series laptops, RX 400/500, MacBook Pro 15" 2016–19 (Radeon Pro 4xx/5xx)', mapId: 'gddr5-170', sources: ['https://datasheet.chipsmall.com/MT51J256M32HF-70-A-TR/252006.pdf'], confidence: 'matrix 10 × 17 (cols 6–9 empty), 0.8 mm, span 10.4 × 12.8 primary (Micron); body 12 × 14; measured on four boards' },
+  { id: 'mem-gddr5x-190', vendor: 'memory', name: 'GDDR5X x32 FBGA-190', balls: 190, pitch: 0.65, body: { L: 14, W: 10, H: 1.1, sub: 0.3 }, span: [11.7, 8.45], style: 'moulded', mold: { h: 0.75 },
+    used: 'GTX 1080 / 1080 Ti, Titan X (Pascal)', sources: ['https://www.rxelectronics.cz/datasheet/be/MT58K256M321JA-100-A.pdf'], confidence: 'matrix 10 × 19 (cols 6–9 empty), 0.65 mm, span 8.45 × 11.7 primary (Micron MO-246); body 10 × 14; no sample' },
+  { id: 'mem-gddr6-180', vendor: 'memory', name: 'GDDR6 / GDDR6X x32 FBGA-180', balls: 180, pitch: 0.75, body: { L: 14, W: 12, H: 1.1, sub: 0.3 }, span: [12.75, 9.75], style: 'moulded', mold: { h: 0.75 },
+    used: 'RTX 20/30/40 cards and laptops, RX 5000/6000/7000, iMac 2020 (Navi), PS5 / Xbox Series', mapId: 'gddr6-180', sources: ['https://assets.sourcengine.com/datasheets/810969df-46bf-40b2-9bc7-215fdae2d760.pdf'], confidence: 'matrix 10 × 18 (cols 6–9 empty), 0.75 mm, span 9.75 × 12.75 primary (Micron JE, Samsung MO-328); body 12 × 14; measured on three boards' },
+  { id: 'mem-gddr7-266', vendor: 'memory', name: 'GDDR7 x32 FBGA-266', balls: 266, pitch: 0.73, body: { L: 14, W: 12, H: 1.1, sub: 0.3 }, span: [13.1, 11.0], style: 'moulded', mold: { h: 0.75 },
+    used: 'RTX 50 cards and laptops (Legion Pro 5 16IRX9: Micron MT68A512M32DF)', mapId: 'gddr7-266', sources: ['https://my.micron.com/content/dam/micron/global/public/products/product-flyer/gddr7-product-brief.pdf'], confidence: 'body 12 × 14 × 1.1 and 266 balls primary (Micron brief); the matrix is not public — the field measured on the Legion Pro 5 is 13.1 × 11.0 mm @ 0.73 mm (14 × 19 full array)' },
+
+  // ── Apple NAND — moulded packages with a metallic finish
+  { id: 'apple-nand-bga315', vendor: 'apple', name: 'Apple NAND BGA315 (M-series Macs)', balls: 315, pitch: 0.483, body: { L: 11.5, W: 8.5, H: 1.2, sub: 0.3 }, span: [10.0, 7.0], style: 'moulded, silver',
+    mold: { h: 0.9, finish: 'silver' }, used: 'SSD NAND on M1/M2/M3 MacBooks and Mac mini (UN000–UN800)', mapId: 'nand-bga315', confidence: 'ball field measured on three boards (315 balls @ 0.483 mm, 10.0 × 7.0 span); body from the span; finish per Alexey' },
+  { id: 'apple-nand-bga110', vendor: 'apple', name: 'Apple SSD NAND BGA110 (2018–2020 Intel Macs)', balls: 110, pitch: 1.114, body: { L: 14.5, W: 11.5, H: 1.3, sub: 0.3 }, span: [12.8, 9.6], style: 'moulded, silver',
+    mold: { h: 1.0, finish: 'silver' }, used: 'SSD NAND on MacBook Air/Pro 2018–2020 (U8600–U8900)', mapId: 'nand-bga110', confidence: 'ball field measured on nine boards (110 balls @ 1.11 mm, 12.8 × 9.6 span); body from the span; finish per Alexey' },
 
   // ── NVIDIA — bare flip-chip die, centred, perimeter stiffener frame, caps between die and frame (every public photo;
   // no NVIDIA document describes it). Ball pitches are measured on sample boards: the web has none.
@@ -232,6 +290,12 @@ export const PACKAGES: PackageSpec[] = [
     dies: [{ kind: 'gpu', label: 'GB206', x: 0, y: 0, ...sq(181), h: 0.75 }], ring: { w: 31.8, d: 31.8, t: 2.4, h: 0.75 }, caps: [{ x: 0, y: 9.8, n: 10, dir: 'x', pitch: 1.1 }, { x: 0, y: -9.8, n: 10, dir: 'x', pitch: 1.1 }],
     used: 'RTX 5060 laptop (GN22-X4), RTX 5070 laptop (GN22-X6)', mapId: 'gn22', sources: ['https://wccftech.com/nvidia-next-gen-geforce-rtx-50-blackwell-laptop-gpu-lineup-gddr7-leak-2025-launch/'],
     confidence: 'ball field measured on LA-P161P (Allegro GN22-X4-A1_FCBGA_2088P); body from the span; die 181 mm² secondary' },
+  { id: 'nv-gn21-1358', vendor: 'nvidia', name: 'NVIDIA GA107 / AD107 / AD106 laptop, 29 mm (RTX 3050, 4050, 4060, 4070)', balls: 1358, pitch: 0.65, body: { L: 29, W: 29, H: 2.2, sub: 1.2 }, span: [27.3, 27.3], style: 'bare die in a stiffener frame',
+    dies: [{ kind: 'gpu', label: 'GPU', x: 0, y: 0, ...sq(159), h: 0.75 }], ring: { w: 27.8, d: 27.8, t: 2.2, h: 0.75 }, caps: [{ x: 0, y: 8.8, n: 8, dir: 'x', pitch: 1.2 }, { x: 0, y: -8.8, n: 8, dir: 'x', pitch: 1.2 }],
+    used: 'RTX 3050/3050 Ti (GN20-P0/P1, GA107), RTX 4050/4060 (GN21-X2/X4, AD107), RTX 4070 (GN21-X6, AD106); Lenovo Legion Pro 5 16IRX9', mapId: 'ad107', sources: ['https://videocardz.com/newz/notebooks-with-nvidia-ga107-gpu-can-easily-be-upgraded-to-rtx-40-ad106-107-gpus'],
+    confidence: 'ball field measured (Legion Pro 5 NM-F701: 1,358 balls @ 0.686 mm nearest-neighbour — a 0.65 mm staggered core, 27.3 mm span); TechPowerUp FCBGA-1358 for GA107; AD107/AD106 laptop parts drop into GA107 boards; die drawn at AD107 159 mm²' },
+  { id: 'intel-pch-hx-1045', vendor: 'intel', name: 'Intel 700-series PCH for HX laptops (HM770 / WM790)', balls: 1045, pitch: 0.571, body: { L: 28, W: 25, H: 1.7, sub: 0.9 }, span: [26.7, 23.7], style: 'bare die',
+    dies: [{ kind: 'pch', label: 'PCH', x: 0, y: 0, w: 10, d: 9, h: 0.6 }], used: 'Alder / Raptor Lake-HX laptops (Legion Pro 5 16IRX9)', mapId: 'pch-hx-1045', sources: ['https://cdrdv2.intel.com/v1/dl/getContent/743844'], confidence: 'ball field measured (1,045 balls @ 0.57 mm, 26.7 × 23.7 span); 25 × 28 × 1.7 body from Intel\'s HX platform diagram; die size guessed' },
   { id: 'nv-fcbga1745', vendor: 'nvidia', name: 'NVIDIA 256-bit GPU, 40 mm (GK104, GM204)', balls: 1745, pitch: 0.8, body: { L: 40, W: 40, H: 2.6, sub: 1.4 }, span: [38.4, 38.4], style: 'bare die in a stiffener frame',
     dies: [{ kind: 'gpu', label: 'GPU', x: 0, y: 0, ...sq(340), h: 0.8 }], ring: { w: 38.8, d: 38.8, t: 2.8, h: 0.8 }, caps: [{ x: 0, y: 13.5, n: 12, dir: 'x', pitch: 1.2 }, { x: 0, y: -13.5, n: 12, dir: 'x', pitch: 1.2 }],
     used: 'GTX 680MX/775M/780M (GK104), GTX 970M/980M (GM204, N16E), iMac 2012–2013 GK104', mapId: 'gk104', sources: ['https://videocardz.com/58101/nvidia-gp104-and-first-polaris-gpu-supposedly-spotted-on-zauba'],

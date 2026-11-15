@@ -20,7 +20,7 @@
  */
 
 import type { BoardData, BoardRevision, Part, Pin, Nail, Point, Trace, Via } from './types';
-import { computeBBox, buildNets, computePartGeometry, generateSyntheticOutline, detectGhostComponents, detectBomAlternateClusters } from './types';
+import { computeBBox, buildNets, computePartGeometry, generateSyntheticOutline, detectGhostComponents, detectBomAlternateClusters, chainPolylines } from './types';
 import { detectXMirrorByPinDirection, applyXMirrorInPlace } from './mirror-detect';
 import { log } from '../store/log-store';
 
@@ -980,6 +980,52 @@ function tessellateArc(
 }
 
 // ---------------------------------------------------------------------------
+// Board outline ($BOARD): LINE / ARC / CIRCLE primitives, chained into contours
+// ---------------------------------------------------------------------------
+
+/** The $BOARD section as polylines (mils). `ARC x1 y1 x2 y2 xc yc` is CCW like
+ *  $ROUTES arcs (#33: never a shortest-arc rule); `CIRCLE xc yc r` is a closed
+ *  ring. Until 2026-11-15 this section was ignored and every GenCAD board got a
+ *  synthetic rectangle from its pins — the Lenovo Legion Pro 5 (NM-F701) file
+ *  has 901 outline lines and showed as a slab the size of its pin field. */
+function parseBoardOutline(lines: string[], factor: number): Point[][] {
+  const polys: Point[][] = [];
+  for (const raw of lines) {
+    const t = raw.trim().split(/\s+/); if (t.length < 4) continue;
+    const v = t.slice(1).map(Number); if (v.some(n => !Number.isFinite(n))) continue;
+    const P = (x: number, y: number): Point => ({ x: x * factor, y: y * factor });
+    if (t[0] === 'LINE' && v.length >= 4) polys.push([P(v[0], v[1]), P(v[2], v[3])]);
+    else if (t[0] === 'ARC' && v.length >= 6) {
+      const [x1, y1, x2, y2, cx, cy] = v; const r = Math.hypot(x1 - cx, y1 - cy);
+      if (r <= 0) { polys.push([P(x1, y1), P(x2, y2)]); continue; }
+      const a0 = Math.atan2(y1 - cy, x1 - cx), sweep = gencadArcSweepRad(a0, Math.atan2(y2 - cy, x2 - cx));
+      const steps = Math.max(2, Math.ceil(sweep / (Math.PI / 18))); const pts: Point[] = [P(x1, y1)];
+      for (let i = 1; i < steps; i++) pts.push(P(cx + r * Math.cos(a0 + sweep * i / steps), cy + r * Math.sin(a0 + sweep * i / steps)));
+      pts.push(P(x2, y2)); polys.push(pts);
+    } else if (t[0] === 'CIRCLE' && v.length >= 3) {
+      const [cx, cy, r] = v; const pts: Point[] = []; for (let i = 0; i <= 36; i++) pts.push(P(cx + r * Math.cos(i * Math.PI / 18), cy + r * Math.sin(i * Math.PI / 18))); polys.push(pts);
+    }
+  }
+  return polys;
+}
+
+/** Of a chained outline (NaN-separated contours), the largest closed contour plus the closed ones inside it. */
+function keepClosedContours(chained: Point[]): Point[] {
+  const contours: Point[][] = []; let cur: Point[] = [];
+  for (const q of chained) { if (Number.isNaN(q.x)) { if (cur.length) contours.push(cur); cur = []; } else cur.push(q); }
+  if (cur.length) contours.push(cur);
+  const closed = contours.filter(c => c.length >= 4 && Math.hypot(c[0].x - c[c.length - 1].x, c[0].y - c[c.length - 1].y) <= 10);
+  if (!closed.length) return [];
+  const area = (c: Point[]) => { const b = computeBBox(c); return (b.maxX - b.minX) * (b.maxY - b.minY); };
+  closed.sort((a, b) => area(b) - area(a));
+  const main = closed[0], mb = computeBBox(main);
+  const inner = closed.slice(1).filter(c => { const b = computeBBox(c); return b.minX >= mb.minX && b.maxX <= mb.maxX && b.minY >= mb.minY && b.maxY <= mb.maxY && area(c) >= 40 * 40; });
+  const out: Point[] = [...main];
+  for (const c of inner) out.push({ x: NaN, y: NaN }, ...c);
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Test pins + power pins ($TESTPINS, $POWERPINS)
 // ---------------------------------------------------------------------------
 
@@ -1052,6 +1098,7 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   const unitFactor = parseUnitsFactor(headerLines);
 
   // Parse sections
+  const boardPolys = parseBoardOutline(extractSection(lines, 'BOARD'), unitFactor);
   const pads       = parsePads(extractSection(lines, 'PADS'), unitFactor);
   const padstacks  = resolvePadstacks(extractSection(lines, 'PADSTACKS'), pads);
   const shapes     = parseShapes(extractSection(lines, 'SHAPES'), unitFactor);
@@ -1336,7 +1383,22 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
 
   const revisions: BoardRevision[] = partsByPass.map((parts, idx) => {
     const allPoints: Point[] = parts.flatMap(p => p.pins.map(pin => pin.position));
-    const outline = generateSyntheticOutline(allPoints);
+    // the file's own outline when it is one board and the chained contours hold the pins (the parser may have
+    // recentred or mirrored the parts, in which case the raw $BOARD frame no longer applies — keep the rectangle)
+    let outline: Point[] = [];
+    if (!hasMultiplePasses && boardPolys.length) {
+      // $BOARD also carries dimension lines, text and artwork on some exports (743 fragments on the RTX 4090 file):
+      // keep the largest closed contour as the board and closed contours inside it as cutouts, drop the rest
+      const chained = keepClosedContours(chainPolylines(boardPolys, 10));
+      const real = chained.filter(q => !Number.isNaN(q.x));
+      if (real.length >= 3) {
+        const ob = computeBBox(real); const tol = 40;
+        const inside = allPoints.filter(q => q.x >= ob.minX - tol && q.x <= ob.maxX + tol && q.y >= ob.minY - tol && q.y <= ob.maxY + tol).length;
+        if (inside >= allPoints.length * 0.9) outline = chained;
+        else log.parser.info(`[cad outline] $BOARD contour (${boardPolys.length} primitives) holds only ${inside}/${allPoints.length} pins — using the pin rectangle`);
+      }
+    }
+    if (!outline.length) outline = generateSyntheticOutline(allPoints);
     const bounds = computeBBox([...outline, ...allPoints]);
     const nets = buildNets(parts);
     const ghosts = detectGhostComponents(parts);

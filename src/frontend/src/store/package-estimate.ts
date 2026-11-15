@@ -13,6 +13,7 @@
  */
 import type { Part, Pin } from '../parsers/types';
 import { matchPackage, orientToSignature } from './cpu-packages';
+import { classifyConnector, isConnectorRef, looksLikeUsbC, type ConnectorGeometry } from './connector-kinds';
 
 const MIL_PER_MM = 1 / 0.0254;
 const mm = (mils: number) => mils * 0.0254;
@@ -244,7 +245,7 @@ export function parsePackageName(name: string, ref: string): PkgHint | null {
  *  field, and the turn (0/90/180/270) with the closest signature wins — a bottom-side part's field is read mirrored,
  *  as the renderer mirrors its model. Without a signature (no sample board yet) only the span's orientation is known. */
 function knownPackage(e: PartEstimate, side: Part['side'], f: Frame, field: number[], spanX: number, spanY: number, pitch: number): PartEstimate {
-  if (field.length < 300) return e;
+  if (field.length < 60) return e; // memory and NAND packages start at 78 balls
   // the record's pitch is the nearest-neighbour pitch; a staggered field's grid clusters are 1/√2 of it
   const locs = field.map(i => f.loc[i]);
   const nn = nearestNeighbours(locs).map(v => v.d).filter(Number.isFinite).sort((a, b) => a - b);
@@ -252,10 +253,35 @@ function knownPackage(e: PartEstimate, side: Part['side'], f: Frame, field: numb
   const m = matchPackage({ balls: field.length, pitch, spanX, spanY });
   if (!m) return e;
   const s = m.spec; let turn: number, how: string;
-  if (s.sig) { const o = orientToSignature(s.sig, locs, side === 'bottom'); turn = o.turn; how = `turned ${o.turn}° onto the ball pattern (fit ${o.fit.toFixed(2)}, worst ${o.worst.toFixed(2)})`; }
+  // the span fixes the parity (a turned field matches the record's W along its x); the pattern picks between the two
+  // turns of that parity — on one A1502 file the pattern alone chose 90° against a 40 × 24 body and left half the balls outside
+  if (s.sig) { const o = orientToSignature(s.sig, locs, side === 'bottom', m.turned ? [90, 270] : [0, 180]); turn = o.turn; how = `turned ${o.turn}° onto the ball pattern (fit ${o.fit.toFixed(2)}, worst ${o.worst.toFixed(2)})`; }
   else { turn = m.turned ? 90 : 0; how = 'oriented by the span only (no sample of this package yet)'; }
   const why = `${e.why}; ${s.name} by span ${spanX.toFixed(1)}×${spanY.toFixed(1)} @ ${pitch.toFixed(2)}${m.missingBalls ? ` (${m.missingBalls} balls not listed)` : ''}, ${how}`;
   return { ...e, L: s.body.L, W: s.body.W, H: s.body.H ?? e.H, rotDeg: wrap(e.rotDeg + turn), pkg: s.id, p: { ...e.p, balls: field.length }, why };
+}
+
+/** Geometry summary + kind for a part the designator calls a connector. The frame runs along the longest row; the
+ *  body is centred on the field across the row and pushed toward the mating face by the kind's `offsetW`. */
+function connectorEstimate(pins: Pin[], ref: string, drilledCount: number): { family: Family; size: string; L: number; W: number; H: number; cx: number; cy: number; rotDeg: number; p: Record<string, number>; why: string; evidence: 'name' | 'pattern' | 'fallback' } {
+  const medA = median(pins.map(q => (q.padWidth && q.padHeight ? q.padWidth * q.padHeight : 4 * q.radius * q.radius)));
+  const big = pins.map((_, i) => i).filter(i => { const q = pins[i]; return (q.padWidth && q.padHeight ? q.padWidth * q.padHeight : 4 * q.radius * q.radius) > medA * 3; });
+  const sig = big.length < pins.length ? pins.map((_, i) => i).filter(i => !big.includes(i)) : pins.map((_, i) => i);
+  const f0 = frame(pins, gridAngle(sig.map(i => pins[i].position)), sig);
+  // the row axis: whichever of the two frame axes gives fewer, longer rows
+  const rowsAt = (f: Frame) => { const sl = sig.map(i => f.loc[i]); const tol = Math.max(6, mm(1) * 0); const ys = clusters(sl.map(v => v.y), Math.max(tol, 8)); return { f, ys, sl }; };
+  const a = rowsAt(f0), b = rowsAt(frame(pins, f0.deg + 90, sig));
+  const pick = a.ys.length <= b.ys.length ? a : b; const f = pick.f, sl = pick.sl;
+  const row = sl.filter(v => Math.abs(v.y - pick.ys.reduce((m, c) => c.n > m.n ? c : m, pick.ys[0]).c) <= 8).map(v => v.x).sort((x, y) => x - y);
+  const pitch = row.length > 1 ? mm(pitchOf(row)) : 0; const B = bboxOf(sl);
+  const g: ConnectorGeometry = { n: pins.length, rows: pick.ys.length, perRow: Math.max(...pick.ys.map(c => c.n)), pitch, spanL: mm(B.x1 - B.x0), spanW: mm(B.y1 - B.y0), bigPads: big.length, drilled: drilledCount };
+  const k = classifyConnector(ref, g);
+  // mating face: away from the shell tabs / big pads when there are any, else toward +y of the frame
+  const tabY = big.length ? big.reduce((s2, i) => s2 + f.loc[i].y, 0) / big.length : Infinity, rowY = (B.y0 + B.y1) / 2;
+  const dir = big.length && tabY > rowY ? -1 : 1;
+  const c = toBoard(f, (B.x0 + B.x1) / 2, rowY + dir * k.offsetW * (k.W - mm(B.y1 - B.y0)) / 2 * MIL_PER_MM);
+  const fam: Family = k.kind === 'usb-c' ? 'usb-c' : k.kind === 'b2b' ? 'b2b' : k.kind === 'header' ? 'header' : k.kind === 'coax' ? 'coax' : 'conn';
+  return { family: fam, size: k.label, L: k.L, W: k.W, H: k.H, cx: c.x, cy: c.y, rotDeg: wrap(f.deg + (dir > 0 ? 0 : 180)), p: { n: pins.length, pitch, rows: g.rows, perSide: g.perRow, cols: g.perRow }, why: `${k.why} (${k.evidence})`, evidence: k.evidence };
 }
 
 // ── main ───────────────────────────────────────────────────────────────────
@@ -284,8 +310,15 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
       fam === 'hole' ? (d ? `1 pin, ${d.toFixed(1)} mm drill → mounting hole` : `1 pin, ${pw.toFixed(1)}×${ph.toFixed(1)} mm pad → plated mounting hole (both sides)`) : fam === 'fiducial' ? '1 pin, no net → fiducial' : '1 pin on a net → test point');
   }
 
-  // ── headers: every pin drilled ──
+  // ── connectors by designator: J…, CN…, P<digit>… never reach the IC rules ──
   const drilled = pins.filter(p => (p.drill ?? 0) > 0);
+  // A keyword decides at once; a pattern-only wire / FPC reading lets the series rules below (JST SH/PH by pitch,
+  // FPC, board-to-board) name it better; and whatever is left is still a connector, never an IC (`connFallback`).
+  const connFallback = isConnectorRef(ref) && !(hint && !['conn', 'usb-c', 'header', 'b2b'].includes(hint.family)) ? connectorEstimate(pins, ref, drilled.length) : null;
+  const asConn = (c: NonNullable<typeof connFallback>) => out({ family: c.family, size: c.size, L: c.L, W: c.W, H: c.H, cx: c.cx, cy: c.cy, rotDeg: c.rotDeg, p: c.p }, c.why, hint ? 'package' : 'geometry');
+  if (connFallback && !(hint?.family === 'conn' && hint.size) && (connFallback.evidence === 'name' || !['wire-to-board', 'FPC', 'connector'].some(k => connFallback.size.startsWith(k)))) return asConn(connFallback);
+
+  // ── headers: every pin drilled ──
   if ((hint?.family === 'header') || (!hint && drilled.length === n && n >= 2 && (n > 2 || mm(Math.hypot(pins[1].position.x - pins[0].position.x, pins[1].position.y - pins[0].position.y)) > 1.9))) {
     const f0 = frame(pins, gridAngle(pins.map(p => p.position)));
     const b = bboxOf(f0.loc); const long = b.x1 - b.x0 >= b.y1 - b.y0;
@@ -386,7 +419,8 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
       const f = frame(pins, f0.deg + extra, small); const sl = small.map(i => f.loc[i]);
       const ys = clusters(sl.map(v => v.y), 14), xs = clusters(sl.map(v => v.x), 6);
       const p = mm(pitchOf(xs.map(c => c.c)));
-      if (ys.length <= 2 && (hint || (p > 0.2 && p < 0.65))) {
+      const B = bboxOf(sl), geom: ConnectorGeometry = { n, rows: ys.length, perRow: Math.max(...ys.map(c => c.n)), pitch: p, spanL: mm(B.x1 - B.x0), spanW: mm(B.y1 - B.y0), bigPads: big.length, drilled: drilled.length };
+      if (hint || looksLikeUsbC(geom)) { // the loose two-rows test read SODIMM sockets and keyboard FPCs as USB-C (Legion Pro 5, 2026-11-15)
         // body extends from the signal row away from the shell tabs' far side: opening faces the tabs.
         const tabY = big.length ? big.reduce((a, i) => a + f.loc[i].y, 0) / big.length : 0;
         const rowY = sl.reduce((a, v) => a + v.y, 0) / sl.length; const dir = tabY < rowY ? -1 : 1;
@@ -462,6 +496,9 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
     }
   }
 
+  // a connector that no series rule named is still a connector
+  if (connFallback) return asConn(connFallback);
+
   // No-lead / leaded ICs and grids, on the signal pins.
   {
     const b = bboxOf(sloc);
@@ -500,12 +537,20 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
     // grids: try the nearest-neighbour angle and 45° off it (staggered ball fields)
     // a checkerboard field has diagonal nearest neighbours; the package edge is the angle with the tighter box
     const area = (d: number) => { const B = bboxOf(frame(pins, d, small).loc); return (B.x1 - B.x0) * (B.y1 - B.y0); };
+    // A ball grid sits square to the board in practice; a fitted angle within 3° of a right angle is noise from
+    // quantised positions, and on a 46 mm body it is what lets corner pads poke out of the package (A1989, 2026-11-15).
+    // a body must at least cover its pads: files with coarse pad radii (BVR) would otherwise show them past the edge
+    const padOut = mm(Math.max(...small.map(i => sizes[i]))) + 0.2;
+    const squared = (deg: number) => { const r = Math.round(deg / 90) * 90; return Math.abs(wrap(deg - r)) <= 3 ? r : deg; };
     for (const extra of area(f0.deg) <= area(f0.deg + 45) * 1.02 ? [0, 45] : [45, 0]) {
-      const f = frame(pins, f0.deg + extra, small); const sl = small.map(i => f.loc[i]);
+      const f = frame(pins, squared(f0.deg + extra), small); const sl = small.map(i => f.loc[i]);
       const gx = clusters(sl.map(v => v.x), tol), gy = clusters(sl.map(v => v.y), tol);
       if (gx.length >= 4 && gy.length >= 4 && small.length >= 16 && small.length >= 0.3 * gx.length * gy.length) {
-        const B = bboxOf(sl), p = mm(pitchOf(gx.map(c => c.c))), margin = Math.min(1.6, Math.max(0.4, p * 1.5)); // chip-scale packages end close to their outer balls
-        return knownPackage(out({ family: 'bga', L: mm(B.x1 - B.x0) + margin, W: mm(B.y1 - B.y0) + margin, H: 1.2, cx: f.cx, cy: f.cy, rotDeg: wrap(f.deg), p: { cols: gx.length, rows: gy.length, pitch: p, balls: small.length } },
+        const B = bboxOf(sl), p = mm(pitchOf(gx.map(c => c.c))), margin = Math.max(Math.min(1.6, Math.max(0.4, p * 1.5)), padOut); // chip-scale packages end close to their outer balls; never less than the pads
+        // the body sits over the field's box, not its centroid: a depopulated field is lopsided (the A1989's
+        // Coffee Lake-U centroid is 0.9 mm off its middle, which put a column of balls outside the package)
+        const bc = toBoard(f, (B.x0 + B.x1) / 2, (B.y0 + B.y1) / 2);
+        return knownPackage(out({ family: 'bga', L: mm(B.x1 - B.x0) + margin, W: mm(B.y1 - B.y0) + margin, H: 1.2, cx: bc.x, cy: bc.y, rotDeg: wrap(f.deg), p: { cols: gx.length, rows: gy.length, pitch: p, balls: small.length } },
           `${small.length} balls on a ${gx.length}×${gy.length} grid @ ${p.toFixed(2)} → BGA`), part.side, f, small, mm(B.x1 - B.x0), mm(B.y1 - B.y0), p);
       }
     }
@@ -513,10 +558,11 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
     // n balls at nearest-neighbour pitch p cover about n·p² of the field.
     {
       const nn = nearestNeighbours(sloc).map(e => e.d).filter(Number.isFinite).sort((a, c) => a - c), pitch = nn[nn.length >> 1] ?? 0;
-      const B = bboxOf(sloc), area = (B.x1 - B.x0) * (B.y1 - B.y0);
+      const B0 = bboxOf(sloc), area = (B0.x1 - B0.x0) * (B0.y1 - B0.y0); const f0u = f0;
       if (hint?.family === 'bga' || (small.length >= 100 && area > 0 && small.length * pitch * pitch / area > 0.25)) {
-        const pm = mm(pitch), margin = Math.min(1.6, Math.max(0.4, pm * 1.5));
-        return knownPackage(out({ family: 'bga', L: mm(B.x1 - B.x0) + margin, W: mm(B.y1 - B.y0) + margin, H: 1.2, cx: f0.cx, cy: f0.cy, rotDeg: wrap(f0.deg), p: { pitch: pm, balls: small.length } },
+        const f0 = frame(pins, squared(f0u.deg), small), B = bboxOf(small.map(i => f0.loc[i]));
+        const pm = mm(pitch), margin = Math.max(Math.min(1.6, Math.max(0.4, pm * 1.5)), padOut), bc = toBoard(f0, (B.x0 + B.x1) / 2, (B.y0 + B.y1) / 2);
+        return knownPackage(out({ family: 'bga', L: mm(B.x1 - B.x0) + margin, W: mm(B.y1 - B.y0) + margin, H: 1.2, cx: bc.x, cy: bc.y, rotDeg: wrap(f0.deg), p: { pitch: pm, balls: small.length } },
           `${small.length} balls in a dense field @ ~${pm.toFixed(2)} → BGA`), part.side, f0, small, mm(B.x1 - B.x0), mm(B.y1 - B.y0), pm);
       }
     }

@@ -28,11 +28,15 @@ export const MAT = {
   lid: std(0xc9ccd1, 0.38, 0.9),
   silicon: std(0x30343a, 0.18, 0.55),
   siliconTop: std(0x3c4148, 0.12, 0.7),
+  // an Intel bare die reads silver: polished backside, mirror-like
+  siliconIntel: std(0xaeb3b9, 0.22, 0.95),
+  siliconIntelTop: std(0xc6cad0, 0.16, 0.95),
   underfill: std(0x202124, 0.7),
   substIntel: std(0x2d5637, 0.55),
   substNv: std(0x1e4d3a, 0.55),
   substAmd: std(0x2a4f3a, 0.55),
   interposer: std(0x3a3d44, 0.4, 0.3),
+  moldSilver: std(0xb5b9be, 0.35, 0.85),
   hbm: std(0x262a30, 0.3, 0.5),
   ledBody: std(0xf4f4ee, 0.55),
   band: std(0xb8bcc2, 0.5),
@@ -68,17 +72,19 @@ function gull(g: THREE.Group, x: number, side: number, half: number, out: number
  *  Record frame: x along L, y along W toward A1's edge; the model's local −z is that +y. Balls collapsed to 0.36 mm. */
 export function buildPackage(g: THREE.Group, spec: PackageSpec): void {
   const { L, W } = spec.body, sub = spec.body.sub ?? 1.0, ballH = Math.min(0.36, spec.pitch * 0.5);
-  const substMat = { intel: MAT.substIntel, nvidia: MAT.substNv, amd: MAT.substAmd, apple: MAT.epoxy }[spec.vendor];
-  g.add(box(L, sub, W, substMat, 0, ballH + sub / 2));
+  const substMat = { intel: MAT.substIntel, nvidia: MAT.substNv, amd: MAT.substAmd, apple: MAT.epoxy, memory: MAT.substIntel }[spec.vendor];
+  if (sub > 0) g.add(box(L, sub, W, substMat, 0, ballH + sub / 2)); // a socket record has no substrate of its own
   const top = ballH + sub; let baseTop = top;
   if (spec.interposer) { const ip = spec.interposer; g.add(box(ip.w, ip.h, ip.d, MAT.interposer, ip.x ?? 0, top + ip.h / 2, -(ip.y ?? 0))); baseTop = top + ip.h; }
   for (const d of spec.dies ?? []) {
     // a tile on a base die has no underfill fillet and a visible seam to its neighbours
     const h = d.h ?? 0.75, y0 = d.onInterposer ? baseTop : top, gap = d.onInterposer ? 0.15 : 0, w = d.w - gap, dd = d.d - gap;
     if (!d.onInterposer) g.add(box(d.w + 0.5, 0.12, d.d + 0.5, MAT.underfill, d.x, y0 + 0.06, -d.y));
-    g.add(box(w, h, dd, d.kind === 'mem' ? MAT.hbm : MAT.silicon, d.x, y0 + h / 2, -d.y));
-    g.add(box(w * 0.98, 0.01, dd * 0.98, MAT.siliconTop, d.x, y0 + h + 0.005, -d.y));
+    const silver = spec.vendor === 'intel' && d.kind !== 'mem' && d.kind !== 'base';
+    g.add(box(w, h, dd, d.kind === 'mem' ? MAT.hbm : silver ? MAT.siliconIntel : MAT.silicon, d.x, y0 + h / 2, -d.y));
+    g.add(box(w * 0.98, 0.01, dd * 0.98, silver ? MAT.siliconIntelTop : MAT.siliconTop, d.x, y0 + h + 0.005, -d.y));
   }
+  if (spec.mold) { const m = spec.mold; g.add(rbox(L, m.h, W, 0.12, m.finish === 'silver' ? MAT.moldSilver : MAT.epoxy, 0, top + m.h / 2)); }
   if (spec.socket) { // LGA socket: plastic frame around the pad field, the lidded CPU inside it
     const q = spec.socket, iw = q.w - 2 * q.t, id = q.d - 2 * q.t;
     for (const sz of [-1, 1]) g.add(box(q.w, q.h, q.t, MAT.epoxy, 0, q.h / 2, sz * (q.d / 2 - q.t / 2)));
@@ -158,7 +164,23 @@ export function buildPartModel(e: PartEstimate): THREE.Group | null {
     case 'standoff': { const r = Math.min(L, W) * 0.42; g.add(cyl(r, H, MAT.lid, 0, H / 2, 0, 6)); g.add(cyl(r * 0.45, 0.02, MAT.slot, 0, H + 0.01, 0, 16)); break; }
     case 'b2b': g.add(rbox(L, H, W, 0.08, MAT.epoxy, 0, H / 2)); g.add(box(L - 1.2, 0.02, W * 0.45, MAT.slot, 0, H + 0.005)); for (const s of [-1, 1]) g.add(box(0.3, H * 0.9, W * 0.9, MAT.lid, s * (L / 2 - 0.1), H * 0.45)); break;
     case 'conn': {
-      const n = Math.min(p.n || 2, 80), pitch = p.pitch || 1, housing = /JST/.test(e.size ?? '') ? MAT.nylon : MAT.epoxy;
+      const kind = e.size ?? '', n = Math.min(p.n || 2, 80), pitch = p.pitch || 1;
+      if (/^(USB-A|HDMI|DisplayPort|RJ45)$/.test(kind)) { // shielded port: steel shell, dark opening on the mating face
+        g.add(rbox(L, H, W, 0.3, MAT.steel, 0, H / 2)); g.add(box(L - 1.2, H - 1.2, 0.1, MAT.slot, 0, H / 2, -W / 2 - 0.02));
+        if (kind === 'RJ45') g.add(box(L * 0.4, 1.2, 0.1, MAT.slot, 0, H - 1.0, -W / 2 - 0.03));
+        break;
+      }
+      if (kind === 'SODIMM') { // low socket: dark housing, slot along the top, latch arms at both ends
+        g.add(rbox(L, H * 0.55, W, 0.3, MAT.epoxy, 0, H * 0.275)); g.add(box(L - 10, 0.06, 1.4, MAT.slot, 0, H * 0.55 + 0.03, 0.8));
+        for (const s of [-1, 1]) g.add(box(2.2, H, 6.5, MAT.steel, s * (L / 2 - 1.1), H / 2, -(W / 2 - 3.6)));
+        break;
+      }
+      if (kind === 'M.2') { g.add(rbox(L, H, W, 0.2, MAT.epoxy, 0, H / 2)); g.add(box(L - 2.0, 0.06, 1.2, MAT.slot, 0, H + 0.03, -0.6)); break; }
+      if (/^FPC/.test(kind)) { g.add(rbox(L, H * 0.7, W, 0.1, MAT.epoxy, 0, H * 0.35)); g.add(box(L - 1.0, H * 0.3, W * 0.45, MAT.mlcc, 0, H * 0.85, W * 0.2)); for (let i = 0; i < n; i++) g.add(box(pitch * 0.4, 0.08, 0.7, MAT.tin, -(n - 1) * pitch / 2 + i * pitch, 0.04, W / 2 + 0.3)); break; }
+      if (kind === 'DC-in') { g.add(rbox(L, H, W, 0.4, MAT.epoxy, 0, H / 2)); g.add(cyl(2.9, 0.2, MAT.slot, 0, H / 2, -W / 2 - 0.05, 20).rotateX(Math.PI / 2)); break; }
+      if (kind === 'audio jack') { g.add(rbox(L, H, W, 0.3, MAT.epoxy, 0, H / 2)); g.add(cyl(1.9, 0.2, MAT.slot, 0, H / 2, -W / 2 - 0.05, 20).rotateX(Math.PI / 2)); break; }
+      if (kind === 'card slot') { g.add(box(L, H, W, MAT.steel, 0, H / 2)); g.add(box(L - 2, H * 0.5, 0.1, MAT.slot, 0, H / 2, -W / 2 - 0.02)); break; }
+      const housing = /JST|battery|fan|wire/.test(kind) ? MAT.nylon : MAT.epoxy;
       g.add(rbox(L, H, W, 0.12, housing, 0, H / 2)); g.add(box(L - 1.4, Math.max(0.2, H - 0.8), 0.05, MAT.slot, 0, H / 2 + 0.1, -W / 2 - 0.01));
       for (let i = 0; i < n; i++) g.add(box(pitch * 0.32, 0.1, 0.9, MAT.tin, -(n - 1) * pitch / 2 + i * pitch, 0.05, W / 2 + 0.35));
       break;

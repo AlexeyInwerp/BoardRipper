@@ -53,6 +53,12 @@ const PRINTED_SILK = new Set(['EAGLE_BRD', 'KICAD']);
 
 export function buildBoard3DModel(board: BoardData): Board3DModel {
   const yUp = board.flipY ?? getFormat(board.format)?.flipY ?? false;
+  // The user's Top is the file's primary side. The 2D view draws a primary-bottom board in the file frame with the
+  // bottom-side parts on top; the 3D view does the same by putting that side on the +y face — before, the Top preset
+  // looked at it from underneath, a mirror image of the 2D view, and turning the board felt inverted (Legion Pro 5
+  // NM-F701, 2026-11-15). Every side label below is the effective one, estimator included (its bottom-side mirror).
+  const swap = board.primarySide === 'bottom';
+  const S = <T extends 'top' | 'bottom' | 'both' | undefined>(side: T): T => (swap && side === 'top' ? 'bottom' : swap && side === 'bottom' ? 'top' : side) as T;
   const fy = (y: number) => (yUp ? y : -y);
   const P = (p: Point): Point => ({ x: p.x, y: fy(p.y) });
   const B = (b: BBox): BBox => (yUp ? b : { minX: b.minX, maxX: b.maxX, minY: -b.maxY, maxY: -b.minY });
@@ -78,8 +84,8 @@ export function buildBoard3DModel(board: BoardData): Board3DModel {
   contours.forEach((c, i) => (inside(i) ? cutouts : outlines).push(c.map(toScene)));
 
   // parts: estimate in the Y-up frame
-  const yUpPart = (pt: Part): Part => yUp ? pt : {
-    ...pt, origin: P(pt.origin), bounds: B(pt.bounds), angleDeg: pt.angleDeg === undefined ? undefined : -pt.angleDeg,
+  const yUpPart = (pt: Part): Part => yUp ? (swap ? { ...pt, side: S(pt.side) } : pt) : {
+    ...pt, side: S(pt.side), origin: P(pt.origin), bounds: B(pt.bounds), angleDeg: pt.angleDeg === undefined ? undefined : -pt.angleDeg,
     pins: pt.pins.map((q: Pin): Pin => ({ ...q, position: P(q.position), padBounds: q.padBounds && B(q.padBounds), padAngleDeg: q.padAngleDeg === undefined ? undefined : -q.padAngleDeg, padPolygon: q.padPolygon?.map(P) })),
   };
   const parts: Board3DPart[] = [];
@@ -87,7 +93,7 @@ export function buildBoard3DModel(board: BoardData): Board3DModel {
   board.parts.forEach((pt, index) => {
     if (pt.hidden || !pt.pins.length) return;
     const est = estimatePart(yUpPart(pt), { usePackage: true });
-    const side = pt.side === 'bottom' ? 'bottom' : 'top';
+    const side = S(pt.side) === 'bottom' ? 'bottom' : 'top';
     parts.push({ index, name: pt.name, side, est });
     if (est.family === 'hole') { const [x, z] = toScene({ x: est.cx, y: est.cy }); holes.push({ x, z, rx: (est.p.drill || est.L * 0.5) / 2, rz: (est.p.drill || est.W * 0.5) / 2 }); }
   });
@@ -102,7 +108,7 @@ export function buildBoard3DModel(board: BoardData): Board3DModel {
     const yb = B(b); const [x, z] = toScene({ x: (yb.minX + yb.maxX) / 2, y: (yb.minY + yb.maxY) / 2 });
     pads.push({ x, z, w: (w ?? b.maxX - b.minX) * MM, h: (h ?? b.maxY - b.minY) * MM, angle: (yUp ? 1 : -1) * (a ?? 0), round, side, drill: (drill ?? 0) * MM });
   };
-  if (board.pads?.length) for (const p of board.pads) pushPad(p.bounds, p.side, p.width, p.height, p.angleDeg, p.shape === 'round', p.drill);
+  if (board.pads?.length) for (const p of board.pads) pushPad(p.bounds, S(p.side), p.width, p.height, p.angleDeg, p.shape === 'round', p.drill);
   else board.parts.forEach((pt, index) => {
     if (pt.hidden) return;
     const est = estByIndex.get(index);
@@ -110,11 +116,11 @@ export function buildBoard3DModel(board: BoardData): Board3DModel {
     for (const q of pt.pins) {
       const before = pads.length;
       const roundFamily = est && ['bga', 'testpoint', 'fiducial', 'hole'].includes(est.family);
-      if (q.padBounds) { pushPad(q.padBounds, q.side, q.padWidth, q.padHeight, q.padAngleDeg, q.padShape === 'round' || (!q.padShape && !!roundFamily), q.drill); list.push(pads[before]); continue; }
+      if (q.padBounds) { pushPad(q.padBounds, S(q.side), q.padWidth, q.padHeight, q.padAngleDeg, q.padShape === 'round' || (!q.padShape && !!roundFamily), q.drill); list.push(pads[before]); continue; }
       const t = est && !q.drill ? terminalPad(est, P(q.position), q.radius * MM) : null;
       const [x, z] = toScene(P(q.position));
-      if (t) pads.push({ x, z, w: t.w, h: t.h, angle: t.angle, round: false, side: q.side, drill: 0 });
-      else pads.push({ x, z, w: q.radius * 2 * MM, h: q.radius * 2 * MM, angle: 0, round: true, side: q.side, drill: (q.drill ?? 0) * MM });
+      if (t) pads.push({ x, z, w: t.w, h: t.h, angle: t.angle, round: false, side: S(q.side), drill: 0 });
+      else pads.push({ x, z, w: q.radius * 2 * MM, h: q.radius * 2 * MM, angle: 0, round: true, side: S(q.side), drill: (q.drill ?? 0) * MM });
       list.push(pads[before]);
     }
   });
@@ -127,7 +133,7 @@ export function buildBoard3DModel(board: BoardData): Board3DModel {
       pinPadMap.set(index, pt.pins.map(q => {
         const [x, z] = toScene(P(q.position)); let best: Board3DPad | null = null, bd = Infinity;
         for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const p of grid.get(`${Math.floor(x / cell) + i},${Math.floor(z / cell) + j}`) ?? []) {
-          if (p.side !== 'both' && p.side !== q.side) continue; const d = Math.hypot(p.x - x, p.z - z); if (d < bd && d < Math.max(p.w, p.h) / 2 + 0.05) { bd = d; best = p; }
+          if (p.side !== 'both' && p.side !== S(q.side)) continue; const d = Math.hypot(p.x - x, p.z - z); if (d < bd && d < Math.max(p.w, p.h) / 2 + 0.05) { bd = d; best = p; }
         }
         return best;
       }));
@@ -138,14 +144,14 @@ export function buildBoard3DModel(board: BoardData): Board3DModel {
   const nLayers = board.layerNames?.length ?? 0;
   const traces: Board3DModel['traces'] = [];
   for (const t of board.traces ?? []) {
-    const L = t.layer ?? 0; const side = L === 0 ? 'top' : nLayers > 1 && L === nLayers - 1 ? 'bottom' : null; if (!side) continue;
+    const L = t.layer ?? 0; const side = S(L === 0 ? 'top' : nLayers > 1 && L === nLayers - 1 ? 'bottom' : undefined); if (!side) continue;
     const [x1, z1] = toScene(P(t.start)), [x2, z2] = toScene(P(t.end)); traces.push({ side, x1, z1, x2, z2, w: t.width * MM, net: t.net });
   }
-  const silk = PRINTED_SILK.has(board.format) ? (board.silkscreen ?? []).map(s => ({ side: s.side, pts: s.points.map(p => toScene(P(p))) })) : [];
+  const silk = PRINTED_SILK.has(board.format) ? (board.silkscreen ?? []).map(s => ({ side: S(s.side), pts: s.points.map(p => toScene(P(p))) })) : [];
 
   const pinsOf = (index: number) => {
     const pt = board.parts[index]; if (!pt) return [];
-    return pt.pins.map(q => { const [x, z] = toScene(P(q.position)); return { x, z, side: (q.side === 'bottom' ? 'bottom' : 'top') as 'top' | 'bottom', net: q.net, r: Math.max(q.radius * MM, 0.12) }; });
+    return pt.pins.map(q => { const [x, z] = toScene(P(q.position)); return { x, z, side: (S(q.side) === 'bottom' ? 'bottom' : 'top') as 'top' | 'bottom', net: q.net, r: Math.max(q.radius * MM, 0.12) }; });
   };
 
   return {

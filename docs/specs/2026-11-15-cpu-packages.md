@@ -97,7 +97,7 @@ populated. The contact sheet of all 28 maps is in the mockup.
 
 ## The records
 
-43 records in `cpu-packages.ts`, each with its sources and a confidence line.
+66 records in `cpu-packages.ts` (CPU / GPU / SoC, memory, NAND, sockets), each with its sources and a confidence line.
 What each number rests on:
 
 **Intel (6th gen → Core Ultra 200V).** Ball count, pitch, body size and, where
@@ -175,6 +175,118 @@ Apple-sized field.
 
 **Sockets.** The iMacs' LGA1151 / LGA2066 pad fields draw a socket frame with a
 lidded CPU in it.
+
+**Memory (JEDEC FBGA).** All overmoulded; body and matrix from Micron /
+Samsung / SK hynix mechanical drawings (links in the records). The ball field
+identifies the family but not always the generation: DDR3, DDR4 and DDR5 x8
+share the 6 × 13 / 0.8 mm 78-ball pattern (6.4 × 9.6 mm span) and x16 the
+6 × 16 96-ball one — only the body (DDR3 8 × 10.5, DDR4 7.5 × 11) differs,
+so one record each; DDR5 x16 is its own 102-ball (17 rows). GDDR5 (170 balls,
+0.8 mm), GDDR5X (190, 0.65), GDDR6/6X (180, 0.75) and GDDR7 (266, 0.73) all
+put ten columns in two groups of five on a 12 × 14 body and differ by pitch and
+row count. LPDDR3 178 (0.65 × 0.8 mm, 11 × 11.5), LPDDR3 253 (0.5, 11.5 × 11.5
+with a 6 × 6 void), LPDDR4/4X 200 (0.65 × 0.8, 10 × 14.5), 366 / 376 / 556
+(perimeter arrays at 0.5 / 0.4 / 0.4 mm), LPDDR5 315 (0.7 × 0.8, 12.4 × 15),
+441 (0.65, 14 × 14) and LPDDR5X 496 (0.4, 14 × 12.4). The GDDR7 matrix is not
+public; its 14 × 19 field was measured on the Legion Pro 5 board (Micron
+MT68A512M32DF). Measured on the corpus: DDR4-78, DDR3-96, GDDR5, GDDR6X,
+GDDR7, LPDDR3 178/253, LPDDR4X 200. The Apple NAND packages — BGA315
+(0.483 mm, 10 × 7 mm field) and BGA110 (1.11 mm, 12.8 × 9.6) — are recorded
+with a silver finish; the LPDDR5 315-ball is a different part (0.7 mm, 11.2 ×
+14 field) and the lookup keeps them apart by pitch and span.
+
+**AMD mobile GPUs (second pass).** Measured on MacBook Pro / iMac boards:
+Polaris 21 (769 balls, 22.6 mm field), Navi 14 (1,125, 30.4 mm), Cape Verde
+(962, 27.6 mm — the 2011 Whistler shares it), Pitcairn (1,737, 38.6 mm), Navi
+10 (1,928, 39.9 mm — the iMac 2020 Radeon Pro 5700, which the first pass had
+taken for a Vega with HBM). AMD GPU fields are multi-pitch (a 0.65–0.9 mm
+signal perimeter around a 1.0 mm power core); the records carry the
+nearest-neighbour pitch. Bodies are field + 2.6 mm (the Vega 10 ratio, the one
+chip with both numbers published). The `820-01814 (SAFFORO)` file in the corpus
+is a copy of 820-01041, not a Vega board.
+
+**Lenovo Legion Pro 5 16IRX9 (NM-F701, GenCAD).** First board with Raptor
+Lake-HX: BGA1964 measured at 42.4 × 36.0 mm (the record's derived span was
+0.8 mm off on each axis, enough to miss), the 29 mm 1,358-ball laptop GPU
+package (GA107 / AD107 / AD106: RTX 3050 → 4070) and the HX chipset (1,045
+balls, 25 × 28 mm). The file carries no pad sizes and no package names.
+
+## Positioning (2026-11-15, after the first test on :1234)
+
+- **The body sits over the field's bounding box, not its centroid.** A
+  depopulated CPU field is lopsided; the A1989's Coffee Lake-U centroid sat
+  0.9 mm off its middle and a column of balls stood outside the package.
+- **A fitted angle within 3° of a right angle is snapped.** Ball grids sit
+  square to the board; the −0.85° the grid fit returned on that board let the
+  corners of a 46 mm body clear their pads by less than a pad radius.
+- **The pattern turn respects the span's parity.** On one A1502 file the
+  signature alone chose 90° for a 40 × 24 body across a 38.7 × 22.7 field and
+  left half the balls outside; now the span fixes 0/180 vs 90/270 and the
+  pattern picks within that pair.
+- **The margin of a plain BGA body never undercuts its pads** (files with
+  coarse pad radii: BVR).
+- **Socket records** use the socket outline as the body.
+- `scripts/cpu-package-coverage.ts` counts pads outside the drawn body for every
+  BGA on a board or a folder; after the fixes the three reported boards and
+  the whole corpus show none that are not misread connectors.
+
+## The user's Top is the +y face (primary-bottom boards)
+
+A GenCAD or Allegro file whose parts mostly sit on the file's bottom side gets
+`primarySide: 'bottom'`, and the 2D view shows that side as Top in the file
+frame, un-mirrored. The 3D view used to keep the file's sides and have the Top
+preset look from underneath — a mirror image of the 2D picture, with turning
+and panning feeling inverted (what "panning is much faster and rotation is
+off" on the Legion board was; pan itself measured pixel-true, 200 px = 72.8 mm
+at 0.36 mm/px). The model builder now swaps the side labels for such a board
+(parts, pads, outer copper, silkscreen, pin markers) so the user's Top is the
++y face, feeds the estimator the effective side (its bottom-side mirror for
+die orientation), and the presets always look at +y for Top.
+
+## Connectors
+
+A connector is decided by its designator, named by a keyword, checked by its
+pin count, and otherwise read from its pad pattern (`store/connector-kinds.ts`).
+This came from the Legion Pro 5 board, where the old pattern rules drew both
+DDR5 SODIMM sockets, the eDP, the keyboard FPC and the M.2 slots as USB-C ports.
+
+- **Designator ⇒ connector.** `J…` (any), `CN`, `CON`, `X`, `P<digit>`, `JP`,
+  `SKT`. No IC starts with J; `PU…`, `PQ…`, `PR…` on Compal/LCFC boards are
+  ICs and passives, so `P` counts only with a digit after it. A connector never
+  reaches the IC rules: what no rule names is still drawn as a connector.
+- **Keyword ⇒ kind** (first match, digits kept): DDR/DIMM/MEM → SODIMM;
+  TB/TYPEC/UC → USB-C; USB/UA → USB-A; HDMI; DP/MDP; EDP/LVDS/LCD/KB/TP/CAM/
+  FP/RGB/KBL → FPC; RJ45/LAN; SSD/M2/NGFF/WLAN/WWAN → M.2; BAT → battery;
+  FAN; SPK/RTC/LED/UL → wire-to-board; DCIN/PWR/ADP → DC-in; AUDIO/HP/JACK;
+  IO/B2B/DOCK → board-to-board; CDBG/JTAG/UART → header; SD/SIM/CARD;
+  ANT/RF/COAX.
+- **Pin count checks the keyword**: a SODIMM has ≥ 200 pins, a USB-C 6–34, an
+  M.2 slot 50–80, HDMI 19–26; a keyword with an impossible count falls back to
+  the pattern.
+- **Pattern** (when the name says nothing): USB-C is two rows of 6–14 pads at
+  0.4–0.6 mm within 9.5 mm plus shell tabs — nothing else; ≥ 200 pins in two
+  rows ≤ 0.65 mm → SODIMM; 50–80 pins over 17–23 mm → M.2; two rows ≤ 4.5 mm
+  apart at 0.3–0.55 → board-to-board; one row at 0.3–0.6 → FPC; one row at
+  0.9–2.6 → wire-to-board (the series rules by pitch — JST SH/PH, PicoBlade —
+  still name those); drilled at ≥ 1.9 → header.
+- **Bodies** per kind: shielded ports at their standard sizes (USB-A 14.5 ×
+  14.6 × 7.2, HDMI 15.2 × 11.7 × 6, RJ45 16 × 21 × 13.5, USB-C 8.9 × 7.4 ×
+  3.3), SODIMM ≥ 73 × 10 × 5.2 with latch arms, M.2 21 × 7.5 × 4.2, FPC
+  span + 3 × 4.8 × 1.7, others from the pin span. The mating face points away
+  from the shell tabs.
+
+On the Legion Pro 5: 2 SODIMM, 3 M.2, 3 USB-A, 2 USB-C, HDMI, eDP, keyboard,
+touchpad, RGB, fans, speakers, battery, DC-in, RJ45 — each by its name.
+
+## GenCAD outline
+
+`$BOARD` was never read: every GenCAD board got a rectangle around its pins
+(the Legion file has 901 outline lines and showed as a slab the size of its
+pin field). `parseBoardOutline` now reads LINE / ARC (CCW, #33) / CIRCLE,
+chains them, keeps the largest closed contour as the board and closed contours
+inside it as cutouts (the RTX 4090 file has 743 fragments of dimension lines
+and artwork in that section), and falls back to the rectangle when the result
+does not hold 90 % of the pins or the file has several passes.
 
 ## The models
 
