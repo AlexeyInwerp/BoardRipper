@@ -10,23 +10,53 @@
  */
 import * as THREE from 'three';
 
-const CELL = 64, COLS = 16, ADV = 0.62; // glyph cell (px), atlas columns, advance as a fraction of the height
+const CELL = 96, COLS = 16, ADV = 0.62, SPREAD = 12; // glyph cell (px), atlas columns, advance as a fraction of the height, SDF range (px)
 
-function atlas(chars: string[]): { tex: THREE.CanvasTexture; uv: Map<string, [number, number, number, number]> } {
-  const rows = Math.ceil(chars.length / COLS), cv = document.createElement('canvas');
-  cv.width = CELL * COLS; cv.height = CELL * Math.max(1, rows);
+/** Signed-distance atlas: each glyph is rasterised once, then its alpha mask is turned into a
+ *  distance field (two 1-D passes, Felzenszwalb), so the shader thresholds it and the text is as
+ *  sharp at 3 mm from a part as at a metre — a plain bitmap atlas blurred past its own resolution. */
+function atlas(chars: string[]): { tex: THREE.DataTexture; uv: Map<string, [number, number, number, number]> } {
+  const rows = Math.max(1, Math.ceil(chars.length / COLS)), W = CELL * COLS, H = CELL * rows;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
   const c = cv.getContext('2d')!;
-  c.font = `700 ${CELL * 0.78}px ui-monospace, Menlo, Consolas, monospace`; c.textAlign = 'center'; c.textBaseline = 'middle';
-  c.lineJoin = 'round'; c.lineWidth = CELL * 0.16; c.strokeStyle = 'rgba(0,0,0,0.9)'; c.fillStyle = '#ffffff';
+  c.font = `700 ${CELL * 0.62}px ui-monospace, Menlo, Consolas, monospace`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillStyle = '#fff';
   const uv = new Map<string, [number, number, number, number]>();
   chars.forEach((ch, i) => {
-    const col = i % COLS, row = Math.floor(i / COLS), x = col * CELL + CELL / 2, y = row * CELL + CELL / 2 + CELL * 0.03;
-    c.strokeText(ch, x, y); c.fillText(ch, x, y);
+    const col = i % COLS, row = Math.floor(i / COLS);
+    c.fillText(ch, col * CELL + CELL / 2, row * CELL + CELL / 2 + CELL * 0.03);
     const pad = (1 - ADV) / 2; // a glyph uses the middle ADV of its cell's width
-    uv.set(ch, [(col + pad) / COLS, 1 - (row + 1) / Math.max(1, rows), (col + 1 - pad) / COLS, 1 - row / Math.max(1, rows)]);
+    uv.set(ch, [(col + pad) / COLS, 1 - (row + 1) / rows, (col + 1 - pad) / COLS, 1 - row / rows]);
   });
-  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4; tex.generateMipmaps = true; tex.minFilter = THREE.LinearMipmapLinearFilter;
+  const alpha = c.getImageData(0, 0, W, H).data;
+  const inside = new Float64Array(W * H), outside = new Float64Array(W * H);
+  for (let i = 0; i < W * H; i++) { const on = alpha[i * 4 + 3] > 127; inside[i] = on ? 0 : Infinity; outside[i] = on ? Infinity : 0; }
+  edt2d(inside, W, H); edt2d(outside, W, H);
+  // 0.5 = the edge; +SPREAD px inside → 1, −SPREAD px outside → 0. Row 0 is the top in canvas space
+  // and the bottom in texture space: flip so the uv rows above stay right.
+  const data = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = y * W + x, d = Math.sqrt(outside[i]) - Math.sqrt(inside[i]); data[(H - 1 - y) * W + x] = Math.round(255 * Math.min(1, Math.max(0, 0.5 + d / (2 * SPREAD)))); }
+  const tex = new THREE.DataTexture(data, W, H, THREE.RedFormat); tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = false; tex.needsUpdate = true;
   return { tex, uv };
+}
+/** Squared Euclidean distance transform in place (Felzenszwalb & Huttenlocher), rows then columns. */
+function edt2d(f: Float64Array, W: number, H: number): void {
+  const n = Math.max(W, H), d = new Float64Array(n), v = new Int32Array(n), z = new Float64Array(n + 1), g = new Float64Array(n);
+  const pass = (len: number, get: (i: number) => number, set: (i: number, x: number) => void) => {
+    for (let i = 0; i < len; i++) g[i] = get(i);
+    let k = 0; v[0] = 0; z[0] = -Infinity; z[1] = Infinity;
+    for (let q = 1; q < len; q++) {
+      if (!Number.isFinite(g[q])) continue;
+      let s2 = 0;
+      for (;;) { const p = v[k]; s2 = Number.isFinite(g[p]) ? ((g[q] + q * q) - (g[p] + p * p)) / (2 * q - 2 * p) : -Infinity; if (s2 <= z[k] && k > 0) k--; else break; }
+      if (!Number.isFinite(g[v[k]])) { v[k] = q; z[k] = -Infinity; z[k + 1] = Infinity; continue; }
+      k++; v[k] = q; z[k] = s2; z[k + 1] = Infinity;
+    }
+    k = 0;
+    for (let q = 0; q < len; q++) { while (z[k + 1] < q) k++; const p = v[k]; d[q] = Number.isFinite(g[p]) ? (q - p) * (q - p) + g[p] : Infinity; }
+    for (let i = 0; i < len; i++) set(i, d[i]);
+  };
+  for (let y = 0; y < H; y++) pass(W, x => f[y * W + x], (x, val) => { f[y * W + x] = val; });
+  for (let x = 0; x < W; x++) pass(H, y => f[y * W + x], (y, val) => { f[y * W + x] = val; });
 }
 
 export interface LabelSpec {
@@ -88,8 +118,12 @@ export function buildLabelMesh(specs: LabelSpec[]): THREE.Mesh | null {
     fragmentShader: `
       uniform sampler2D map; uniform float dim; varying vec2 vUv; varying float vA; varying vec3 vCol;
       void main() {
-        vec4 t = texture2D(map, vUv); float a = t.a * vA; if (a < 0.04) discard;
-        gl_FragColor = vec4(t.rgb * vCol * dim, a);
+        // signed distance: 0.5 is the glyph edge; the band width follows the on-screen derivative, so the
+        // edge is one pixel soft at every zoom. A dark halo sits just outside the edge for contrast.
+        float d = texture2D(map, vUv).r, w = max(fwidth(d), 0.004);
+        float ink = smoothstep(0.5 - w, 0.5 + w, d), halo = smoothstep(0.34 - w, 0.42 + w, d);
+        float a = max(ink, halo * 0.85) * vA; if (a < 0.03) discard;
+        gl_FragColor = vec4(mix(vec3(0.0), vCol * dim, ink / max(a / vA, 1e-4)), a);
         #include <colorspace_fragment>
       }`,
     transparent: true, depthWrite: false, side: THREE.DoubleSide,

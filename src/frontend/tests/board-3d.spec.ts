@@ -194,3 +194,33 @@ test('3D view: net lines follow the ribbon mode; the settings menu changes colou
   await page.evaluate(() => localStorage.removeItem('boardripper-view3d'));
 });
 
+test('3D view: hidden-side ghosts show the lit net\'s parts on the face the camera does not see', async ({ page }) => {
+  await openBoard(page);
+  await page.getByTestId('view3d-btn').click();
+  await page.waitForFunction(() => ((window as unknown as W).__board3d?.renderer.drawnParts ?? 0) > 0, null, { timeout: 30000 });
+  type R = { selectionStats(): { ghosts: number; ghostsVisible: number } };
+  const stats = () => page.evaluate(() => (window as unknown as { __board3d: { renderer: R } }).__board3d.renderer.selectionStats());
+  // a net with parts on both sides, not ground
+  const pick = await page.evaluate(() => {
+    const st = (window as unknown as { __boardStore: { board: { parts: { side: string; pins: { net: string }[] }[] }; selectPin(i: number, k: number): void } }).__boardStore;
+    const sides = new Map<string, Set<string>>(); st.board.parts.forEach(p => p.pins.forEach(q => { if (!q.net || /GND/i.test(q.net)) return; let s = sides.get(q.net); if (!s) sides.set(q.net, (s = new Set())); s.add(p.side); }));
+    const net = [...sides.entries()].find(([, s]) => s.size === 2)?.[0]; if (!net) return null;
+    const i = st.board.parts.findIndex(p => p.pins.some(q => q.net === net)); st.selectPin(i, st.board.parts[i].pins.findIndex(q => q.net === net));
+    return { net, side: st.board.parts[i].side };
+  });
+  test.skip(!pick, 'no net crosses the board on this fixture');
+  await page.waitForTimeout(300);
+  // the ribbon's ghost button cycles off → ghosts → disco; the app starts in ghosts
+  const mode = () => page.evaluate(() => (window as unknown as { __boardStore: { ghostMode: string } }).__boardStore.ghostMode);
+  while ((await mode()) !== 'off') { await page.getByTestId('ghosts-btn').click(); await page.waitForTimeout(200); }
+  expect((await stats()).ghosts).toBe(0);                       // ghosts off: nothing drawn
+  await page.getByTestId('ghosts-btn').click(); await page.waitForTimeout(300);
+  expect(await mode()).toBe('ghosts');
+  const on = await stats(); expect(on.ghosts).toBeGreaterThan(0);
+  // each ghost shows from exactly one face — the one the camera does not see
+  await page.getByTestId(pick!.side === 'bottom' ? 'board-3d-bottom' : 'board-3d-top').click(); await page.waitForTimeout(800);
+  const fromOwn = (await stats()).ghostsVisible; expect(fromOwn).toBeGreaterThan(0);
+  await page.getByTestId(pick!.side === 'bottom' ? 'board-3d-top' : 'board-3d-bottom').click(); await page.waitForTimeout(800);
+  const fromFar = await stats(); expect(fromOwn + fromFar.ghostsVisible).toBe(fromFar.ghosts);
+});
+

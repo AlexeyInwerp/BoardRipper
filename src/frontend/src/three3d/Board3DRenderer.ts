@@ -18,7 +18,8 @@ import type { Board3DModel, Board3DPad, Board3DPart } from './board3d-model';
 import { buildPartModel, MAT } from './part-models';
 import { buildLabelMesh, type LabelSpec } from './part-labels';
 import { SEL_COLOURS, DEFAULT_VIEW3D_SETTINGS, type View3DSettings } from '../store/view3d-store';
-import type { NetLineMode } from '../store/board-store';
+import type { GhostMode, NetLineMode } from '../store/board-store';
+import { renderSettingsStore, isGroundNet } from '../store/render-settings';
 
 export type View3DPreset = 'iso' | 'top' | 'bottom';
 const T = 1.6, TOP = T / 2;
@@ -56,6 +57,7 @@ export class Board3DRenderer {
 
   private settings: View3DSettings = DEFAULT_VIEW3D_SETTINGS;
   private netLineMode: NetLineMode = 'off';
+  private ghostMode: GhostMode = 'off';
   private sel: { part: number | null; net: string | null; pin: number | null } = { part: null, net: null, pin: null };
   private host: HTMLElement;
   constructor(host: HTMLElement) {
@@ -116,6 +118,8 @@ export class Board3DRenderer {
   }
   /** The ribbon's net-lines mode (shared with 2D): off / star / chain / chain-adjacent. */
   setNetLineMode(mode: NetLineMode): void { if (mode === this.netLineMode) return; this.netLineMode = mode; this.setSelection(this.sel.part, this.sel.net, this.sel.pin); }
+  /** The ribbon's hidden-side ghosts (shared with 2D): parts on the lit net on the face the camera does not see. */
+  setGhostMode(mode: GhostMode): void { if (mode === this.ghostMode) return; this.ghostMode = mode; this.setSelection(this.sel.part, this.sel.net, this.sel.pin); }
   private colour(k: 'netColour' | 'pinColour' | 'partColour'): number { return SEL_COLOURS[this.settings[k]]; }
 
   // ───────────── board ─────────────
@@ -149,13 +153,15 @@ export class Board3DRenderer {
     for (const h of m.holes) { const p = new THREE.Path(); p.absellipse(h.x, -h.z, h.rx, h.rz, 0, Math.PI * 2, true); shape.holes.push(p); }
     const slabGeo = new THREE.ExtrudeGeometry(shapes, { depth: T, bevelEnabled: false, curveSegments: 16 });
     slabGeo.rotateX(-Math.PI / 2); slabGeo.translate(0, -TOP, 0);
-    const slab = new THREE.Mesh(slabGeo, [new THREE.MeshStandardMaterial({ color: 0x09130d, roughness: 0.45 }), new THREE.MeshStandardMaterial({ color: 0x8a7d5c, roughness: 0.85 })]);
+    // solder mask is semi-matt: a broad, dull highlight, not a mirror — roughness 0.8 and a quarter of the room light
+    const slab = new THREE.Mesh(slabGeo, [new THREE.MeshStandardMaterial({ color: 0x09130d, roughness: 0.8, envMapIntensity: 0.25 }), new THREE.MeshStandardMaterial({ color: 0x6e6448, roughness: 0.95, envMapIntensity: 0.1 })]);
     // the slab must not shadow its own face: that was the speckle (shadow acne) over the whole board
     slab.receiveShadow = true; this.boardRoot.add(slab);
     const faceGeo = new THREE.ShapeGeometry(shapes, 16); faceGeo.rotateX(-Math.PI / 2);
     for (const side of ['top', 'bottom'] as const) {
-      const mat = new THREE.MeshStandardMaterial({ map: this.faceTexture(m, side), roughness: 0.42, side: side === 'top' ? THREE.FrontSide : THREE.BackSide, polygonOffset: true, polygonOffsetFactor: -1 });
+      const mat = new THREE.MeshStandardMaterial({ map: this.faceTexture(m, side), roughness: 0.8, envMapIntensity: 0.25, side: side === 'top' ? THREE.FrontSide : THREE.BackSide, polygonOffset: true, polygonOffsetFactor: -1 });
       const face = new THREE.Mesh(faceGeo, mat); face.position.y = side === 'top' ? TOP + 0.002 : -TOP - 0.002; face.receiveShadow = true; this.boardRoot.add(face);
+      this.boardRoot.add(this.padMesh(m, side));
     }
   }
 
@@ -169,13 +175,6 @@ export class Board3DRenderer {
     c.strokeStyle = '#13281b'; c.lineCap = 'round';
     for (const t of m.traces) if (t.side === side) { c.lineWidth = Math.max(1, t.w * ppm); c.beginPath(); c.moveTo(U(t.x1), V(t.z1)); c.lineTo(U(t.x2), V(t.z2)); c.stroke(); }
     c.fillStyle = '#c99a3c';
-    for (const p of m.pads) {
-      if (p.side !== side && p.side !== 'both') continue;
-      c.save(); c.translate(U(p.x), V(p.z));
-      if (p.round || p.drill > 0) { c.beginPath(); c.arc(0, 0, Math.max(p.w, p.h) * ppm / 2, 0, Math.PI * 2); c.fill(); }
-      else { c.rotate(-p.angle * Math.PI / 180); c.fillRect(-p.w * ppm / 2, -p.h * ppm / 2, p.w * ppm, p.h * ppm); }
-      c.restore();
-    }
     for (const pt of m.parts) if (pt.est.family === 'hole') { const [x, z] = m.toScene({ x: pt.est.cx, y: pt.est.cy }); c.beginPath(); c.ellipse(U(x), V(z), pt.est.L * ppm / 2, pt.est.W * ppm / 2, 0, 0, Math.PI * 2); c.fill(); }
     c.strokeStyle = '#ecebe4'; c.lineWidth = Math.max(1, 0.14 * ppm); c.lineJoin = 'round';
     for (const s of m.silk) if (s.side === side) { c.beginPath(); s.pts.forEach(([x, z], i) => (i ? c.lineTo(U(x), V(z)) : c.moveTo(U(x), V(z)))); c.stroke(); }
@@ -183,6 +182,20 @@ export class Board3DRenderer {
     // ShapeGeometry UVs are the shape's (x, −z) in mm
     tex.repeat.set(1 / m.width, 1 / m.height); tex.offset.set(0.5, 0.5);
     return tex;
+  }
+
+  /** The lands as geometry, 8 µm off the face: a texture capped at 8192 px gives a 0.2 mm land eight
+   *  pixels and it blurs close up; a quad or a 16-gon stays sharp at any zoom. One mesh per face. */
+  private padMesh(m: Board3DModel, side: 'top' | 'bottom'): THREE.Mesh {
+    const geos: THREE.BufferGeometry[] = [];
+    for (const p of m.pads) {
+      if (p.side !== side && p.side !== 'both') continue;
+      const g = p.round || p.drill > 0 ? new THREE.CircleGeometry(Math.max(p.w, p.h) / 2, 16) : new THREE.PlaneGeometry(p.w, p.h);
+      g.rotateX(side === 'top' ? -Math.PI / 2 : Math.PI / 2); g.rotateY(p.angle * Math.PI / 180); g.translate(p.x, side === 'top' ? TOP + 0.008 : -TOP - 0.008, p.z);
+      geos.push(g.index ? g.toNonIndexed() : g);
+    }
+    const merged = geos.length ? mergeGeometries(geos) : new THREE.BufferGeometry(); geos.forEach(g => g.dispose());
+    const mesh = new THREE.Mesh(merged, PAD_MAT); mesh.receiveShadow = true; return mesh;
   }
 
   /** Large bodies that stand over their own pins (BGAs, QFNs, connectors…) are kept as their own
@@ -411,6 +424,7 @@ export class Board3DRenderer {
       }
       this.hlRoot.add(this.netMarkers(m, net, partIndex, pinIndex, NET));
       this.hlRoot.add(this.netLines(m, net, partIndex, pinIndex, NET, px));
+      this.hlRoot.add(this.ghosts(m, net, NET, px));
     }
     if (partIndex !== null) {
       const e = this.partByIndex.get(partIndex);
@@ -428,12 +442,30 @@ export class Board3DRenderer {
     this.dirty = true;
   }
 
+  /** Hidden-side ghosts: the lit net's parts on the face the camera does not see, drawn through the
+   *  board as a translucent box and outline in the net colour, so a net that crosses to the other side
+   *  says where it goes without flipping the board. Disco pulses them. Never on ground. */
+  private ghostParts: THREE.Object3D[] = [];
+  private ghosts(m: Board3DModel, net: string, colour: number, px: number): THREE.Group {
+    const g = new THREE.Group(); this.ghostParts = [];
+    if (this.ghostMode === 'off' || isGround(net)) return g;
+    for (const [index, { part, box }] of this.partByIndex) {
+      if (!m.pinsOf(index).some(q => q.net === net)) continue;
+      const sz = box.getSize(new THREE.Vector3()).addScalar(0.1), c = box.getCenter(new THREE.Vector3());
+      const fill = new THREE.Mesh(new THREE.BoxGeometry(sz.x, Math.max(sz.y, 0.3), sz.z), new THREE.MeshBasicMaterial({ color: colour, transparent: true, opacity: 0.22, depthTest: false, depthWrite: false }));
+      fill.position.copy(c); fill.renderOrder = 8;
+      const lines = this.thickBox(box, 0.1, colour, Math.max(1, px - 1)); (lines.material as LineMaterial).depthTest = false; (lines.material as LineMaterial).transparent = true; (lines.material as LineMaterial).opacity = 0.7;
+      const holder = new THREE.Group(); holder.add(fill, lines); holder.userData.face = part.side; g.add(holder); this.ghostParts.push(holder);
+    }
+    return g;
+  }
+
   /** Net lines for the lit net, in the ribbon's mode: star from the picked pin (or the selected part)
    *  to every other land on the net, or a nearest-neighbour chain through them. Chain-adjacent lights
    *  the adjacent nets too in 2D; here it chains like chain (the adjacent nets are the store's). Lands
    *  are joined centre to centre, lifted off the face, through bodies. Skipped on huge nets (GND). */
   private netLines(m: Board3DModel, net: string, partIndex: number | null, pinIndex: number | null, colour: number, px: number): THREE.Object3D {
-    const g = new THREE.Group(); if (this.netLineMode === 'off' || /GND/i.test(net)) return g;
+    const g = new THREE.Group(); if (this.netLineMode === 'off' || isGround(net)) return g;
     type L = { x: number; y: number; z: number; part: number; pin: number };
     const lands: L[] = [];
     for (const pt of m.parts) { const pads = m.pinPads(pt.index); m.pinsOf(pt.index).forEach((q, i) => { if (q.net !== net) return; const pad = pads[i]; const top = (pad?.side ?? q.side) !== 'bottom'; lands.push({ x: pad?.x ?? q.x, y: top ? TOP + 0.25 : -TOP - 0.25, z: pad?.z ?? q.z, part: pt.index, pin: i }); }); }
@@ -666,13 +698,13 @@ export class Board3DRenderer {
     return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height];
   }
   /** What the selection drew, for tests: net-line segments, markers, outlines, lit lands. */
-  selectionStats(): { netLineSegments: number; markers: number; outlines: number; litLands: number } {
+  selectionStats(): { netLineSegments: number; markers: number; outlines: number; litLands: number; ghosts: number; ghostsVisible: number } {
     let netLineSegments = 0, outlines = 0, litLands = 0;
     this.hlRoot.traverse(o => {
       if (o instanceof LineSegments2) { const n = (o.geometry.attributes.instanceStart?.count ?? 0); if (n === 12) outlines++; else netLineSegments += n; }
       else if (o instanceof THREE.Mesh && !(o instanceof LineSegments2) && o.renderOrder === 4) litLands += o.geometry.attributes.position.count / 6;
     });
-    return { netLineSegments, markers: this.markers.length, outlines, litLands: Math.round(litLands) };
+    return { netLineSegments, markers: this.markers.length, outlines: outlines - this.ghostParts.length, litLands: Math.round(litLands), ghosts: this.ghostParts.length, ghostsVisible: this.ghostParts.filter(g => g.visible).length };
   }
   /** Camera distance and target, for tests. */
   cameraState(): { dist: number; target: [number, number, number]; pos: [number, number, number]; leftDrag: 'orbit' | 'pan'; roll: number } {
@@ -739,6 +771,12 @@ export class Board3DRenderer {
     this.updateXray();
     const fromAbove = this.camera.position.y >= this.target.y;
     for (const mk of this.markers) mk.visible = (mk.userData.face === 'top') === fromAbove;
+    for (const gh of this.ghostParts) gh.visible = (gh.userData.face === 'top') !== fromAbove; // the face the camera does not see
+    if (this.ghostMode === 'disco' && this.ghostParts.length) {
+      const k = 0.55 + 0.45 * Math.sin(performance.now() / 180); // pulse
+      for (const gh of this.ghostParts) gh.traverse(o => { const mat = (o as THREE.Mesh).material as THREE.Material | undefined; if (mat && 'opacity' in mat) mat.opacity = (o instanceof LineSegments2 ? 0.7 : 0.22) * k; });
+      this.dirty = true;
+    }
     this.renderer.render(this.scene, this.camera);
   }
   dispose(): void {
@@ -776,5 +814,10 @@ function disposeTree(root: THREE.Object3D): void {
   root.clear();
 }
 // part-model materials are module-wide and shared between views: never dispose them
-const SHARED = new Set<THREE.Material>(Object.values(MAT));
+/** Ground, by the user's pin-group rules (the same test the 2D view's ghosts and net lines use), with GND as a floor. */
+const isGround = (net: string) => isGroundNet(renderSettingsStore.settings, net) || /^(A|D|P)?GND/i.test(net);
+
+/** ENIG lands: gold, matt — a bare pad on a real board is dull, not a mirror. */
+const PAD_MAT = new THREE.MeshStandardMaterial({ color: 0xc99a3c, metalness: 0.75, roughness: 0.55, envMapIntensity: 0.5 });
+const SHARED = new Set<THREE.Material>([...Object.values(MAT), PAD_MAT]);
 const isMarkerTexture = (t: THREE.Texture) => Object.values(MARKER_TEX).includes(t as THREE.CanvasTexture);

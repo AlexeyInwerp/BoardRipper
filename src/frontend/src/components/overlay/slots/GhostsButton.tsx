@@ -21,6 +21,7 @@ export function GhostsButton({ ctx }: { ctx: SlotCtx }) {
   return (
     <button
       className={`board-netlines-toggle ${ghostMode !== 'off' ? 'active' : ''} ${ghostMode === 'disco' ? 'disco-active' : ''}`}
+      data-testid="ghosts-btn"
       onClick={() => boardStore.cycleGhostMode()}
       title={title}
     >

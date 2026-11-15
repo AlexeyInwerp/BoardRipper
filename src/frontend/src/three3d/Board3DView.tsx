@@ -27,7 +27,7 @@ export default function Board3DView({ tabId }: { tabId: number }) {
   const sel = tab?.selection;
   const [tip, setTip] = useState<{ x: number; y: number; title: string; body: string } | null>(null);
   useSyncExternalStore(c => view3dStore.subscribe(c), () => view3dStore.snapshot());
-  const dragMode = view3dStore.uiOf(tabId).drag, settings = view3dStore.settings, netLineMode = tab?.netLineMode ?? 'off';
+  const dragMode = view3dStore.uiOf(tabId).drag, settings = view3dStore.settings, netLineMode = tab?.netLineMode ?? 'off', ghostMode = tab?.ghostMode ?? 'off';
 
   useEffect(() => {
     let r: Board3DRenderer;
@@ -42,6 +42,7 @@ export default function Board3DView({ tabId }: { tabId: number }) {
   useEffect(() => { if (ready && model) { rRef.current!.setModel(model); const pr = view3dStore.uiOf(tabId).preset; if (pr !== 'iso') rRef.current!.view(pr); } }, [ready, model, tabId]);
   useEffect(() => { if (ready) rRef.current!.setLeftDrag(dragMode); }, [ready, dragMode]);
   useEffect(() => { if (ready) rRef.current!.setNetLineMode(netLineMode); }, [ready, netLineMode]);
+  useEffect(() => { if (ready) rRef.current!.setGhostMode(ghostMode); }, [ready, ghostMode]);
   useEffect(() => { if (ready && model) rRef.current!.setSelection(sel?.partIndex ?? null, sel?.highlightedNet ?? null, sel?.pinIndex ?? null); }, [ready, model, sel?.partIndex, sel?.highlightedNet, sel?.pinIndex]);
 
   // a click is a press that did not travel; a drag orbits
