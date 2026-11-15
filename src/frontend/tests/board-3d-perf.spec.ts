@@ -2,9 +2,9 @@
  * 3D view performance on real boards, on the real GPU (Metal through ANGLE).
  * Opt-in: BR_3D_PERF=1, and boards missing from samples/ are skipped.
  *   BR_3D_PERF=1 npx playwright test tests/board-3d-perf.spec.ts --workers=1
- * Prints per board: parts, triangles, draw calls, build time, the time to render
- * one frame to completion (read-back, so it includes a GPU stall) and the frame
- * rate actually delivered during an orbit at 2× and 1× pixel ratio.
+ * Prints per board: parts, triangles, draw calls, build time, the settled frame's
+ * cost (full resolution, 4× MSAA, timed to completion with a read-back) and the
+ * frame rate actually delivered while moving (the 1× target the drag draws into).
  */
 import { test } from '@playwright/test';
 import fs from 'fs';
@@ -20,7 +20,7 @@ const BOARDS: [string, string][] = [
   ['LA-P161', `${R}/LA-P161PR1B.brd`], ['NVIDIA4090', `${R}/cad/NVIDIA4090.cad`],
   ['iMacPro', `${R}/XZZ PCB SAMPLES/A18xx/A1862 820-00967 IMac Pro 27 late 2017/A1862 820-00967.pcb`],
 ];
-type W = { __board3d: { renderer: { drawnParts: number; bench(n: number, pr?: number): Record<string, number>; fps(ms: number, pr?: number): Promise<{ fps: number; worstMs: number }> } } };
+type W = { __board3d: { renderer: { drawnParts: number; bench(n: number, pr?: number): Record<string, number>; fps(ms: number, pr?: number, viaLow?: boolean): Promise<{ fps: number; worstMs: number }>; dragBench(ms: number): Promise<Record<string, number>> } } };
 for (const [name, file] of BOARDS) test(`3D perf ${name}`, async ({ page }) => {
   test.skip(!process.env.BR_3D_PERF, 'opt-in: BR_3D_PERF=1');
   test.skip(!fs.existsSync(file), `missing ${file}`);
@@ -32,8 +32,8 @@ for (const [name, file] of BOARDS) test(`3D perf ${name}`, async ({ page }) => {
   await page.getByTestId('view3d-btn').click();
   await page.waitForFunction(() => ((window as unknown as W).__board3d?.renderer.drawnParts ?? 0) > 0, null, { timeout: 200000 });
   await page.waitForTimeout(800);
-  const one = await page.evaluate(() => (window as unknown as W).__board3d.renderer.bench(60));
-  const f2 = await page.evaluate(() => (window as unknown as W).__board3d.renderer.fps(3000, 2));
-  const f1 = await page.evaluate(() => (window as unknown as W).__board3d.renderer.fps(3000, 1));
-  console.log(`3D-PERF ${name} parts=${await page.evaluate(() => (window as unknown as W).__board3d.renderer.drawnParts)} ${JSON.stringify({ ...one, fps2: f2, fps1: f1 })}`);
+  const settled = await page.evaluate(() => (window as unknown as W).__board3d.renderer.bench(60));
+  const moving = await page.evaluate(() => (window as unknown as W).__board3d.renderer.fps(3000, undefined, true));
+  const drag = await page.evaluate(() => (window as unknown as W).__board3d.renderer.dragBench(2000));
+  console.log(`3D-PERF ${name} parts=${await page.evaluate(() => (window as unknown as W).__board3d.renderer.drawnParts)} ${JSON.stringify({ ...settled, moving, drag })}`);
 });

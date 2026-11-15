@@ -34,6 +34,25 @@ RP2040 (EAGLE), Metal on an M1. Part of [2026-11-14-3d-mode-design.md](2026-11-1
 - **Labels below their fade-in size collapse in the vertex shader** to a point
   outside the clip volume, so a zoomed-out board rasterises none of the ~150 k
   net-name quads.
+- **The "resolution fix" stutter, and where the frame really went (2026-11-15).**
+  Switching the canvas's own pixel ratio between moving (1×) and settled (2×)
+  reallocated the drawing buffer twice per gesture: 40–70 ms at the first move
+  and again at the stop, measured through the real loop (`dragBench`). Rendering
+  the moving frames into a 1× target and blitting removed the reallocation but
+  gained nothing per frame (51 fps either way), and that pointed at the real
+  fixed cost: the canvas was created with `antialias: true`, so every frame
+  drawn to it — even a one-quad blit — paid a 4× MSAA resolve of the whole
+  window, ~8 ms at 2× on an M1. The canvas now has no multisampling. Moving
+  frames go through a 1× 8-bit target with none; the settled frame goes once
+  through a full-size 4× target (8-bit, stored sRGB-encoded so the dark board
+  does not band; half-float was 30 ms a frame to 8-bit's 21 for the same
+  picture). Both are blitted by one quad, which applies the tone mapping and
+  the colour-space conversion three only does on the canvas. Result on the M1
+  board: a drag runs at 59–60 fps with a 19 ms worst frame, first move 20 ms,
+  settle one 21 ms frame; it was 60 fps with 40–70 ms hitches, or 47 fps
+  hitch-free at 2× with no dynamic resolution. The second shader set the target
+  pass needs is compiled at open (`warmLowPass`); on the first drag it was a
+  1.7 s stall.
 - **Measuring:** the render loop used to fight `bench(…, 1)` / `fps(…, 1)` over
   the pixel ratio every frame, so the 1× numbers in earlier rounds were taken at
   2× with a resize per frame; `benchPr` now holds the loop off. And the day's

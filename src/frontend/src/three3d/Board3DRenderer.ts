@@ -48,10 +48,23 @@ export class Board3DRenderer {
   private ro: ResizeObserver;
   private ray = new THREE.Raycaster();
   private disposed = false;
-  // Dynamic resolution: the view is fill-bound (16 ms a frame at 2× on an M1, 8 ms at 1×), so it
-  // draws at 1× while the camera moves and once at full resolution when it settles.
+  // Two render targets, allocated once per size, both blitted to the canvas with one quad: while the
+  // camera moves, a 1× target with no multisampling (a moving frame costs what 1× costs); when it
+  // settles, a full-resolution 4× multisampled target, drawn once. The first cut switched the canvas's
+  // own pixel ratio instead, and the buffer reallocation cost 40–70 ms at the start and end of every
+  // drag — the stutter felt as "degraded after the resolution fix".
   private fullPr = 1;
   private movingUntil = 0;
+  private lowRT: THREE.WebGLRenderTarget | null = null;
+  private fullRT: THREE.WebGLRenderTarget | null = null;
+  private blitScene = new THREE.Scene();
+  private blitCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  private blitMat = new THREE.MeshBasicMaterial({ depthTest: false, depthWrite: false });
+  private lowCfg = { samples: 0, half: false, scale: 1 };
+  /** Measurement hook: the moving target's samples, format and scale (fraction of 1×); reallocates it. */
+  private fullCfg = { samples: 4, half: false };
+  setFullTarget(cfg: Partial<{ samples: number; half: boolean }>): void { this.fullCfg = { ...this.fullCfg, ...cfg }; this.fullRT?.dispose(); this.fullRT = null; this.resize(); this.warmLowPass(); }
+  setLowTarget(cfg: Partial<{ samples: number; half: boolean; scale: number }>): void { this.lowCfg = { ...this.lowCfg, ...cfg }; this.lowRT?.dispose(); this.lowRT = null; this.resize(); this.warmLowPass(); }
   /** A measurement's pixel ratio: the loop leaves it alone until the measurement ends. */
   private benchPr: number | null = null;
 
@@ -65,7 +78,10 @@ export class Board3DRenderer {
     this.canvas = document.createElement('canvas');
     this.canvas.className = 'board-3d-canvas';
     host.appendChild(this.canvas);
-    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true });
+    // No multisampling on the canvas: a multisampled canvas resolves the whole window every frame,
+    // even for a one-quad blit — 8 ms at 2× on an M1, the fixed cost that made moving frames no
+    // cheaper than settled ones. Antialiasing happens in the settled frame's own target instead.
+    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: false });
     this.fullPr = Math.min(devicePixelRatio, 2);
     this.renderer.setPixelRatio(this.fullPr);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -93,6 +109,7 @@ export class Board3DRenderer {
     this.canvas.addEventListener('contextmenu', this.onContextMenu);
     // every wheel is ours: a scroll pans, a pinch or ⌘/Ctrl+scroll zooms at the pointer
     this.canvas.addEventListener('wheel', this.onWheel, { capture: true, passive: false });
+    const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.blitMat); quad.frustumCulled = false; this.blitScene.add(quad);
     this.ro = new ResizeObserver(() => this.resize()); this.ro.observe(host);
     this.resize();
     const loop = () => { if (this.disposed) return; this.raf = requestAnimationFrame(loop); this.tick(); };
@@ -140,6 +157,7 @@ export class Board3DRenderer {
     this.view('iso', false);
     this.renderer.shadowMap.needsUpdate = true;
     this.applySettings(this.settings);
+    this.warmLowPass();
     this.buildMs = Math.round(performance.now() - t0);
   }
 
@@ -714,15 +732,16 @@ export class Board3DRenderer {
     return { dist: c.distanceTo(t), target: [t.x, t.y, t.z], pos: [c.x, c.y, c.z], leftDrag: this.leftDrag, roll: right.y };
   }
 
-  /** Draw calls, triangles and buffers of the last frame, and the build time. */
+  private lastScene = { calls: 0, triangles: 0 };
+  /** Draw calls and triangles of the last scene pass (not the blit), buffers, and the build time. */
   stats() {
     const i = this.renderer.info;
     let verts = 0; this.partsRoot.traverse(o => { if (o instanceof THREE.Mesh) verts += o.geometry.attributes.position.count; });
-    return { calls: i.render.calls, triangles: i.render.triangles, geometries: i.memory.geometries, textures: i.memory.textures, partVertices: verts, buildMs: this.buildMs };
+    return { calls: this.lastScene.calls, triangles: this.lastScene.triangles, geometries: i.memory.geometries, textures: i.memory.textures, partVertices: verts, buildMs: this.buildMs };
   }
   /** Frames actually delivered during a continuous `ms`-long orbit, paced by
    *  requestAnimationFrame like real use (no read-back stalls). */
-  fps(ms = 2000, pixelRatio?: number): Promise<{ fps: number; worstMs: number }> {
+  fps(ms = 2000, pixelRatio?: number, viaLow = false): Promise<{ fps: number; worstMs: number }> {
     const prevPr = this.renderer.getPixelRatio(); if (pixelRatio) { this.benchPr = pixelRatio; this.renderer.setPixelRatio(pixelRatio); this.resize(); }
     const r = this.camera.position.length(), t0 = performance.now(); let n = 0, last = t0, worst = 0;
     return new Promise(res => {
@@ -730,7 +749,28 @@ export class Board3DRenderer {
         const now = performance.now(); worst = Math.max(worst, now - last); last = now;
         if (now - t0 > ms) { if (pixelRatio) { this.benchPr = null; this.renderer.setPixelRatio(prevPr); this.resize(); } this.dirty = true; res({ fps: Math.round(n * 1000 / (now - t0)), worstMs: Math.round(worst) }); return; }
         const a = (now - t0) / ms * Math.PI * 2; this.camera.position.set(Math.cos(a) * r * 0.8, r * 0.55, Math.sin(a) * r * 0.8); this.camera.lookAt(this.target);
-        this.renderer.render(this.scene, this.camera); n++; requestAnimationFrame(step);
+        this.renderVia(viaLow && this.lowRT ? this.lowRT : this.fullRT);
+        n++; requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    });
+  }
+  /** A real drag through the real loop: turns the camera a little every frame for `ms`, then lets it
+   *  settle. Reports frame intervals during the drag and the longest interval around the stop (the
+   *  full-resolution redraw plus whatever the switch costs). For measurement, not for the UI. */
+  dragBench(ms = 2000): Promise<{ dragFps: number; dragWorstMs: number; settleMs: number; firstMoveMs: number }> {
+    const t0 = performance.now(); let last = t0, worst = 0, n = 0, first = 0; const pivot = new THREE.Vector3();
+    return new Promise(res => {
+      const step = () => {
+        const now = performance.now(); const dt = now - last; last = now;
+        if (n === 1) first = dt; else if (n > 1) worst = Math.max(worst, dt);
+        if (now - t0 > ms) {
+          // stop: wait for the settle redraw, time the longest frame in the next 600 ms
+          let sw = 0, sl = performance.now(); const t1 = sl;
+          const tail = () => { const nw = performance.now(); sw = Math.max(sw, nw - sl); sl = nw; if (nw - t1 < 600) requestAnimationFrame(tail); else res({ dragFps: Math.round(n * 1000 / (now - t0)), dragWorstMs: Math.round(worst), settleMs: Math.round(sw), firstMoveMs: Math.round(first) }); };
+          requestAnimationFrame(tail); return;
+        }
+        this.turnBy(3, 0, pivot); n++; requestAnimationFrame(step);
       };
       requestAnimationFrame(step);
     });
@@ -743,7 +783,7 @@ export class Board3DRenderer {
     const r = this.camera.position.length(), base = Math.atan2(this.camera.position.z, this.camera.position.x);
     for (let k = 0; k < frames; k++) {
       const a = base + k * 2 * Math.PI / frames; this.camera.position.set(Math.cos(a) * r * 0.8, r * 0.55, Math.sin(a) * r * 0.8); this.camera.lookAt(this.target);
-      const t0 = performance.now(); this.renderer.render(this.scene, this.camera); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); t.push(performance.now() - t0);
+      const t0 = performance.now(); this.renderVia(this.fullRT); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); t.push(performance.now() - t0);
     }
     t.sort((x, y) => x - y); this.dirty = true;
     if (pixelRatio) { this.benchPr = null; this.renderer.setPixelRatio(prevPr); this.resize(); }
@@ -755,8 +795,25 @@ export class Board3DRenderer {
     // (also called on a resolution switch: setPixelRatio needs a setSize to take effect)
     const w = Math.max(1, this.host.clientWidth), h = Math.max(1, this.host.clientHeight);
     this.renderer.setSize(w, h, false); this.camera.aspect = w / h; this.camera.updateProjectionMatrix(); this.dirty = true;
-    if (this.labelMat) this.labelMat.uniforms.viewportH.value = this.renderer.domElement.height;
-    for (const lm of this.lineMats) lm.resolution.set(this.renderer.domElement.width, this.renderer.domElement.height);
+    const lw = Math.max(1, Math.round(w * Math.min(1, this.fullPr) * this.lowCfg.scale)), lh = Math.max(1, Math.round(h * Math.min(1, this.fullPr) * this.lowCfg.scale));
+    if (this.fullPr > 1.01 && (!this.lowRT || this.lowRT.width !== lw || this.lowRT.height !== lh)) {
+      this.lowRT?.dispose();
+      this.lowRT = Board3DRenderer.target(lw, lh, this.lowCfg.samples, this.lowCfg.half);
+    }
+    const fw = this.renderer.domElement.width, fh = this.renderer.domElement.height;
+    if (!this.fullRT || this.fullRT.width !== fw || this.fullRT.height !== fh) {
+      this.fullRT?.dispose();
+      this.fullRT = Board3DRenderer.target(fw, fh, this.fullCfg.samples, this.fullCfg.half);
+    }
+    this.setPixelUniforms(this.renderer.domElement.width, this.renderer.domElement.height);
+  }
+  /** Screen-pixel sizes the shaders need (label fade, line widths, marker sizes) for a given target size. */
+  private pixelScale = 1;
+  private setPixelUniforms(w: number, h: number): void {
+    if (this.labelMat) this.labelMat.uniforms.viewportH.value = h;
+    for (const lm of this.lineMats) lm.resolution.set(w, h);
+    const scale = h / this.renderer.domElement.height; // 1 at full resolution, 0.5 in the moving target at 2×
+    if (scale !== this.pixelScale) { for (const mk of this.markers) { const mat = (mk as THREE.Points).material as THREE.PointsMaterial; if (mat?.size !== undefined) mat.size = mat.size / this.pixelScale * scale; } this.pixelScale = scale; }
   }
   private tick(): void {
     if (this.anim) {
@@ -765,10 +822,9 @@ export class Board3DRenderer {
       this.camera.up.lerpVectors(this.anim.uf, this.anim.ut, e).normalize(); this.camera.lookAt(this.target); this.camera.updateMatrixWorld();
       if (k >= 1) { this.anim = null; this.movingUntil = performance.now() + 180; } this.dirty = true;
     }
-    const now = performance.now(), moving = this.anim !== null || now < this.movingUntil;
-    const pr = this.benchPr ?? (moving ? Math.min(1, this.fullPr) : this.fullPr);
-    if (pr !== this.renderer.getPixelRatio()) { this.renderer.setPixelRatio(pr); this.resize(); }
-    if (!this.dirty) return;
+    const now = performance.now(), moving = this.benchPr === null && (this.anim !== null || now < this.movingUntil);
+    // draw when something changed; and once more at full resolution when a move has ended
+    if (!this.dirty && (moving || !this.settledLow)) return;
     this.dirty = false;
     this.updateXray();
     const fromAbove = this.camera.position.y >= this.target.y;
@@ -779,12 +835,41 @@ export class Board3DRenderer {
       for (const gh of this.ghostParts) gh.traverse(o => { const mat = (o as THREE.Mesh).material as THREE.Material | undefined; if (mat && 'opacity' in mat) mat.opacity = (o instanceof LineSegments2 ? 0.7 : 0.22) * k; });
       this.dirty = true;
     }
-    this.renderer.render(this.scene, this.camera);
+    if (moving && this.lowRT) { this.renderVia(this.lowRT); this.settledLow = true; }
+    else { this.renderVia(this.fullRT); this.settledLow = false; }
   }
+  /** An 8-bit target stores sRGB-encoded (SRGB8_ALPHA8: the GPU encodes on write and decodes on read),
+   *  so the dark board does not band the way 8-bit linear would; half-float stays linear. 4× MSAA
+   *  half-float at 6.4 MP was 30 ms a frame, 8-bit 21 ms, for the same picture. */
+  private static target(w: number, h: number, samples: number, half: boolean): THREE.WebGLRenderTarget {
+    const rt = new THREE.WebGLRenderTarget(w, h, { type: half ? THREE.HalfFloatType : THREE.UnsignedByteType, samples, depthBuffer: true });
+    if (!half) rt.texture.colorSpace = THREE.SRGBColorSpace;
+    return rt;
+  }
+  /** One frame: the scene into `rt` (linear, no tone mapping — three applies those only on the
+   *  canvas), then the target onto the canvas through one quad, which tone-maps and converts. */
+  private renderVia(rt: THREE.WebGLRenderTarget | null): void {
+    if (!rt) { this.setPixelUniforms(this.renderer.domElement.width, this.renderer.domElement.height); this.renderer.render(this.scene, this.camera); return; }
+    this.setPixelUniforms(rt.width, rt.height);
+    this.renderer.setRenderTarget(rt); this.renderer.render(this.scene, this.camera);
+    this.lastScene = { calls: this.renderer.info.render.calls, triangles: this.renderer.info.render.triangles }; // before the blit resets them
+    this.renderer.setRenderTarget(null);
+    if (this.blitMat.map !== rt.texture) { this.blitMat.map = rt.texture; this.blitMat.needsUpdate = true; }
+    this.renderer.render(this.blitScene, this.blitCam);
+  }
+  /** Render the moving-resolution pass once now: it needs its own compiled shaders (no tone mapping,
+   *  linear output into the target), and compiling them on the first drag was a 1.7 s stall. */
+  private warmLowPass(): void {
+    if (this.lowRT) this.renderVia(this.lowRT);
+    this.renderVia(this.fullRT); this.dirty = true;
+  }
+  /** The last frame on screen is the moving-resolution one: redraw at full resolution once settled. */
+  private settledLow = false;
   dispose(): void {
     this.disposed = true; cancelAnimationFrame(this.raf); this.canvas.removeEventListener('wheel', this.onWheel, { capture: true }); this.ro.disconnect();
     for (const [ev, fn] of [['pointerdown', this.onPointerDown], ['pointermove', this.onPointerMove], ['pointerup', this.onPointerUp], ['pointercancel', this.onPointerUp], ['contextmenu', this.onContextMenu]] as const) this.canvas.removeEventListener(ev, fn as EventListener);
     for (const root of [this.boardRoot, this.partsRoot, this.pickRoot, this.hlRoot, this.labelRoot]) disposeTree(root);
+    this.lowRT?.dispose(); this.fullRT?.dispose(); this.blitMat.dispose();
     this.renderer.dispose(); this.renderer.forceContextLoss(); this.canvas.remove();
   }
 }
