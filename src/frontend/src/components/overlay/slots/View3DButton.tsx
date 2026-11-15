@@ -1,6 +1,6 @@
 import { useState, useSyncExternalStore } from 'react';
 import { IconAdjustments, IconCube, IconFocusCentered, IconHandStop, IconRotate360, IconStackBack, IconStackFront, IconZoomIn, IconZoomOut, IconView360 } from '@tabler/icons-react';
-import { view3dStore, type SelColour, type View3DSettings } from '../../../store/view3d-store';
+import { view3dStore, QUALITY_PRESETS, type SelColour, type View3DQuality, type View3DSettings } from '../../../store/view3d-store';
 import { QuickMenu, type QuickMenuItem } from '../../QuickMenu';
 import type { SlotCtx } from '../slot-ctx';
 
@@ -66,6 +66,9 @@ function View3DSettingsMenu({ x, y, onClose }: { x: number; y: number; onClose: 
     ...choices.map(c => ({ kind: 'check' as const, label: COLOUR_LABEL[c], checked: s[key] === c, testId: `view3d-${key}-${c}`, onSelect: () => set({ [key]: c }) })),
   ];
   const items: QuickMenuItem[] = [
+    { kind: 'header', label: 'Performance' },
+    ...(Object.keys(QUALITY_PRESETS) as View3DQuality[]).map(q => ({ kind: 'check' as const, label: QUALITY_PRESETS[q].label, hint: QUALITY_PRESETS[q].hint, checked: s.quality === q, testId: `view3d-quality-${q}`, onSelect: () => set({ quality: q }) })),
+    { kind: 'sep' },
     ...colourRow('netColour', 'Lit net', ['cyan', 'magenta', 'lime', 'orange']),
     ...colourRow('pinColour', 'Picked pin', ['lime', 'cyan', 'white', 'orange']),
     ...colourRow('partColour', 'Selected part', ['violet', 'white', 'orange', 'magenta']),
@@ -73,9 +76,8 @@ function View3DSettingsMenu({ x, y, onClose }: { x: number; y: number; onClose: 
     { kind: 'header', label: 'Show' },
     { kind: 'check', label: 'Part names', checked: s.partNames, testId: 'view3d-partNames', onSelect: () => set({ partNames: !s.partNames }) },
     { kind: 'check', label: 'Net names on pins (close up)', checked: s.netNames, testId: 'view3d-netNames', onSelect: () => set({ netNames: !s.netNames }) },
-    { kind: 'check', label: 'Dim the rest while a net is lit', checked: s.dimOthers, testId: 'view3d-dimOthers', onSelect: () => set({ dimOthers: !s.dimOthers }) },
     { kind: 'check', label: 'Large parts see-through up close', checked: s.seeThrough, testId: 'view3d-seeThrough', onSelect: () => set({ seeThrough: !s.seeThrough }) },
-    { kind: 'check', label: 'Shadows', checked: s.shadows, testId: 'view3d-shadows', onSelect: () => set({ shadows: !s.shadows }) },
+    { kind: 'check', label: 'Shadows', checked: s.shadows && QUALITY_PRESETS[s.quality].shadows, disabled: !QUALITY_PRESETS[s.quality].shadows, testId: 'view3d-shadows', onSelect: () => set({ shadows: !s.shadows }) },
     { kind: 'sep' },
     { kind: 'range', label: 'Marker size', value: s.markerPx, min: 6, max: 40, step: 1, format: v => `${v} px`, testId: 'view3d-markerPx', onChange: v => set({ markerPx: v }) },
     { kind: 'range', label: 'Outline width', value: s.outlinePx, min: 1, max: 8, step: 0.5, format: v => `${v} px`, testId: 'view3d-outlinePx', onChange: v => set({ outlinePx: v }) },

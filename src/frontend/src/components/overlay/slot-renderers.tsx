@@ -28,7 +28,7 @@ import { View3DButton, View3DSideSwitch, View3DFitButton } from './slots/View3DB
 /** Slots that mean something in the 3D view. The rest act on the 2D renderer
  *  (transforms, butterfly, slides, the 2D-only view aids) and hide in 3D. */
 // (no scrollMode: in 3D a scroll always pans and a pinch zooms)
-const SLOTS_3D: ReadonlySet<OverlaySlotId> = new Set<OverlaySlotId>(['sideSwitch', 'history', 'view3d', 'pdfFollow', 'fitBoard', 'netLines', 'ghosts', 'partsDropdown', 'netsDropdown']);
+const SLOTS_3D: ReadonlySet<OverlaySlotId> = new Set<OverlaySlotId>(['sideSwitch', 'history', 'view3d', 'pdfFollow', 'fitBoard', 'netDim', 'netLines', 'ghosts', 'partsDropdown', 'netsDropdown']);
 
 export function renderOverlaySlot(id: OverlaySlotId, ctx: SlotCtx): ReactNode {
   if (isSeparatorId(id)) return <Separator />;

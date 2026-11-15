@@ -17,7 +17,7 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import type { Board3DModel, Board3DPad, Board3DPart } from './board3d-model';
 import { buildPartModel, MAT } from './part-models';
 import { buildLabelMesh, type LabelSpec } from './part-labels';
-import { SEL_COLOURS, DEFAULT_VIEW3D_SETTINGS, type View3DSettings } from '../store/view3d-store';
+import { SEL_COLOURS, DEFAULT_VIEW3D_SETTINGS, QUALITY_PRESETS, type View3DSettings } from '../store/view3d-store';
 import type { GhostMode, NetLineMode } from '../store/board-store';
 import { renderSettingsStore, isGroundNet } from '../store/render-settings';
 
@@ -60,7 +60,7 @@ export class Board3DRenderer {
   private blitScene = new THREE.Scene();
   private blitCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   private blitMat = new THREE.MeshBasicMaterial({ depthTest: false, depthWrite: false });
-  private lowCfg = { samples: 0, half: false, scale: 1 };
+  private lowCfg = { samples: 4, half: false, scale: 1 };
   /** Measurement hook: the moving target's samples, format and scale (fraction of 1×); reallocates it. */
   private fullCfg = { samples: 4, half: false };
   setFullTarget(cfg: Partial<{ samples: number; half: boolean }>): void { this.fullCfg = { ...this.fullCfg, ...cfg }; this.fullRT?.dispose(); this.fullRT = null; this.resize(); this.warmLowPass(); }
@@ -71,6 +71,9 @@ export class Board3DRenderer {
   private settings: View3DSettings = DEFAULT_VIEW3D_SETTINGS;
   private netLineMode: NetLineMode = 'off';
   private ghostMode: GhostMode = 'off';
+  /** The ribbon's dim button (shared with 2D): the lights go down while a net is lit unless it is off. */
+  private dimMode: 'off' | 'dim' | 'darklight' = 'dim';
+  setDimMode(mode: 'off' | 'dim' | 'darklight'): void { if (mode === this.dimMode) return; this.dimMode = mode; this.setSelection(this.sel.part, this.sel.net, this.sel.pin); }
   private sel: { part: number | null; net: string | null; pin: number | null } = { part: null, net: null, pin: null };
   private host: HTMLElement;
   constructor(host: HTMLElement) {
@@ -124,10 +127,18 @@ export class Board3DRenderer {
   applySettings(s: View3DSettings): void {
     const prev = this.settings; this.settings = s;
     this.labelRoot.visible = s.partNames || s.netNames;
+    if (prev.quality !== s.quality) {
+      const q = QUALITY_PRESETS[s.quality];
+      this.fullPr = Math.min(devicePixelRatio, q.settledPr); this.renderer.setPixelRatio(this.fullPr);
+      this.lowCfg = { samples: q.movingSamples, half: false, scale: q.movingScale }; this.fullCfg = { samples: q.settledSamples, half: false };
+      this.lowRT?.dispose(); this.lowRT = null; this.fullRT?.dispose(); this.fullRT = null;
+      this.resize(); if (this.model) this.warmLowPass();
+    }
+    const shadows = s.shadows && QUALITY_PRESETS[s.quality].shadows;
     if (this.model && (prev.partNames !== s.partNames || prev.netNames !== s.netNames)) this.buildLabels(this.model);
-    if (prev.shadows !== s.shadows) {
+    if (shadows !== this.renderer.shadowMap.enabled) {
       // a shadow-map switch changes every receiving material's shader: ask them to recompile
-      this.renderer.shadowMap.enabled = s.shadows; this.key.castShadow = s.shadows; this.renderer.shadowMap.needsUpdate = true;
+      this.renderer.shadowMap.enabled = shadows; this.key.castShadow = shadows; this.renderer.shadowMap.needsUpdate = true;
       this.boardRoot.traverse(o => { if (o instanceof THREE.Mesh) for (const m of Array.isArray(o.material) ? o.material : [o.material]) m.needsUpdate = true; });
     }
     this.dirty = true; // updateXray runs before the next render and resets any fade when see-through is off
@@ -454,7 +465,7 @@ export class Board3DRenderer {
       if (pinIndex !== null) { const pad = m.pinPads(partIndex)[pinIndex], q = m.pinsOf(partIndex)[pinIndex]; if (pad || q) this.hlRoot.add(this.pinRing(pad?.x ?? q.x, pad?.z ?? q.z, (pad?.side ?? q.side) === 'bottom', PIN)); }
     }
     // dim: lights down while a net is lit; the selection is unlit and keeps its colour
-    const dim = net && this.settings.dimOthers ? 0.3 : 1;
+    const dim = net && this.dimMode !== 'off' ? 0.3 : 1;
     this.key.intensity = 1.3 * dim; this.under.intensity = 0.9 * dim; this.hemi.intensity = 0.45 * dim; this.scene.environmentIntensity = 0.4 * dim;
     if (this.labelMat) this.labelMat.uniforms.dim.value = dim === 1 ? 1 : 0.55;
     this.dirty = true;
@@ -796,7 +807,10 @@ export class Board3DRenderer {
     const w = Math.max(1, this.host.clientWidth), h = Math.max(1, this.host.clientHeight);
     this.renderer.setSize(w, h, false); this.camera.aspect = w / h; this.camera.updateProjectionMatrix(); this.dirty = true;
     const lw = Math.max(1, Math.round(w * Math.min(1, this.fullPr) * this.lowCfg.scale)), lh = Math.max(1, Math.round(h * Math.min(1, this.fullPr) * this.lowCfg.scale));
-    if (this.fullPr > 1.01 && (!this.lowRT || this.lowRT.width !== lw || this.lowRT.height !== lh)) {
+    // a moving target only when it is smaller than the settled frame (a 1× display at scale 1 has no use for one)
+    const wantLow = this.fullPr > 1.01 || this.lowCfg.scale < 0.99;
+    if (!wantLow) { this.lowRT?.dispose(); this.lowRT = null; }
+    else if (!this.lowRT || this.lowRT.width !== lw || this.lowRT.height !== lh) {
       this.lowRT?.dispose();
       this.lowRT = Board3DRenderer.target(lw, lh, this.lowCfg.samples, this.lowCfg.half);
     }

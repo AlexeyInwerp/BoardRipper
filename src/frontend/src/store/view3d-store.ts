@@ -23,7 +23,11 @@ export const SEL_COLOURS = {
 } as const;
 export type SelColour = keyof typeof SEL_COLOURS;
 
+export type View3DQuality = 'quality' | 'balanced' | 'fast';
+
 export interface View3DSettings {
+  /** Render quality: target sizes, multisampling and shadows — see QUALITY_PRESETS. */
+  quality: View3DQuality;
   /** The lit net: lands, part outlines, markers under bodies, net lines. */
   netColour: SelColour;
   /** The picked pin: its land and the ring that finds it from any distance. */
@@ -34,8 +38,6 @@ export interface View3DSettings {
   partNames: boolean;
   /** Net names on the lands, readable only close up (they fade in with size). */
   netNames: boolean;
-  /** Darken everything but the selection while a net is lit. */
-  dimOthers: boolean;
   /** Large bodies fade when the camera comes close, showing the lands under them. */
   seeThrough: boolean;
   shadows: boolean;
@@ -45,9 +47,19 @@ export interface View3DSettings {
   outlinePx: number;
 }
 
+/** What each quality preset sets. `settledPr` caps the full-resolution frame's pixel ratio;
+ *  `movingScale` is the moving target's size as a fraction of 1×. Multisampling on the moving
+ *  target is what keeps sub-pixel lands visible while the board turns (4× costs nothing at 1×). */
+export const QUALITY_PRESETS: Record<View3DQuality, { settledPr: number; settledSamples: number; movingScale: number; movingSamples: number; shadows: boolean; label: string; hint: string }> = {
+  quality:  { settledPr: 2,   settledSamples: 4, movingScale: 1,    movingSamples: 4, shadows: true,  label: 'Quality',  hint: 'full resolution, 4× smoothing, shadows' },
+  balanced: { settledPr: 2,   settledSamples: 2, movingScale: 0.75, movingSamples: 4, shadows: true,  label: 'Balanced', hint: 'full resolution when still, ¾ while moving' },
+  fast:     { settledPr: 1.5, settledSamples: 2, movingScale: 0.5,  movingSamples: 2, shadows: false, label: 'Fast',     hint: '1.5× when still, ½ while moving, no shadows' },
+};
+
 export const DEFAULT_VIEW3D_SETTINGS: View3DSettings = {
+  quality: 'quality',
   netColour: 'cyan', pinColour: 'lime', partColour: 'violet',
-  partNames: true, netNames: true, dimOthers: true, seeThrough: true, shadows: true,
+  partNames: true, netNames: true, seeThrough: true, shadows: true,
   markerPx: 14, outlinePx: 2.5,
 };
 const KEY = 'boardripper-view3d';
@@ -97,6 +109,7 @@ function loadSettings(): View3DSettings {
     const raw = localStorage.getItem(KEY); if (!raw) return DEFAULT_VIEW3D_SETTINGS;
     const p = JSON.parse(raw) as Partial<View3DSettings>, s = { ...DEFAULT_VIEW3D_SETTINGS, ...p };
     for (const k of ['netColour', 'pinColour', 'partColour'] as const) if (!(s[k] in SEL_COLOURS)) s[k] = DEFAULT_VIEW3D_SETTINGS[k];
+    if (!(s.quality in QUALITY_PRESETS)) s.quality = DEFAULT_VIEW3D_SETTINGS.quality;
     s.markerPx = clamp(s.markerPx, 6, 40, DEFAULT_VIEW3D_SETTINGS.markerPx); s.outlinePx = clamp(s.outlinePx, 1, 8, DEFAULT_VIEW3D_SETTINGS.outlinePx);
     return s;
   } catch { return DEFAULT_VIEW3D_SETTINGS; }

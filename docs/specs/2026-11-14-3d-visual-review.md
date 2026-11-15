@@ -53,6 +53,15 @@ RP2040 (EAGLE), Metal on an M1. Part of [2026-11-14-3d-mode-design.md](2026-11-1
   hitch-free at 2× with no dynamic resolution. The second shader set the target
   pass needs is compiled at open (`warmLowPass`); on the first drag it was a
   1.7 s stall.
+- **Lands vanished while moving (2026-11-15):** the moving target had no
+  multisampling, and a 0.2–0.5 mm land is under a pixel at overview zoom — with
+  no coverage sampling a sub-pixel quad rasterises to nothing, so pads blinked
+  out on every tilt and came back in the settled frame. 4× MSAA on the 1×
+  moving target measures free (60 fps, both boards), so it is on. **Quality
+  presets** (3D settings ▸ Performance): Quality / Balanced / Fast set the
+  settled pixel-ratio cap, both targets' sampling, the moving scale and shadows
+  (`QUALITY_PRESETS`). **Dimming** follows the ribbon's own dim button, as in
+  2D; the separate 3D option is gone.
 - **Measuring:** the render loop used to fight `bench(…, 1)` / `fps(…, 1)` over
   the pixel ratio every frame, so the 1× numbers in earlier rounds were taken at
   2× with a resize per frame; `benchPr` now holds the loop off. And the day's
