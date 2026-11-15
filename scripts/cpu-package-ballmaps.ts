@@ -64,6 +64,7 @@ const WANT: [string, string, string, string][] = [
   ['pch-hx-1045', 'Intel 700-series PCH for HX (Legion Pro 5) · 1045 balls', 'incoming/lenovo/Lenovo_Legion_Pro_5_16IRX9_NM_F701.cad', 'UH1'],
   ['amd-pitcairn', 'AMD Pitcairn (iMac A1419 2014 R9 M290X) · 1737 balls', `${X}/A14xx/A1419_820-4652/Schematic and boardview/J78_MLB_820-4652-A.pcb`, 'U8700'],
   ['amd-fp6', 'AMD FP6 (Renoir / Cezanne) · 1140 balls (Compal LA-N591P)', 'incoming/uncategorized/LA-N591P r1.0.cad', 'UC1'],
+  ['nv-bga2714', 'NVIDIA GB5-256 40 mm (AD103/AD104, GA104/GA106) · 2714 balls (Legion 7 Pro 16IRX8H)', 'incoming/lenovo/Legion7Pro-16IRX8H-KY782.tvw', 'UG1'],
   ['lga2066', 'Intel LGA2066 socket pads (iMac Pro A1862)', `${X}/A18xx/A1862 820-00967 IMac Pro 27 late 2017/A1862 820-00967.pcb`, 'U1000'],
 ];
 
