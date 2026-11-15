@@ -1395,7 +1395,7 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
         const ob = computeBBox(real); const tol = 40;
         const inside = allPoints.filter(q => q.x >= ob.minX - tol && q.x <= ob.maxX + tol && q.y >= ob.minY - tol && q.y <= ob.maxY + tol).length;
         if (inside >= allPoints.length * 0.9) outline = chained;
-        else log.parser.info(`[cad outline] $BOARD contour (${boardPolys.length} primitives) holds only ${inside}/${allPoints.length} pins — using the pin rectangle`);
+        else log.parser.log(`[cad outline] $BOARD contour (${boardPolys.length} primitives) holds only ${inside}/${allPoints.length} pins — using the pin rectangle`);
       }
     }
     if (!outline.length) outline = generateSyntheticOutline(allPoints);
