@@ -62,6 +62,19 @@ RP2040 (EAGLE), Metal on an M1. Part of [2026-11-14-3d-mode-design.md](2026-11-1
   settled pixel-ratio cap, both targets' sampling, the moving scale and shadows
   (`QUALITY_PRESETS`). **Dimming** follows the ribbon's own dim button, as in
   2D; the separate 3D option is gone.
+- **Lands still flickered on Quality (2026-11-15, second pass):** two causes. A
+  land under half a pixel can miss every sample of a 1× target even with 4×
+  MSAA, so at overview zoom it blinks while moving — Quality now moves at full
+  resolution too (no moving target; ~45 fps on the M1 board instead of 60, the
+  picture never changes), Balanced keeps the 1× moving target. And the face
+  material's polygon offset (−1) put the board surface in front of lands 8 µm
+  above it at grazing tilt angles, at any resolution; the lands have a stronger
+  offset (−2) now.
+- **Lands jittered when zoomed out:** sub-pixel quad edges alias and crawl as
+  the camera moves, whatever the sampling. Level of detail now: the lands are
+  back in the face texture (mipmapped, so a one-pixel land is a steady smooth
+  dot), and the geometry lands cull themselves in the vertex shader below 3 px
+  of screen width (`aSize`, `uViewportH`), taking over where they are sharp.
 - **Measuring:** the render loop used to fight `bench(…, 1)` / `fps(…, 1)` over
   the pixel ratio every frame, so the 1× numbers in earlier rounds were taken at
   2× with a resize per frame; `benchPr` now holds the loop off. And the day's

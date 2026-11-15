@@ -61,6 +61,8 @@ export class Board3DRenderer {
   private blitCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   private blitMat = new THREE.MeshBasicMaterial({ depthTest: false, depthWrite: false });
   private lowCfg = { samples: 4, half: false, scale: 1 };
+  /** Quality preset: no moving target at all, every frame through the settled one. */
+  private movingFull = true;
   /** Measurement hook: the moving target's samples, format and scale (fraction of 1×); reallocates it. */
   private fullCfg = { samples: 4, half: false };
   setFullTarget(cfg: Partial<{ samples: number; half: boolean }>): void { this.fullCfg = { ...this.fullCfg, ...cfg }; this.fullRT?.dispose(); this.fullRT = null; this.resize(); this.warmLowPass(); }
@@ -130,7 +132,7 @@ export class Board3DRenderer {
     if (prev.quality !== s.quality) {
       const q = QUALITY_PRESETS[s.quality];
       this.fullPr = Math.min(devicePixelRatio, q.settledPr); this.renderer.setPixelRatio(this.fullPr);
-      this.lowCfg = { samples: q.movingSamples, half: false, scale: q.movingScale }; this.fullCfg = { samples: q.settledSamples, half: false };
+      this.lowCfg = { samples: q.movingSamples, half: false, scale: q.movingScale }; this.fullCfg = { samples: q.settledSamples, half: false }; this.movingFull = q.movingFull;
       this.lowRT?.dispose(); this.lowRT = null; this.fullRT?.dispose(); this.fullRT = null;
       this.resize(); if (this.model) this.warmLowPass();
     }
@@ -203,7 +205,16 @@ export class Board3DRenderer {
     c.fillStyle = '#0a1710'; c.fillRect(0, 0, cv.width, cv.height); // darker mask: parts, lands and the lit net stand out
     c.strokeStyle = '#13281b'; c.lineCap = 'round';
     for (const t of m.traces) if (t.side === side) { c.lineWidth = Math.max(1, t.w * ppm); c.beginPath(); c.moveTo(U(t.x1), V(t.z1)); c.lineTo(U(t.x2), V(t.z2)); c.stroke(); }
+    // lands in the texture too: far away a land is a pixel or two, and a mipmapped texture draws that
+    // smoothly where geometry edges crawl; the geometry lands take over once they are a few pixels wide
     c.fillStyle = '#c99a3c';
+    for (const p of m.pads) {
+      if (p.side !== side && p.side !== 'both') continue;
+      c.save(); c.translate(U(p.x), V(p.z));
+      if (p.round || p.drill > 0) { c.beginPath(); c.arc(0, 0, Math.max(p.w, p.h) * ppm / 2, 0, Math.PI * 2); c.fill(); }
+      else { c.rotate(-p.angle * Math.PI / 180); c.fillRect(-p.w * ppm / 2, -p.h * ppm / 2, p.w * ppm, p.h * ppm); }
+      c.restore();
+    }
     for (const pt of m.parts) if (pt.est.family === 'hole') { const [x, z] = m.toScene({ x: pt.est.cx, y: pt.est.cy }); c.beginPath(); c.ellipse(U(x), V(z), pt.est.L * ppm / 2, pt.est.W * ppm / 2, 0, 0, Math.PI * 2); c.fill(); }
     c.strokeStyle = '#ecebe4'; c.lineWidth = Math.max(1, 0.14 * ppm); c.lineJoin = 'round';
     for (const s of m.silk) if (s.side === side) { c.beginPath(); s.pts.forEach(([x, z], i) => (i ? c.lineTo(U(x), V(z)) : c.moveTo(U(x), V(z)))); c.stroke(); }
@@ -219,12 +230,29 @@ export class Board3DRenderer {
     const geos: THREE.BufferGeometry[] = [];
     for (const p of m.pads) {
       if (p.side !== side && p.side !== 'both') continue;
-      const g = p.round || p.drill > 0 ? new THREE.CircleGeometry(Math.max(p.w, p.h) / 2, 16) : new THREE.PlaneGeometry(p.w, p.h);
-      g.rotateX(side === 'top' ? -Math.PI / 2 : Math.PI / 2); g.rotateY(p.angle * Math.PI / 180); g.translate(p.x, side === 'top' ? TOP + 0.008 : -TOP - 0.008, p.z);
-      geos.push(g.index ? g.toNonIndexed() : g);
+      const g0 = p.round || p.drill > 0 ? new THREE.CircleGeometry(Math.max(p.w, p.h) / 2, 16) : new THREE.PlaneGeometry(p.w, p.h);
+      g0.rotateX(side === 'top' ? -Math.PI / 2 : Math.PI / 2); g0.rotateY(p.angle * Math.PI / 180); g0.translate(p.x, side === 'top' ? TOP + 0.008 : -TOP - 0.008, p.z);
+      const g = g0.index ? g0.toNonIndexed() : g0; if (g !== g0) g0.dispose();
+      g.setAttribute('aSize', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count).fill(Math.min(p.w, p.h)), 1));
+      geos.push(g);
     }
     const merged = geos.length ? mergeGeometries(geos) : new THREE.BufferGeometry(); geos.forEach(g => g.dispose());
-    const mesh = new THREE.Mesh(merged, PAD_MAT); mesh.receiveShadow = true; return mesh;
+    const mesh = new THREE.Mesh(merged, this.padMat()); mesh.receiveShadow = true; return mesh;
+  }
+
+  /** The land material, patched to drop lands narrower than `uMinPx` on screen (the texture shows them). */
+  private padShader: { uniforms: { uViewportH: { value: number } } } | null = null;
+  private padMaterial: THREE.MeshStandardMaterial | null = null;
+  private padMat(): THREE.MeshStandardMaterial {
+    if (this.padMaterial) return this.padMaterial;
+    const mat = PAD_MAT.clone();
+    mat.onBeforeCompile = sh => {
+      sh.uniforms.uViewportH = { value: this.renderer.domElement.height }; this.padShader = sh as unknown as { uniforms: { uViewportH: { value: number } } };
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float aSize; uniform float uViewportH;')
+        .replace('#include <project_vertex>', '#include <project_vertex>\n{ float pxs = aSize * projectionMatrix[1][1] * 0.5 * uViewportH / max(-mvPosition.z, 1e-3); if (pxs < 3.0) gl_Position = vec4(2.0, 2.0, 2.0, 1.0); }');
+    };
+    mat.customProgramCacheKey = () => 'padlod';
+    this.padMaterial = mat; return mat;
   }
 
   /** Large bodies that stand over their own pins (BGAs, QFNs, connectors…) are kept as their own
@@ -808,7 +836,7 @@ export class Board3DRenderer {
     this.renderer.setSize(w, h, false); this.camera.aspect = w / h; this.camera.updateProjectionMatrix(); this.dirty = true;
     const lw = Math.max(1, Math.round(w * Math.min(1, this.fullPr) * this.lowCfg.scale)), lh = Math.max(1, Math.round(h * Math.min(1, this.fullPr) * this.lowCfg.scale));
     // a moving target only when it is smaller than the settled frame (a 1× display at scale 1 has no use for one)
-    const wantLow = this.fullPr > 1.01 || this.lowCfg.scale < 0.99;
+    const wantLow = !this.movingFull && (this.fullPr > 1.01 || this.lowCfg.scale < 0.99);
     if (!wantLow) { this.lowRT?.dispose(); this.lowRT = null; }
     else if (!this.lowRT || this.lowRT.width !== lw || this.lowRT.height !== lh) {
       this.lowRT?.dispose();
@@ -825,6 +853,7 @@ export class Board3DRenderer {
   private pixelScale = 1;
   private setPixelUniforms(w: number, h: number): void {
     if (this.labelMat) this.labelMat.uniforms.viewportH.value = h;
+    if (this.padShader) this.padShader.uniforms.uViewportH.value = h;
     for (const lm of this.lineMats) lm.resolution.set(w, h);
     const scale = h / this.renderer.domElement.height; // 1 at full resolution, 0.5 in the moving target at 2×
     if (scale !== this.pixelScale) { for (const mk of this.markers) { const mat = (mk as THREE.Points).material as THREE.PointsMaterial; if (mat?.size !== undefined) mat.size = mat.size / this.pixelScale * scale; } this.pixelScale = scale; }
@@ -883,7 +912,7 @@ export class Board3DRenderer {
     this.disposed = true; cancelAnimationFrame(this.raf); this.canvas.removeEventListener('wheel', this.onWheel, { capture: true }); this.ro.disconnect();
     for (const [ev, fn] of [['pointerdown', this.onPointerDown], ['pointermove', this.onPointerMove], ['pointerup', this.onPointerUp], ['pointercancel', this.onPointerUp], ['contextmenu', this.onContextMenu]] as const) this.canvas.removeEventListener(ev, fn as EventListener);
     for (const root of [this.boardRoot, this.partsRoot, this.pickRoot, this.hlRoot, this.labelRoot]) disposeTree(root);
-    this.lowRT?.dispose(); this.fullRT?.dispose(); this.blitMat.dispose();
+    this.lowRT?.dispose(); this.fullRT?.dispose(); this.blitMat.dispose(); this.padMaterial?.dispose();
     this.renderer.dispose(); this.renderer.forceContextLoss(); this.canvas.remove();
   }
 }
@@ -922,6 +951,7 @@ const GHOST_BLUE = 0x3d9bff;
 const isGround = (net: string) => isGroundNet(renderSettingsStore.settings, net) || /^(A|D|P)?GND/i.test(net);
 
 /** ENIG lands: gold, matt — a bare pad on a real board is dull, not a mirror. */
-const PAD_MAT = new THREE.MeshStandardMaterial({ color: 0xc99a3c, metalness: 0.75, roughness: 0.55, envMapIntensity: 0.5 });
+// polygon offset beyond the face's (−1): at a grazing tilt the face's offset put it in front of a land 8 µm above it
+const PAD_MAT = new THREE.MeshStandardMaterial({ color: 0xc99a3c, metalness: 0.75, roughness: 0.55, envMapIntensity: 0.5, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
 const SHARED = new Set<THREE.Material>([...Object.values(MAT), PAD_MAT]);
 const isMarkerTexture = (t: THREE.Texture) => Object.values(MARKER_TEX).includes(t as THREE.CanvasTexture);

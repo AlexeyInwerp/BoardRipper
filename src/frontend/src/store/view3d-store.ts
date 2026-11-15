@@ -50,10 +50,11 @@ export interface View3DSettings {
 /** What each quality preset sets. `settledPr` caps the full-resolution frame's pixel ratio;
  *  `movingScale` is the moving target's size as a fraction of 1×. Multisampling on the moving
  *  target is what keeps sub-pixel lands visible while the board turns (4× costs nothing at 1×). */
-export const QUALITY_PRESETS: Record<View3DQuality, { settledPr: number; settledSamples: number; movingScale: number; movingSamples: number; shadows: boolean; label: string; hint: string }> = {
-  quality:  { settledPr: 2,   settledSamples: 4, movingScale: 1,    movingSamples: 4, shadows: true,  label: 'Quality',  hint: 'full resolution, 4× smoothing, shadows' },
-  balanced: { settledPr: 2,   settledSamples: 2, movingScale: 0.75, movingSamples: 4, shadows: true,  label: 'Balanced', hint: 'full resolution when still, ¾ while moving' },
-  fast:     { settledPr: 1.5, settledSamples: 2, movingScale: 0.5,  movingSamples: 2, shadows: false, label: 'Fast',     hint: '1.5× when still, ½ while moving, no shadows' },
+export const QUALITY_PRESETS: Record<View3DQuality, { settledPr: number; settledSamples: number; movingFull: boolean; movingScale: number; movingSamples: number; shadows: boolean; label: string; hint: string }> = {
+  // Quality moves at full resolution too: a sub-pixel land can miss every sample of a smaller target and flicker
+  quality:  { settledPr: 2,   settledSamples: 4, movingFull: true,  movingScale: 1,    movingSamples: 4, shadows: true,  label: 'Quality',  hint: 'full resolution always, 4× smoothing, shadows' },
+  balanced: { settledPr: 2,   settledSamples: 4, movingFull: false, movingScale: 1,    movingSamples: 4, shadows: true,  label: 'Balanced', hint: 'full resolution when still, 1× while moving' },
+  fast:     { settledPr: 1.5, settledSamples: 2, movingFull: false, movingScale: 0.5,  movingSamples: 2, shadows: false, label: 'Fast',     hint: '1.5× when still, ½ while moving, no shadows' },
 };
 
 export const DEFAULT_VIEW3D_SETTINGS: View3DSettings = {
