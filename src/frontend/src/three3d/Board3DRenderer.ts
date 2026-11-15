@@ -149,6 +149,7 @@ export class Board3DRenderer {
       this.renderer.shadowMap.enabled = shadows; this.key.castShadow = shadows; this.renderer.shadowMap.needsUpdate = true;
       this.boardRoot.traverse(o => { if (o instanceof THREE.Mesh) for (const m of Array.isArray(o.material) ? o.material : [o.material]) m.needsUpdate = true; });
     }
+    if (prev.parts !== s.parts) this.applyPartsMode();
     if (prev.copperLayers !== s.copperLayers || prev.xray !== s.xray || prev.explode !== s.explode) { this.applyStack(); if (this.stack && (prev.explode === 0) !== (s.explode === 0)) this.fit(); } // the stack is eight times taller exploded: refit when it opens or closes
     this.dirty = true; // updateXray runs before the next render and resets any fade when see-through is off
     this.setSelection(this.sel.part, this.sel.net, this.sel.pin);
@@ -171,7 +172,7 @@ export class Board3DRenderer {
     this.pickBoxes = []; this.partByIndex.clear(); this.stack = null; this.padMeshes = []; this.sideOffset = 0;
     this.buildBoard(model);
     this.buildStack(model);
-    this.buildParts(model);
+    this.buildParts(model); if (this.settings.parts !== 'solid') this.applyPartsMode();
     this.buildPickGrids(model);
     this.buildLabels(model);
     const span = Math.max(model.width, model.height);
@@ -305,7 +306,7 @@ export class Board3DRenderer {
       mesh.receiveShadow = true; const y = (y0 + y1) / 2; mesh.position.y = y; this.stackRoot.add(mesh); stack.slices.push({ mesh, y });
     }
     if (m.vias.length) {
-      const barrel = new THREE.CylinderGeometry(1, 1, 1, 10, 1, false); const inst = new THREE.InstancedMesh(barrel, new THREE.MeshStandardMaterial({ color: 0xc9a24a, metalness: 0.8, roughness: 0.35 }), m.vias.length);
+      const barrel = new THREE.CylinderGeometry(1, 1, 1, 10, 1, false); const inst = new THREE.InstancedMesh(barrel, new THREE.MeshStandardMaterial({ color: 0xc9a24a, metalness: 0.8, roughness: 0.35, transparent: true, opacity: 0.5, depthWrite: false }), m.vias.length); inst.renderOrder = 3;
       const mtx = new THREE.Matrix4(); m.vias.forEach((v, k) => { const y0 = this.layerY(v.l0, n), y1 = this.layerY(v.l1, n); mtx.makeScale(v.r, Math.max(0.05, y0 - y1 + 0.03), v.r); mtx.setPosition(v.x, (y0 + y1) / 2, v.z); inst.setMatrixAt(k, mtx); });
       inst.frustumCulled = false; this.stackRoot.add(inst); stack.vias = inst;
     }
@@ -338,8 +339,9 @@ export class Board3DRenderer {
       if (L.copper) { const u = (L.copper.material as THREE.ShaderMaterial).uniforms; (u.uColor.value as THREE.Color).set(color); u.uAlpha.value = alpha; }
       if (L.pour) { const mat = L.pour.material as THREE.MeshBasicMaterial; mat.color.set(color); mat.opacity = 0.35 * alpha; }
     });
-    for (const sl of st.slices) { sl.mesh.position.y = sl.y * scale; for (const mat of sl.mesh.material as THREE.MeshStandardMaterial[]) { mat.transparent = s.xray; mat.opacity = s.xray ? 0.22 : 1; mat.depthWrite = !s.xray; mat.needsUpdate = true; } }
-    for (const f of st.faces) { const mat = f.material as THREE.MeshStandardMaterial; mat.transparent = s.xray; mat.opacity = s.xray ? 0.45 : 1; mat.depthWrite = !s.xray; f.position.y = (f.position.y < 0 ? -TOP - 0.002 : TOP + 0.002) * scale; mat.needsUpdate = true; }
+    const xray = s.xray || s.copperLayers; // showing the copper layers is showing the inside: the board goes see-through with them
+    for (const sl of st.slices) { sl.mesh.position.y = sl.y * scale; for (const mat of sl.mesh.material as THREE.MeshStandardMaterial[]) { mat.transparent = xray; mat.opacity = xray ? 0.22 : 1; mat.depthWrite = !xray; mat.needsUpdate = true; } }
+    for (const f of st.faces) { const mat = f.material as THREE.MeshStandardMaterial; mat.transparent = xray; mat.opacity = xray ? 0.45 : 1; mat.depthWrite = !xray; f.position.y = (f.position.y < 0 ? -TOP - 0.002 : TOP + 0.002) * scale; mat.needsUpdate = true; }
     if (st.vias) { const mtx = new THREE.Matrix4(), v = this.model!.vias; v.forEach((q, k) => { const y0 = this.layerY(q.l0, n) * scale, y1 = this.layerY(q.l1, n) * scale; mtx.makeScale(q.r, Math.max(0.05, y0 - y1 + 0.03), q.r); mtx.setPosition(q.x, (y0 + y1) / 2, q.z); st.vias!.setMatrixAt(k, mtx); }); st.vias.instanceMatrix.needsUpdate = true; st.vias.visible = s.copperLayers; }
     this.sideOffset = TOP * (scale - 1);
     for (const g of [this.partsRoot, this.pickRoot, this.hlRoot, this.labelRoot]) g.traverse(o => { if (o.userData.side) o.position.y = (o.userData.side === 'top' ? 1 : -1) * this.sideOffset; });
@@ -602,10 +604,28 @@ export class Board3DRenderer {
     this.dirty = true;
   }
 
+  /** The component bodies: solid, ghosted or hidden. Ghosting swaps each body mesh's material for a translucent clone
+   *  (cached per material) and back, so no rebuild; the pick boxes stay, a hidden part can still be clicked. */
+  private ghostMats = new Map<THREE.Material, THREE.Material>();
+  private applyPartsMode(): void {
+    const mode = this.settings.parts; this.partsRoot.visible = mode !== 'off';
+    this.partsRoot.traverse(o => {
+      if (!(o instanceof THREE.Mesh)) return;
+      const solid = (o.userData.solidMat as THREE.Material | undefined) ?? (o.material as THREE.Material); o.userData.solidMat = solid;
+      if (mode === 'ghost') {
+        let g = this.ghostMats.get(solid);
+        if (!g) { const src = solid as THREE.MeshStandardMaterial; g = new THREE.MeshStandardMaterial({ color: src.color ?? new THREE.Color(0x888888), roughness: 0.6, metalness: 0, transparent: true, opacity: 0.16, depthWrite: false }); this.ghostMats.set(solid, g); }
+        o.material = g; o.castShadow = false;
+      } else { o.material = solid; o.castShadow = true; }
+    });
+    this.renderer.shadowMap.needsUpdate = true; this.dirty = true;
+  }
+  partsMode(): 'solid' | 'ghost' | 'off' { return this.settings.parts; }
+
   /** The stack as built — for tests. */
-  stackInfo(): { layers: number; copperMeshes: number; pourMeshes: number; vias: number; slices: number; sideOffset: number; layerY: number[] } | null {
+  stackInfo(): { layers: number; copperMeshes: number; pourMeshes: number; vias: number; slices: number; sideOffset: number; layerY: number[]; partsVisible: boolean; xray: boolean } | null {
     const st = this.stack; if (!st) return null;
-    return { layers: st.layers.length, copperMeshes: st.layers.filter(L => L.copper).length, pourMeshes: st.layers.filter(L => L.pour).length, vias: st.vias?.count ?? 0, slices: st.slices.length, sideOffset: this.sideOffset, layerY: st.layers.map(L => L.group.position.y) };
+    return { layers: st.layers.length, copperMeshes: st.layers.filter(L => L.copper).length, pourMeshes: st.layers.filter(L => L.pour).length, vias: st.vias?.count ?? 0, slices: st.slices.length, sideOffset: this.sideOffset, layerY: st.layers.map(L => L.group.position.y), partsVisible: this.partsRoot.visible, xray: (st.slices[0]?.mesh.material as THREE.MeshStandardMaterial[])[0]?.transparent ?? false };
   }
 
   /** Hidden-side ghosts: the lit net's parts on the face the camera does not see, drawn through the
@@ -742,7 +762,9 @@ export class Board3DRenderer {
   /** Pan by screen pixels (+x right, +y down), the board following the pointer. */
   panBy(dx: number, dy: number, animate = false): void {
     const dist = this.camera.position.distanceTo(this.target);
-    const perPx = 2 * dist * Math.tan(this.camera.fov * Math.PI / 360) / Math.max(1, this.canvas.clientHeight);
+    // pointer deltas arrive in viewport pixels; the canvas's on-screen height is its bounding rect, which the interface
+    // scale (body zoom) multiplies while clientHeight stays in CSS pixels — dividing by clientHeight ran the pan 25 % fast at 125 %
+    const perPx = 2 * dist * Math.tan(this.camera.fov * Math.PI / 360) / Math.max(1, this.canvas.getBoundingClientRect().height);
     const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrix, 0), up = new THREE.Vector3().setFromMatrixColumn(this.camera.matrix, 1);
     const move = right.multiplyScalar(-dx * perPx).add(up.multiplyScalar(dy * perPx));
     if (animate) this.animateTo(this.camera.position.clone().add(move), this.target.clone().add(move));
@@ -811,7 +833,11 @@ export class Board3DRenderer {
    *  The tip is not clamped, so there is no pole to get stuck at; the whole camera frame turns
    *  about the pivot, so the pivot stays under the pointer. */
   turnBy(dx: number, dy: number, pivot: THREE.Vector3): void {
-    const k = 0.006, upright = this.camera.up.y >= 0 ? 1 : -1; // past the pole the board is seen upside down: keep the spin following the pointer
+    // past the pole the board is seen upside down, and from underneath it is seen mirrored: in both the spin about the
+    // board's normal must change sign to keep following the pointer (the Bottom preset, and the old Top preset on a
+    // primary-bottom board, turned against the drag — "rotation is quite off", 2026-11-15)
+    const facing = this.camera.getWorldDirection(new THREE.Vector3()).y <= 0 ? 1 : -1;
+    const k = 0.006, upright = (this.camera.up.y >= 0 ? 1 : -1) * facing;
     const spin = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -dx * k * upright);
     const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0).applyQuaternion(spin);
     right.y = 0; if (right.lengthSq() < 1e-8) right.set(1, 0, 0); right.normalize(); // keep the tip axis level, so no roll creeps in
@@ -825,7 +851,7 @@ export class Board3DRenderer {
   /** In 3D a plain wheel / two-finger swipe pans and a pinch (ctrlKey) or ⌘/Ctrl+wheel zooms at the pointer; drag turns. */
   private onWheel = (e: WheelEvent) => {
     e.preventDefault(); e.stopImmediatePropagation();
-    const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.canvas.clientHeight : 1;
+    const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.canvas.getBoundingClientRect().height : 1;
     if (e.ctrlKey || e.metaKey) { this.zoomAt(e.clientX, e.clientY, Math.exp(e.deltaY * k * 0.004)); return; }
     if (e.shiftKey && !e.deltaX) this.panBy(-e.deltaY * k, 0); else this.panBy(-e.deltaX * k, -e.deltaY * k);
   };
