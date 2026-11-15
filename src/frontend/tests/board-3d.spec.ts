@@ -21,7 +21,7 @@ async function openBoard(page: Page) {
 }
 
 type Cam = { dist: number; target: [number, number, number]; pos: [number, number, number]; leftDrag: 'orbit' | 'pan' };
-type W = { __board3d?: { renderer: { cameraState(): Cam; screenOfPin(a: number, b: number): [number, number] | null; focusPart(i: number): void; drawnParts: number; screenOf(i: number): [number, number] | null; part(i: number): { name: string; est: { family: string } } | undefined } }; __boardStore?: { selection: { partIndex: number | null }; board: { parts: { name: string; pins: unknown[] }[] } } };
+type W = { __board3d?: { renderer: { cameraState(): Cam; screenOfPin(a: number, b: number): [number, number] | null; focusPart(i: number): void; panBy(dx: number, dy: number): void; drawnParts: number; screenOf(i: number): [number, number] | null; part(i: number): { name: string; est: { family: string } } | undefined } }; __boardStore?: { selection: { partIndex: number | null }; board: { parts: { name: string; pins: unknown[] }[] } } };
 
 test('3D view: toggle, draws estimated parts, a click selects, back to 2D', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
@@ -100,8 +100,9 @@ test('3D view: the ribbon carries the 3D controls; a click on a land lights its 
   const sideBtn = pick.side === 'bottom' ? 'board-3d-bottom' : 'board-3d-top';
   await page.getByTestId(sideBtn).click(); await page.waitForTimeout(700);
   await expect(page.getByTestId(sideBtn)).toHaveAttribute('aria-pressed', 'true');
-  // centre the part first: at this viewport the ribbon wraps onto a second row, and a land near the top edge sits under it
-  await page.evaluate(i => (window as unknown as W).__board3d!.renderer.focusPart(i), pick.i); await page.waitForTimeout(700);
+  // pan the land to the canvas centre first: at this viewport the ribbon wraps onto a second row, and a land near the
+  // top edge sits under it (a test point has no body, so focusPart cannot centre it)
+  await page.evaluate(i => { const R = (window as unknown as W).__board3d!.renderer; const xy = R.screenOfPin(i, 0)!; const c = document.querySelector('.board-3d-canvas')!.getBoundingClientRect(); R.panBy(c.left + c.width / 2 - xy[0], c.top + c.height / 2 - xy[1]); }, pick.i); await page.waitForTimeout(500);
   const target = { ...pick, xy: await page.evaluate(i => (window as unknown as W).__board3d!.renderer.screenOfPin(i, 0), pick.i) };
   expect(target.xy).not.toBeNull();
   await page.mouse.click(target.xy![0], target.xy![1]);
