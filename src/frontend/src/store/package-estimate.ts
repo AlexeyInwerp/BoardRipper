@@ -324,6 +324,18 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
   const asConn = (c: NonNullable<typeof connFallback>) => out({ family: c.family, size: c.size, L: c.L, W: c.W, H: c.H, cx: c.cx, cy: c.cy, rotDeg: c.rotDeg, p: c.p }, c.why, hint ? 'package' : 'geometry');
   if (connFallback && !(hint?.family === 'conn' && hint.size) && (connFallback.evidence === 'name' || !['wire-to-board', 'FPC', 'connector'].some(k => connFallback.size.startsWith(k)))) return asConn(connFallback);
 
+  // ── power inductor listed with its tiny sense / shape pads (Compal PLV: two 3 mm pads + two 0.5 mm pads in a line) ──
+  if (kindFromPrefix(ref) === 'L' && n >= 3 && n <= 4 && !hint) {
+    const byR = pins.map((q, i) => ({ i, r: pinSize(q) / 2 })).sort((a, b) => b.r - a.r);
+    const [a, b] = byR; const rest = byR.slice(2);
+    if (rest.every(q => q.r <= a.r * 0.4) && b.r >= a.r * 0.6) {
+      const pa = pins[a.i].position, pb = pins[b.i].position, span = mm(Math.hypot(pb.x - pa.x, pb.y - pa.y)), rp = mm(a.r);
+      const L = span + 2 * rp + 0.3, W = Math.max(L * 0.9, rp * 2.6), H = Math.min(6, Math.max(1.2, L * 0.4));
+      return out({ family: 'inductor', kind: 'L', L, W, H, cx: (pa.x + pb.x) / 2, cy: (pa.y + pb.y) / 2, rotDeg: wrap(Math.atan2(pb.y - pa.y, pb.x - pa.x) * 180 / Math.PI) },
+        `${n} pins, two ${(2 * rp).toFixed(1)} mm pads ${span.toFixed(1)} mm apart + ${rest.length} sense pads → power inductor ${L.toFixed(1)}×${W.toFixed(1)}`);
+    }
+  }
+
   // ── headers: every pin drilled ──
   if ((hint?.family === 'header') || (!hint && drilled.length === n && n >= 2 && (n > 2 || mm(Math.hypot(pins[1].position.x - pins[0].position.x, pins[1].position.y - pins[0].position.y)) > 1.9))) {
     const f0 = frame(pins, gridAngle(pins.map(p => p.position)));
@@ -566,7 +578,10 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
       const nn = nearestNeighbours(sloc).map(e => e.d).filter(Number.isFinite).sort((a, c) => a - c), pitch = nn[nn.length >> 1] ?? 0;
       const B0 = bboxOf(sloc), area = (B0.x1 - B0.x0) * (B0.y1 - B0.y0); const f0u = f0;
       if (hint?.family === 'bga' || (small.length >= 100 && area > 0 && small.length * pitch * pitch / area > 0.25)) {
-        const f0 = frame(pins, squared(f0u.deg), small), B = bboxOf(small.map(i => f0.loc[i]));
+        // a staggered core (AMD FP6: 0.65 mm signal ring, 1.0 mm power core) gives a diagonal nearest-neighbour angle;
+        // of the fitted angle and that angle + 45°, keep the tighter box (the LA-N591P's FP6 read as a 39 mm diamond)
+        const boxArea = (d: number) => { const Q = bboxOf(frame(pins, d, small).loc.filter((_, i) => small.includes(i))); return (Q.x1 - Q.x0) * (Q.y1 - Q.y0); };
+        const f0 = frame(pins, squared(boxArea(f0u.deg + 45) < boxArea(f0u.deg) * 0.98 ? f0u.deg + 45 : f0u.deg), small), B = bboxOf(small.map(i => f0.loc[i]));
         const pm = mm(pitch), margin = Math.max(Math.min(1.6, Math.max(0.4, pm * 1.5)), padOut), bc = toBoard(f0, (B.x0 + B.x1) / 2, (B.y0 + B.y1) / 2);
         return knownPackage(out({ family: 'bga', L: mm(B.x1 - B.x0) + margin, W: mm(B.y1 - B.y0) + margin, H: 1.2, cx: bc.x, cy: bc.y, rotDeg: wrap(f0.deg), p: { pitch: pm, balls: small.length } },
           `${small.length} balls in a dense field @ ~${pm.toFixed(2)} → BGA`), part.side, f0, small, mm(B.x1 - B.x0), mm(B.y1 - B.y0), pm);

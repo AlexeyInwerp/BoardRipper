@@ -230,6 +230,19 @@ balls, 25 × 28 mm). The file carries no pad sizes and no package names.
   BGA on a board or a folder; after the fixes the three reported boards and
   the whole corpus show none that are not misread connectors.
 
+**Compal LA-N591P (GenCAD, first AMD laptop in the corpus).** Its FP6
+(1,140 balls) came out as a 39 mm diamond: the staggered 1.0 mm power core
+gives a diagonal nearest-neighbour angle, and the dense-field branch had no
+tighter-box test (the grid branch had one). It has it now; the field measures
+32.6 × 22.6 mm at 0.70 mm nearest-neighbour pitch and matches. FP5 and FP6
+share body, count and layout and are one record ("FP5 / FP6 / FP7"), with the
+LA-N591P as its sample and signature. The board's GPU is the 29 mm 1,358-ball
+package (RTX 3050). Its power inductors (PLV1–4, PL502…) are listed with
+their two 0.5 mm sense pads beside the 3 mm terminals — four pins in a line,
+which no rule knew and the fallback drew as a 0.8 × 11.5 mm box; an
+L-prefixed part with 3–4 pins whose two largest pads dwarf the rest is now a
+power inductor sized from the terminal spacing (14 × 13 × 5.6 mm for PLV1).
+
 ## The user's Top is the +y face (primary-bottom boards)
 
 A GenCAD or Allegro file whose parts mostly sit on the file's bottom side gets
