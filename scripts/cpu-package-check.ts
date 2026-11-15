@@ -11,7 +11,7 @@ for (const f of process.argv.slice(2).filter(a => a !== '--')) {
     if (part.pins.length < 300) continue;
     for (const usePackage of [true, false]) {
       const e = estimatePart(part, { usePackage });
-      console.log(`${f.split('/').pop()}\t${part.name}\t${part.pins.length}\t${usePackage ? 'pkg ' : 'pins'}\t${e.family}\t${e.pkg ?? '—'}\t${e.L}×${e.W}×${e.H}\trot ${e.rotDeg.toFixed(0)}\t${e.why.slice(0, 110)}`);
+      console.log(`${f.split('/').pop()}\t${part.name}\t${part.pins.length}\t${usePackage ? 'pkg ' : 'pins'}\t${e.family}\t${e.pkg ?? '—'}\t${e.L}×${e.W}×${e.H}\trot ${e.rotDeg.toFixed(0)}\t${e.why}`);
     }
   }
 }

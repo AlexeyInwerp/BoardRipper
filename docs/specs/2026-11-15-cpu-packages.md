@@ -39,9 +39,23 @@ A staggered 0.4 mm field (BGA1515, BGA1380) has diagonal nearest neighbours, so
 the estimator's grid clusters report 0.26–0.28 mm; the lookup takes the
 nearest-neighbour pitch from the field directly.
 
-The A1 corner: when the pins are named, the record is turned so ball A1 sits at
-its (−x, +y) corner, which puts the CPU die on the correct side of a two-die
-package. Unverified against a photo so far.
+**Orientation comes from the board's ball pattern, not from pin names.** Each
+record with a sample carries a 12 × 12 occupancy signature of that sample's
+field (`cpu-package-signatures.ts`, generated with the ball maps; package top
+view, x along L). A matched field is turned by whichever of 0/90/180/270°
+brings its own signature closest to the record's; a bottom-side part's field is
+read mirrored in y, which is exactly what the renderer does to a bottom part's
+model. On the corpus the choice is decisive — fit 0.04–0.11 against 0.30–0.44
+for the worst turn on every Intel U/H/P and NVIDIA field; a symmetric field
+(PCH-H, square GPUs) ties and takes 0°, where the die is centred anyway. So the
+dies sit where the ball pattern says they sit, on either side of the board, and
+the body follows the field. A record without a sample is oriented by its span
+only. The earlier A1-corner rule is gone: the relation between ball A1 and the
+die layout was never verified, and the pattern needs no names.
+
+The die layout *relative to the pattern* is still from photos; the mockup draws
+each record's dies over its sample's ball map in that frame, so a wrong side
+is a visible, one-line fix in the record.
 
 ## What the library boards carry
 
@@ -164,7 +178,7 @@ lidded CPU in it.
 
 ## The models
 
-`buildPackage` (`part-models.ts`) draws from a record: substrate (vendor colour),
+`buildPackage` (`part-models.ts`) draws from a record (Foveros tiles in a row on their base tile, as in Intel's package photos): substrate (vendor colour),
 bare dies as dark silicon with an underfill fillet and a lighter mirror top,
 memory dies darker, an optional interposer / base tile, a nickel lid with a
 sealant rim, a stiffener ring (four bars), rows of 0402/0201 caps, a socket
@@ -189,7 +203,7 @@ renderer as before. The mockup draws the same shapes from the same table
 - Die positions are from photos, not drawings; Intel keeps the mechanical
   drawings in its restricted design centre. A photo comparison like the
   Feather RP2040 one would settle the U-series layouts.
-- The A1 turn is untested against a real package orientation.
+- The die layout relative to the ball pattern (which end the PCH is on) is from photos; the orientation itself is now from the pattern.
 - Ice Lake-U is recorded at the span of the one sample, which lists 1,344 of
   1,526 balls; a file listing them all may span more and miss.
 - AMD mobile has no sample board, so none of its records is measured.

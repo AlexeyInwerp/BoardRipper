@@ -114,10 +114,10 @@ function buildPackage(spec, map, opts) {
   let baseTop = top;
   if (spec.interposer) { const ip = spec.interposer; g.add(box(ip.w, ip.h, ip.d, M.interposer, ip.x ?? 0, top + ip.h / 2, -(ip.y ?? 0))); baseTop = top + ip.h; }
   for (const d of spec.dies ?? []) {
-    const h = d.h ?? 0.75, y0 = d.onInterposer ? baseTop : top;
-    g.add(box(d.w + 0.5, 0.12, d.d + 0.5, M.underfill, d.x, y0 + 0.06, -d.y));
-    const m = d.kind === 'mem' ? M.hbm : M.silicon; g.add(box(d.w, h, d.d, m, d.x, y0 + h / 2, -d.y));
-    g.add(box(d.w * 0.98, 0.01, d.d * 0.98, M.siliconTop, d.x, y0 + h + 0.005, -d.y));
+    const h = d.h ?? 0.75, y0 = d.onInterposer ? baseTop : top, gap = d.onInterposer ? 0.15 : 0, w = d.w - gap, dd = d.d - gap;
+    if (!d.onInterposer) g.add(box(d.w + 0.5, 0.12, d.d + 0.5, M.underfill, d.x, y0 + 0.06, -d.y));
+    const m = d.kind === 'mem' ? M.hbm : M.silicon; g.add(box(w, h, dd, m, d.x, y0 + h / 2, -d.y));
+    g.add(box(w * 0.98, 0.01, dd * 0.98, M.siliconTop, d.x, y0 + h + 0.005, -d.y));
   }
   if (spec.socket) { // LGA socket: plastic frame around the pad field, the lidded CPU inside it
     const q = spec.socket, iw = q.w - 2 * q.t, id = q.d - 2 * q.t;

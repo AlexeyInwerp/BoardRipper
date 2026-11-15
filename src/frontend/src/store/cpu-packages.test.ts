@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchPackage, PACKAGES, type PackageSpec } from './cpu-packages';
+import { ballSignature, matchPackage, orientToSignature, PACKAGES, type PackageSpec } from './cpu-packages';
 
 const spec = (id: string, balls: number, pitch: number, span: [number, number]): PackageSpec =>
   ({ id, vendor: 'intel', name: id, balls, pitch, body: { L: span[0] + 1.3, W: span[1] + 1.3 }, span, style: 'test' });
@@ -30,5 +30,23 @@ describe('matchPackage', () => {
       const m = matchPackage({ balls: s.balls, pitch: s.pitch, spanX: s.span[0], spanY: s.span[1] });
       expect(m?.spec.id, `${s.id} → ${m?.spec.id}`).toBe(s.id);
     }
+  });
+});
+
+describe('orientToSignature', () => {
+  // an L-shaped, clearly asymmetric field
+  const base: { x: number; y: number }[] = [];
+  for (let i = 0; i < 20; i++) for (let j = 0; j < 12; j++) if (i < 6 || j < 4) base.push({ x: i, y: j });
+  const rot = (p: { x: number; y: number }, t: number) => t === 0 ? p : t === 90 ? { x: -p.y, y: p.x } : t === 180 ? { x: -p.x, y: -p.y } : { x: p.y, y: -p.x };
+  const sig = ballSignature(base);
+  it('recovers every turn of a top-side field', () => {
+    for (const t of [0, 90, 180, 270]) expect(orientToSignature(sig, base.map(p => rot(p, t)), false).turn).toBe(t);
+  });
+  it('recovers the turn of a bottom-side field, which is seen mirrored', () => {
+    for (const t of [0, 90, 180, 270]) expect(orientToSignature(sig, base.map(p => rot({ x: p.x, y: -p.y }, t)), true).turn).toBe(t);
+  });
+  it('reports a tie on a symmetric field as turn 0', () => {
+    const sq: { x: number; y: number }[] = []; for (let i = 0; i < 10; i++) for (let j = 0; j < 10; j++) sq.push({ x: i, y: j });
+    const o = orientToSignature(ballSignature(sq), sq.map(p => rot(p, 90)), false); expect(o.turn).toBe(0); expect(o.fit).toBeCloseTo(o.worst, 6);
   });
 });

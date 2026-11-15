@@ -12,7 +12,7 @@
  * docs/specs/2026-11-14-3d-mode-design.md.
  */
 import type { Part, Pin } from '../parsers/types';
-import { matchPackage } from './cpu-packages';
+import { matchPackage, orientToSignature } from './cpu-packages';
 
 const MIL_PER_MM = 1 / 0.0254;
 const mm = (mils: number) => mils * 0.0254;
@@ -239,23 +239,22 @@ export function parsePackageName(name: string, ref: string): PkgHint | null {
   return null;
 }
 
-/** A large ball field that matches a known CPU / GPU / SoC record takes that package's body, height and id, turned
- *  so the A1 ball (when the pins are named) sits at the record's (−x, +y) corner. Anything else keeps the geometric estimate. */
-function knownPackage(e: PartEstimate, pins: Pin[], f: Frame, field: number[], spanX: number, spanY: number, pitch: number): PartEstimate {
+/** A large ball field that matches a known CPU / GPU / SoC record takes that package's body, height and id. The
+ *  model is turned onto the **board's** ball pattern: the record carries a 12 × 12 occupancy signature of its sample
+ *  field, and the turn (0/90/180/270) with the closest signature wins — a bottom-side part's field is read mirrored,
+ *  as the renderer mirrors its model. Without a signature (no sample board yet) only the span's orientation is known. */
+function knownPackage(e: PartEstimate, side: Part['side'], f: Frame, field: number[], spanX: number, spanY: number, pitch: number): PartEstimate {
   if (field.length < 300) return e;
   // the record's pitch is the nearest-neighbour pitch; a staggered field's grid clusters are 1/√2 of it
-  const nn = nearestNeighbours(field.map(i => f.loc[i])).map(v => v.d).filter(Number.isFinite).sort((a, b) => a - b);
+  const locs = field.map(i => f.loc[i]);
+  const nn = nearestNeighbours(locs).map(v => v.d).filter(Number.isFinite).sort((a, b) => a - b);
   if (nn.length) pitch = mm(nn[nn.length >> 1]);
   const m = matchPackage({ balls: field.length, pitch, spanX, spanY });
   if (!m) return e;
-  const s = m.spec; let turn = m.turned ? 90 : 0;
-  // A1 corner: the record's frame has A1 at (−x, +y). In the field frame, after `turn`, find where the A1 ball sits.
-  const a1 = pins.findIndex(q => /^A1$/i.test(q.name) || /^A1$/i.test(q.number));
-  if (a1 >= 0) {
-    const v = f.loc[a1]; const r = turn ? { x: v.y, y: -v.x } : v; // rotate the field by −turn so (x, y) reads in the body frame
-    turn += r.x <= 0 && r.y >= 0 ? 0 : r.x > 0 && r.y >= 0 ? 90 : r.x > 0 ? 180 : -90;
-  }
-  const why = `${e.why}; ${s.name} by span ${spanX.toFixed(1)}×${spanY.toFixed(1)} @ ${pitch.toFixed(2)}${m.missingBalls ? ` (${m.missingBalls} balls not listed)` : ''}`;
+  const s = m.spec; let turn: number, how: string;
+  if (s.sig) { const o = orientToSignature(s.sig, locs, side === 'bottom'); turn = o.turn; how = `turned ${o.turn}° onto the ball pattern (fit ${o.fit.toFixed(2)}, worst ${o.worst.toFixed(2)})`; }
+  else { turn = m.turned ? 90 : 0; how = 'oriented by the span only (no sample of this package yet)'; }
+  const why = `${e.why}; ${s.name} by span ${spanX.toFixed(1)}×${spanY.toFixed(1)} @ ${pitch.toFixed(2)}${m.missingBalls ? ` (${m.missingBalls} balls not listed)` : ''}, ${how}`;
   return { ...e, L: s.body.L, W: s.body.W, H: s.body.H ?? e.H, rotDeg: wrap(e.rotDeg + turn), pkg: s.id, p: { ...e.p, balls: field.length }, why };
 }
 
@@ -507,7 +506,7 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
       if (gx.length >= 4 && gy.length >= 4 && small.length >= 16 && small.length >= 0.3 * gx.length * gy.length) {
         const B = bboxOf(sl), p = mm(pitchOf(gx.map(c => c.c))), margin = Math.min(1.6, Math.max(0.4, p * 1.5)); // chip-scale packages end close to their outer balls
         return knownPackage(out({ family: 'bga', L: mm(B.x1 - B.x0) + margin, W: mm(B.y1 - B.y0) + margin, H: 1.2, cx: f.cx, cy: f.cy, rotDeg: wrap(f.deg), p: { cols: gx.length, rows: gy.length, pitch: p, balls: small.length } },
-          `${small.length} balls on a ${gx.length}×${gy.length} grid @ ${p.toFixed(2)} → BGA`), pins, f, small, mm(B.x1 - B.x0), mm(B.y1 - B.y0), p);
+          `${small.length} balls on a ${gx.length}×${gy.length} grid @ ${p.toFixed(2)} → BGA`), part.side, f, small, mm(B.x1 - B.x0), mm(B.y1 - B.y0), p);
       }
     }
     // A big ball field with several pitches (CPU/GPU) defeats the grid test; its density does not:
@@ -518,7 +517,7 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
       if (hint?.family === 'bga' || (small.length >= 100 && area > 0 && small.length * pitch * pitch / area > 0.25)) {
         const pm = mm(pitch), margin = Math.min(1.6, Math.max(0.4, pm * 1.5));
         return knownPackage(out({ family: 'bga', L: mm(B.x1 - B.x0) + margin, W: mm(B.y1 - B.y0) + margin, H: 1.2, cx: f0.cx, cy: f0.cy, rotDeg: wrap(f0.deg), p: { pitch: pm, balls: small.length } },
-          `${small.length} balls in a dense field @ ~${pm.toFixed(2)} → BGA`), pins, f0, small, mm(B.x1 - B.x0), mm(B.y1 - B.y0), pm);
+          `${small.length} balls in a dense field @ ~${pm.toFixed(2)} → BGA`), part.side, f0, small, mm(B.x1 - B.x0), mm(B.y1 - B.y0), pm);
       }
     }
     // fallback: body = pin box + margin, height guessed

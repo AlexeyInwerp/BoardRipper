@@ -17,6 +17,8 @@
  * the body with the edge margin. Research: docs/specs/2026-11-15-cpu-packages.md.
  */
 
+import { SIGNATURES } from './cpu-package-signatures';
+
 export type DieKind = 'cpu' | 'gpu' | 'pch' | 'io' | 'mem' | 'base';
 export interface PackageDie { kind: DieKind; label?: string; x: number; y: number; w: number; d: number; h?: number; onInterposer?: boolean }
 export interface CapRow { x: number; y: number; n: number; dir: 'x' | 'y'; pitch?: number; size?: '0402' | '0201' }
@@ -45,7 +47,39 @@ export interface PackageSpec {
   notes?: string;
   /** Ball-map entry id in the mockup (docs/specs/2026-11-15-cpu-package-ballmaps.js). */
   mapId?: string;
+  /** 12 × 12 ball-occupancy signature of the sample's field in the record frame (generated; orients a matched field). */
+  sig?: number[];
 }
+
+export const SIG_N = 12;
+/** Ball-occupancy signature: the fraction of balls in each cell of a SIG_N × SIG_N grid over the field's own bounding
+ *  box, rows from +y (top) to −y, columns from −x to +x. Scale-free, so mils and mm compare. */
+export function ballSignature(pts: readonly { x: number; y: number }[], n = SIG_N): number[] {
+  const out = new Array<number>(n * n).fill(0); if (!pts.length) return out;
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const p of pts) { if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x; if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y; }
+  const w = Math.max(x1 - x0, 1e-9), h = Math.max(y1 - y0, 1e-9);
+  for (const p of pts) { const i = Math.min(n - 1, Math.floor((p.x - x0) / w * n)), j = Math.min(n - 1, Math.floor((y1 - p.y) / h * n)); out[j * n + i] += 1 / pts.length; }
+  return out;
+}
+export type Turn = 0 | 90 | 180 | 270;
+/** The turn (CCW, degrees) that brings a measured field onto a record's signature, by the smallest L1 distance over
+ *  the four right angles. `mirrorY` = the field is seen through the board (a bottom-side part): the package is the
+ *  field with y mirrored, which is what the 3D renderer does to a bottom part's model. A symmetric field ties; the
+ *  smallest turn wins then. */
+export function orientToSignature(sig: readonly number[], locs: readonly { x: number; y: number }[], mirrorY: boolean): { turn: Turn; fit: number; worst: number } {
+  let best: { turn: Turn; fit: number } | null = null, worst = 0;
+  for (const turn of [0, 90, 180, 270] as const) {
+    const pts = locs.map(p => { // package = R(−turn) · field, then the side mirror
+      const q = turn === 0 ? p : turn === 90 ? { x: p.y, y: -p.x } : turn === 180 ? { x: -p.x, y: -p.y } : { x: -p.y, y: p.x };
+      return mirrorY ? { x: q.x, y: -q.y } : q;
+    });
+    const s = ballSignature(pts); let d = 0; for (let i = 0; i < s.length; i++) d += Math.abs(s[i] - sig[i]);
+    if (!best || d < best.fit - 1e-9) best = { turn, fit: d }; if (d > worst) worst = d;
+  }
+  return { ...best!, worst };
+}
+
 
 export interface PackageMeasure { balls: number; pitch: number; spanX: number; spanY: number }
 export interface PackageMatch { spec: PackageSpec; /** The field's X axis is the body's W (turn the model 90°). */ turned: boolean; score: number; missingBalls: number }
@@ -119,18 +153,19 @@ export const PACKAGES: PackageSpec[] = [
   { id: 'intel-bga1964', vendor: 'intel', name: 'Intel BGA1964 (Alder Lake-HX / Raptor Lake-HX)', balls: 1964, pitch: 0.8, body: { L: 45, W: 37.5, H: 2.005, sub: 1.119 }, span: [43.2, 35.2], style: 'one bare desktop die, die-side caps, regular 0.8 mm grid; PCH-S separate',
     dies: [{ kind: 'cpu', label: 'CPU', x: 0, y: 0, w: 23.8, d: 10.8, h: 0.75 }], caps: [{ x: 0, y: 9.5, n: 12, dir: 'x', pitch: 1.3 }, { x: 0, y: -9.5, n: 12, dir: 'x', pitch: 1.3 }],
     used: 'i9-12900HX, i9-13980HX, i9-14900HX; MSI Raider GE78 HX, Dell Precision 7670', sources: ['https://cdrdv2-public.intel.com/655258/655258-011.pdf', 'https://cdrdv2.intel.com/v1/dl/getContent/743844'], confidence: 'count, pitch, body, substrate, height primary (Intel 655258 / 743844 Table 98 — the 1.185 in §1.2 is a copy error); no sample — span derived; RPL-S 8+16 die 257 mm² ≈ 23.8 × 10.8 secondary' },
-  { id: 'intel-bga2049', vendor: 'intel', name: 'Intel BGA2049 (Meteor Lake-U/H, Arrow Lake-H/U)', balls: 2049, pitch: 0.65, body: { L: 50, W: 25, H: 1.245, sub: 0.644 }, span: [48.7, 23.7], style: 'Foveros: four tiles + filler on a base tile, bare',
-    interposer: { w: 23.5, d: 11.3, h: 0.25, x: -3, y: 0 },
-    dies: [{ kind: 'io', label: 'SoC', x: -11.0, y: 0, w: 7.6, d: 10.6, h: 0.35, onInterposer: true }, { kind: 'cpu', label: 'Compute', x: -3.5, y: 2.4, w: 7.2, d: 5.4, h: 0.35, onInterposer: true }, { kind: 'gpu', label: 'GPU', x: -3.5, y: -2.8, w: 7.2, d: 4.6, h: 0.35, onInterposer: true }, { kind: 'pch', label: 'IOE', x: 4.7, y: 0, w: 6.6, d: 4.0, h: 0.35, onInterposer: true }],
-    used: 'Core Ultra 5 125H/U, 7 155H/165H, 9 185H, Ultra 5 225H, 7 255H, 9 285H; Dell XPS 14 9440, Yoga Pro 9i Gen 10', sources: ['https://cdrdv2.intel.com/v1/dl/getContent/792044', 'https://cdrdv2.intel.com/v1/dl/getContent/842704'], confidence: 'count, pitch, body, substrate, height primary (Intel 792044 / 842704 Table 10); no sample — span derived; tile sizes from Locuza/TechInsights estimates, placement from photos; Arrow Lake-H tiles unknown, drawn as Meteor Lake' },
-  { id: 'intel-bga2551', vendor: 'intel', name: 'Intel BGA2551 (Meteor Lake-U Type 4)', balls: 2551, pitch: 0.37, body: { L: 23, W: 19, H: 0.675, sub: 0.24 }, span: [22.0, 18.0], style: 'Foveros tiles on a thin base, bare, low-temperature solder',
-    interposer: { w: 23.5, d: 11.3, h: 0.15, x: -0.5, y: 0 }, dies: [{ kind: 'io', label: 'SoC', x: -8.5, y: 0, w: 7.6, d: 10.6, h: 0.25, onInterposer: true }, { kind: 'cpu', label: 'Compute', x: -1.0, y: 2.4, w: 7.2, d: 5.4, h: 0.25, onInterposer: true }, { kind: 'gpu', label: 'GPU', x: -1.0, y: -2.8, w: 7.2, d: 4.6, h: 0.25, onInterposer: true }, { kind: 'pch', label: 'IOE', x: 7.2, y: 0, w: 6.6, d: 4.0, h: 0.25, onInterposer: true }],
+  { id: 'intel-bga2049', vendor: 'intel', name: 'Intel BGA2049 (Meteor Lake-U/H, Arrow Lake-H/U)', balls: 2049, pitch: 0.65, body: { L: 50, W: 25, H: 1.245, sub: 0.644 }, span: [48.7, 23.7], style: 'Foveros: four tiles in a row on a base tile, bare',
+    interposer: { w: 24.2, d: 11.3, h: 0.25, x: 0, y: 0 },
+    dies: [{ kind: 'gpu', label: 'GPU', x: -9.6, y: 0, w: 4.4, d: 10.4, h: 0.35, onInterposer: true }, { kind: 'io', label: 'SoC', x: -2.3, y: 0, w: 9.6, d: 10.4, h: 0.35, onInterposer: true }, { kind: 'cpu', label: 'Compute', x: 5.9, y: 0, w: 6.4, d: 10.4, h: 0.35, onInterposer: true }, { kind: 'pch', label: 'IOE', x: 10.6, y: 0, w: 2.6, d: 10.4, h: 0.35, onInterposer: true }],
+    caps: [{ x: -16, y: 0, n: 8, dir: 'y', pitch: 1.2 }, { x: 16, y: 0, n: 8, dir: 'y', pitch: 1.2 }],
+    used: 'Core Ultra 5 125H/U, 7 155H/165H, 9 185H, Ultra 5 225H, 7 255H, 9 285H; Dell XPS 14 9440, Yoga Pro 9i Gen 10', sources: ['https://cdrdv2.intel.com/v1/dl/getContent/792044', 'https://cdrdv2.intel.com/v1/dl/getContent/842704'], confidence: 'count, pitch, body, substrate, height primary (Intel 792044 / 842704 Table 10); no sample — span derived; tile areas from Locuza/TechInsights estimates, the row order GPU · SoC · Compute · IOE from Intel\'s package photo; Arrow Lake-H tiles unknown, drawn as Meteor Lake' },
+  { id: 'intel-bga2551', vendor: 'intel', name: 'Intel BGA2551 (Meteor Lake-U Type 4)', balls: 2551, pitch: 0.37, body: { L: 23, W: 19, H: 0.675, sub: 0.24 }, span: [22.0, 18.0], style: 'Foveros tiles in a row on a thin base, bare, low-temperature solder',
+    interposer: { w: 22.2, d: 10.4, h: 0.15, x: 0, y: 0 }, dies: [{ kind: 'gpu', label: 'GPU', x: -8.8, y: 0, w: 4.0, d: 9.6, h: 0.25, onInterposer: true }, { kind: 'io', label: 'SoC', x: -2.1, y: 0, w: 8.8, d: 9.6, h: 0.25, onInterposer: true }, { kind: 'cpu', label: 'Compute', x: 5.4, y: 0, w: 5.9, d: 9.6, h: 0.25, onInterposer: true }, { kind: 'pch', label: 'IOE', x: 9.7, y: 0, w: 2.4, d: 9.6, h: 0.25, onInterposer: true }],
     used: 'Core Ultra 5 134U, 7 164U', sources: ['https://cdrdv2.intel.com/v1/dl/getContent/792044'], confidence: 'count, pitch (0.37 corner / 0.40 under the tile), body, height primary (Intel 792044 Table 11); no sample — span derived' },
-  { id: 'intel-bga2114', vendor: 'intel', name: 'Intel BGA2114 (Arrow Lake-HX)', balls: 2114, pitch: 0.65, body: { L: 37.5, W: 30.2, H: 2.0, sub: 1.1 }, span: [36.2, 28.9], style: 'Foveros: desktop Arrow Lake tiles on a base tile, bare; PCH separate',
-    interposer: { w: 21.5, d: 14.1, h: 0.3 }, dies: [{ kind: 'cpu', label: 'Compute', x: -5.5, y: 0, w: 9.8, d: 12.0, h: 0.4, onInterposer: true }, { kind: 'io', label: 'SoC', x: 4.5, y: 2.8, w: 10.4, d: 8.3, h: 0.4, onInterposer: true }, { kind: 'gpu', label: 'GPU', x: 2.0, y: -4.0, w: 5.0, d: 4.6, h: 0.4, onInterposer: true }, { kind: 'pch', label: 'IOE', x: 7.5, y: -4.0, w: 5.2, d: 4.7, h: 0.4, onInterposer: true }],
-    used: 'Core Ultra 5 235HX, 7 255HX, 9 275HX/285HX; Legion Pro 7i Gen 10, MSI Raider 18 HX', sources: ['https://cdrdv2-public.intel.com/834774/834774_024.pdf'], confidence: 'count and body primary (Intel 834774 spec update); pitch unpublished — 0.65 inferred (0.8 cannot hold 2,114 balls on 37.5 × 30.2); height guessed from the HX line; tiles as the desktop 285K' },
+  { id: 'intel-bga2114', vendor: 'intel', name: 'Intel BGA2114 (Arrow Lake-HX)', balls: 2114, pitch: 0.65, body: { L: 37.5, W: 30.2, H: 2.0, sub: 1.1 }, span: [36.2, 28.9], style: 'Foveros: desktop Arrow Lake tiles in a row on a base tile, bare; PCH separate',
+    interposer: { w: 25.5, d: 11.9, h: 0.3 }, dies: [{ kind: 'cpu', label: 'Compute', x: -7.2, y: 0, w: 10.6, d: 11.0, h: 0.4, onInterposer: true }, { kind: 'gpu', label: 'GPU', x: -0.2, y: 2.8, w: 4.2, d: 5.4, h: 0.4, onInterposer: true }, { kind: 'base', label: 'filler', x: -0.2, y: -2.8, w: 4.2, d: 5.4, h: 0.4, onInterposer: true }, { kind: 'io', label: 'SoC', x: 6.1, y: 0, w: 7.9, d: 11.0, h: 0.4, onInterposer: true }, { kind: 'pch', label: 'IOE', x: 11.3, y: 0, w: 2.3, d: 11.0, h: 0.4, onInterposer: true }],
+    used: 'Core Ultra 5 235HX, 7 255HX, 9 275HX/285HX; Legion Pro 7i Gen 10, MSI Raider 18 HX', sources: ['https://cdrdv2-public.intel.com/834774/834774_024.pdf'], confidence: 'count and body primary (Intel 834774 spec update); pitch unpublished — 0.65 inferred (0.8 cannot hold 2,114 balls on 37.5 × 30.2); height guessed from the HX line; tiles as the desktop 285K die photo' },
   { id: 'intel-bga2833', vendor: 'intel', name: 'Intel BGA2833 (Lunar Lake, Core Ultra 200V)', balls: 2833, pitch: 0.5, body: { L: 27.5, W: 27, H: 1.58, sub: 0.584 }, span: [26.3, 25.8], style: 'Foveros stack + two LPDDR5X packages on the substrate, bare',
-    interposer: { w: 15.5, d: 14, h: 0.25, x: -5, y: 0 }, dies: [{ kind: 'cpu', label: 'Compute', x: -7.5, y: 0, w: 10.2, d: 13.0, h: 0.35, onInterposer: true }, { kind: 'pch', label: 'PCT', x: 0.0, y: 3.2, w: 4.6, d: 6.0, h: 0.35, onInterposer: true }, { kind: 'base', label: 'filler', x: 0.0, y: -3.5, w: 4.6, d: 6.0, h: 0.35, onInterposer: true }, { kind: 'mem', label: 'LPDDR5X', x: 8.0, y: 6.4, w: 9.5, d: 11.0, h: 0.95 }, { kind: 'mem', label: 'LPDDR5X', x: 8.0, y: -6.4, w: 9.5, d: 11.0, h: 0.95 }],
+    interposer: { w: 15.5, d: 13.5, h: 0.25, x: -5, y: 0 }, dies: [{ kind: 'cpu', label: 'Compute', x: -7.3, y: 0, w: 10.6, d: 12.8, h: 0.35, onInterposer: true }, { kind: 'pch', label: 'PCT', x: -0.2, y: 0, w: 3.6, d: 12.8, h: 0.35, onInterposer: true }, { kind: 'mem', label: 'LPDDR5X', x: 8.0, y: 6.4, w: 9.5, d: 11.0, h: 0.95 }, { kind: 'mem', label: 'LPDDR5X', x: 8.0, y: -6.4, w: 9.5, d: 11.0, h: 0.95 }],
     used: 'Core Ultra 5 226V–9 288V; Dell XPS 13 9350 (2024), Asus Zenbook S 14', sources: ['https://cdrdv2-public.intel.com/829568/829568-004.pdf', 'https://www.hc2024.hotchips.org/assets/program/conference/day1/56_HC2024.Intel.AGihon.final.pdf'], confidence: 'count, pitch, body, substrate, heights primary (Intel 829568 Table 10: 1.34 mm with 2 × 8 GB, 1.58 with 2 × 16 GB DRAM); no sample — span derived; tile sizes secondary, DRAM placement from photos' },
   { id: 'intel-fcbga1338', vendor: 'intel', name: 'Intel FCBGA1338 (Jasper Lake)', balls: 1338, pitch: 0.593, body: { L: 35, W: 24, H: 1.406, sub: 0.8 }, span: [33.8, 22.8], style: 'two bare dies (compute + PCH)',
     dies: [{ kind: 'cpu', label: 'SoC', x: -4.5, y: 0, w: 9.0, d: 8.5, h: 0.6 }, { kind: 'pch', label: 'PCH', x: 5.5, y: 0, w: 6.0, d: 7.5, h: 0.6 }],
@@ -208,7 +243,7 @@ export const PACKAGES: PackageSpec[] = [
   // ── Intel PCH (separate chips on H-series boards) — small bare flip-chip die, no lid.
   { id: 'intel-pch-h-837', vendor: 'intel', name: 'Intel 100/200-series PCH-H (Sunrise Point / Union Point)', balls: 837, pitch: 0.543, body: { L: 23, W: 23, H: 1.3, sub: 0.8 }, span: [22.0, 22.0], style: 'bare die',
     dies: [{ kind: 'pch', label: 'PCH', x: 0, y: 0, w: 8.5, d: 8.5, h: 0.6 }], used: 'HM170/HM175/QM170… on Skylake-H / Kaby Lake-H boards', mapId: 'pch-skl-h', confidence: 'ball field measured (Allegro SKY-S-PCH_BGA_837P); die size guessed' },
-  { id: 'intel-pch-h-874', vendor: 'intel', name: 'Intel 300-series PCH-H (Cannon Point-H)', balls: 874, pitch: 0.535, body: { L: 23.8, W: 24.8, H: 1.3, sub: 0.8 }, span: [22.6, 23.6], style: 'bare die',
+  { id: 'intel-pch-h-874', vendor: 'intel', name: 'Intel 300-series PCH-H (Cannon Point-H)', balls: 874, pitch: 0.535, body: { L: 24.8, W: 23.8, H: 1.3, sub: 0.8 }, span: [23.6, 22.6], style: 'bare die',
     dies: [{ kind: 'pch', label: 'PCH', x: 0, y: 0, w: 9, d: 9, h: 0.6 }], used: 'HM370/QM370/CM246 on Coffee Lake-H boards', mapId: 'pch-cnp-h', confidence: 'ball field measured (Allegro CNP-H_BGA_874P); die size guessed' },
 
   // ── Apple silicon — SoC under a nickel lid, LPDDR packages beside it on the substrate. Measured on the XZZ boardviews.
@@ -224,6 +259,7 @@ export const PACKAGES: PackageSpec[] = [
   { id: 'apple-m1max', vendor: 'apple', name: 'Apple M1 Max (A2442 / A2485)', balls: 4183, pitch: 0.635, body: { L: 57, W: 36, H: 2.6, sub: 1.0 }, span: [55.2, 34.4], style: 'lidded SoC + 4 LPDDR5 packages',
     lid: { w: 24, d: 22, h: 1.2, x: 0, y: 0 }, dies: [{ kind: 'mem', label: 'LPDDR5', x: -20.5, y: 8, w: 11, d: 14, h: 0.9 }, { kind: 'mem', label: 'LPDDR5', x: -20.5, y: -8, w: 11, d: 14, h: 0.9 }, { kind: 'mem', label: 'LPDDR5', x: 20.5, y: 8, w: 11, d: 14, h: 0.9 }, { kind: 'mem', label: 'LPDDR5', x: 20.5, y: -8, w: 11, d: 14, h: 0.9 }],
     used: 'MacBook Pro 14/16 2021 M1 Max', mapId: 'm1max', confidence: 'ball field measured; layout from photos' },
-  { id: 'apple-t2', vendor: 'apple', name: 'Apple T2 (2018–2020 Intel Macs)', balls: 1406, pitch: 0.381, body: { L: 15.8, W: 16.2, H: 1.2, sub: 0.7 }, span: [14.4, 14.8], style: 'bare die',
+  { id: 'apple-t2', vendor: 'apple', name: 'Apple T2 (2018–2020 Intel Macs)', balls: 1406, pitch: 0.381, body: { L: 16.2, W: 15.8, H: 1.2, sub: 0.7 }, span: [14.8, 14.4], style: 'bare die',
     dies: [{ kind: 'cpu', label: 'T2', x: 0, y: 0, w: 9, d: 9.5, h: 0.5 }], used: 'MacBook Air/Pro 2018–2020, iMac Pro, Mac mini 2018', mapId: 't2', confidence: 'ball field measured on seven boards; die size guessed' },
 ];
+for (const p of PACKAGES) if (p.mapId && SIGNATURES[p.mapId]) p.sig = SIGNATURES[p.mapId];

@@ -73,10 +73,11 @@ export function buildPackage(g: THREE.Group, spec: PackageSpec): void {
   const top = ballH + sub; let baseTop = top;
   if (spec.interposer) { const ip = spec.interposer; g.add(box(ip.w, ip.h, ip.d, MAT.interposer, ip.x ?? 0, top + ip.h / 2, -(ip.y ?? 0))); baseTop = top + ip.h; }
   for (const d of spec.dies ?? []) {
-    const h = d.h ?? 0.75, y0 = d.onInterposer ? baseTop : top;
-    g.add(box(d.w + 0.5, 0.12, d.d + 0.5, MAT.underfill, d.x, y0 + 0.06, -d.y));
-    g.add(box(d.w, h, d.d, d.kind === 'mem' ? MAT.hbm : MAT.silicon, d.x, y0 + h / 2, -d.y));
-    g.add(box(d.w * 0.98, 0.01, d.d * 0.98, MAT.siliconTop, d.x, y0 + h + 0.005, -d.y));
+    // a tile on a base die has no underfill fillet and a visible seam to its neighbours
+    const h = d.h ?? 0.75, y0 = d.onInterposer ? baseTop : top, gap = d.onInterposer ? 0.15 : 0, w = d.w - gap, dd = d.d - gap;
+    if (!d.onInterposer) g.add(box(d.w + 0.5, 0.12, d.d + 0.5, MAT.underfill, d.x, y0 + 0.06, -d.y));
+    g.add(box(w, h, dd, d.kind === 'mem' ? MAT.hbm : MAT.silicon, d.x, y0 + h / 2, -d.y));
+    g.add(box(w * 0.98, 0.01, dd * 0.98, MAT.siliconTop, d.x, y0 + h + 0.005, -d.y));
   }
   if (spec.socket) { // LGA socket: plastic frame around the pad field, the lidded CPU inside it
     const q = spec.socket, iw = q.w - 2 * q.t, id = q.d - 2 * q.t;
