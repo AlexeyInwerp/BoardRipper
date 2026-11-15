@@ -21,7 +21,7 @@ async function openBoard(page: Page) {
 }
 
 type Cam = { dist: number; target: [number, number, number]; pos: [number, number, number]; leftDrag: 'orbit' | 'pan' };
-type W = { __board3d?: { renderer: { cameraState(): Cam; screenOfPin(a: number, b: number): [number, number] | null; drawnParts: number; screenOf(i: number): [number, number] | null; part(i: number): { name: string; est: { family: string } } | undefined } }; __boardStore?: { selection: { partIndex: number | null }; board: { parts: { name: string; pins: unknown[] }[] } } };
+type W = { __board3d?: { renderer: { cameraState(): Cam; screenOfPin(a: number, b: number): [number, number] | null; focusPart(i: number): void; drawnParts: number; screenOf(i: number): [number, number] | null; part(i: number): { name: string; est: { family: string } } | undefined } }; __boardStore?: { selection: { partIndex: number | null }; board: { parts: { name: string; pins: unknown[] }[] } } };
 
 test('3D view: toggle, draws estimated parts, a click selects, back to 2D', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
@@ -100,6 +100,8 @@ test('3D view: the ribbon carries the 3D controls; a click on a land lights its 
   const sideBtn = pick.side === 'bottom' ? 'board-3d-bottom' : 'board-3d-top';
   await page.getByTestId(sideBtn).click(); await page.waitForTimeout(700);
   await expect(page.getByTestId(sideBtn)).toHaveAttribute('aria-pressed', 'true');
+  // centre the part first: at this viewport the ribbon wraps onto a second row, and a land near the top edge sits under it
+  await page.evaluate(i => (window as unknown as W).__board3d!.renderer.focusPart(i), pick.i); await page.waitForTimeout(700);
   const target = { ...pick, xy: await page.evaluate(i => (window as unknown as W).__board3d!.renderer.screenOfPin(i, 0), pick.i) };
   expect(target.xy).not.toBeNull();
   await page.mouse.click(target.xy![0], target.xy![1]);
