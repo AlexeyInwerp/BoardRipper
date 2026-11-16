@@ -44,6 +44,8 @@ export interface Board3DModel {
   copper: { layer: number; x1: number; z1: number; x2: number; z2: number; w: number; net: string }[];
   /** Copper pours per layer: outer ring and holes, scene mm. */
   pours: { layer: number; net: string; outer: [number, number][]; holes: [number, number][][] }[];
+  /** The thinnest trace on the board, mm — the via pass sizes its barrels against it. */
+  minTraceWidth: number;
   /** Vias: position, drill radius, the layer span they join (through = 0 … last). */
   vias: { x: number; z: number; r: number; net: string; l0: number; l1: number }[];
   /** The side the user calls Top (the file's `primarySide`). */
@@ -208,7 +210,7 @@ export function buildBoard3DModel(board: BoardData, opts: Board3DModelOptions = 
 
   return {
     width: (all.x1 - all.x0) * MM, height: (all.y1 - all.y0) * MM,
-    outlines, cutouts, parts, pads, traces, silk, holes, layerNames, copper, pours, vias,
+    outlines, cutouts, parts, pads, traces, silk, holes, layerNames, copper, pours, vias, minTraceWidth: copper.length ? copper.reduce((m, c) => Math.min(m, c.w), Infinity) : 0.2,
     primarySide: board.primarySide === 'bottom' ? 'bottom' : 'top',
     toScene, pinsOf,
     pinPads: (index: number) => pinPadMap.get(index) ?? [],

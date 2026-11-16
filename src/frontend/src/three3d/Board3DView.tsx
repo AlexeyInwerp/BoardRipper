@@ -73,10 +73,14 @@ export default function Board3DView({ tabId }: { tabId: number }) {
   useEffect(() => { if (ready && model) rRef.current!.setSelection(sel?.partIndex ?? null, sel?.highlightedNet ?? null, sel?.pinIndex ?? null); }, [ready, model, sel?.partIndex, sel?.highlightedNet, sel?.pinIndex]);
 
   // a click is a press that did not travel; a drag orbits
-  const down = useRef<[number, number] | null>(null);
-  const onPointerDown = (e: React.PointerEvent) => { down.current = [e.clientX, e.clientY]; };
+  // a pinch is not a tap: iPadOS may cancel the first finger before the second lands, and the release of either must not
+  // select whatever sits under it (the 2D view's rule, 2026-09-18) — `multi` is set the moment a second finger lands
+  const down = useRef<[number, number] | null>(null); const fingers = useRef(0); const multi = useRef(false);
+  const onPointerDown = (e: React.PointerEvent) => { if (e.pointerType === 'touch') { fingers.current++; if (fingers.current > 1) multi.current = true; } down.current = [e.clientX, e.clientY]; };
+  const onPointerCancel = (e: React.PointerEvent) => { if (e.pointerType === 'touch') { fingers.current = Math.max(0, fingers.current - 1); if (!fingers.current) multi.current = false; } down.current = null; };
   const onPointerUp = (e: React.PointerEvent) => {
     const d = down.current; down.current = null; const r = rRef.current;
+    if (e.pointerType === 'touch') { fingers.current = Math.max(0, fingers.current - 1); const wasMulti = multi.current; if (!fingers.current) multi.current = false; if (wasMulti) return; }
     if (!d || !r || Math.hypot(e.clientX - d[0], e.clientY - d[1]) > (e.pointerType === 'touch' ? 12 : 5)) return;
     const hit = r.pickAt(e.clientX, e.clientY);
     if (boardStore.activeTabId !== tabId) boardStore.switchTab(tabId);
@@ -134,6 +138,7 @@ export default function Board3DView({ tabId }: { tabId: number }) {
         className="board-3d-host"
         onPointerDown={onPointerDown}
         onPointerUp={onPointerUp}
+        onPointerCancel={onPointerCancel}
         onPointerMove={onPointerMove}
         onPointerLeave={() => setTip(null)}
         onDoubleClick={onDoubleClick}

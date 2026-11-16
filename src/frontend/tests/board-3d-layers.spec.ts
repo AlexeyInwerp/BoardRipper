@@ -13,7 +13,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.resolve(HERE, '../public/samples/tomu-fpga.kicad_pcb');
 test.use({ launchOptions: { args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] } });
 
-type Stack = { layers: number; copperMeshes: number; pourMeshes: number; vias: number; slices: number; sideOffset: number; layerY: number[]; partsVisible: boolean; xray: boolean; litNetId: number; litOnly: boolean; copperGroupsVisible: number };
+type Stack = { layers: number; copperMeshes: number; pourMeshes: number; vias: number; slices: number; sideOffset: number; layerY: number[]; partsVisible: boolean; xray: boolean; litNetId: number; litOnly: boolean; copperGroupsVisible: number; minTraceWidth: number; viaRadius: number; viaOpacity: number; litVias: number; litViaOpacity: number };
 type W = { __boardStore: { board: { parts: { name: string; pins: { net: string }[] }[]; traces: { net: string }[] }; layerStates: { visible: boolean }[]; toggleLayer(i: number): void; highlightNet(n: string | null): void; setPartOverride(n: string, m: 'hide' | null): void; selectPart(i: number | null): void }; __board3d?: { renderer: { drawnParts: number; stackInfo(): Stack | null; cameraState(): { dist: number }; part(i: number): unknown; screenOf(i: number): [number, number] | null } } };
 
 async function open3D(page: Page) {
@@ -95,4 +95,21 @@ test('a part hidden from the right-click menu leaves the 3D scene; the build sho
   expect(await page.evaluate(i => !!(window as unknown as W).__board3d!.renderer.part(i), target.i)).toBe(false);
   await page.evaluate(n => (window as unknown as W).__boardStore.setPartOverride(n, null), target.name);
   await expect.poll(() => page.evaluate(() => (window as unknown as W).__board3d!.renderer.drawnParts), { timeout: 30000 }).toBe(before);
+});
+
+test('vias: no wider than twice the thinnest trace, faint when unlit, flashing on the lit net', async ({ page }) => {
+  await open3D(page);
+  await page.getByTestId('board-3d-settings').click(); await page.getByTestId('view3d-copperLayers').click(); await page.keyboard.press('Escape'); await page.waitForTimeout(300);
+  const s0 = (await stack(page))!;
+  expect(s0.viaRadius).toBeLessThanOrEqual(s0.minTraceWidth + 1e-6); // diameter ≤ 2 × the thinnest trace
+  expect(s0.viaOpacity).toBeLessThanOrEqual(0.3); expect(s0.litVias).toBe(0);
+  const net = await page.evaluate(() => { const b = (window as unknown as W).__boardStore.board; const byNet = new Map<string, number>(); for (const t of b.traces) byNet.set(t.net, (byNet.get(t.net) ?? 0) + 1); return [...byNet.entries()].filter(([n]) => n && !/GND|VCC|3V3|1V2/.test(n)).sort((a, b) => b[1] - a[1])[0][0]; });
+  await page.evaluate(n => (window as unknown as W).__boardStore.highlightNet(n), net);
+  await expect.poll(() => stack(page).then(s => s!.litVias)).toBeGreaterThan(0);
+  const seen = new Set<number>(); for (let i = 0; i < 10; i++) { seen.add(Math.round((await stack(page))!.litViaOpacity * 100)); await page.waitForTimeout(120); }
+  expect(seen.size).toBeGreaterThan(1); // the lit vias flash
+  // the size slider is a multiple of the thinnest trace
+  await page.getByTestId('board-3d-settings').click(); await page.getByTestId('view3d-viaScale').fill('200'); await page.keyboard.press('Escape'); await page.waitForTimeout(300);
+  const r2 = (await stack(page))!.viaRadius; // a via limited by its own drill does not grow; none passes twice the cap
+  expect(r2).toBeGreaterThanOrEqual(s0.viaRadius - 1e-6); expect(r2).toBeLessThanOrEqual(s0.minTraceWidth * 2 + 1e-6);
 });

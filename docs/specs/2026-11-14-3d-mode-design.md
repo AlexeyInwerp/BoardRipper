@@ -326,6 +326,19 @@ runs for a board with two or more layers and copper:
   view shows a stage name and a bar. A tab switch cancels it.
 - **Hidden parts** come from the tab's part overrides (the right-click menu,
   which the 3D view opens too); a change rebuilds the scene.
+- **Vias are their own pass** (2026-11-16): six-sided barrels, radius the
+  file's via size capped at the board's thinnest trace width × the via-size
+  setting (so a via is never wider than twice the thinnest trace at 100 %),
+  one instanced mesh for the unlit vias at a low opacity (setting, 25 %) and
+  a second for the lit net's, drawn in the net colour and flashing on a
+  350 ms toggle — a timed toggle, not a per-frame fade, so a big board draws
+  a few frames a second for it. TVW and GenCAD only know the via's land, and
+  a 0.6 mm land drawn as a pillar is what read as "oversized".
+- **Touch** follows the 2D view's ownership rule: a complete pointer pair
+  owns a pinch (zoom about the live midpoint, pan with its travel), else
+  WebKit's gesture stream does; stale and cancelled fingers are dropped; a
+  finger still down after a pinch goes back to panning; a release after a
+  second finger has landed is never a tap.
 
 Not done: picking inner copper (the 2D hit test only knows the outer
 faces), a real stackup (every file in the corpus spaces its layers evenly).

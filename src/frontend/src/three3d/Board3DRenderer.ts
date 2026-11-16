@@ -40,7 +40,7 @@ export class Board3DRenderer {
   private labelRoot = new THREE.Group();
   /** The layer stack of a multi-layer board: dielectric slices, copper per layer, pours, vias. */
   private stackRoot = new THREE.Group();
-  private stack: { layers: { group: THREE.Group; y: number; copper: THREE.Mesh | null; pour: THREE.Mesh | null }[]; slices: { mesh: THREE.Mesh; y: number }[]; vias: THREE.InstancedMesh | null; faces: THREE.Mesh[]; slab: THREE.Mesh | null } | null = null;
+  private stack: { layers: { group: THREE.Group; y: number; copper: THREE.Mesh | null; pour: THREE.Mesh | null }[]; slices: { mesh: THREE.Mesh; y: number }[]; vias: THREE.InstancedMesh | null; litVias: THREE.InstancedMesh | null; faces: THREE.Mesh[]; slab: THREE.Mesh | null } | null = null;
   private layerStates: { visible: boolean; color: number }[] = [];
   private layerEmphasis: number | null = null;
   private labelMat: THREE.ShaderMaterial | null = null;
@@ -116,8 +116,13 @@ export class Board3DRenderer {
     this.canvas.addEventListener('pointerdown', this.onPointerDown);
     this.canvas.addEventListener('pointermove', this.onPointerMove);
     this.canvas.addEventListener('pointerup', this.onPointerUp);
-    this.canvas.addEventListener('pointercancel', this.onPointerUp);
+    this.canvas.addEventListener('pointercancel', this.onPointerCancel);
+    this.canvas.addEventListener('lostpointercapture', this.onPointerCancel);
     this.canvas.addEventListener('contextmenu', this.onContextMenu);
+    // iPadOS delivers a two-finger pinch as WebKit gesture events too, and may never deliver the second finger's
+    // pointerdown at all when its own recogniser claims the gesture — the 2D view's rule applies here as well:
+    // a complete pointer pair owns the pinch, else the gesture stream does, never both (2026-09-21)
+    for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) this.canvas.addEventListener(ev, this.onGesture as EventListener, { passive: false });
     // every wheel is ours: a scroll pans, a pinch or ⌘/Ctrl+scroll zooms at the pointer
     this.canvas.addEventListener('wheel', this.onWheel, { capture: true, passive: false });
     const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.blitMat); quad.frustumCulled = false; this.blitScene.add(quad);
@@ -150,7 +155,7 @@ export class Board3DRenderer {
       this.boardRoot.traverse(o => { if (o instanceof THREE.Mesh) for (const m of Array.isArray(o.material) ? o.material : [o.material]) m.needsUpdate = true; });
     }
     if (prev.parts !== s.parts) this.applyPartsMode();
-    if (prev.copperLayers !== s.copperLayers || prev.xray !== s.xray || prev.explode !== s.explode) { this.applyStack(); if (this.stack && (prev.explode === 0) !== (s.explode === 0)) this.fit(); } // the stack is eight times taller exploded: refit when it opens or closes
+    if (prev.copperLayers !== s.copperLayers || prev.xray !== s.xray || prev.explode !== s.explode || prev.viaScale !== s.viaScale || prev.viaOpacity !== s.viaOpacity) { this.applyStack(); if (this.stack && (prev.explode === 0) !== (s.explode === 0)) this.fit(); } // the stack is eight times taller exploded: refit when it opens or closes
     this.dirty = true; // updateXray runs before the next render and resets any fade when see-through is off
     this.setSelection(this.sel.part, this.sel.net, this.sel.pin);
   }
@@ -287,7 +292,7 @@ export class Board3DRenderer {
    *  the stack can be pulled apart (`explode`) and seen through (`xray`). A board with one layer keeps its slab. */
   private buildStack(m: Board3DModel): void {
     const n = m.layerNames.length; if (n < 2 || !(m.copper.length || m.pours.length)) return;
-    const stack: NonNullable<typeof this.stack> = { layers: [], slices: [], vias: null, faces: this.faceMeshes, slab: this.slabMesh };
+    const stack: NonNullable<typeof this.stack> = { layers: [], slices: [], vias: null, litVias: null, faces: this.faceMeshes, slab: this.slabMesh };
     const quad = new THREE.PlaneGeometry(1, 1); // (u, v) corners in x/y; the shader builds the capsule quad from them
     for (let i = 0; i < n; i++) {
       const group = new THREE.Group(); const y = this.layerY(i, n); group.position.y = y; this.stackRoot.add(group);
@@ -318,15 +323,22 @@ export class Board3DRenderer {
       mesh.receiveShadow = true; const y = (y0 + y1) / 2; mesh.position.y = y; this.stackRoot.add(mesh); stack.slices.push({ mesh, y });
     }
     if (m.vias.length) {
-      const barrel = new THREE.CylinderGeometry(1, 1, 1, 10, 1, false); const inst = new THREE.InstancedMesh(barrel, new THREE.MeshStandardMaterial({ color: 0xc9a24a, metalness: 0.8, roughness: 0.35, transparent: true, opacity: 0.5, depthWrite: false }), m.vias.length); inst.renderOrder = 3;
-      const mtx = new THREE.Matrix4(); m.vias.forEach((v, k) => { const y0 = this.layerY(v.l0, n), y1 = this.layerY(v.l1, n); mtx.makeScale(v.r, Math.max(0.05, y0 - y1 + 0.03), v.r); mtx.setPosition(v.x, (y0 + y1) / 2, v.z); inst.setMatrixAt(k, mtx); });
-      inst.frustumCulled = false; this.stackRoot.add(inst); stack.vias = inst;
+      // the via pass: six-sided barrels (the minimal shape that still reads as a tube), one instanced mesh for the
+      // unlit vias at a low opacity and one for the lit net's, which flashes; both sized in applyStack
+      const barrel = new THREE.CylinderGeometry(1, 1, 1, 6, 1, false);
+      const inst = new THREE.InstancedMesh(barrel, new THREE.MeshBasicMaterial({ color: 0xc9a24a, transparent: true, opacity: this.settings.viaOpacity, depthWrite: false }), m.vias.length); inst.renderOrder = 3;
+      const lit = new THREE.InstancedMesh(barrel, new THREE.MeshBasicMaterial({ color: 0x19e6ff, transparent: true, opacity: 1, depthWrite: false }), m.vias.length); lit.renderOrder = 4; lit.count = 0;
+      inst.frustumCulled = false; lit.frustumCulled = false; this.stackRoot.add(inst, lit); stack.vias = inst; stack.litVias = lit;
     }
     this.stack = stack; this.applyStack();
   }
   /** Net name → small integer for the copper shader (0 = no net). Per model. */
   private netIds = new Map<string, number>();
   private netId(net: string): number { if (!net) return 0; let id = this.netIds.get(net); if (id === undefined) { id = this.netIds.size + 1; this.netIds.set(net, id); } return id; }
+  /** A via barrel's radius: the file's via size (most formats give the drill, TVW and GenCAD only the land) capped
+   *  at the board's thinnest trace width times the via-size setting — a via is never wider than twice the thinnest
+   *  trace at 100 %, so the barrels never dominate the copper they join. */
+  private barrelRadius(r: number): number { const cap = (this.model?.minTraceWidth ?? 0.2) * this.settings.viaScale; return Math.min(cap, r * 0.6); }
   /** One material per copper layer: layer colour and alpha, the lit net's id and colour, and `uMode` — 0 draws every
    *  segment (Copper layers on), 1 draws only the lit net's (Copper layers off, a net lit: its traces still show on the
    *  faces, through the dielectric they are inside the board as they should be). A lit segment is drawn in the net
@@ -348,6 +360,11 @@ export class Board3DRenderer {
   /** The lit net onto the copper stack: every layer's shader gets its id; with Copper layers off the stack is shown in
    *  lit-only mode while a net is lit, so the net's traces appear on the faces even on a plain board. */
   private applyLitNet(): void {
+    const st = this.stack; if (!st) return;
+    if (st.litVias && !this.inApplyStack) { this.applyStack(); return; } // applyStack sizes the via pass by the lit net and ends in applyLitNetShader
+    this.applyLitNetShader();
+  }
+  private applyLitNetShader(): void {
     const st = this.stack; if (!st) return; const net = this.sel.net, id = net ? (this.netIds.get(net) ?? 0) : 0, litOnly = !this.settings.copperLayers;
     st.layers.forEach((L, i) => {
       if (!L.copper) return; const u = (L.copper.material as THREE.ShaderMaterial).uniforms;
@@ -362,8 +379,9 @@ export class Board3DRenderer {
     this.layerStates = states; this.layerEmphasis = emphasis; this.applyStack();
   }
   /** Colours, visibility, X-ray and explode onto the stack — cheap, so every change re-runs it. */
+  private inApplyStack = false;
   private applyStack(): void {
-    const st = this.stack, s = this.settings; if (!st) return;
+    const st = this.stack, s = this.settings; if (!st) return; this.inApplyStack = true;
     const n = st.layers.length, scale = 1 + s.explode * 7;
     st.layers.forEach((L, i) => {
       const state = this.layerStates[i], vis = (state?.visible ?? true) || this.layerEmphasis === i;
@@ -375,12 +393,21 @@ export class Board3DRenderer {
     const xray = s.xray || s.copperLayers; // showing the copper layers is showing the inside: the board goes see-through with them
     for (const sl of st.slices) { sl.mesh.position.y = sl.y * scale; for (const mat of sl.mesh.material as THREE.MeshStandardMaterial[]) { mat.transparent = xray; mat.opacity = xray ? 0.22 : 1; mat.depthWrite = !xray; mat.needsUpdate = true; } }
     for (const f of st.faces) { const mat = f.material as THREE.MeshStandardMaterial; mat.transparent = xray; mat.opacity = xray ? 0.45 : 1; mat.depthWrite = !xray; f.position.y = (f.position.y < 0 ? -TOP - 0.002 : TOP + 0.002) * scale; mat.needsUpdate = true; }
-    if (st.vias) { const mtx = new THREE.Matrix4(), v = this.model!.vias; v.forEach((q, k) => { const y0 = this.layerY(q.l0, n) * scale, y1 = this.layerY(q.l1, n) * scale; mtx.makeScale(q.r, Math.max(0.05, y0 - y1 + 0.03), q.r); mtx.setPosition(q.x, (y0 + y1) / 2, q.z); st.vias!.setMatrixAt(k, mtx); }); st.vias.instanceMatrix.needsUpdate = true; st.vias.visible = s.copperLayers; }
+    if (st.vias) {
+      const mtx = new THREE.Matrix4(), v = this.model!.vias, litId = this.sel.net ? (this.netIds.get(this.sel.net) ?? 0) : 0; let k2 = 0;
+      v.forEach((q, k) => {
+        const y0 = this.layerY(q.l0, n) * scale, y1 = this.layerY(q.l1, n) * scale, r = this.barrelRadius(q.r);
+        mtx.makeScale(r, Math.max(0.05, y0 - y1 + 0.03), r); mtx.setPosition(q.x, (y0 + y1) / 2, q.z); st.vias!.setMatrixAt(k, mtx);
+        if (litId && this.netId(q.net) === litId) { mtx.makeScale(r * 1.3, Math.max(0.05, y0 - y1 + 0.06), r * 1.3); st.litVias!.setMatrixAt(k2++, mtx); }
+      });
+      st.vias.instanceMatrix.needsUpdate = true; st.vias.visible = s.copperLayers; (st.vias.material as THREE.MeshBasicMaterial).opacity = s.viaOpacity;
+      if (st.litVias) { st.litVias.count = k2; st.litVias.instanceMatrix.needsUpdate = true; st.litVias.visible = k2 > 0; ((st.litVias.material as THREE.MeshBasicMaterial).color).set(this.colour('netColour')); }
+    }
     this.sideOffset = TOP * (scale - 1);
     for (const g of [this.partsRoot, this.pickRoot, this.hlRoot, this.labelRoot]) g.traverse(o => { if (o.userData.side) o.position.y = (o.userData.side === 'top' ? 1 : -1) * this.sideOffset; });
     for (const pm of this.padMeshes) pm.position.y = (pm.userData.side === 'top' ? 1 : -1) * this.sideOffset;
     this.renderer.shadowMap.needsUpdate = true; this.dirty = true;
-    this.applyLitNet();
+    this.inApplyStack = false; this.applyLitNetShader();
   }
   /** How far the top face (and everything on it) sits above its resting height while exploded; the bottom sits as far below. */
   private sideOffset = 0;
@@ -658,9 +685,9 @@ export class Board3DRenderer {
   partsMode(): 'solid' | 'ghost' | 'off' { return this.settings.parts; }
 
   /** The stack as built — for tests. */
-  stackInfo(): { layers: number; copperMeshes: number; pourMeshes: number; vias: number; slices: number; sideOffset: number; layerY: number[]; partsVisible: boolean; xray: boolean; litNetId: number; litOnly: boolean; copperGroupsVisible: number } | null {
+  stackInfo(): { layers: number; copperMeshes: number; pourMeshes: number; vias: number; slices: number; sideOffset: number; layerY: number[]; partsVisible: boolean; xray: boolean; litNetId: number; litOnly: boolean; copperGroupsVisible: number; minTraceWidth: number; viaRadius: number; viaOpacity: number; litVias: number; litViaOpacity: number } | null {
     const st = this.stack; if (!st) return null;
-    return { layers: st.layers.length, copperMeshes: st.layers.filter(L => L.copper).length, pourMeshes: st.layers.filter(L => L.pour).length, vias: st.vias?.count ?? 0, slices: st.slices.length, sideOffset: this.sideOffset, layerY: st.layers.map(L => L.group.position.y), partsVisible: this.partsRoot.visible, xray: (st.slices[0]?.mesh.material as THREE.MeshStandardMaterial[])[0]?.transparent ?? false, litNetId: st.layers.find(L => L.copper) ? ((st.layers.find(L => L.copper)!.copper!.material as THREE.ShaderMaterial).uniforms.uLit.value as number) : 0, litOnly: st.layers.some(L => L.copper && ((L.copper.material as THREE.ShaderMaterial).uniforms.uMode.value as number) > 0), copperGroupsVisible: st.layers.filter(L => L.group.visible).length };
+    return { layers: st.layers.length, copperMeshes: st.layers.filter(L => L.copper).length, pourMeshes: st.layers.filter(L => L.pour).length, vias: st.vias?.count ?? 0, slices: st.slices.length, sideOffset: this.sideOffset, layerY: st.layers.map(L => L.group.position.y), partsVisible: this.partsRoot.visible, xray: (st.slices[0]?.mesh.material as THREE.MeshStandardMaterial[])[0]?.transparent ?? false, litNetId: st.layers.find(L => L.copper) ? ((st.layers.find(L => L.copper)!.copper!.material as THREE.ShaderMaterial).uniforms.uLit.value as number) : 0, litOnly: st.layers.some(L => L.copper && ((L.copper.material as THREE.ShaderMaterial).uniforms.uMode.value as number) > 0), copperGroupsVisible: st.layers.filter(L => L.group.visible).length, minTraceWidth: this.model?.minTraceWidth ?? 0, viaRadius: this.model?.vias.length ? Math.max(...this.model.vias.map(q => this.barrelRadius(q.r))) : 0, viaOpacity: st.vias ? (st.vias.material as THREE.MeshBasicMaterial).opacity : 0, litVias: st.litVias?.count ?? 0, litViaOpacity: st.litVias ? (st.litVias.material as THREE.MeshBasicMaterial).opacity : 0 };
   }
 
   /** Hidden-side ghosts: the lit net's parts on the face the camera does not see, drawn through the
@@ -835,6 +862,9 @@ export class Board3DRenderer {
   /** The last pivot a turn used — for tests. */
   lastPivot: [number, number, number] | null = null;
   private onPointerDown = (e: PointerEvent) => {
+    // a primary touch landing means every earlier touch is gone: iOS can take a pointer back without a pointerup
+    if (e.pointerType === 'touch' && e.isPrimary) { this.pointers.clear(); this.pinch = null; this.drag = null; }
+    if (this.gesture) return; // the gesture stream owns this pinch; a finger down meanwhile must not start a drag against it
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     try { this.canvas.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
     if (this.pointers.size === 2) { this.drag = null; this.pinch = this.pinchState(); return; }
@@ -861,6 +891,24 @@ export class Board3DRenderer {
     this.pointers.delete(e.pointerId);
     if (this.pointers.size < 2) this.pinch = null;
     if (this.pointers.size === 0) this.drag = null;
+    else if (this.pointers.size === 1 && !this.drag) this.drag = { mode: 'pan', pivot: new THREE.Vector3() }; // the finger still down goes back to panning, no lift needed
+  };
+  /** A cancelled or lost pointer is gone: drop it so a pinch cannot wedge with a ghost finger. */
+  private onPointerCancel = (e: PointerEvent) => { this.onPointerUp(e); };
+  private removeGestureListeners(): void { for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) this.canvas.removeEventListener(ev, this.onGesture as EventListener); }
+  /** WebKit's gesture stream (iPadOS trackpad and touch pinch): owns the pinch when the pointer stream has not seen
+   *  a complete pair; zooms about the live midpoint and pans with its travel, scale relative to the previous event
+   *  (a gesture's `scale` is cumulative; the anchor frozen at gesturestart was the old 2D bug). */
+  private gesture: { scale: number; x: number; y: number } | null = null;
+  private onGesture = (e: Event & { scale?: number; clientX?: number; clientY?: number }) => {
+    e.preventDefault(); e.stopPropagation();
+    if (this.pointers.size >= 2) return; // a complete pointer pair knows both fingers and already handles this pinch
+    const x = e.clientX ?? 0, y = e.clientY ?? 0, scale = e.scale ?? 1;
+    if (e.type === 'gesturestart') { this.gesture = { scale, x, y }; this.drag = null; this.pinch = null; this.anim = null; return; }
+    if (!this.gesture) return;
+    if (e.type === 'gesturechange') { if (scale > 0 && this.gesture.scale > 0) this.zoomAt(x, y, this.gesture.scale / scale); this.panBy(x - this.gesture.x, y - this.gesture.y); this.gesture = { scale, x, y }; return; }
+    this.gesture = null; // gestureend: a finger still down pans from here
+    if (this.pointers.size === 1) this.drag = { mode: 'pan', pivot: new THREE.Vector3() };
   };
   /** Turntable about `pivot`: a horizontal drag spins about the board's normal, a vertical drag
    *  tips about the screen's horizontal axis. Spinning about the camera's own axes (a trackball)
@@ -1045,6 +1093,9 @@ export class Board3DRenderer {
     const fromAbove = this.camera.position.y >= this.target.y;
     for (const mk of this.markers) mk.visible = (mk.userData.face === 'top') === fromAbove;
     for (const gh of this.ghostParts) gh.visible = (gh.userData.face === 'top') !== fromAbove; // the face the camera does not see
+    // the lit net's vias flash: on 350 ms, dim 350 ms — a timed toggle, not a per-frame fade, so a big board draws a few
+    // frames a second for it, not sixty
+    if (this.stack?.litVias?.visible) { const on = Math.floor(performance.now() / 350) % 2 === 0; const mat = this.stack.litVias.material as THREE.MeshBasicMaterial; const want = on ? 1 : 0.3; if (mat.opacity !== want) { mat.opacity = want; } this.dirty = true; }
     if (this.ghostMode === 'disco' && this.ghostParts.length) {
       const k = 0.55 + 0.45 * Math.sin(performance.now() / 180); // pulse
       for (const gh of this.ghostParts) gh.traverse(o => { const mat = (o as THREE.Mesh).material as THREE.Material | undefined; if (mat && 'opacity' in mat) mat.opacity = (o instanceof LineSegments2 ? 0.7 : 0.22) * k; });
@@ -1082,8 +1133,9 @@ export class Board3DRenderer {
   private settledLow = false;
   dispose(): void {
     this.disposed = true; cancelAnimationFrame(this.raf); this.canvas.removeEventListener('wheel', this.onWheel, { capture: true }); this.ro.disconnect();
-    for (const [ev, fn] of [['pointerdown', this.onPointerDown], ['pointermove', this.onPointerMove], ['pointerup', this.onPointerUp], ['pointercancel', this.onPointerUp], ['contextmenu', this.onContextMenu]] as const) this.canvas.removeEventListener(ev, fn as EventListener);
+    for (const [ev, fn] of [['pointerdown', this.onPointerDown], ['pointermove', this.onPointerMove], ['pointerup', this.onPointerUp], ['pointercancel', this.onPointerCancel], ['lostpointercapture', this.onPointerCancel], ['contextmenu', this.onContextMenu]] as const) this.canvas.removeEventListener(ev, fn as EventListener);
     for (const root of [this.boardRoot, this.partsRoot, this.pickRoot, this.hlRoot, this.labelRoot]) disposeTree(root);
+    this.removeGestureListeners();
     this.lowRT?.dispose(); this.fullRT?.dispose(); this.blitMat.dispose(); this.padMaterial?.dispose();
     this.renderer.dispose(); this.renderer.forceContextLoss(); this.canvas.remove();
   }
