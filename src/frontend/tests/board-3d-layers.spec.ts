@@ -17,7 +17,12 @@ test.describe.configure({ timeout: 240000 });
 type Stack = { layers: number; copperMeshes: number; pourMeshes: number; vias: number; slices: number; sideOffset: number; layerY: number[]; partsVisible: boolean; xray: boolean; litNetId: number; litOnly: boolean; copperGroupsVisible: number; minTraceWidth: number; viaRadius: number; viaOpacity: number; litVias: number; litViaOpacity: number };
 type W = { __boardStore: { board: { parts: { name: string; pins: { net: string }[] }[]; traces: { net: string; layer?: number; start: { x: number; y: number }; end: { x: number; y: number }; width: number }[] }; layerStates: { visible: boolean }[]; toggleLayer(i: number): void; highlightNet(n: string | null): void; setPartOverride(n: string, m: 'hide' | null): void; selectPart(i: number | null): void }; __board3d?: { renderer: { drawnParts: number; stackInfo(): Stack | null; cameraState(): { dist: number }; part(i: number): unknown; screenOf(i: number): [number, number] | null; project(p: [number, number, number]): [number, number]; view(p: string, a?: boolean): void; partsMode(): string } } };
 
+/** three.js reports a shader that does not compile on the console and simply draws nothing: a GLSL typo passed every
+ *  uniform-level check (2026-11-16). Every test here fails on such an error. */
+const shaderErrors = new WeakMap<Page, string[]>();
 async function open3D(page: Page) {
+  const errs: string[] = []; shaderErrors.set(page, errs);
+  page.on('console', m => { const t = m.text(); if (/Shader Error|WebGLProgram|ERROR: 0:/.test(t)) errs.push(t.slice(0, 300)); });
   await page.goto('/'); await page.waitForLoadState('networkidle');
   await page.evaluate(() => localStorage.removeItem('boardripper-view3d'));
   await page.setInputFiles('[data-testid="file-input"]', FIXTURE);
@@ -25,6 +30,7 @@ async function open3D(page: Page) {
   await page.getByTestId('view3d-btn').click();
   await page.waitForFunction(() => ((window as unknown as W).__board3d?.renderer.drawnParts ?? 0) > 0, null, { timeout: 180000 }); // the first load after an edit pays Vite's re-transform of the three.js chunk
 }
+test.afterEach(async ({ page }) => { expect(shaderErrors.get(page) ?? []).toEqual([]); });
 const stack = (page: Page) => page.evaluate(() => (window as unknown as W).__board3d!.renderer.stackInfo());
 
 test('a 4-layer board gets a stack; X-ray and Explode act on it; the Layers tab hides a layer', async ({ page }) => {

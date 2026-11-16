@@ -343,6 +343,9 @@ export class Board3DRenderer {
    *  segment (Copper layers on), 1 draws only the lit net's (Copper layers off, a net lit: its traces still show on the
    *  faces, through the dielectric they are inside the board as they should be). A lit segment is drawn in the net
    *  colour at full alpha and a little wider, so it reads over its layer. */
+  // The lit net draws in its own layer's colour, saturated and brightened, with a dark edge so it reads on any
+  // background; while a net is lit the rest of the copper is darker but stays saturated and opaque enough to follow.
+  // Never put a // comment inside the GLSL template: it runs to the end of the line and can swallow code (2026-11-16).
   private static copperMaterial(): THREE.ShaderMaterial {
     return new THREE.ShaderMaterial({
       uniforms: { uColor: { value: new THREE.Color(0x3fa65b) }, uAlpha: { value: 1 }, uLit: { value: 0 }, uLitColor: { value: new THREE.Color(0x19e6ff) }, uMode: { value: 0 } }, transparent: true, depthWrite: false, side: THREE.DoubleSide,
@@ -354,7 +357,10 @@ export class Board3DRenderer {
           vLoc = vec2(s, v * half_); vHalf = half_; vLen = len; gl_Position = projectionMatrix * modelViewMatrix * vec4(p.x, lit > 0.5 ? 0.02 : 0.0, p.y, 1.0); }`,
       fragmentShader: `uniform vec3 uColor; uniform float uAlpha; uniform vec3 uLitColor; uniform float uLit; varying vec2 vLoc; varying float vHalf; varying float vLen; varying float vLitSeg;
         void main() { float s = clamp(vLoc.x, 0.0, vLen); float d = length(vLoc - vec2(s, 0.0)); if (d > vHalf) discard;
-          if (vLitSeg > 0.5) { float edge = vHalf * 0.32; gl_FragColor = d > vHalf - edge ? vec4(0.02, 0.02, 0.03, 1.0) : vec4(uLitColor, 1.0); } else // a dark edge keeps the net colour readable on any layer colour and on the tan dielectric gl_FragColor = vec4(uColor, uAlpha * (uLit > 0.5 ? 0.12 : 1.0)); }`,
+          float lum = dot(uColor, vec3(0.299, 0.587, 0.114)); vec3 sat = clamp(mix(vec3(lum), uColor, 1.5), 0.0, 1.0);
+          if (vLitSeg > 0.5) { float edge = vHalf * 0.3; gl_FragColor = d > vHalf - edge ? vec4(0.02, 0.02, 0.03, 1.0) : vec4(clamp(sat * 1.3 + 0.06, 0.0, 1.0), 1.0); }
+          else if (uLit > 0.5) gl_FragColor = vec4(sat * 0.42, uAlpha * 0.85);
+          else gl_FragColor = vec4(uColor, uAlpha); }`,
     });
   }
   /** The lit net onto the copper stack: every layer's shader gets its id; with Copper layers off the stack is shown in

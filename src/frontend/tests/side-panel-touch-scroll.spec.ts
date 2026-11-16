@@ -123,8 +123,10 @@ test.describe('side panels scroll under a finger', () => {
     await expect(table).toBeVisible();
     await expect.poll(() => table.evaluate(e => e.scrollHeight - e.clientHeight)).toBeGreaterThan(80);
 
-    const box = (await table.boundingBox())!;
-    await fingerDrag(cdp, page, { x: box.x + box.width / 2, y: box.y + box.height * 0.8 }, -Math.round(box.height * 0.6));
+    // at this short viewport the table runs past the bottom of the panel: drag inside the part that is on screen
+    const box = (await table.boundingBox())!, clip = await table.evaluate(e => { let b = e.getBoundingClientRect().bottom; for (let p = e.parentElement; p; p = p.parentElement) { const cs = getComputedStyle(p); if (cs.overflowY !== 'visible') b = Math.min(b, p.getBoundingClientRect().bottom); } return Math.min(b, window.innerHeight); });
+    const visible = clip - box.y;
+    await fingerDrag(cdp, page, { x: box.x + box.width / 2, y: box.y + visible * 0.8 }, -Math.round(visible * 0.6));
     expect(await table.evaluate(e => e.scrollTop)).toBeGreaterThan(40);
   });
 });
