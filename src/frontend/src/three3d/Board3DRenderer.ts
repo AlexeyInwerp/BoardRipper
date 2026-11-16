@@ -999,7 +999,7 @@ export class Board3DRenderer {
   }
   turnBy(dx: number, dy: number, pivot: THREE.Vector3, spinSign?: number): void {
     const k = 0.006, upright = spinSign ?? this.spinSign();
-    const spin = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -dx * k * upright);
+    const spin = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), dx * k * upright); // a drag right turns the picture clockwise from above (reported inverted the other way, 2026-11-16)
     const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0).applyQuaternion(spin);
     right.y = 0; if (right.lengthSq() < 1e-8) right.set(1, 0, 0); right.normalize(); // keep the tip axis level, so no roll creeps in
     const q = new THREE.Quaternion().setFromAxisAngle(right, -dy * k).multiply(spin);
