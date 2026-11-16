@@ -59,7 +59,37 @@ export interface Board3DModel {
 /** Formats whose silkscreen paths are printed art, not assembly outlines. */
 const PRINTED_SILK = new Set(['EAGLE_BRD', 'KICAD']);
 
-export function buildBoard3DModel(board: BoardData): Board3DModel {
+export interface Board3DModelOptions {
+  /** Reference designators the user hid (the tab's part overrides) — left out like `part.hidden`. */
+  hidden?: ReadonlySet<string>;
+  /** Precomputed estimates by part index (from `estimateParts`), so the slow step can run in chunks with progress. */
+  estimates?: ReadonlyMap<number, PartEstimate>;
+}
+
+/** The estimator over every part, in chunks that yield to the browser between them so a progress indicator can
+ *  paint — on a 7,900-part board the estimates are most of the build. The Y-up conversion matches `buildBoard3DModel`. */
+export async function estimateParts(board: BoardData, onProgress?: (done: number, total: number) => void | Promise<void>, chunk = 400): Promise<Map<number, PartEstimate>> {
+  const yUp = board.flipY ?? getFormat(board.format)?.flipY ?? false, swap = board.primarySide === 'bottom';
+  const out = new Map<number, PartEstimate>(); const n = board.parts.length;
+  for (let i = 0; i < n; i++) {
+    const pt = board.parts[i]; if (pt.hidden || !pt.pins.length) continue;
+    out.set(i, estimatePart(yUpPartOf(pt, yUp, swap), { usePackage: true }));
+    if ((i + 1) % chunk === 0 && onProgress) { await onProgress(i + 1, n); await new Promise<void>(r => setTimeout(r, 0)); }
+  }
+  if (onProgress) await onProgress(n, n);
+  return out;
+}
+
+/** A part in the Y-up frame with its effective side (the user's Top is the +y face). */
+function yUpPartOf(pt: Part, yUp: boolean, swap: boolean): Part {
+  const S = (side: Part['side']): Part['side'] => (swap && side === 'top' ? 'bottom' : swap && side === 'bottom' ? 'top' : side);
+  if (yUp) return swap ? { ...pt, side: S(pt.side) } : pt;
+  const fy = (y: number) => -y, P = (p: Point): Point => ({ x: p.x, y: fy(p.y) }), B = (b: BBox): BBox => ({ minX: b.minX, maxX: b.maxX, minY: -b.maxY, maxY: -b.minY });
+  return { ...pt, side: S(pt.side), origin: P(pt.origin), bounds: B(pt.bounds), angleDeg: pt.angleDeg === undefined ? undefined : -pt.angleDeg,
+    pins: pt.pins.map((q: Pin): Pin => ({ ...q, position: P(q.position), padBounds: q.padBounds && B(q.padBounds), padAngleDeg: q.padAngleDeg === undefined ? undefined : -q.padAngleDeg, padPolygon: q.padPolygon?.map(P) })) };
+}
+
+export function buildBoard3DModel(board: BoardData, opts: Board3DModelOptions = {}): Board3DModel {
   const yUp = board.flipY ?? getFormat(board.format)?.flipY ?? false;
   // The user's Top is the file's primary side. The 2D view draws a primary-bottom board in the file frame with the
   // bottom-side parts on top; the 3D view does the same by putting that side on the +y face — before, the Top preset
@@ -99,8 +129,8 @@ export function buildBoard3DModel(board: BoardData): Board3DModel {
   const parts: Board3DPart[] = [];
   const holes: Board3DModel['holes'] = [];
   board.parts.forEach((pt, index) => {
-    if (pt.hidden || !pt.pins.length) return;
-    const est = estimatePart(yUpPart(pt), { usePackage: true });
+    if (pt.hidden || !pt.pins.length || opts.hidden?.has(pt.name)) return;
+    const est = opts.estimates?.get(index) ?? estimatePart(yUpPart(pt), { usePackage: true });
     const side = S(pt.side) === 'bottom' ? 'bottom' : 'top';
     parts.push({ index, name: pt.name, side, est });
     if (est.family === 'hole') { const [x, z] = toScene({ x: est.cx, y: est.cy }); holes.push({ x, z, rx: (est.p.drill || est.L * 0.5) / 2, rz: (est.p.drill || est.W * 0.5) / 2 }); }

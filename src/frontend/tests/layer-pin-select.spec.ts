@@ -91,7 +91,8 @@ test('selecting reveals transiently without flipping the toggle; pinning turns i
   await loadMultilayer(page);
   const rows = page.locator('.layer-list-container .layer-item');
 
-  // Only the primary (Top) layer is visible by default; inner/bottom are hidden.
+  // every layer is visible by default (2026-11-16); hide the inner and bottom layers for this test
+  await page.evaluate(() => { const st = (window as unknown as { __boardStore: { toggleLayer(i: number): void } }).__boardStore; st.toggleLayer(1); st.toggleLayer(2); });
   await expect(rows.nth(1)).toHaveClass(/layer-hidden/);
   await expect(rows.nth(2)).toHaveClass(/layer-hidden/);
 

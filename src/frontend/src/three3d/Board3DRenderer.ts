@@ -162,19 +162,31 @@ export class Board3DRenderer {
 
   // ───────────── board ─────────────
   private buildMs = 0;
+  private buildGen = 0;
   private boardShapes: THREE.Shape[] = [];
   private slabMesh: THREE.Mesh | null = null;
   private faceMeshes: THREE.Mesh[] = [];
-  setModel(model: Board3DModel): void {
-    const t0 = performance.now();
+  setModel(model: Board3DModel): void { void this.setModelStaged(model); }
+  /** The scene build in stages — board faces, layer stack, parts, pick grids, labels — with `onStage` awaited between
+   *  them, so a progress indicator can paint: on a 7,900-part board the whole build blocks the thread for seconds
+   *  (a minute on a slow machine), and before this nothing on screen said so. */
+  async setModelStaged(model: Board3DModel, onStage?: (stage: string, done: number, total: number) => Promise<void>): Promise<void> {
+    const t0 = performance.now(); const gen = ++this.buildGen; this.building = true;
     this.model = model;
     for (const root of [this.boardRoot, this.stackRoot, this.partsRoot, this.pickRoot, this.hlRoot, this.labelRoot]) disposeTree(root);
-    this.pickBoxes = []; this.partByIndex.clear(); this.stack = null; this.padMeshes = []; this.sideOffset = 0;
-    this.buildBoard(model);
-    this.buildStack(model);
-    this.buildParts(model); if (this.settings.parts !== 'solid') this.applyPartsMode();
-    this.buildPickGrids(model);
-    this.buildLabels(model);
+    this.pickBoxes = []; this.partByIndex.clear(); this.stack = null; this.padMeshes = []; this.sideOffset = 0; this.netIds = new Map();
+    const stages: [string, () => void][] = [
+      ['Board faces', () => this.buildBoard(model)], ['Copper layers', () => this.buildStack(model)],
+      ['Parts', () => { this.buildParts(model); if (this.settings.parts !== 'solid') this.applyPartsMode(); }],
+      ['Picking', () => this.buildPickGrids(model)], ['Labels', () => this.buildLabels(model)],
+    ];
+    for (let i = 0; i < stages.length; i++) {
+      if (onStage) { await onStage(stages[i][0], i, stages.length); if (this.disposed || gen !== this.buildGen) return; }
+      stages[i][1]();
+    }
+    if (onStage) await onStage('Ready', stages.length, stages.length);
+    if (this.disposed || gen !== this.buildGen) return;
+    this.building = false;
     const span = Math.max(model.width, model.height);
     Object.assign(this.key.shadow.camera, { left: -span * 0.7, right: span * 0.7, top: span * 0.7, bottom: -span * 0.7, near: 1, far: span * 6 });
     this.key.position.set(-0.4 * span, span * 1.5, 0.5 * span); this.key.shadow.camera.updateProjectionMatrix();
@@ -282,9 +294,9 @@ export class Board3DRenderer {
       const segs = m.copper.filter(c => c.layer === i); let copper: THREE.Mesh | null = null;
       if (segs.length) {
         const g = new THREE.InstancedBufferGeometry(); g.index = quad.index; g.setAttribute('position', quad.attributes.position); g.setAttribute('uv', quad.attributes.uv); g.instanceCount = segs.length;
-        const a = new Float32Array(segs.length * 2), b = new Float32Array(segs.length * 2), w = new Float32Array(segs.length);
-        segs.forEach((c, k) => { a[k * 2] = c.x1; a[k * 2 + 1] = c.z1; b[k * 2] = c.x2; b[k * 2 + 1] = c.z2; w[k] = c.w; });
-        g.setAttribute('aP1', new THREE.InstancedBufferAttribute(a, 2)); g.setAttribute('aP2', new THREE.InstancedBufferAttribute(b, 2)); g.setAttribute('aW', new THREE.InstancedBufferAttribute(w, 1));
+        const a = new Float32Array(segs.length * 2), b = new Float32Array(segs.length * 2), w = new Float32Array(segs.length), nid = new Float32Array(segs.length);
+        segs.forEach((c, k) => { a[k * 2] = c.x1; a[k * 2 + 1] = c.z1; b[k * 2] = c.x2; b[k * 2 + 1] = c.z2; w[k] = c.w; nid[k] = this.netId(c.net); });
+        g.setAttribute('aP1', new THREE.InstancedBufferAttribute(a, 2)); g.setAttribute('aP2', new THREE.InstancedBufferAttribute(b, 2)); g.setAttribute('aW', new THREE.InstancedBufferAttribute(w, 1)); g.setAttribute('aNet', new THREE.InstancedBufferAttribute(nid, 1));
         const B = new THREE.Box3(); for (const c of segs) { B.expandByPoint(new THREE.Vector3(c.x1, 0, c.z1)); B.expandByPoint(new THREE.Vector3(c.x2, 0, c.z2)); } B.min.y = -0.1; B.max.y = 0.1; g.boundingBox = B; g.boundingSphere = B.getBoundingSphere(new THREE.Sphere());
         copper = new THREE.Mesh(g, Board3DRenderer.copperMaterial()); copper.frustumCulled = false; copper.renderOrder = 2; group.add(copper);
       }
@@ -312,17 +324,38 @@ export class Board3DRenderer {
     }
     this.stack = stack; this.applyStack();
   }
-  /** One material for every copper layer; the colour and alpha are per mesh (cloned uniforms). */
+  /** Net name → small integer for the copper shader (0 = no net). Per model. */
+  private netIds = new Map<string, number>();
+  private netId(net: string): number { if (!net) return 0; let id = this.netIds.get(net); if (id === undefined) { id = this.netIds.size + 1; this.netIds.set(net, id); } return id; }
+  /** One material per copper layer: layer colour and alpha, the lit net's id and colour, and `uMode` — 0 draws every
+   *  segment (Copper layers on), 1 draws only the lit net's (Copper layers off, a net lit: its traces still show on the
+   *  faces, through the dielectric they are inside the board as they should be). A lit segment is drawn in the net
+   *  colour at full alpha and a little wider, so it reads over its layer. */
   private static copperMaterial(): THREE.ShaderMaterial {
     return new THREE.ShaderMaterial({
-      uniforms: { uColor: { value: new THREE.Color(0x3fa65b) }, uAlpha: { value: 1 } }, transparent: true, depthWrite: false, side: THREE.DoubleSide,
-      vertexShader: `attribute vec2 aP1; attribute vec2 aP2; attribute float aW; varying vec2 vLoc; varying float vHalf; varying float vLen;
-        void main() { vec2 d = aP2 - aP1; float len = length(d); vec2 dir = len > 1e-6 ? d / len : vec2(1.0, 0.0); vec2 perp = vec2(-dir.y, dir.x); float half_ = aW * 0.5;
-          float u = position.x + 0.5, v = position.y * 2.0; float s = u * (len + aW) - half_; vec2 p = aP1 + dir * s + perp * (v * half_);
-          vLoc = vec2(s, v * half_); vHalf = half_; vLen = len; gl_Position = projectionMatrix * modelViewMatrix * vec4(p.x, 0.0, p.y, 1.0); }`,
-      fragmentShader: `uniform vec3 uColor; uniform float uAlpha; varying vec2 vLoc; varying float vHalf; varying float vLen;
-        void main() { float s = clamp(vLoc.x, 0.0, vLen); float d = length(vLoc - vec2(s, 0.0)); if (d > vHalf) discard; gl_FragColor = vec4(uColor, uAlpha); }`,
+      uniforms: { uColor: { value: new THREE.Color(0x3fa65b) }, uAlpha: { value: 1 }, uLit: { value: 0 }, uLitColor: { value: new THREE.Color(0x19e6ff) }, uMode: { value: 0 } }, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      vertexShader: `attribute vec2 aP1; attribute vec2 aP2; attribute float aW; attribute float aNet; uniform float uLit; uniform float uMode; varying vec2 vLoc; varying float vHalf; varying float vLen; varying float vLitSeg;
+        void main() { float lit = (uLit > 0.5 && abs(aNet - uLit) < 0.5) ? 1.0 : 0.0; vLitSeg = lit;
+          if (uMode > 0.5 && lit < 0.5) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+          float w = aW * (lit > 0.5 ? 1.6 : 1.0); vec2 d = aP2 - aP1; float len = length(d); vec2 dir = len > 1e-6 ? d / len : vec2(1.0, 0.0); vec2 perp = vec2(-dir.y, dir.x); float half_ = w * 0.5;
+          float u = position.x + 0.5, v = position.y * 2.0; float s = u * (len + w) - half_; vec2 p = aP1 + dir * s + perp * (v * half_);
+          vLoc = vec2(s, v * half_); vHalf = half_; vLen = len; gl_Position = projectionMatrix * modelViewMatrix * vec4(p.x, lit > 0.5 ? 0.02 : 0.0, p.y, 1.0); }`,
+      fragmentShader: `uniform vec3 uColor; uniform float uAlpha; uniform vec3 uLitColor; uniform float uLit; varying vec2 vLoc; varying float vHalf; varying float vLen; varying float vLitSeg;
+        void main() { float s = clamp(vLoc.x, 0.0, vLen); float d = length(vLoc - vec2(s, 0.0)); if (d > vHalf) discard;
+          if (vLitSeg > 0.5) gl_FragColor = vec4(uLitColor, 1.0); else gl_FragColor = vec4(uColor, uAlpha * (uLit > 0.5 ? 0.35 : 1.0)); }`,
     });
+  }
+  /** The lit net onto the copper stack: every layer's shader gets its id; with Copper layers off the stack is shown in
+   *  lit-only mode while a net is lit, so the net's traces appear on the faces even on a plain board. */
+  private applyLitNet(): void {
+    const st = this.stack; if (!st) return; const net = this.sel.net, id = net ? (this.netIds.get(net) ?? 0) : 0, litOnly = !this.settings.copperLayers;
+    st.layers.forEach((L, i) => {
+      if (!L.copper) return; const u = (L.copper.material as THREE.ShaderMaterial).uniforms;
+      u.uLit.value = id; (u.uLitColor.value as THREE.Color).set(this.colour('netColour')); u.uMode.value = litOnly ? 1 : 0;
+      if (litOnly) { const state = this.layerStates[i]; L.group.visible = id > 0 && (state?.visible ?? true); if (L.pour) L.pour.visible = false; }
+      else if (L.pour) L.pour.visible = true;
+    });
+    this.dirty = true;
   }
   /** The Layers tab's state for this board: visibility and colour per layer, and the emphasised layer (the rest dim). */
   setLayerStates(states: { visible: boolean; color: number }[], emphasis: number | null): void {
@@ -335,7 +368,7 @@ export class Board3DRenderer {
     st.layers.forEach((L, i) => {
       const state = this.layerStates[i], vis = (state?.visible ?? true) || this.layerEmphasis === i;
       const color = state?.color ?? 0x3fa65b, alpha = this.layerEmphasis === null || this.layerEmphasis === i ? 1 : 0.2;
-      L.group.visible = s.copperLayers && vis; L.group.position.y = L.y * scale;
+      L.group.visible = s.copperLayers && vis; L.group.position.y = L.y * scale; if (L.pour) L.pour.visible = true;
       if (L.copper) { const u = (L.copper.material as THREE.ShaderMaterial).uniforms; (u.uColor.value as THREE.Color).set(color); u.uAlpha.value = alpha; }
       if (L.pour) { const mat = L.pour.material as THREE.MeshBasicMaterial; mat.color.set(color); mat.opacity = 0.35 * alpha; }
     });
@@ -347,6 +380,7 @@ export class Board3DRenderer {
     for (const g of [this.partsRoot, this.pickRoot, this.hlRoot, this.labelRoot]) g.traverse(o => { if (o.userData.side) o.position.y = (o.userData.side === 'top' ? 1 : -1) * this.sideOffset; });
     for (const pm of this.padMeshes) pm.position.y = (pm.userData.side === 'top' ? 1 : -1) * this.sideOffset;
     this.renderer.shadowMap.needsUpdate = true; this.dirty = true;
+    this.applyLitNet();
   }
   /** How far the top face (and everything on it) sits above its resting height while exploded; the bottom sits as far below. */
   private sideOffset = 0;
@@ -596,6 +630,7 @@ export class Board3DRenderer {
     const dim = net && this.dimMode !== 'off' ? 0.3 : 1;
     this.key.intensity = 1.3 * dim; this.under.intensity = 0.9 * dim; this.hemi.intensity = 0.45 * dim; this.scene.environmentIntensity = 0.4 * dim;
     for (const lm of this.labelMats) lm.uniforms.dim.value = dim === 1 ? 1 : 0.55;
+    this.applyLitNet();
     // an exploded view lifts each face's highlights with the face: a highlight whose geometry lies on one side is tagged
     // with it (net lines between the faces and anything spanning both stay in place)
     this.hlRoot.traverse(o => { if (o === this.hlRoot || o.userData.side !== undefined || o.userData.face) return; if (!(o instanceof THREE.Mesh)) return; const g = o.geometry; if (!g.boundingBox) g.computeBoundingBox(); const bb = g.boundingBox; if (!bb || bb.isEmpty()) return; const y0 = bb.min.y + o.position.y, y1 = bb.max.y + o.position.y; o.userData.side = y0 > 0 ? 'top' : y1 < 0 ? 'bottom' : null; });
@@ -623,9 +658,9 @@ export class Board3DRenderer {
   partsMode(): 'solid' | 'ghost' | 'off' { return this.settings.parts; }
 
   /** The stack as built — for tests. */
-  stackInfo(): { layers: number; copperMeshes: number; pourMeshes: number; vias: number; slices: number; sideOffset: number; layerY: number[]; partsVisible: boolean; xray: boolean } | null {
+  stackInfo(): { layers: number; copperMeshes: number; pourMeshes: number; vias: number; slices: number; sideOffset: number; layerY: number[]; partsVisible: boolean; xray: boolean; litNetId: number; litOnly: boolean; copperGroupsVisible: number } | null {
     const st = this.stack; if (!st) return null;
-    return { layers: st.layers.length, copperMeshes: st.layers.filter(L => L.copper).length, pourMeshes: st.layers.filter(L => L.pour).length, vias: st.vias?.count ?? 0, slices: st.slices.length, sideOffset: this.sideOffset, layerY: st.layers.map(L => L.group.position.y), partsVisible: this.partsRoot.visible, xray: (st.slices[0]?.mesh.material as THREE.MeshStandardMaterial[])[0]?.transparent ?? false };
+    return { layers: st.layers.length, copperMeshes: st.layers.filter(L => L.copper).length, pourMeshes: st.layers.filter(L => L.pour).length, vias: st.vias?.count ?? 0, slices: st.slices.length, sideOffset: this.sideOffset, layerY: st.layers.map(L => L.group.position.y), partsVisible: this.partsRoot.visible, xray: (st.slices[0]?.mesh.material as THREE.MeshStandardMaterial[])[0]?.transparent ?? false, litNetId: st.layers.find(L => L.copper) ? ((st.layers.find(L => L.copper)!.copper!.material as THREE.ShaderMaterial).uniforms.uLit.value as number) : 0, litOnly: st.layers.some(L => L.copper && ((L.copper.material as THREE.ShaderMaterial).uniforms.uMode.value as number) > 0), copperGroupsVisible: st.layers.filter(L => L.group.visible).length };
   }
 
   /** Hidden-side ghosts: the lit net's parts on the face the camera does not see, drawn through the
@@ -881,7 +916,9 @@ export class Board3DRenderer {
     const v = e.box.getCenter(new THREE.Vector3()).project(this.camera), r = this.canvas.getBoundingClientRect();
     return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height];
   }
-  get drawnParts(): number { return this.partByIndex.size; }
+  /** 0 while a staged build is still running: tests and callers wait on this for a ready scene. */
+  get drawnParts(): number { return this.building ? 0 : this.partByIndex.size; }
+  private building = false;
   /** For tests: a scene point's client position, and a part's centre. */
   project(p: [number, number, number]): [number, number] { const v = new THREE.Vector3(...p).project(this.camera), r = this.canvas.getBoundingClientRect(); return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height]; }
   partCentre(i: number): [number, number, number] | null { const e = this.partByIndex.get(i); if (!e) return null; const c = e.box.getCenter(new THREE.Vector3()); return [c.x, c.y, c.z]; }

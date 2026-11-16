@@ -317,9 +317,18 @@ runs for a board with two or more layers and copper:
   Ghosting swaps each body mesh's material for a cached translucent clone,
   no rebuild; pick boxes stay, so a hidden part can still be clicked.
 
+- **Lit net** (2026-11-16): each segment carries its net id; the layer shader
+  draws the lit net's segments in the net colour, 1.6× wide and 20 µm raised,
+  dims the rest to 35 %, and with Copper layers off runs in lit-only mode so a
+  lit net's traces still appear on the faces of a plain board.
+- **Build progress**: the build is staged (estimates in chunks of 400 parts,
+  then faces, stack, parts, picking, labels), yields between stages, and the
+  view shows a stage name and a bar. A tab switch cancels it.
+- **Hidden parts** come from the tab's part overrides (the right-click menu,
+  which the 3D view opens too); a change rebuilds the scene.
+
 Not done: picking inner copper (the 2D hit test only knows the outer
-faces), lighting a net on the stack, a real stackup (every file in the
-corpus spaces its layers evenly).
+faces), a real stackup (every file in the corpus spaces its layers evenly).
 
 ## Signal animation
 

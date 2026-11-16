@@ -1080,7 +1080,7 @@ class BoardStore extends Emitter {
     // visible so the side toggle alone gates trace visibility. Butterfly
     // formats (TVW) keep the primary-only default.
     if (cached.layerNames) {
-      tab.layerStates = createLayerStates(cached.layerNames, undefined, !cachedFmt?.hasLayers);
+      tab.layerStates = createLayerStates(cached.layerNames, undefined, true); // every layer on, whatever the format (2026-11-16: TVW used to start on its top layer alone)
     }
     const vp = loadViewPrefs();
     if (vp.defaultButterfly) {
@@ -1220,7 +1220,7 @@ class BoardStore extends Emitter {
         // See the cached-path comment above: hasLayers=false formats (Altium)
         // default every layer visible so the side toggle is the only gate.
         if (board.layerNames) {
-          tab.layerStates = createLayerStates(board.layerNames, undefined, !fmt?.hasLayers);
+          tab.layerStates = createLayerStates(board.layerNames, undefined, true);
         }
         const vp = loadViewPrefs();
         if (vp.defaultButterfly) {
