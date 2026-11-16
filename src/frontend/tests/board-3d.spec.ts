@@ -227,3 +227,31 @@ test('3D view: hidden-side ghosts show the lit net\'s parts on the face the came
   const fromFar = await stats(); expect(fromOwn + fromFar.ghostsVisible).toBe(fromFar.ghosts);
 });
 
+test('3D view: a drag that tips through the board\'s plane keeps turning the same way', async ({ page }) => {
+  test.setTimeout(90000);
+  await openBoard(page);
+  await page.getByTestId('view3d-btn').click();
+  await page.waitForFunction(() => ((window as unknown as W).__board3d?.renderer.drawnParts ?? 0) > 0, null, { timeout: 30000 });
+  await page.waitForTimeout(700);
+  const cam = () => page.evaluate(() => (window as unknown as W).__board3d!.renderer.cameraState());
+  // the camera's bearing about the board's normal, measured round the drag's pivot
+  const bearing = async () => { const c = await cam(); const p = await page.evaluate(() => (window as unknown as { __board3d: { renderer: { lastPivot: [number, number, number] } } }).__board3d.renderer.lastPivot); return Math.atan2(c.pos[0] - p[0], c.pos[2] - p[2]); };
+  const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+  const box = (await page.locator('.board-3d-host').boundingBox())!;
+  let x = box.x + box.width / 2, y = box.y + box.height * 0.85;
+  await page.mouse.move(x, y); await page.mouse.down();
+  const turn = async () => { const b0 = await bearing(); for (let k = 0; k < 8; k++) { x += 6; await page.mouse.move(x, y); } return wrap((await bearing()) - b0); };
+  const before = await turn();
+  const above = (await cam()).pos[1] > 0;
+  // tip towards the board's edge and through its plane — not over the top pole, where a second sign change would
+  // cancel the first and hide the flip
+  const upY = async () => page.evaluate(() => (window as unknown as { __board3d: { renderer: { camera: { up: { y: number } } } } }).__board3d.renderer.camera.up.y);
+  for (let k = 0; k < 60 && ((await cam()).pos[1] > 0) === above; k++) { y -= 8; await page.mouse.move(x, y); }
+  expect(await upY()).toBeGreaterThan(0);   // still upright: the plane was crossed, not the pole
+  expect(((await cam()).pos[1] > 0) !== above).toBe(true);
+  const after = await turn();
+  await page.mouse.up();
+  expect(Math.abs(before)).toBeGreaterThan(0.01);
+  expect(Math.sign(after)).toBe(Math.sign(before));
+});
+

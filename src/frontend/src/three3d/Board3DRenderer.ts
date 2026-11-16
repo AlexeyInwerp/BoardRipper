@@ -40,7 +40,7 @@ export class Board3DRenderer {
   private labelRoot = new THREE.Group();
   /** The layer stack of a multi-layer board: dielectric slices, copper per layer, pours, vias. */
   private stackRoot = new THREE.Group();
-  private stack: { layers: { group: THREE.Group; y: number; copper: THREE.Mesh | null; pour: THREE.Mesh | null }[]; slices: { mesh: THREE.Mesh; y: number }[]; vias: THREE.InstancedMesh | null; litVias: THREE.InstancedMesh | null; faces: THREE.Mesh[]; slab: THREE.Mesh | null } | null = null;
+  private stack: { layers: { group: THREE.Group; y: number; copper: THREE.Mesh | null; litPasses: THREE.Mesh[]; pour: THREE.Mesh | null }[]; slices: { mesh: THREE.Mesh; y: number }[]; vias: THREE.InstancedMesh | null; litVias: THREE.InstancedMesh | null; faces: THREE.Mesh[]; slab: THREE.Mesh | null } | null = null;
   private layerStates: { visible: boolean; color: number }[] = [];
   private layerEmphasis: number | null = null;
   private labelMat: THREE.ShaderMaterial | null = null;
@@ -257,9 +257,13 @@ export class Board3DRenderer {
    *  pixels and it blurs close up; a quad or a 16-gon stays sharp at any zoom. One mesh per face. */
   private padMesh(m: Board3DModel, side: 'top' | 'bottom'): THREE.Mesh {
     const geos: THREE.BufferGeometry[] = [];
+    // holes the file does not tie to a pad's drill (estimated mounting holes): the land centred on one is a ring too
+    const holeAt = (x: number, z: number) => { for (const h of m.holes) if (Math.hypot(h.x - x, h.z - z) < 0.05) return Math.min(h.rx, h.rz); return 0; };
     for (const p of m.pads) {
       if (p.side !== side && p.side !== 'both') continue;
-      const g0 = p.round || p.drill > 0 ? new THREE.CircleGeometry(Math.max(p.w, p.h) / 2, 16) : new THREE.PlaneGeometry(p.w, p.h);
+      // a drilled land is a ring: its hole is cut through the board and must stay open, not be capped with copper
+      const hole = p.drill > 0 ? p.drill / 2 : holeAt(p.x, p.z), outer = Math.max(p.w, p.h) / 2;
+      const g0 = hole > 0 && hole < outer ? new THREE.RingGeometry(hole, outer, 24) : p.round || p.drill > 0 ? new THREE.CircleGeometry(outer, 16) : new THREE.PlaneGeometry(p.w, p.h);
       g0.rotateX(side === 'top' ? -Math.PI / 2 : Math.PI / 2); g0.rotateY(p.angle * Math.PI / 180); g0.translate(p.x, side === 'top' ? TOP + 0.008 : -TOP - 0.008, p.z);
       const g = g0.index ? g0.toNonIndexed() : g0; if (g !== g0) g0.dispose();
       g.setAttribute('aSize', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count).fill(Math.min(p.w, p.h)), 1));
@@ -296,14 +300,16 @@ export class Board3DRenderer {
     const quad = new THREE.PlaneGeometry(1, 1); // (u, v) corners in x/y; the shader builds the capsule quad from them
     for (let i = 0; i < n; i++) {
       const group = new THREE.Group(); const y = this.layerY(i, n); group.position.y = y; this.stackRoot.add(group);
-      const segs = m.copper.filter(c => c.layer === i); let copper: THREE.Mesh | null = null;
+      const segs = m.copper.filter(c => c.layer === i); let copper: THREE.Mesh | null = null; const litPasses: THREE.Mesh[] = [];
       if (segs.length) {
         const g = new THREE.InstancedBufferGeometry(); g.index = quad.index; g.setAttribute('position', quad.attributes.position); g.setAttribute('uv', quad.attributes.uv); g.instanceCount = segs.length;
         const a = new Float32Array(segs.length * 2), b = new Float32Array(segs.length * 2), w = new Float32Array(segs.length), nid = new Float32Array(segs.length);
         segs.forEach((c, k) => { a[k * 2] = c.x1; a[k * 2 + 1] = c.z1; b[k * 2] = c.x2; b[k * 2 + 1] = c.z2; w[k] = c.w; nid[k] = this.netId(c.net); });
         g.setAttribute('aP1', new THREE.InstancedBufferAttribute(a, 2)); g.setAttribute('aP2', new THREE.InstancedBufferAttribute(b, 2)); g.setAttribute('aW', new THREE.InstancedBufferAttribute(w, 1)); g.setAttribute('aNet', new THREE.InstancedBufferAttribute(nid, 1));
         const B = new THREE.Box3(); for (const c of segs) { B.expandByPoint(new THREE.Vector3(c.x1, 0, c.z1)); B.expandByPoint(new THREE.Vector3(c.x2, 0, c.z2)); } B.min.y = -0.1; B.max.y = 0.1; g.boundingBox = B; g.boundingSphere = B.getBoundingSphere(new THREE.Sphere());
-        copper = new THREE.Mesh(g, Board3DRenderer.copperMaterial()); copper.frustumCulled = false; copper.renderOrder = 2; group.add(copper);
+        copper = new THREE.Mesh(g, Board3DRenderer.copperMaterial(0, i)); copper.frustumCulled = false; copper.renderOrder = 2; group.add(copper);
+        // the lit net in two more passes over the same instances: its dark outline, then its bright core
+        for (const pass of [1, 2] as const) { const mesh = new THREE.Mesh(g, Board3DRenderer.copperMaterial(pass, i)); mesh.frustumCulled = false; mesh.renderOrder = 2 + pass * 0.1; group.add(mesh); litPasses.push(mesh); }
       }
       let pour: THREE.Mesh | null = null; const ps = m.pours.filter(q => q.layer === i);
       if (ps.length) {
@@ -312,7 +318,7 @@ export class Board3DRenderer {
         const merged = geos.length ? mergeGeometries(geos) : null; geos.forEach(g => g.dispose());
         if (merged) { pour = new THREE.Mesh(merged, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })); pour.renderOrder = 1; group.add(pour); }
       }
-      stack.layers.push({ group, y, copper, pour });
+      stack.layers.push({ group, y, copper, litPasses, pour });
     }
     // dielectric: one slice between each pair of layers; together they are the slab, which is hidden
     if (this.slabMesh) this.slabMesh.visible = false;
@@ -346,22 +352,38 @@ export class Board3DRenderer {
   // The lit net draws in its own layer's colour, saturated and brightened, with a dark edge so it reads on any
   // background; while a net is lit the rest of the copper is darker but stays saturated and opaque enough to follow.
   // Never put a // comment inside the GLSL template: it runs to the end of the line and can swallow code (2026-11-16).
-  private static copperMaterial(): THREE.ShaderMaterial {
-    return new THREE.ShaderMaterial({
-      uniforms: { uColor: { value: new THREE.Color(0x3fa65b) }, uAlpha: { value: 1 }, uLit: { value: 0 }, uLitColor: { value: new THREE.Color(0x19e6ff) }, uMode: { value: 0 } }, transparent: true, depthWrite: false, side: THREE.DoubleSide,
-      vertexShader: `attribute vec2 aP1; attribute vec2 aP2; attribute float aW; attribute float aNet; uniform float uLit; uniform float uMode; varying vec2 vLoc; varying float vHalf; varying float vLen; varying float vLitSeg;
-        void main() { float lit = (uLit > 0.5 && abs(aNet - uLit) < 0.5) ? 1.0 : 0.0; vLitSeg = lit;
-          if (uMode > 0.5 && lit < 0.5) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
-          float w = aW * (lit > 0.5 ? 1.6 : 1.0); vec2 d = aP2 - aP1; float len = length(d); vec2 dir = len > 1e-6 ? d / len : vec2(1.0, 0.0); vec2 perp = vec2(-dir.y, dir.x); float half_ = w * 0.5;
+  //
+  // A trace is a run of segments, each an instanced capsule. Drawn one by one, every capsule paints its own copy of the
+  // overlap at a joint: translucent copper doubled its alpha there, and the lit net's dark edge cut across the next
+  // segment's core — the trace read as overlapping patches (2026-11-16). So each pass writes the stencil and tests
+  // against it (NotEqual, a ref per layer and pass): every pixel is painted once per pass, the union of the capsules is
+  // one solid line. Pass 0 is the unlit copper (the lit net's segments discarded), 1 the lit net's dark outline at its
+  // full width, 2 its bright core inside — two unions, so the edge runs round the whole line, never across it.
+  private static copperMaterial(pass: 0 | 1 | 2, layer: number): THREE.ShaderMaterial {
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { uColor: { value: new THREE.Color(0x3fa65b) }, uAlpha: { value: 1 }, uLit: { value: 0 }, uLitColor: { value: new THREE.Color(0x19e6ff) }, uMode: { value: 0 }, uPass: { value: pass } }, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      vertexShader: `attribute vec2 aP1; attribute vec2 aP2; attribute float aW; attribute float aNet; uniform float uLit; uniform float uMode; uniform float uPass; varying vec2 vLoc; varying float vHalf; varying float vLen;
+        void main() { float lit = (uLit > 0.5 && abs(aNet - uLit) < 0.5) ? 1.0 : 0.0;
+          bool keep = uPass < 0.5 ? (lit < 0.5 && uMode < 0.5) : (lit > 0.5);
+          if (!keep) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+          float w = aW * (lit > 0.5 ? 1.6 : 1.0) * (uPass > 1.5 ? 0.6 : 1.0); vec2 d = aP2 - aP1; float len = length(d); vec2 dir = len > 1e-6 ? d / len : vec2(1.0, 0.0); vec2 perp = vec2(-dir.y, dir.x); float half_ = w * 0.5;
           float u = position.x + 0.5, v = position.y * 2.0; float s = u * (len + w) - half_; vec2 p = aP1 + dir * s + perp * (v * half_);
           vLoc = vec2(s, v * half_); vHalf = half_; vLen = len; gl_Position = projectionMatrix * modelViewMatrix * vec4(p.x, lit > 0.5 ? 0.02 : 0.0, p.y, 1.0); }`,
-      fragmentShader: `uniform vec3 uColor; uniform float uAlpha; uniform vec3 uLitColor; uniform float uLit; varying vec2 vLoc; varying float vHalf; varying float vLen; varying float vLitSeg;
+      fragmentShader: `uniform vec3 uColor; uniform float uAlpha; uniform float uLit; uniform float uPass; varying vec2 vLoc; varying float vHalf; varying float vLen;
         void main() { float s = clamp(vLoc.x, 0.0, vLen); float d = length(vLoc - vec2(s, 0.0)); if (d > vHalf) discard;
           float lum = dot(uColor, vec3(0.299, 0.587, 0.114)); vec3 sat = clamp(mix(vec3(lum), uColor, 1.5), 0.0, 1.0);
-          if (vLitSeg > 0.5) { float edge = vHalf * 0.3; gl_FragColor = d > vHalf - edge ? vec4(0.02, 0.02, 0.03, 1.0) : vec4(clamp(sat * 1.3 + 0.06, 0.0, 1.0), 1.0); }
+          if (uPass > 1.5) gl_FragColor = vec4(clamp(sat * 1.3 + 0.06, 0.0, 1.0), 1.0);
+          else if (uPass > 0.5) gl_FragColor = vec4(0.02, 0.02, 0.03, 1.0);
           else if (uLit > 0.5) gl_FragColor = vec4(sat * 0.42, uAlpha * 0.85);
           else gl_FragColor = vec4(uColor, uAlpha); }`,
     });
+    mat.stencilWrite = true; mat.stencilRef = 1 + layer * 3 + pass; mat.stencilFunc = THREE.NotEqualStencilFunc;
+    mat.stencilZPass = THREE.ReplaceStencilOp; mat.stencilFail = THREE.KeepStencilOp; mat.stencilZFail = THREE.KeepStencilOp;
+    return mat;
+  }
+  /** Every copper material of a layer: the unlit pass and the lit net's two. */
+  private static copperMats(L: { copper: THREE.Mesh | null; litPasses: THREE.Mesh[] }): THREE.ShaderMaterial[] {
+    return L.copper ? [L.copper, ...L.litPasses].map(x => x.material as THREE.ShaderMaterial) : [];
   }
   /** The lit net onto the copper stack: every layer's shader gets its id; with Copper layers off the stack is shown in
    *  lit-only mode while a net is lit, so the net's traces appear on the faces even on a plain board. */
@@ -374,8 +396,8 @@ export class Board3DRenderer {
     const st = this.stack; if (!st) return;
     const lit = !!this.sel.net; for (const sl of st.slices) for (const mat of sl.mesh.material as THREE.MeshStandardMaterial[]) mat.color.set(lit ? 0x1c1a14 : 0x6e6448); const net = this.sel.net, id = net ? (this.netIds.get(net) ?? 0) : 0, litOnly = !this.settings.copperLayers;
     st.layers.forEach((L, i) => {
-      if (!L.copper) return; const u = (L.copper.material as THREE.ShaderMaterial).uniforms;
-      u.uLit.value = id; (u.uLitColor.value as THREE.Color).set(this.colour('netColour')); u.uMode.value = litOnly ? 1 : 0;
+      if (!L.copper) return;
+      for (const mat of Board3DRenderer.copperMats(L)) { const u = mat.uniforms; u.uLit.value = id; (u.uLitColor.value as THREE.Color).set(this.colour('netColour')); u.uMode.value = litOnly ? 1 : 0; }
       if (litOnly) { const state = this.layerStates[i]; L.group.visible = id > 0 && (state?.visible ?? true); if (L.pour) L.pour.visible = false; }
       else if (L.pour) { L.pour.visible = true; (L.pour.material as THREE.MeshBasicMaterial).opacity = (id > 0 ? 0.08 : 0.35) * (this.layerEmphasis === null || this.layerEmphasis === i ? 1 : 0.2); }
     });
@@ -394,7 +416,7 @@ export class Board3DRenderer {
       const state = this.layerStates[i], vis = (state?.visible ?? true) || this.layerEmphasis === i;
       const color = state?.color ?? 0x3fa65b, alpha = this.layerEmphasis === null || this.layerEmphasis === i ? 1 : 0.2;
       L.group.visible = s.copperLayers && vis; L.group.position.y = L.y * scale; if (L.pour) L.pour.visible = true;
-      if (L.copper) { const u = (L.copper.material as THREE.ShaderMaterial).uniforms; (u.uColor.value as THREE.Color).set(color); u.uAlpha.value = alpha; }
+      for (const mat of Board3DRenderer.copperMats(L)) { (mat.uniforms.uColor.value as THREE.Color).set(color); mat.uniforms.uAlpha.value = alpha; }
       if (L.pour) { const mat = L.pour.material as THREE.MeshBasicMaterial; mat.color.set(color); mat.opacity = 0.35 * alpha; }
     });
     const xray = s.xray || s.copperLayers; // showing the copper layers is showing the inside: the board goes see-through with them
@@ -891,7 +913,9 @@ export class Board3DRenderer {
 
   // ───────────── drag: turn about a pivot, pan, pinch ─────────────
   private pointers = new Map<number, { x: number; y: number }>();
-  private drag: { mode: 'turn' | 'pan'; pivot: THREE.Vector3 } | null = null;
+  private drag: { mode: 'turn' | 'pan'; pivot: THREE.Vector3; spin?: number } | null = null;
+  /** The last drag's spin sign: kept when a drag starts with the camera edge-on to the board, where facing is undecided. */
+  private lastSpin = 1;
   private pinch: { dist: number; mid: [number, number] } | null = null;
   private onContextMenu = (e: Event) => e.preventDefault();
   /** Where turning pivots: the point pressed — a part's surface, or the board face under the
@@ -917,7 +941,7 @@ export class Board3DRenderer {
     if (this.pointers.size === 2) { this.drag = null; this.pinch = this.pinchState(); return; }
     const panButton = e.button === 1 || (e.button === 2) === (this.leftDrag === 'orbit') || (e.button === 0 && e.shiftKey);
     const pivot = panButton ? new THREE.Vector3() : this.pivotAt(e.clientX, e.clientY);
-    this.drag = { mode: panButton ? 'pan' : 'turn', pivot }; if (!panButton) this.lastPivot = [pivot.x, pivot.y, pivot.z];
+    this.drag = { mode: panButton ? 'pan' : 'turn', pivot, spin: panButton ? undefined : this.spinSign() }; if (!panButton) this.lastPivot = [pivot.x, pivot.y, pivot.z];
     this.anim = null;
   };
   private pinchState() { const [a, b] = [...this.pointers.values()]; return { dist: Math.hypot(a.x - b.x, a.y - b.y), mid: [(a.x + b.x) / 2, (a.y + b.y) / 2] as [number, number] }; }
@@ -932,7 +956,7 @@ export class Board3DRenderer {
     }
     if (!this.drag || (dx === 0 && dy === 0)) return;
     if (this.drag.mode === 'pan') this.panBy(dx, dy);
-    else this.turnBy(dx, dy, this.drag.pivot);
+    else this.turnBy(dx, dy, this.drag.pivot, this.drag.spin);
   };
   private onPointerUp = (e: PointerEvent) => {
     this.pointers.delete(e.pointerId);
@@ -962,12 +986,19 @@ export class Board3DRenderer {
    *  builds up roll when the pointer moves in circles — the board tilted further and further.
    *  The tip is not clamped, so there is no pole to get stuck at; the whole camera frame turns
    *  about the pivot, so the pivot stays under the pointer. */
-  turnBy(dx: number, dy: number, pivot: THREE.Vector3): void {
-    // past the pole the board is seen upside down, and from underneath it is seen mirrored: in both the spin about the
-    // board's normal must change sign to keep following the pointer (the Bottom preset, and the old Top preset on a
-    // primary-bottom board, turned against the drag — "rotation is quite off", 2026-11-15)
-    const facing = this.camera.getWorldDirection(new THREE.Vector3()).y <= 0 ? 1 : -1;
-    const k = 0.006, upright = (this.camera.up.y >= 0 ? 1 : -1) * facing;
+  /** Which way a horizontal drag spins the board about its normal. Past the pole the board is seen upside down, and
+   *  from underneath it is seen mirrored: in both the spin changes sign to keep following the pointer (the Bottom
+   *  preset turned against the drag otherwise, 2026-11-15). Decided once, when a drag starts: evaluated on every move
+   *  it flipped the moment a tip carried the camera through the board's plane, and left and right swapped in the
+   *  middle of the gesture (2026-11-16). Edge-on, where the face seen is undecided, the last drag's sign holds. */
+  private spinSign(): number {
+    const dirY = this.camera.getWorldDirection(new THREE.Vector3()).y;
+    if (Math.abs(dirY) < 0.12) return this.lastSpin;
+    this.lastSpin = (this.camera.up.y >= 0 ? 1 : -1) * (dirY <= 0 ? 1 : -1);
+    return this.lastSpin;
+  }
+  turnBy(dx: number, dy: number, pivot: THREE.Vector3, spinSign?: number): void {
+    const k = 0.006, upright = spinSign ?? this.spinSign();
     const spin = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -dx * k * upright);
     const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0).applyQuaternion(spin);
     right.y = 0; if (right.lengthSq() < 1e-8) right.set(1, 0, 0); right.normalize(); // keep the tip axis level, so no roll creeps in
@@ -1155,7 +1186,8 @@ export class Board3DRenderer {
    *  so the dark board does not band the way 8-bit linear would; half-float stays linear. 4× MSAA
    *  half-float at 6.4 MP was 30 ms a frame, 8-bit 21 ms, for the same picture. */
   private static target(w: number, h: number, samples: number, half: boolean): THREE.WebGLRenderTarget {
-    const rt = new THREE.WebGLRenderTarget(w, h, { type: half ? THREE.HalfFloatType : THREE.UnsignedByteType, samples, depthBuffer: true });
+    // stencil: the copper passes paint each pixel once per pass (see copperMaterial)
+    const rt = new THREE.WebGLRenderTarget(w, h, { type: half ? THREE.HalfFloatType : THREE.UnsignedByteType, samples, depthBuffer: true, stencilBuffer: true });
     if (!half) rt.texture.colorSpace = THREE.SRGBColorSpace;
     return rt;
   }
