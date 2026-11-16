@@ -354,7 +354,7 @@ export class Board3DRenderer {
           vLoc = vec2(s, v * half_); vHalf = half_; vLen = len; gl_Position = projectionMatrix * modelViewMatrix * vec4(p.x, lit > 0.5 ? 0.02 : 0.0, p.y, 1.0); }`,
       fragmentShader: `uniform vec3 uColor; uniform float uAlpha; uniform vec3 uLitColor; uniform float uLit; varying vec2 vLoc; varying float vHalf; varying float vLen; varying float vLitSeg;
         void main() { float s = clamp(vLoc.x, 0.0, vLen); float d = length(vLoc - vec2(s, 0.0)); if (d > vHalf) discard;
-          if (vLitSeg > 0.5) gl_FragColor = vec4(uLitColor, 1.0); else gl_FragColor = vec4(uColor, uAlpha * (uLit > 0.5 ? 0.35 : 1.0)); }`,
+          if (vLitSeg > 0.5) gl_FragColor = vec4(uLitColor, 1.0); else gl_FragColor = vec4(uColor, uAlpha * (uLit > 0.5 ? 0.12 : 1.0)); }`,
     });
   }
   /** The lit net onto the copper stack: every layer's shader gets its id; with Copper layers off the stack is shown in
@@ -370,7 +370,7 @@ export class Board3DRenderer {
       if (!L.copper) return; const u = (L.copper.material as THREE.ShaderMaterial).uniforms;
       u.uLit.value = id; (u.uLitColor.value as THREE.Color).set(this.colour('netColour')); u.uMode.value = litOnly ? 1 : 0;
       if (litOnly) { const state = this.layerStates[i]; L.group.visible = id > 0 && (state?.visible ?? true); if (L.pour) L.pour.visible = false; }
-      else if (L.pour) L.pour.visible = true;
+      else if (L.pour) { L.pour.visible = true; (L.pour.material as THREE.MeshBasicMaterial).opacity = (id > 0 ? 0.08 : 0.35) * (this.layerEmphasis === null || this.layerEmphasis === i ? 1 : 0.2); }
     });
     this.dirty = true;
   }
@@ -400,7 +400,7 @@ export class Board3DRenderer {
         mtx.makeScale(r, Math.max(0.05, y0 - y1 + 0.03), r); mtx.setPosition(q.x, (y0 + y1) / 2, q.z); st.vias!.setMatrixAt(k, mtx);
         if (litId && this.netId(q.net) === litId) { mtx.makeScale(r * 1.3, Math.max(0.05, y0 - y1 + 0.06), r * 1.3); st.litVias!.setMatrixAt(k2++, mtx); }
       });
-      st.vias.instanceMatrix.needsUpdate = true; st.vias.visible = s.copperLayers; (st.vias.material as THREE.MeshBasicMaterial).opacity = s.viaOpacity;
+      st.vias.instanceMatrix.needsUpdate = true; st.vias.visible = s.copperLayers; (st.vias.material as THREE.MeshBasicMaterial).opacity = s.viaOpacity * (litId ? 0.3 : 1);
       if (st.litVias) { st.litVias.count = k2; st.litVias.instanceMatrix.needsUpdate = true; st.litVias.visible = k2 > 0; ((st.litVias.material as THREE.MeshBasicMaterial).color).set(this.colour('netColour')); }
     }
     this.sideOffset = TOP * (scale - 1);
@@ -562,9 +562,16 @@ export class Board3DRenderer {
   // ───────────── pick grids (pads by pin, traces), 1 mm cells ─────────────
   private padGrid = new Map<string, { part: number; pin: number; pad: Board3DPad }[]>();
   private traceGrid = new Map<string, number[]>();
+  /** Every layer's copper by 1 mm cell (indices into `model.copper`), so a click on the stack finds its trace. */
+  private copperGrid = new Map<number, Map<string, number[]>>();
   private static cellKey(x: number, z: number) { return `${Math.floor(x)},${Math.floor(z)}`; }
   private buildPickGrids(m: Board3DModel): void {
-    this.padGrid.clear(); this.traceGrid.clear();
+    this.padGrid.clear(); this.traceGrid.clear(); this.copperGrid.clear();
+    m.copper.forEach((t, i) => {
+      let g = this.copperGrid.get(t.layer); if (!g) this.copperGrid.set(t.layer, (g = new Map()));
+      const n = Math.max(1, Math.ceil(Math.hypot(t.x2 - t.x1, t.z2 - t.z1))); let last = '';
+      for (let k = 0; k <= n; k++) { const key = Board3DRenderer.cellKey(t.x1 + (t.x2 - t.x1) * k / n, t.z1 + (t.z2 - t.z1) * k / n); if (key === last) continue; last = key; let l = g.get(key); if (!l) g.set(key, (l = [])); l.push(i); }
+    });
     for (const pt of m.parts) m.pinPads(pt.index).forEach((pad, pin) => {
       if (!pad) return; const r = Math.max(pad.w, pad.h) / 2;
       for (let x = Math.floor(pad.x - r); x <= Math.floor(pad.x + r); x++) for (let z = Math.floor(pad.z - r); z <= Math.floor(pad.z + r); z++) {
@@ -605,6 +612,27 @@ export class Board3DRenderer {
       const nearBoard = Math.abs(hit.point.y) < TOP + 0.4;
       if (nearBoard) { const pin = pinAt(hit.point); if (pin >= 0) return { part: index, pin, net: null }; }
       return { part: index, pin: null, net: null };
+    }
+    // the stack: every visible copper layer is a plane the ray crosses; the first (nearest the camera) with a trace
+    // under the point wins. Only what is drawn can be clicked — in lit-only mode that is the lit net alone. The
+    // tolerance is three screen pixels, so a hair-thin inner trace is still clickable when zoomed out.
+    if (this.stack) {
+      const litId = this.sel.net ? (this.netIds.get(this.sel.net) ?? 0) : 0, litOnly = !this.settings.copperLayers;
+      const dist = this.camera.position.distanceTo(this.target), tol = 3 * 2 * dist * Math.tan(this.camera.fov * Math.PI / 360) / Math.max(1, r.height);
+      const hits: { d: number; net: string }[] = [];
+      for (let i = 0; i < this.stack.layers.length; i++) {
+        const L = this.stack.layers[i]; if (!L.group.visible || !L.copper) continue;
+        const pt = this.ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -L.group.position.y), new THREE.Vector3()); if (!pt) continue;
+        let best: string | null = null, bd = Infinity;
+        for (const k of this.copperGrid.get(i)?.get(Board3DRenderer.cellKey(pt.x, pt.z)) ?? []) {
+          const t = m.copper[k]; if (!t.net || (litOnly && this.netIds.get(t.net) !== litId)) continue;
+          const ex = t.x2 - t.x1, ez = t.z2 - t.z1, L2 = ex * ex + ez * ez || 1, u = Math.max(0, Math.min(1, ((pt.x - t.x1) * ex + (pt.z - t.z1) * ez) / L2));
+          const d = Math.hypot(pt.x - t.x1 - ex * u, pt.z - t.z1 - ez * u);
+          if (d <= t.w / 2 + tol && d < bd) { bd = d; best = t.net; }
+        }
+        if (best) hits.push({ d: this.camera.position.distanceTo(pt), net: best });
+      }
+      if (hits.length) return { part: null, pin: null, net: hits.sort((a, b) => a.d - b.d)[0].net };
     }
     if (!faceHit) return { part: null, pin: null, net: null };
     // bare face: a land (test points, exposed pads), else copper under the mask
@@ -657,7 +685,7 @@ export class Board3DRenderer {
     const dim = net && this.dimMode !== 'off' ? 0.3 : 1;
     this.key.intensity = 1.3 * dim; this.under.intensity = 0.9 * dim; this.hemi.intensity = 0.45 * dim; this.scene.environmentIntensity = 0.4 * dim;
     for (const lm of this.labelMats) lm.uniforms.dim.value = dim === 1 ? 1 : 0.55;
-    this.applyLitNet();
+    this.applyLitNet(); this.applyPartsMode();
     // an exploded view lifts each face's highlights with the face: a highlight whose geometry lies on one side is tagged
     // with it (net lines between the faces and anything spanning both stay in place)
     this.hlRoot.traverse(o => { if (o === this.hlRoot || o.userData.side !== undefined || o.userData.face) return; if (!(o instanceof THREE.Mesh)) return; const g = o.geometry; if (!g.boundingBox) g.computeBoundingBox(); const bb = g.boundingBox; if (!bb || bb.isEmpty()) return; const y0 = bb.min.y + o.position.y, y1 = bb.max.y + o.position.y; o.userData.side = y0 > 0 ? 'top' : y1 < 0 ? 'bottom' : null; });
@@ -670,7 +698,7 @@ export class Board3DRenderer {
    *  (cached per material) and back, so no rebuild; the pick boxes stay, a hidden part can still be clicked. */
   private ghostMats = new Map<THREE.Material, THREE.Material>();
   private applyPartsMode(): void {
-    const mode = this.settings.parts; this.partsRoot.visible = mode !== 'off';
+    const mode = this.settings.parts === 'solid' && this.sel.net ? 'ghost' : this.settings.parts; this.partsRoot.visible = mode !== 'off'; // a lit net is the highlight: solid bodies step back
     this.partsRoot.traverse(o => {
       if (!(o instanceof THREE.Mesh)) return;
       const solid = (o.userData.solidMat as THREE.Material | undefined) ?? (o.material as THREE.Material); o.userData.solidMat = solid;

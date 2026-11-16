@@ -14,7 +14,7 @@ const FIXTURE = path.resolve(HERE, '../public/samples/tomu-fpga.kicad_pcb');
 test.use({ launchOptions: { args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] } });
 
 type Stack = { layers: number; copperMeshes: number; pourMeshes: number; vias: number; slices: number; sideOffset: number; layerY: number[]; partsVisible: boolean; xray: boolean; litNetId: number; litOnly: boolean; copperGroupsVisible: number; minTraceWidth: number; viaRadius: number; viaOpacity: number; litVias: number; litViaOpacity: number };
-type W = { __boardStore: { board: { parts: { name: string; pins: { net: string }[] }[]; traces: { net: string }[] }; layerStates: { visible: boolean }[]; toggleLayer(i: number): void; highlightNet(n: string | null): void; setPartOverride(n: string, m: 'hide' | null): void; selectPart(i: number | null): void }; __board3d?: { renderer: { drawnParts: number; stackInfo(): Stack | null; cameraState(): { dist: number }; part(i: number): unknown; screenOf(i: number): [number, number] | null } } };
+type W = { __boardStore: { board: { parts: { name: string; pins: { net: string }[] }[]; traces: { net: string; layer?: number; start: { x: number; y: number }; end: { x: number; y: number }; width: number } }[] }; layerStates: { visible: boolean }[]; toggleLayer(i: number): void; highlightNet(n: string | null): void; setPartOverride(n: string, m: 'hide' | null): void; selectPart(i: number | null): void }; __board3d?: { renderer: { drawnParts: number; stackInfo(): Stack | null; cameraState(): { dist: number }; part(i: number): unknown; screenOf(i: number): [number, number] | null; project(p: [number, number, number]): [number, number]; view(p: string, a?: boolean): void; partsMode(): string } } };
 
 async function open3D(page: Page) {
   await page.goto('/'); await page.waitForLoadState('networkidle');
@@ -112,4 +112,26 @@ test('vias: no wider than twice the thinnest trace, faint when unlit, flashing o
   await page.getByTestId('board-3d-settings').click(); await page.getByTestId('view3d-viaScale').fill('200'); await page.keyboard.press('Escape'); await page.waitForTimeout(300);
   const r2 = (await stack(page))!.viaRadius; // a via limited by its own drill does not grow; none passes twice the cap
   expect(r2).toBeGreaterThanOrEqual(s0.viaRadius - 1e-6); expect(r2).toBeLessThanOrEqual(s0.minTraceWidth * 2 + 1e-6);
+});
+
+test('a click on an inner layer\'s trace lights its net, and the lit trace is the highlight', async ({ page }) => {
+  await open3D(page);
+  await page.getByTestId('board-3d-settings').click(); await page.getByTestId('view3d-copperLayers').click(); await page.keyboard.press('Escape');
+  await page.evaluate(() => (window as unknown as W).__board3d!.renderer.view('top', false)); await page.waitForTimeout(400);
+  // the longest segment on an inner layer whose cell holds nothing else of another net, by the model's own geometry
+  const pick = await page.evaluate(() => {
+    const R = (window as unknown as W).__board3d!.renderer; const info = R.stackInfo()!; const m = (R as unknown as { model: { copper: { layer: number; x1: number; z1: number; x2: number; z2: number; w: number; net: string }[] } }).model;
+    const inner = m.copper.filter(c => c.layer === 1 && c.net).sort((a, b) => Math.hypot(b.x2 - b.x1, b.z2 - b.z1) - Math.hypot(a.x2 - a.x1, a.z2 - a.z1))[0];
+    const mid: [number, number, number] = [(inner.x1 + inner.x2) / 2, info.layerY[1], (inner.z1 + inner.z2) / 2];
+    return { net: inner.net, xy: R.project(mid) };
+  });
+  await page.mouse.click(pick.xy[0], pick.xy[1]);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __boardStore: { selection: { highlightedNet: string | null } } }).__boardStore.selection.highlightedNet)).toBe(pick.net);
+  // everything else steps back: parts ghosted while the net is lit, back to solid when it is not
+  expect(await page.evaluate(() => (window as unknown as W).__board3d!.renderer.partsMode())).toBe('solid'); // the setting stays solid…
+  const ghosted = await page.evaluate(() => { const R = (window as unknown as { __board3d: { renderer: { partsRoot?: unknown } } }).__board3d.renderer as unknown as { partsRoot: { children: { material?: { opacity?: number; transparent?: boolean } }[] } }; return R.partsRoot.children.some(c => c.material?.transparent && (c.material.opacity ?? 1) < 0.3); });
+  expect(ghosted).toBe(true); // …but the bodies draw ghosted
+  await page.evaluate(() => (window as unknown as W).__boardStore.highlightNet(null)); await page.waitForTimeout(200);
+  const solid = await page.evaluate(() => { const R = (window as unknown as { __board3d: { renderer: unknown } }).__board3d.renderer as unknown as { partsRoot: { children: { material?: { opacity?: number; transparent?: boolean } }[] } }; return R.partsRoot.children.every(c => !c.material?.transparent || (c.material.opacity ?? 1) >= 0.9); });
+  expect(solid).toBe(true);
 });
