@@ -941,7 +941,7 @@ export class Board3DRenderer {
     if (this.pointers.size === 2) { this.drag = null; this.pinch = this.pinchState(); return; }
     const panButton = e.button === 1 || (e.button === 2) === (this.leftDrag === 'orbit') || (e.button === 0 && e.shiftKey);
     const pivot = panButton ? new THREE.Vector3() : this.pivotAt(e.clientX, e.clientY);
-    this.drag = { mode: panButton ? 'pan' : 'turn', pivot, spin: panButton ? undefined : this.spinSign() }; if (!panButton) this.lastPivot = [pivot.x, pivot.y, pivot.z];
+    this.drag = { mode: panButton ? 'pan' : 'turn', pivot, spin: panButton ? undefined : this.spinSign(pivot) }; if (!panButton) this.lastPivot = [pivot.x, pivot.y, pivot.z];
     this.anim = null;
   };
   private pinchState() { const [a, b] = [...this.pointers.values()]; return { dist: Math.hypot(a.x - b.x, a.y - b.y), mid: [(a.x + b.x) / 2, (a.y + b.y) / 2] as [number, number] }; }
@@ -986,20 +986,32 @@ export class Board3DRenderer {
    *  builds up roll when the pointer moves in circles — the board tilted further and further.
    *  The tip is not clamped, so there is no pole to get stuck at; the whole camera frame turns
    *  about the pivot, so the pivot stays under the pointer. */
-  /** Which way a horizontal drag spins the board about its normal. Past the pole the board is seen upside down, and
-   *  from underneath it is seen mirrored: in both the spin changes sign to keep following the pointer (the Bottom
-   *  preset turned against the drag otherwise, 2026-11-15). Decided once, when a drag starts: evaluated on every move
-   *  it flipped the moment a tip carried the camera through the board's plane, and left and right swapped in the
-   *  middle of the gesture (2026-11-16). Edge-on, where the face seen is undecided, the last drag's sign holds. */
-  private spinSign(): number {
-    const dirY = this.camera.getWorldDirection(new THREE.Vector3()).y;
-    if (Math.abs(dirY) < 0.12) return this.lastSpin;
-    this.lastSpin = (this.camera.up.y >= 0 ? 1 : -1) * (dirY <= 0 ? 1 : -1);
+  /** Which way a horizontal drag spins the board about its normal, decided once when a drag starts (evaluated on every
+   *  move it flipped the moment a tip carried the camera through the board's plane, 2026-11-16). The board turns about
+   *  the pressed point, so the board on one side of it moves with the pointer and the board on the other side against
+   *  it — a fixed sign therefore felt right or reversed depending on where the press landed, which differed board by
+   *  board. The rule: the part of the view that holds most of the board follows the pointer. Its reference point is
+   *  the board under the screen centre; a press within ~30 px of it (above or below) uses the board just above the
+   *  press instead — the far side follows, which is how a press on the middle turned before (reported as right, 2026-11-16). The sign is found by trying a small turn and watching where that point goes on screen. */
+  private spinSign(at: THREE.Vector3): number {
+    const pivot = new THREE.Vector3().copy(at); // tests pass a plain {x, y, z}
+    const r = this.canvas.getBoundingClientRect(), plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -pivot.y);
+    const onPlane = (sx: number, sy: number) => { this.ray.setFromCamera(new THREE.Vector2(sx * 2 - 1, -sy * 2 + 1), this.camera); return this.ray.ray.intersectPlane(plane, new THREE.Vector3()); };
+    const toScreen = (p: THREE.Vector3) => { const v = p.clone().project(this.camera); return [(v.x + 1) / 2 * r.width, (1 - v.y) / 2 * r.height]; };
+    const ps = toScreen(pivot);
+    let ref = onPlane(0.5, 0.5);
+    if (!ref || Math.abs(toScreen(ref)[1] - ps[1]) < 30) ref = onPlane(ps[0] / r.width, Math.max(0, (ps[1] - 60) / r.height));
+    if (!ref) return this.lastSpin;
+    // a camera turn by q about the pivot moves a fixed world point on screen as q⁻¹ applied to it would
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.02).invert();
+    const moved = ref.clone().sub(pivot).applyQuaternion(q).add(pivot);
+    const dxs = toScreen(moved)[0] - toScreen(ref)[0];
+    if (Math.abs(dxs) > 1e-3) this.lastSpin = dxs > 0 ? 1 : -1;
     return this.lastSpin;
   }
   turnBy(dx: number, dy: number, pivot: THREE.Vector3, spinSign?: number): void {
-    const k = 0.006, upright = spinSign ?? this.spinSign();
-    const spin = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), dx * k * upright); // a drag right turns the picture clockwise from above (reported inverted the other way, 2026-11-16)
+    const k = 0.006, upright = spinSign ?? this.spinSign(pivot);
+    const spin = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), dx * k * upright);
     const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0).applyQuaternion(spin);
     right.y = 0; if (right.lengthSq() < 1e-8) right.set(1, 0, 0); right.normalize(); // keep the tip axis level, so no roll creeps in
     const q = new THREE.Quaternion().setFromAxisAngle(right, -dy * k).multiply(spin);

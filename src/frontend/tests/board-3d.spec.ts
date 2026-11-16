@@ -255,3 +255,28 @@ test('3D view: a drag that tips through the board\'s plane keeps turning the sam
   expect(Math.sign(after)).toBe(Math.sign(before));
 });
 
+
+test('3D view: the middle of the view follows a horizontal drag wherever the press lands', async ({ page }) => {
+  test.setTimeout(90000);
+  await openBoard(page);
+  await page.getByTestId('view3d-btn').click();
+  await page.waitForFunction(() => ((window as unknown as W).__board3d?.renderer.drawnParts ?? 0) > 0, null, { timeout: 30000 });
+  await page.waitForTimeout(700);
+  const box = (await page.locator('.board-3d-host').boundingBox())!;
+  // the drawn part nearest the middle of the view, in screen px relative to the host
+  const middle = () => page.evaluate(({ w, h }) => {
+    const R = (window as unknown as W).__board3d!.renderer; const parts = (window as unknown as W).__boardStore!.board.parts;
+    let best: [number, number] | null = null, bd = Infinity, bi = -1;
+    parts.forEach((_, i) => { const s = R.screenOf(i); if (!s) return; const d = Math.hypot(s[0] - w / 2, s[1] - h / 2); if (d < bd) { bd = d; best = s; bi = i; } });
+    return { i: bi, s: best as unknown as [number, number] };
+  }, { w: box.width, h: box.height });
+  const at = (i: number) => page.evaluate(i => (window as unknown as W).__board3d!.renderer.screenOf(i)!, i);
+  for (const fy of [0.25, 0.8]) {
+    await page.getByTestId('board-3d-iso').click(); await page.waitForTimeout(900);
+    const m = await middle(); const x = box.x + box.width / 2, y = box.y + box.height * fy;
+    await page.mouse.move(x, y); await page.mouse.down();
+    for (let k = 1; k <= 6; k++) await page.mouse.move(x + 5 * k, y);
+    await page.mouse.up();
+    expect((await at(m.i))[0]).toBeGreaterThan(m.s[0]);
+  }
+});
