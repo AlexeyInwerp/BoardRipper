@@ -271,8 +271,11 @@ test('3D view: the middle of the view follows a horizontal drag wherever the pre
     return { i: bi, s: best as unknown as [number, number] };
   }, { w: box.width, h: box.height });
   const at = (i: number) => page.evaluate(i => (window as unknown as W).__board3d!.renderer.screenOf(i)!, i);
-  for (const fy of [0.25, 0.8]) {
-    await page.getByTestId('board-3d-iso').click(); await page.waitForTimeout(900);
+  // from above, straight from underneath, and an angled view tipped under the board
+  const under = () => page.evaluate(() => { const R = (window as unknown as { __board3d: { renderer: { turnBy(dx: number, dy: number, p: { x: number; y: number; z: number }): void; cameraState(): { pos: number[] } } } }).__board3d.renderer; for (let k = 0; k < 400 && R.cameraState().pos[1] > -0.4 * Math.hypot(...R.cameraState().pos); k++) R.turnBy(0, -4, { x: 0, y: 0, z: 0 }); return R.cameraState().pos[1]; });
+  for (const [view, fy] of [['iso', 0.25], ['iso', 0.8], ['bottom', 0.25], ['bottom', 0.8], ['under', 0.3], ['under', 0.75]] as const) {
+    await page.getByTestId(view === 'bottom' ? 'board-3d-bottom' : 'board-3d-iso').click(); await page.waitForTimeout(900);
+    if (view === 'under') expect(await under()).toBeLessThan(0);
     const m = await middle(); const x = box.x + box.width / 2, y = box.y + box.height * fy;
     await page.mouse.move(x, y); await page.mouse.down();
     for (let k = 1; k <= 6; k++) await page.mouse.move(x + 5 * k, y);
