@@ -65,6 +65,15 @@ const WANT: [string, string, string, string][] = [
   ['amd-pitcairn', 'AMD Pitcairn (iMac A1419 2014 R9 M290X) · 1737 balls', `${X}/A14xx/A1419_820-4652/Schematic and boardview/J78_MLB_820-4652-A.pcb`, 'U8700'],
   ['amd-fp6', 'AMD FP6 (Renoir / Cezanne) · 1140 balls (Compal LA-N591P)', 'incoming/uncategorized/LA-N591P r1.0.cad', 'UC1'],
   ['nv-bga2714', 'NVIDIA GB5-256 40 mm (AD103/AD104, GA104/GA106) · 2714 balls (Legion 7 Pro 16IRX8H)', 'incoming/lenovo/Legion7Pro-16IRX8H-KY782.tvw', 'UG1'],
+  ['tegra-x1', 'NVIDIA Tegra X1 T210 (Switch HAC-CPU-10, Erista)', 'incoming/consoles/switch-HAC-CPU-10.pcb', 'N14858'],
+  ['tegra-x1plus', 'NVIDIA Tegra X1+ T210B01 (Switch HAC-CPU-20, Mariko)', 'incoming/consoles/switch-HAC-CPU-20.pcb', 'N1257'],
+  ['apple-cam-208', 'Apple FaceTime camera controller (MacBook Air A1466 820-00165, U3900)', `${X}/A14xx/A1466_820-00165 J113/Schematic and boardview/Apple Macbook Air 13 A1466 820-00165.pcb`, 'U3900'],
+  ['tegra-t239', 'NVIDIA T239 (Switch 2, BEE-CPU-01)', 'incoming/consoles/switch2-BEE-CPU-01.pcb', 'U13'],
+  ['ps5-apu', 'Sony CXD90044 / CXD90060 (PS5 Oberon, EDM-010)', 'incoming/consoles/ps5-EDM-010.pcb', 'N15900'],
+  ['xsx-apu', 'Microsoft Xbox Series X APU (Anaconda, M1128163)', 'incoming/consoles/xsx-M1128163-003.pcb', 'U1'],
+  ['x360-xcgpu', 'Microsoft Xbox 360 XCGPU (Corona V5/V6)', 'incoming/consoles/x360-corona-v5v6.pcb', 'U5E1'],
+  ['x360-cpu', 'Microsoft Xbox 360 Xenon CPU (Falcon)', 'incoming/consoles/x360-falcon.pcb', 'U4D1'],
+  ['x360-gpu', 'Microsoft Xbox 360 Xenos GPU (Falcon)', 'incoming/consoles/x360-falcon.pcb', 'U7D1'],
   ['lga2066', 'Intel LGA2066 socket pads (iMac Pro A1862)', `${X}/A18xx/A1862 820-00967 IMac Pro 27 late 2017/A1862 820-00967.pcb`, 'U1000'],
 ];
 

@@ -143,6 +143,10 @@ export function buildPartModel(e: PartEstimate): THREE.Group | null {
     case 'bga': {
       const spec = e.pkg ? PACKAGES.find(s => s.id === e.pkg) : undefined;
       if (spec) { buildPackage(g, spec); break; }
+      // an ordinary BGA (power ICs, controllers, memory not in the table) is a solid black moulded body down to the
+      // collapsed balls — no substrate edge shows; only the CPUs / GPUs / APUs in cpu-packages.ts (and Apple's camera
+      // controller) have bare silicon on an exposed substrate (2026-11-16)
+      if (!(L * W > 400 && (p.balls ?? 0) >= 2000 && (p.pitch ?? 1) <= 0.55)) { g.add(rbox(L, H, W, Math.min(0.12, H * 0.15), MAT.epoxy, 0, 0.1 + H / 2)); break; }
       // substrate on collapsed balls: 0.1 mm off the board, not floating
       g.add(box(L, 0.36, W, MAT.subst, 0, 0.28));
       // Apple M-series: SoC under a lid with two memory dies along the long edge. Only for that kind of

@@ -581,7 +581,11 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
         // a staggered core (AMD FP6: 0.65 mm signal ring, 1.0 mm power core) gives a diagonal nearest-neighbour angle;
         // of the fitted angle and that angle + 45°, keep the tighter box (the LA-N591P's FP6 read as a 39 mm diamond)
         const boxArea = (d: number) => { const Q = bboxOf(frame(pins, d, small).loc.filter((_, i) => small.includes(i))); return (Q.x1 - Q.x0) * (Q.y1 - Q.y0); };
-        const f0 = frame(pins, squared(boxArea(f0u.deg + 45) < boxArea(f0u.deg) * 0.98 ? f0u.deg + 45 : f0u.deg), small), B = bboxOf(small.map(i => f0.loc[i]));
+        // candidates: the fitted angle, it + 45°, and the right angles nearest to both — a mixed-pitch field can fit 7°
+        // off (the Switch's Erista Tegra) while the package sits square; the tightest box wins, a right angle on a tie
+        const cands = [f0u.deg, f0u.deg + 45].flatMap(d => [Math.round(d / 90) * 90, d]);
+        const bestDeg = cands.reduce((b, d) => (boxArea(d) < boxArea(b) * 0.995 ? d : b), cands[0]);
+        const f0 = frame(pins, squared(bestDeg), small), B = bboxOf(small.map(i => f0.loc[i]));
         const pm = mm(pitch), margin = Math.max(Math.min(1.6, Math.max(0.4, pm * 1.5)), padOut), bc = toBoard(f0, (B.x0 + B.x1) / 2, (B.y0 + B.y1) / 2);
         return knownPackage(out({ family: 'bga', L: mm(B.x1 - B.x0) + margin, W: mm(B.y1 - B.y0) + margin, H: 1.2, cx: bc.x, cy: bc.y, rotDeg: wrap(f0.deg), p: { pitch: pm, balls: small.length } },
           `${small.length} balls in a dense field @ ~${pm.toFixed(2)} → BGA`), part.side, f0, small, mm(B.x1 - B.x0), mm(B.y1 - B.y0), pm);
