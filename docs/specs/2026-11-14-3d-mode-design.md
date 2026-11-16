@@ -340,8 +340,13 @@ runs for a board with two or more layers and copper:
   finger still down after a pinch goes back to panning; a release after a
   second finger has landed is never a tap.
 
-Not done: picking inner copper (the 2D hit test only knows the outer
-faces), a real stackup (every file in the corpus spaces its layers evenly).
+- **Picking inner copper**: a click crosses each visible layer's plane and
+  looks the point up in that layer's 1 mm grid of segments; the nearest
+  layer to the camera with a trace under the pointer wins. While a net is
+  lit it is the one highlight: other copper, pours and vias fade and solid
+  bodies draw ghosted.
+
+Not done: a real stackup (every file in the corpus spaces its layers evenly).
 
 ## Signal animation
 
