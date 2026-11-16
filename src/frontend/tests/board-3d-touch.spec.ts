@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 const FIXTURE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public/samples/tomu-fpga.kicad_pcb');
 test.use({ hasTouch: true, viewport: { width: 1200, height: 900 }, launchOptions: { args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] } });
-test.describe.configure({ timeout: 120000 }); // the 3D build under SwiftShader can take most of the default budget
+test.describe.configure({ timeout: 240000 }); // the 3D build under SwiftShader can take most of the default budget
 type Pt = { x: number; y: number };
 type Cam = { dist: number; target: number[]; pos: number[] };
 type W = { __boardStore: { board: { parts: { pins: unknown[] }[] }; selection: { partIndex: number | null } }; __board3d?: { renderer: { drawnParts: number; cameraState(): Cam; screenOf(i: number): [number, number] | null; part(i: number): unknown; view(p: string, a?: boolean): void } } };
@@ -22,9 +22,9 @@ async function touch(cdp: CDPSession, type: 'touchStart' | 'touchMove' | 'touchE
 async function open3D(page: Page): Promise<CDPSession> {
   await page.goto('/'); await page.waitForLoadState('networkidle');
   await page.setInputFiles('[data-testid="file-input"]', FIXTURE);
-  await page.waitForFunction(() => (window as unknown as W).__boardStore?.board, null, { timeout: 60000 });
+  await page.waitForFunction(() => (window as unknown as W).__boardStore?.board, null, { timeout: 180000 }); // the first load after an edit pays Vite's re-transform of the three.js chunk
   await page.getByTestId('view3d-btn').click();
-  await page.waitForFunction(() => ((window as unknown as W).__board3d?.renderer.drawnParts ?? 0) > 0, null, { timeout: 60000 });
+  await page.waitForFunction(() => ((window as unknown as W).__board3d?.renderer.drawnParts ?? 0) > 0, null, { timeout: 180000 }); // the first load after an edit pays Vite's re-transform of the three.js chunk
   await page.waitForTimeout(600);
   return page.context().newCDPSession(page);
 }

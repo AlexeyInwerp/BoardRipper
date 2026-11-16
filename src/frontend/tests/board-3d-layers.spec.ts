@@ -12,6 +12,7 @@ import { fileURLToPath } from 'url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.resolve(HERE, '../public/samples/tomu-fpga.kicad_pcb');
 test.use({ launchOptions: { args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] } });
+test.describe.configure({ timeout: 240000 });
 
 type Stack = { layers: number; copperMeshes: number; pourMeshes: number; vias: number; slices: number; sideOffset: number; layerY: number[]; partsVisible: boolean; xray: boolean; litNetId: number; litOnly: boolean; copperGroupsVisible: number; minTraceWidth: number; viaRadius: number; viaOpacity: number; litVias: number; litViaOpacity: number };
 type W = { __boardStore: { board: { parts: { name: string; pins: { net: string }[] }[]; traces: { net: string; layer?: number; start: { x: number; y: number }; end: { x: number; y: number }; width: number }[] }; layerStates: { visible: boolean }[]; toggleLayer(i: number): void; highlightNet(n: string | null): void; setPartOverride(n: string, m: 'hide' | null): void; selectPart(i: number | null): void }; __board3d?: { renderer: { drawnParts: number; stackInfo(): Stack | null; cameraState(): { dist: number }; part(i: number): unknown; screenOf(i: number): [number, number] | null; project(p: [number, number, number]): [number, number]; view(p: string, a?: boolean): void; partsMode(): string } } };
@@ -20,9 +21,9 @@ async function open3D(page: Page) {
   await page.goto('/'); await page.waitForLoadState('networkidle');
   await page.evaluate(() => localStorage.removeItem('boardripper-view3d'));
   await page.setInputFiles('[data-testid="file-input"]', FIXTURE);
-  await page.waitForFunction(() => (window as unknown as W).__boardStore?.board, null, { timeout: 60000 });
+  await page.waitForFunction(() => (window as unknown as W).__boardStore?.board, null, { timeout: 180000 }); // the first load after an edit pays Vite's re-transform of the three.js chunk
   await page.getByTestId('view3d-btn').click();
-  await page.waitForFunction(() => ((window as unknown as W).__board3d?.renderer.drawnParts ?? 0) > 0, null, { timeout: 60000 });
+  await page.waitForFunction(() => ((window as unknown as W).__board3d?.renderer.drawnParts ?? 0) > 0, null, { timeout: 180000 }); // the first load after an edit pays Vite's re-transform of the three.js chunk
 }
 const stack = (page: Page) => page.evaluate(() => (window as unknown as W).__board3d!.renderer.stackInfo());
 

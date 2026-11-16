@@ -354,7 +354,7 @@ export class Board3DRenderer {
           vLoc = vec2(s, v * half_); vHalf = half_; vLen = len; gl_Position = projectionMatrix * modelViewMatrix * vec4(p.x, lit > 0.5 ? 0.02 : 0.0, p.y, 1.0); }`,
       fragmentShader: `uniform vec3 uColor; uniform float uAlpha; uniform vec3 uLitColor; uniform float uLit; varying vec2 vLoc; varying float vHalf; varying float vLen; varying float vLitSeg;
         void main() { float s = clamp(vLoc.x, 0.0, vLen); float d = length(vLoc - vec2(s, 0.0)); if (d > vHalf) discard;
-          if (vLitSeg > 0.5) gl_FragColor = vec4(uLitColor, 1.0); else gl_FragColor = vec4(uColor, uAlpha * (uLit > 0.5 ? 0.12 : 1.0)); }`,
+          if (vLitSeg > 0.5) { float edge = vHalf * 0.32; gl_FragColor = d > vHalf - edge ? vec4(0.02, 0.02, 0.03, 1.0) : vec4(uLitColor, 1.0); } else // a dark edge keeps the net colour readable on any layer colour and on the tan dielectric gl_FragColor = vec4(uColor, uAlpha * (uLit > 0.5 ? 0.12 : 1.0)); }`,
     });
   }
   /** The lit net onto the copper stack: every layer's shader gets its id; with Copper layers off the stack is shown in
@@ -365,7 +365,8 @@ export class Board3DRenderer {
     this.applyLitNetShader();
   }
   private applyLitNetShader(): void {
-    const st = this.stack; if (!st) return; const net = this.sel.net, id = net ? (this.netIds.get(net) ?? 0) : 0, litOnly = !this.settings.copperLayers;
+    const st = this.stack; if (!st) return;
+    const lit = !!this.sel.net; for (const sl of st.slices) for (const mat of sl.mesh.material as THREE.MeshStandardMaterial[]) mat.color.set(lit ? 0x1c1a14 : 0x6e6448); const net = this.sel.net, id = net ? (this.netIds.get(net) ?? 0) : 0, litOnly = !this.settings.copperLayers;
     st.layers.forEach((L, i) => {
       if (!L.copper) return; const u = (L.copper.material as THREE.ShaderMaterial).uniforms;
       u.uLit.value = id; (u.uLitColor.value as THREE.Color).set(this.colour('netColour')); u.uMode.value = litOnly ? 1 : 0;
@@ -767,6 +768,17 @@ export class Board3DRenderer {
   /** The lands of every pin on `net`, lit on their face; the clicked pin's land brighter. */
   private netPads(m: Board3DModel, net: string, partIndex: number | null, pinIndex: number | null, netColour: number, pinColour: number): THREE.Group {
     const g = new THREE.Group(), lit: THREE.BufferGeometry[] = [], hot: THREE.BufferGeometry[] = [];
+    // a big net (GND, a rail) lit as filled lands is a solid field over half the board: past 24 lands they are drawn
+    // as outlines, so the lands read and what is between them stays visible
+    let count = 0; for (const pt of m.parts) for (const q of m.pinsOf(pt.index)) if (q.net === net) count++;
+    const ring = count > 24;
+    const outline = (pad: { w: number; h: number; round: boolean }) => {
+      if (pad.round) { const r = Math.max(pad.w, pad.h) / 2 + 0.03; return new THREE.RingGeometry(r * 0.72, r, 20); }
+      const w = pad.w + 0.06, h = pad.h + 0.06, t = Math.max(0.03, Math.min(w, h) * 0.18), sh = new THREE.Shape();
+      sh.moveTo(-w / 2, -h / 2); sh.lineTo(w / 2, -h / 2); sh.lineTo(w / 2, h / 2); sh.lineTo(-w / 2, h / 2); sh.closePath();
+      const hole = new THREE.Path(); hole.moveTo(-w / 2 + t, -h / 2 + t); hole.lineTo(-w / 2 + t, h / 2 - t); hole.lineTo(w / 2 - t, h / 2 - t); hole.lineTo(w / 2 - t, -h / 2 + t); hole.closePath(); sh.holes.push(hole);
+      return new THREE.ShapeGeometry(sh);
+    };
     for (const pt of m.parts) {
       const pins = m.pinsOf(pt.index), pads = m.pinPads(pt.index);
       pins.forEach((q, i) => {
@@ -775,7 +787,8 @@ export class Board3DRenderer {
         const faces = pad.side === 'both' ? ['top', 'bottom'] : [q.side];
         for (const f of faces) {
           // facing out of its face (+y on top, −y below), then turned like the land: same footprint either side
-          const c = pad.round ? new THREE.CircleGeometry(Math.max(pad.w, pad.h) / 2 + 0.03, 20) : new THREE.PlaneGeometry(pad.w + 0.06, pad.h + 0.06);
+          const hotPin = pt.index === partIndex && i === pinIndex; // the picked pin stays filled
+          const c = ring && !hotPin ? outline(pad) : pad.round ? new THREE.CircleGeometry(Math.max(pad.w, pad.h) / 2 + 0.03, 20) : new THREE.PlaneGeometry(pad.w + 0.06, pad.h + 0.06);
           c.rotateX(f === 'top' ? -Math.PI / 2 : Math.PI / 2); c.rotateY(pad.angle * Math.PI / 180);
           c.translate(pad.x, f === 'top' ? TOP + 0.012 : -TOP - 0.012, pad.z); (pt.index === partIndex && i === pinIndex ? hot : lit).push(c);
         }

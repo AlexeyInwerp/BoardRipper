@@ -2071,6 +2071,11 @@ export class BoardRenderer {
     // set before `clicked` is emitted, and `clicked` comes out of the very
     // same release.
     this.boundPointerRelease = (e: PointerEvent) => {
+      // Window-level, so it hears every pointer in the window — but only one that began on this board is ours. A finger
+      // scrolling a side panel is cancelled by the browser the moment the scroll takes over; treating that as a board
+      // gesture logged a Debug line per scroll, and the Debug log, following its newest entry, threw the view back to
+      // the bottom under the finger (iPad, 2026-11-16: "scrolling of text is broken in side panels").
+      if (e.pointerType === 'touch' && !this.activeTouchIds.has(e.pointerId)) return;
       if (e.type === 'pointercancel') {
         this.gestureWasCancelled = true;
         log.ui.log(`touch: pointercancel id=${e.pointerId} type=${e.pointerType} ` +
