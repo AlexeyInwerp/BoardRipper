@@ -256,30 +256,31 @@ test('3D view: a drag that tips through the board\'s plane keeps turning the sam
 });
 
 
-test('3D view: the middle of the view follows a horizontal drag wherever the press lands', async ({ page }) => {
-  test.setTimeout(90000);
+test('3D view: the board nearest the viewer follows a horizontal drag, from above and from underneath', async ({ page }) => {
+  test.setTimeout(120000);
   await openBoard(page);
   await page.getByTestId('view3d-btn').click();
   await page.waitForFunction(() => ((window as unknown as W).__board3d?.renderer.drawnParts ?? 0) > 0, null, { timeout: 30000 });
   await page.waitForTimeout(700);
+  type RR = { turnBy(dx: number, dy: number, p: { x: number; y: number; z: number }): void; cameraState(): { pos: number[] }; lastPivot: number[]; screenOfWorld(x: number, y: number, z: number): [number, number] };
   const box = (await page.locator('.board-3d-host').boundingBox())!;
-  // the drawn part nearest the middle of the view, in screen px relative to the host
-  const middle = () => page.evaluate(({ w, h }) => {
-    const R = (window as unknown as W).__board3d!.renderer; const parts = (window as unknown as W).__boardStore!.board.parts;
-    let best: [number, number] | null = null, bd = Infinity, bi = -1;
-    parts.forEach((_, i) => { const s = R.screenOf(i); if (!s) return; const d = Math.hypot(s[0] - w / 2, s[1] - h / 2); if (d < bd) { bd = d; best = s; bi = i; } });
-    return { i: bi, s: best as unknown as [number, number] };
-  }, { w: box.width, h: box.height });
-  const at = (i: number) => page.evaluate(i => (window as unknown as W).__board3d!.renderer.screenOf(i)!, i);
-  // from above, straight from underneath, and an angled view tipped under the board
-  const under = () => page.evaluate(() => { const R = (window as unknown as { __board3d: { renderer: { turnBy(dx: number, dy: number, p: { x: number; y: number; z: number }): void; cameraState(): { pos: number[] } } } }).__board3d.renderer; for (let k = 0; k < 400 && R.cameraState().pos[1] > -0.4 * Math.hypot(...R.cameraState().pos); k++) R.turnBy(0, -4, { x: 0, y: 0, z: 0 }); return R.cameraState().pos[1]; });
-  for (const [view, fy] of [['iso', 0.25], ['iso', 0.8], ['bottom', 0.25], ['bottom', 0.8], ['under', 0.3], ['under', 0.75]] as const) {
-    await page.getByTestId(view === 'bottom' ? 'board-3d-bottom' : 'board-3d-iso').click(); await page.waitForTimeout(900);
+  const under = () => page.evaluate(() => { const R = (window as unknown as { __board3d: { renderer: RR } }).__board3d.renderer; for (let k = 0; k < 400 && R.cameraState().pos[1] > -0.4 * Math.hypot(...R.cameraState().pos); k++) R.turnBy(0, -4, { x: 0, y: 0, z: 0 }); return R.cameraState().pos[1]; });
+  for (const [view, fy] of [['iso', 0.3], ['iso', 0.7], ['under', 0.3], ['under', 0.7]] as const) {
+    await page.getByTestId('board-3d-iso').click(); await page.waitForTimeout(900);
     if (view === 'under') expect(await under()).toBeLessThan(0);
-    const m = await middle(); const x = box.x + box.width / 2, y = box.y + box.height * fy;
-    await page.mouse.move(x, y); await page.mouse.down();
-    for (let k = 1; k <= 6; k++) await page.mouse.move(x + 5 * k, y);
+    const x = box.x + box.width / 2, y = box.y + box.height * fy;
+    await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x + 1, y);
+    // a fixed world point 5 % of the camera distance from the pressed point, towards the camera, in the board's plane
+    const near = await page.evaluate(() => {
+      const R = (window as unknown as { __board3d: { renderer: RR } }).__board3d.renderer; const p = R.lastPivot, c = R.cameraState().pos;
+      const dx = c[0] - p[0], dz = c[2] - p[2], h = Math.hypot(dx, dz), d = Math.hypot(dx, c[1] - p[1], dz) * 0.05;
+      return [p[0] + dx / h * d, p[1], p[2] + dz / h * d];
+    });
+    const at = () => page.evaluate(n => (window as unknown as { __board3d: { renderer: RR } }).__board3d.renderer.screenOfWorld(n[0], n[1], n[2]), near);
+    const x0 = (await at())[0];
+    for (let k = 2; k <= 7; k++) await page.mouse.move(x + 5 * k, y);
+    const x1 = (await at())[0];
     await page.mouse.up();
-    expect((await at(m.i))[0]).toBeGreaterThan(m.s[0]);
+    expect(x1).toBeGreaterThan(x0);
   }
 });

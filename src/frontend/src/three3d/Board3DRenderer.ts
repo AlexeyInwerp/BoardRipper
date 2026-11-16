@@ -930,6 +930,8 @@ export class Board3DRenderer {
     const sel = this.selectedPart !== null ? this.partByIndex.get(this.selectedPart) : undefined;
     return sel ? sel.box.getCenter(new THREE.Vector3()) : new THREE.Vector3();
   }
+  /** Screen position (px in the canvas) of a world point — for tests. */
+  screenOfWorld(x: number, y: number, z: number): [number, number] { const r = this.canvas.getBoundingClientRect(), v = new THREE.Vector3(x, y, z).project(this.camera); return [(v.x + 1) / 2 * r.width, (1 - v.y) / 2 * r.height]; }
   /** The last pivot a turn used — for tests. */
   lastPivot: [number, number, number] | null = null;
   private onPointerDown = (e: PointerEvent) => {
@@ -989,18 +991,22 @@ export class Board3DRenderer {
   /** Which way a horizontal drag spins the board about its normal, decided once when a drag starts (evaluated on every
    *  move it flipped the moment a tip carried the camera through the board's plane, 2026-11-16). The board turns about
    *  the pressed point, so the board on one side of it moves with the pointer and the board on the other side against
-   *  it — a fixed sign therefore felt right or reversed depending on where the press landed, which differed board by
-   *  board. The rule: the part of the view that holds most of the board follows the pointer. Its reference point is
-   *  the board under the screen centre; a press within ~30 px of it (above or below) uses the board just above the
-   *  press instead — the far side follows, which is how a press on the middle turned before (reported as right, 2026-11-16). The sign is found by trying a small turn and watching where that point goes on screen. */
+   *  it. The rule (the user's, 2026-11-16): the board nearest the viewer follows the pointer — the point a little way
+   *  from the press towards the camera, measured in the board's plane, from above and from underneath alike. Looking
+   *  straight at a face there is no nearer side; the board just below the press on screen stands in. The sign is found
+   *  by trying a small turn and watching where that point goes on screen. */
   private spinSign(at: THREE.Vector3): number {
     const pivot = new THREE.Vector3().copy(at); // tests pass a plain {x, y, z}
     const r = this.canvas.getBoundingClientRect(), plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -pivot.y);
-    const onPlane = (sx: number, sy: number) => { this.ray.setFromCamera(new THREE.Vector2(sx * 2 - 1, -sy * 2 + 1), this.camera); return this.ray.ray.intersectPlane(plane, new THREE.Vector3()); };
     const toScreen = (p: THREE.Vector3) => { const v = p.clone().project(this.camera); return [(v.x + 1) / 2 * r.width, (1 - v.y) / 2 * r.height]; };
-    const ps = toScreen(pivot);
-    let ref = onPlane(0.5, 0.5);
-    if (!ref || Math.abs(toScreen(ref)[1] - ps[1]) < 30) ref = onPlane(ps[0] / r.width, Math.max(0, (ps[1] - 60) / r.height));
+    const toCam = this.camera.position.clone().sub(pivot), dist = toCam.length(); toCam.y = 0;
+    let ref: THREE.Vector3 | null;
+    if (toCam.length() > 0.08 * dist) ref = pivot.clone().addScaledVector(toCam.normalize(), 0.05 * dist);
+    else {
+      const ps = toScreen(pivot);
+      this.ray.setFromCamera(new THREE.Vector2(ps[0] / r.width * 2 - 1, -Math.min(1, (ps[1] + 60) / r.height) * 2 + 1), this.camera);
+      ref = this.ray.ray.intersectPlane(plane, new THREE.Vector3());
+    }
     if (!ref) return this.lastSpin;
     // a camera turn by q about the pivot moves a fixed world point on screen as q⁻¹ applied to it would
     const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.02).invert();
