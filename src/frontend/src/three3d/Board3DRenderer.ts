@@ -274,15 +274,21 @@ export class Board3DRenderer {
   }
 
   /** The land material, patched to drop lands narrower than `uMinPx` on screen (the texture shows them). */
-  private padShader: { uniforms: { uViewportH: { value: number } } } | null = null;
+  private padShader: { uniforms: { uViewportH: { value: number }; uXray: { value: number } } } | null = null;
+  private padXray = false;
   private padMaterial: THREE.MeshStandardMaterial | null = null;
   private padMat(): THREE.MeshStandardMaterial {
     if (this.padMaterial) return this.padMaterial;
     const mat = PAD_MAT.clone();
     mat.onBeforeCompile = sh => {
-      sh.uniforms.uViewportH = { value: this.renderer.domElement.height }; this.padShader = sh as unknown as { uniforms: { uViewportH: { value: number } } };
-      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float aSize; uniform float uViewportH;')
-        .replace('#include <project_vertex>', '#include <project_vertex>\n{ float pxs = aSize * projectionMatrix[1][1] * 0.5 * uViewportH / max(-mvPosition.z, 1e-3); if (pxs < 3.0) gl_Position = vec4(2.0, 2.0, 2.0, 1.0); }');
+      sh.uniforms.uViewportH = { value: this.renderer.domElement.height }; sh.uniforms.uXray = { value: this.padXray ? 1 : 0 };
+      this.padShader = sh as unknown as { uniforms: { uViewportH: { value: number }; uXray: { value: number } } };
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float aSize; uniform float uViewportH; varying float vPadSize;')
+        .replace('#include <project_vertex>', '#include <project_vertex>\nvPadSize = aSize;\n{ float pxs = aSize * projectionMatrix[1][1] * 0.5 * uViewportH / max(-mvPosition.z, 1e-3); if (pxs < 3.0) gl_Position = vec4(2.0, 2.0, 2.0, 1.0); }');
+      // see-through board: a land fades with its size, so a dense BGA field or a big plate no longer hides the copper
+      // under it (45 % below 0.8 mm across, 15 % from 3 mm)
+      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform float uXray; varying float vPadSize;')
+        .replace('#include <color_fragment>', '#include <color_fragment>\nif (uXray > 0.5) diffuseColor.a *= mix(0.45, 0.15, smoothstep(0.8, 3.0, vPadSize));');
     };
     mat.customProgramCacheKey = () => 'padlod';
     this.padMaterial = mat; return mat;
@@ -432,6 +438,8 @@ export class Board3DRenderer {
       sl.edges.visible = xray && (look === 'edges' || look === 'glass' || look === 'layer');
       (sl.edges.material as THREE.LineBasicMaterial).color.set(look === 'layer' ? layerColour : look === 'glass' ? 0xcfe3f5 : 0x9aa4b0); (sl.edges.material as THREE.LineBasicMaterial).opacity = look === 'edges' ? 0.6 : 0.3;
     });
+    this.padXray = xray; if (this.padShader) this.padShader.uniforms.uXray.value = xray ? 1 : 0;
+    if (this.padMaterial && this.padMaterial.transparent !== xray) { this.padMaterial.transparent = xray; this.padMaterial.depthWrite = !xray; this.padMaterial.needsUpdate = true; }
     for (const f of st.faces) { const mat = f.material as THREE.MeshStandardMaterial; mat.transparent = xray; mat.opacity = faceOpacity; mat.depthWrite = !xray; f.position.y = (f.position.y < 0 ? -TOP - 0.002 : TOP + 0.002) * scale; mat.needsUpdate = true; }
     if (st.vias) {
       const mtx = new THREE.Matrix4(), v = this.model!.vias, litId = this.sel.net ? (this.netIds.get(this.sel.net) ?? 0) : 0; let k2 = 0;
