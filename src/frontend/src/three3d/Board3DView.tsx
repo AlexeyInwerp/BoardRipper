@@ -78,7 +78,13 @@ export default function Board3DView({ tabId }: { tabId: number }) {
   // the Layers tab drives the stack: visibility and colour per layer, and the pinned / selected layer's emphasis
   const tabLayers = tab?.layerStates, isActive = boardStore.activeTabId === tabId;
   const emphasis = isActive ? (boardStore.fixatedLayerIndex ?? boardStore.selectedLayerIndex ?? null) : null;
-  useEffect(() => { if (ready && model) rRef.current!.setLayerStates((tabLayers ?? []).map(l => ({ visible: l.visible, color: l.color })), emphasis); }, [ready, model, tabLayers, emphasis]);
+  useEffect(() => {
+    if (!ready || !model) return;
+    // the Layers tab speaks file layer indices; the 3D stack is ordered from the user's Top (upside down on a
+    // primary-bottom board) — map both the states and the emphasised row, or a toggle switches another layer
+    const states = model.layerFileIndex.map(fi => tabLayers?.[fi]).map(l => ({ visible: l?.visible ?? true, color: l?.color ?? 0x3fa65b }));
+    rRef.current!.setLayerStates(states, emphasis === null ? null : model.layerFileIndex.indexOf(emphasis));
+  }, [ready, model, tabLayers, emphasis]);
   useEffect(() => { if (ready) rRef.current!.setNetLineMode(netLineMode); }, [ready, netLineMode]);
   useEffect(() => { if (ready) rRef.current!.setGhostMode(ghostMode); }, [ready, ghostMode]);
   useEffect(() => { if (ready) rRef.current!.setDimMode(dimMode); }, [ready, dimMode]);

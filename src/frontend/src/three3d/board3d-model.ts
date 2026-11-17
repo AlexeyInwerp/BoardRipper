@@ -40,6 +40,9 @@ export interface Board3DModel {
   holes: { x: number; z: number; rx: number; rz: number }[];
   /** Copper layers, 0 = the user's Top face, in stack order. One entry for a board without layer data. */
   layerNames: string[];
+  /** For each 3D layer (0 = the user's Top face) the file's layer index — the Layers tab speaks file indices, and a
+   *  primary-bottom board's stack is read upside down here. */
+  layerFileIndex: number[];
   /** Every trace segment with its layer, scene mm — the inner stack (the face textures use `traces`). */
   copper: { layer: number; x1: number; z1: number; x2: number; z2: number; w: number; net: string }[];
   /** Copper pours per layer: outer ring and holes, scene mm. */
@@ -217,7 +220,7 @@ export function buildBoard3DModel(board: BoardData, opts: Board3DModelOptions = 
 
   return {
     width: (all.x1 - all.x0) * MM, height: (all.y1 - all.y0) * MM,
-    outlines, cutouts, parts, pads, traces, silk, holes, layerNames, copper, pours, vias, minTraceWidth: copper.length ? copper.reduce((m, c) => Math.min(m, c.w), Infinity) : 0.2,
+    outlines, cutouts, parts, pads, traces, silk, holes, layerNames, layerFileIndex: Array.from({ length: layerNames.length }, (_, i) => (swap ? layerNames.length - 1 - i : i)), copper, pours, vias, minTraceWidth: copper.length ? copper.reduce((m, c) => Math.min(m, c.w), Infinity) : 0.2,
     primarySide: board.primarySide === 'bottom' ? 'bottom' : 'top',
     toScene, pinsOf,
     pinPads: (index: number) => pinPadMap.get(index) ?? [],

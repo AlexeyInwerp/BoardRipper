@@ -760,6 +760,8 @@ export class Board3DRenderer {
   }
   partsMode(): 'solid' | 'ghost' | 'off' { return this.settings.parts; }
 
+  /** Each 3D layer's name and whether its copper is shown — for tests. */
+  layerVisibility(): { name: string; visible: boolean }[] { const st = this.stack, m = this.model; if (!st || !m) return []; return st.layers.map((L, i) => ({ name: m.layerNames[i], visible: L.group.visible })); }
   /** The stack as built — for tests. */
   stackInfo(): { layers: number; copperMeshes: number; pourMeshes: number; vias: number; slices: number; sideOffset: number; layerY: number[]; partsVisible: boolean; xray: boolean; litNetId: number; litOnly: boolean; copperGroupsVisible: number; minTraceWidth: number; viaRadius: number; viaOpacity: number; litVias: number; litViaOpacity: number } | null {
     const st = this.stack; if (!st) return null;
@@ -1200,6 +1202,10 @@ export class Board3DRenderer {
       this.camera.up.lerpVectors(this.anim.uf, this.anim.ut, e).normalize(); this.camera.lookAt(this.target); this.camera.updateMatrixWorld();
       if (k >= 1) { this.anim = null; this.movingUntil = performance.now() + 180; } this.dirty = true;
     }
+    // the lit net's vias flash: on 350 ms, dim 350 ms — a timed toggle that marks the frame dirty only when it flips, so a
+    // big board redraws a few times a second for it, not sixty. It must run before the clean-frame early return below,
+    // or a settled scene never flips it (the vias froze once the view stopped moving, 2026-11-17).
+    if (this.stack?.litVias?.visible) { const mat = this.stack.litVias.material as THREE.MeshBasicMaterial; const want = Math.floor(performance.now() / 350) % 2 === 0 ? 1 : 0.3; if (mat.opacity !== want) { mat.opacity = want; this.dirty = true; } }
     const now = performance.now(), moving = this.benchPr === null && (this.anim !== null || now < this.movingUntil);
     // draw when something changed; and once more at full resolution when a move has ended
     if (!this.dirty && (moving || !this.settledLow)) return;
@@ -1208,9 +1214,6 @@ export class Board3DRenderer {
     const fromAbove = this.camera.position.y >= this.target.y;
     for (const mk of this.markers) mk.visible = (mk.userData.face === 'top') === fromAbove;
     for (const gh of this.ghostParts) gh.visible = (gh.userData.face === 'top') !== fromAbove; // the face the camera does not see
-    // the lit net's vias flash: on 350 ms, dim 350 ms — a timed toggle, not a per-frame fade, so a big board draws a few
-    // frames a second for it, not sixty
-    if (this.stack?.litVias?.visible) { const on = Math.floor(performance.now() / 350) % 2 === 0; const mat = this.stack.litVias.material as THREE.MeshBasicMaterial; const want = on ? 1 : 0.3; if (mat.opacity !== want) { mat.opacity = want; } this.dirty = true; }
     if (this.ghostMode === 'disco' && this.ghostParts.length) {
       const k = 0.55 + 0.45 * Math.sin(performance.now() / 180); // pulse
       for (const gh of this.ghostParts) gh.traverse(o => { const mat = (o as THREE.Mesh).material as THREE.Material | undefined; if (mat && 'opacity' in mat) mat.opacity = (o instanceof LineSegments2 ? 0.7 : 0.22) * k; });
