@@ -4,7 +4,7 @@
  * selection from boardStore and writes clicks back through the ordinary
  * selection actions, so the 2D view, the sidebar and cross-probing follow.
  */
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { view3dStore } from '../store/view3d-store';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
@@ -13,6 +13,8 @@ import { buildBoard3DModel, estimateParts, type Board3DModel } from './board3d-m
 import { contextMenuStore } from '../store/context-menu-store';
 import { pinDisplayId } from '../parsers/types';
 import { Board3DRenderer } from './Board3DRenderer';
+import { useRenderSettings } from '../hooks/useRenderSettings';
+import { resolvePartType } from '../store/render-settings';
 
 const EVIDENCE: Record<string, string> = { package: 'from the package name', geometry: 'estimated from the pins', fallback: 'size unknown — body from the pins' };
 
@@ -26,6 +28,16 @@ export default function Board3DView({ tabId }: { tabId: number }) {
   const tab = tabs.find(t => t.id === tabId);
   const board = tab?.board ? boardStore.viewBoardFor(tabId) : null;
   const overrides = tab?.partOverrides; // a new Map on every hide / unhide
+  // what the 2D view leaves out, the 3D view leaves out too: parts hidden by hand (right-click) and every part of a
+  // type hidden in Settings ▸ Theme ▸ Colours & filters. Keyed by the names, so a settings change that hides nothing
+  // new does not rebuild the scene.
+  const partTypes = useRenderSettings().partTypes;
+  const hiddenKey = useMemo(() => {
+    if (!board) return '';
+    const types = { partTypes } as Parameters<typeof resolvePartType>[1], out: string[] = [];
+    for (const pt of board.parts) if (overrides?.get(pt.name)?.hidden || (partTypes.some(t => t.hidden) && resolvePartType(pt.name, types)?.hidden)) out.push(pt.name);
+    return out.sort().join('\n');
+  }, [board, overrides, partTypes]);
   const [model, setModel] = useState<Board3DModel | null>(null);
   const [progress, setProgress] = useState<{ stage: string; pct: number } | null>(null);
   const sel = tab?.selection;
@@ -52,7 +64,7 @@ export default function Board3DView({ tabId }: { tabId: number }) {
     (async () => {
       try {
         await step('Estimating parts', 0);
-        const hidden = new Set([...(overrides ?? new Map<string, { hidden?: boolean }>()).entries()].filter(([, o]) => o.hidden).map(([n]) => n));
+        const hidden = new Set(hiddenKey ? hiddenKey.split('\n') : []);
         const estimates = await estimateParts(board, (d, t) => step('Estimating parts', 0.5 * d / t));
         const m = buildBoard3DModel(board, { hidden, estimates }); if (!live) return; setModel(m);
         await r.setModelStaged(m, (stage, i, n) => step(stage, 0.5 + 0.5 * i / n));
@@ -61,7 +73,7 @@ export default function Board3DView({ tabId }: { tabId: number }) {
       } catch (err) { if (!(err instanceof Error && err.message === 'cancelled')) { setFailed(err instanceof Error ? err.message : String(err)); } }
     })();
     return () => { live = false; };
-  }, [ready, board, tabId, overrides]);
+  }, [ready, board, tabId, hiddenKey]);
   useEffect(() => { if (ready) rRef.current!.setLeftDrag(dragMode); }, [ready, dragMode]);
   // the Layers tab drives the stack: visibility and colour per layer, and the pinned / selected layer's emphasis
   const tabLayers = tab?.layerStates, isActive = boardStore.activeTabId === tabId;

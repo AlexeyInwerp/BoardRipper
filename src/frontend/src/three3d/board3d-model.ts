@@ -62,7 +62,8 @@ export interface Board3DModel {
 const PRINTED_SILK = new Set(['EAGLE_BRD', 'KICAD']);
 
 export interface Board3DModelOptions {
-  /** Reference designators the user hid (the tab's part overrides) — left out like `part.hidden`. */
+  /** Reference designators left out like `part.hidden`: hidden by hand (the tab's part overrides) or by their part
+   *  type in the theme's colours & filters — body and the lands drawn from its pins, as in 2D. */
   hidden?: ReadonlySet<string>;
   /** Precomputed estimates by part index (from `estimateParts`), so the slow step can run in chunks with progress. */
   estimates?: ReadonlyMap<number, PartEstimate>;
@@ -150,7 +151,7 @@ export function buildBoard3DModel(board: BoardData, opts: Board3DModelOptions = 
   };
   if (board.pads?.length) for (const p of board.pads) pushPad(p.bounds, S(p.side), p.width, p.height, p.angleDeg, p.shape === 'round', p.drill);
   else board.parts.forEach((pt, index) => {
-    if (pt.hidden) return;
+    if (pt.hidden || opts.hidden?.has(pt.name)) return;
     const est = estByIndex.get(index);
     const list: (Board3DPad | null)[] = []; pinPadMap.set(index, list);
     for (const q of pt.pins) {
@@ -160,7 +161,13 @@ export function buildBoard3DModel(board: BoardData, opts: Board3DModelOptions = 
       const t = est && !q.drill ? terminalPad(est, P(q.position), q.radius * MM) : null;
       const [x, z] = toScene(P(q.position));
       if (t) pads.push({ x, z, w: t.w, h: t.h, angle: t.angle, round: false, side: S(q.side), drill: 0 });
-      else pads.push({ x, z, w: q.radius * 2 * MM, h: q.radius * 2 * MM, angle: 0, round: true, side: S(q.side), drill: (q.drill ?? 0) * MM });
+      else {
+        // a land from the pin radius alone (BVR, BRD, XZZ without pad sizes): no wider than 45 % of the part's ball
+        // pitch, the 2D view's rule — the Switch Lite BVR gives its BGA balls radii past half the pitch, and the lands
+        // under every BGA merged into one plate (2026-11-17)
+        const pitch = est?.p.pitch ?? 0, d = q.radius * 2 * MM, w = pitch > 0 && !q.drill ? Math.min(d, pitch * 0.9) : d;
+        pads.push({ x, z, w, h: w, angle: 0, round: true, side: S(q.side), drill: (q.drill ?? 0) * MM });
+      }
       list.push(pads[before]);
     }
   });
@@ -169,7 +176,7 @@ export function buildBoard3DModel(board: BoardData, opts: Board3DModelOptions = 
     const cell = 1, grid = new Map<string, Board3DPad[]>(), key = (x: number, z: number) => `${Math.floor(x / cell)},${Math.floor(z / cell)}`;
     for (const p of pads) { const k = key(p.x, p.z); let l = grid.get(k); if (!l) grid.set(k, (l = [])); l.push(p); }
     board.parts.forEach((pt, index) => {
-      if (pt.hidden) return;
+      if (pt.hidden || opts.hidden?.has(pt.name)) return;
       pinPadMap.set(index, pt.pins.map(q => {
         const [x, z] = toScene(P(q.position)); let best: Board3DPad | null = null, bd = Infinity;
         for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const p of grid.get(`${Math.floor(x / cell) + i},${Math.floor(z / cell) + j}`) ?? []) {

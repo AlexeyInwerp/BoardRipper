@@ -1,5 +1,5 @@
 import { useState, useSyncExternalStore } from 'react';
-import { IconAdjustments, IconCube, IconCubeOff, IconFocusCentered, IconHandStop, IconRotate360, IconStackBack, IconStackFront, IconZoomIn, IconZoomOut, IconView360 } from '@tabler/icons-react';
+import { IconAdjustments, IconCube, IconCpu, IconCpuOff, IconFocusCentered, IconHandStop, IconRotate360, IconStackBack, IconStackFront, IconZoomIn, IconZoomOut, IconView360 } from '@tabler/icons-react';
 import { view3dStore, QUALITY_PRESETS, type SelColour, type View3DQuality, type View3DSettings } from '../../../store/view3d-store';
 import { QuickMenu, type QuickMenuItem } from '../../QuickMenu';
 import type { SlotCtx } from '../slot-ctx';
@@ -44,7 +44,7 @@ export function View3DButton({ ctx }: { ctx: SlotCtx }) {
             onClick={() => view3dStore.setSettings({ parts: s3.parts === 'solid' ? 'ghost' : s3.parts === 'ghost' ? 'off' : 'solid' })}
             title={s3.parts === 'solid' ? 'Parts solid · click: ghost them' : s3.parts === 'ghost' ? 'Parts ghosted · click: hide them' : 'Parts hidden · click: show them'}
           >
-            {s3.parts === 'off' ? <IconCubeOff size={16} /> : <IconCube size={16} style={s3.parts === 'ghost' ? { opacity: 0.45 } : undefined} />}
+            {s3.parts === 'off' ? <IconCpuOff size={16} /> : <IconCpu size={16} style={s3.parts === 'ghost' ? { opacity: 0.45 } : undefined} />}
           </button>
           <button
             className={`board-netlines-toggle ${menu ? 'active' : ''}`}

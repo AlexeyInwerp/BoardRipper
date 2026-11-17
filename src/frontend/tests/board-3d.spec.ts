@@ -284,3 +284,20 @@ test('3D view: the board nearest the viewer follows a horizontal drag, from abov
     expect(x1).toBeGreaterThan(x0);
   }
 });
+
+test('3D view: a part type hidden in the theme\'s colours & filters is left out, as in 2D', async ({ page }) => {
+  test.setTimeout(90000);
+  await openBoard(page);
+  await page.getByTestId('view3d-btn').click();
+  await page.waitForFunction(() => ((window as unknown as W).__board3d?.renderer.drawnParts ?? 0) > 0, null, { timeout: 30000 });
+  const caps = () => page.evaluate(() => { const w = window as unknown as W; const R = w.__board3d!.renderer; return w.__boardStore!.board.parts.filter((p, i) => /^C\d/.test(p.name) && R.part(i)).length; });
+  const before = await caps(); expect(before).toBeGreaterThan(0);
+  const drawn0 = await page.evaluate(() => (window as unknown as W).__board3d!.renderer.drawnParts);
+  type RS = { __renderSettings: { globalSnapshot(): { partTypes: { id: string; hidden: boolean }[] }; applyGlobal(s: unknown): void } };
+  const hideCaps = (hidden: boolean) => page.evaluate(hidden => { const rs = (window as unknown as RS).__renderSettings; const g = rs.globalSnapshot(); rs.applyGlobal({ ...g, partTypes: g.partTypes.map(t => t.id === 'capacitor' ? { ...t, hidden } : t) }); }, hidden);
+  await hideCaps(true);
+  await page.waitForFunction(() => { const w = window as unknown as W; const R = w.__board3d!.renderer; return R.drawnParts > 0 && !w.__boardStore!.board.parts.some((p, i) => /^C\d/.test(p.name) && R.part(i)); }, null, { timeout: 30000 });
+  expect(await page.evaluate(() => (window as unknown as W).__board3d!.renderer.drawnParts)).toBe(drawn0 - before);
+  await hideCaps(false);
+  await page.waitForFunction(n => (window as unknown as W).__board3d!.renderer.drawnParts === n, drawn0, { timeout: 30000 });
+});
