@@ -17,7 +17,7 @@ import { PACKAGES, type PackageSpec } from '../store/cpu-packages';
 
 const std = (color: number, roughness: number, metalness = 0) => new THREE.MeshStandardMaterial({ color, roughness, metalness });
 export const MAT = {
-  tin: std(0xd9dde2, 0.28, 1),
+  tin: std(0xcfd3d8, 0.45, 0.85), // tinned terminals: satin, not a mirror (2026-11-17)
   gold: std(0xe3b95c, 0.3, 1),
   ceramic: std(0xeeeee6, 0.7),
   resTop: std(0x141414, 0.55),
@@ -57,7 +57,30 @@ const k3 = (...v: number[]) => v.map(n => n.toFixed(3)).join(',');
 function mesh(g: THREE.BufferGeometry, m: THREE.Material, x: number, y: number, z: number): THREE.Mesh { const o = new THREE.Mesh(g, m); o.position.set(x, y, z); return o; }
 const box = (w: number, h: number, d: number, m: THREE.Material, x = 0, y = 0, z = 0) => mesh(geo('b' + k3(w, h, d), () => new THREE.BoxGeometry(w, h, d)), m, x, y, z);
 // rounded edges only where they can show: a sub-0.6 mm box is drawn plain (2 k of the M1 board's parts)
-const rbox = (w: number, h: number, d: number, r: number, m: THREE.Material, x = 0, y = 0, z = 0) => Math.min(w, h, d) < 0.6 ? box(w, h, d, m, x, y, z) :
+// small bodies (0201, 0402, SOT…) get a one-segment bevel — a light chamfer on every edge, 4× a plain box's triangles,
+// not the 2-segment rounding the large ones get (2026-11-17)
+const cbox = (w: number, h: number, d: number, m: THREE.Material, x = 0, y = 0, z = 0) =>
+  mesh(geo('k' + k3(w, h, d), () => chamferBox(w, h, d, Math.min(w, h, d) * 0.12)), m, x, y, z);
+/** A box with its four top edges bevelled by `c`: bottom, four sides up to h − c, four bevel faces, an inset top —
+ *  20 triangles, flat-shaded. The top edges are the ones the eye reads; a full rounded box was 48 per small part and put
+ *  the Switch Lite board at 448 k triangles. */
+function chamferBox(w: number, h: number, d: number, c: number): THREE.BufferGeometry {
+  const x0 = -w / 2, x1 = w / 2, z0 = -d / 2, z1 = d / 2, y0 = -h / 2, ym = h / 2 - c, y1 = h / 2;
+  const B = [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]], M = [[x0, ym, z0], [x1, ym, z0], [x1, ym, z1], [x0, ym, z1]];
+  const T = [[x0 + c, y1, z0 + c], [x1 - c, y1, z0 + c], [x1 - c, y1, z1 - c], [x0 + c, y1, z1 - c]];
+  const quads: number[][][] = [[B[0], B[1], B[2], B[3]], [T[0], T[3], T[2], T[1]]];
+  for (let i = 0; i < 4; i++) { const j = (i + 1) % 4; quads.push([B[i], M[i], M[j], B[j]], [M[i], T[i], T[j], M[j]]); }
+  const pos: number[] = []; for (const [a, b2, c2, d2] of quads) pos.push(...a, ...b2, ...c2, ...a, ...c2, ...d2);
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.computeVertexNormals();
+  // winding: make every face point outward from the centre
+  const p = g.attributes.position.array as Float32Array, nrm = g.attributes.normal.array as Float32Array;
+  for (let t = 0; t < p.length; t += 9) {
+    const cx = (p[t] + p[t + 3] + p[t + 6]) / 3, cy = (p[t + 1] + p[t + 4] + p[t + 7]) / 3, cz = (p[t + 2] + p[t + 5] + p[t + 8]) / 3;
+    if (nrm[t] * cx + nrm[t + 1] * cy + nrm[t + 2] * cz < 0) { for (let k = 0; k < 3; k++) { const a = p[t + 3 + k]; p[t + 3 + k] = p[t + 6 + k]; p[t + 6 + k] = a; } }
+  }
+  g.computeVertexNormals(); return g;
+}
+const rbox = (w: number, h: number, d: number, r: number, m: THREE.Material, x = 0, y = 0, z = 0) => Math.min(w, h, d) < 0.6 ? cbox(w, h, d, m, x, y, z) :
   mesh(geo('r' + k3(w, h, d, r), () => new RoundedBoxGeometry(w, h, d, 2, Math.max(0.001, Math.min(r, w / 2, h / 2, d / 2) * 0.99))), m, x, y, z);
 const cyl = (r: number, h: number, m: THREE.Material, x = 0, y = 0, z = 0, seg = 24) => mesh(geo('c' + k3(r, h) + seg, () => new THREE.CylinderGeometry(r, r, h, seg)), m, x, y, z);
 
@@ -111,7 +134,7 @@ export function buildPartModel(e: PartEstimate): THREE.Group | null {
   switch (e.family) {
     case 'chip': {
       const k = e.kind;
-      if (k === 'R') { g.add(box(L * 0.96, H * 0.82, W, MAT.ceramic, 0, H * 0.41)); g.add(box(L * 0.62, H * 0.12, W * 0.92, MAT.resTop, 0, H * 0.88)); for (const s of [-1, 1]) g.add(box(L * 0.2, H, W * 1.02, MAT.tin, s * (L / 2 - L * 0.1), H / 2)); }
+      if (k === 'R') { g.add(cbox(L * 0.96, H * 0.82, W, MAT.ceramic, 0, H * 0.41)); g.add(box(L * 0.62, H * 0.12, W * 0.92, MAT.resTop, 0, H * 0.88)); for (const s of [-1, 1]) g.add(box(L * 0.2, H, W * 1.02, MAT.tin, s * (L / 2 - L * 0.1), H / 2)); }
       else if (k === 'LED') { g.add(box(L * 0.96, H * 0.55, W, MAT.ledBody, 0, H * 0.275)); g.add(box(L * 0.7, H * 0.45, W * 0.8, MAT.lens, 0, H * 0.775)); for (const s of [-1, 1]) g.add(box(L * 0.16, H * 0.55, W * 1.02, MAT.tin, s * (L / 2 - L * 0.08), H * 0.275)); }
       else { const m = k === 'C' ? MAT.mlcc : k === 'L' || k === 'FB' ? MAT.dark : k === 'D' ? MAT.epoxy : MAT.dot; const r = Math.min(W, H) * 0.12; g.add(rbox(L * 0.98, H, W, r, m, 0, H / 2)); for (const s of [-1, 1]) g.add(rbox(L * 0.24, H * 1.02, W * 1.02, r, MAT.tin, s * (L / 2 - L * 0.12), H / 2)); if (k === 'D') g.add(box(L * 0.12, 0.01, W, MAT.band, -L * 0.28, H + 0.005)); }
       break;

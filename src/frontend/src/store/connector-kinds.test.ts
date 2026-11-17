@@ -30,4 +30,9 @@ describe('connector semantics', () => {
     const r = classifyConnector('J9', g({ n: 79, rows: 4, perRow: 20, pitch: 0.65, spanL: 44, spanW: 3 }));
     expect(r.kind).toBe('generic'); expect(r.L).toBeGreaterThan(44);
   });
+  it('card-edge fingers (one line at 1 mm) draw no body, a two-row slot stays a slot', () => {
+    const e = classifyConnector('CN1', g({ n: 164, rows: 1, perRow: 82, pitch: 1.0, spanL: 83, spanW: 0 }));
+    expect(e.kind).toBe('edge'); expect(e.L).toBe(0);
+    expect(classifyConnector('JPCIE1', g({ n: 164, rows: 2, perRow: 82, pitch: 1.0, spanL: 83, spanW: 2.5 })).kind).not.toBe('edge');
+  });
 });

@@ -278,15 +278,16 @@ function connectorEstimate(pins: Pin[], ref: string, drilledCount: number): { fa
   const rowsAt = (f: Frame) => { const sl = sig.map(i => f.loc[i]); const tol = Math.max(6, mm(1) * 0); const ys = clusters(sl.map(v => v.y), Math.max(tol, 8)); return { f, ys, sl }; };
   const a = rowsAt(f0), b = rowsAt(frame(pins, f0.deg + 90, sig));
   const pick = a.ys.length <= b.ys.length ? a : b; const f = pick.f, sl = pick.sl;
-  const row = sl.filter(v => Math.abs(v.y - pick.ys.reduce((m, c) => c.n > m.n ? c : m, pick.ys[0]).c) <= 8).map(v => v.x).sort((x, y) => x - y);
+  // unique positions: a two-sided edge connector lists both sides' contacts on the same spot, and a zero gap would read as the pitch
+  const row = [...new Set(sl.filter(v => Math.abs(v.y - pick.ys.reduce((m, c) => c.n > m.n ? c : m, pick.ys[0]).c) <= 8).map(v => Math.round(v.x * 10) / 10))].sort((x, y) => x - y);
   const pitch = row.length > 1 ? mm(pitchOf(row)) : 0; const B = bboxOf(sl);
-  const g: ConnectorGeometry = { n: pins.length, rows: pick.ys.length, perRow: Math.max(...pick.ys.map(c => c.n)), pitch, spanL: mm(B.x1 - B.x0), spanW: mm(B.y1 - B.y0), bigPads: big.length, drilled: drilledCount };
+  const g: ConnectorGeometry = { n: pins.length, rows: pick.ys.length, perRow: row.length, pitch, spanL: mm(B.x1 - B.x0), spanW: mm(B.y1 - B.y0), bigPads: big.length, drilled: drilledCount };
   const k = classifyConnector(ref, g);
   // mating face: away from the shell tabs / big pads when there are any, else toward +y of the frame
   const tabY = big.length ? big.reduce((s2, i) => s2 + f.loc[i].y, 0) / big.length : Infinity, rowY = (B.y0 + B.y1) / 2;
   const dir = big.length && tabY > rowY ? -1 : 1;
   const c = toBoard(f, (B.x0 + B.x1) / 2, rowY + dir * k.offsetW * (k.W - mm(B.y1 - B.y0)) / 2 * MIL_PER_MM);
-  const fam: Family = k.kind === 'usb-c' ? 'usb-c' : k.kind === 'b2b' ? 'b2b' : k.kind === 'header' ? 'header' : k.kind === 'coax' ? 'coax' : 'conn';
+  const fam: Family = k.kind === 'edge' ? 'none' : k.kind === 'usb-c' ? 'usb-c' : k.kind === 'b2b' ? 'b2b' : k.kind === 'header' ? 'header' : k.kind === 'coax' ? 'coax' : 'conn';
   return { family: fam, size: k.label, L: k.L, W: k.W, H: k.H, cx: c.x, cy: c.y, rotDeg: wrap(f.deg + (dir > 0 ? 0 : 180)), p: { n: pins.length, pitch, rows: g.rows, perSide: g.perRow, cols: g.perRow }, why: `${k.why} (${k.evidence})`, evidence: k.evidence };
 }
 
@@ -389,6 +390,14 @@ export function estimatePart(part: Part, opts: EstimateOptions): PartEstimate {
   const small = pins.map((_, i) => i).filter(i => !big.includes(i));
   const f0 = frame(pins, gridAngle(small.map(i => pins[i].position)), small);
   const sloc = small.map(i => f0.loc[i]);
+  // card-edge gold fingers under any designator (MPCIE1 on an RX 580 card): every contact on one line at ~1 mm, at least
+  // 30 distinct positions — lands only, no body. The connector rules catch the J / CN ones first.
+  if (!hint && n >= 30) for (const extra of [0, 90]) {
+    const f = frame(pins, f0.deg + extra), B = bboxOf(f.loc);
+    if (mm(B.y1 - B.y0) > 1.0) continue;
+    const xs = [...new Set(f.loc.map(v => Math.round(v.x * 10) / 10))].sort((a, b) => a - b), p = mm(pitchOf(xs));
+    if (xs.length >= 30 && p >= 0.9 && p <= 1.1) { const c = center(); return out({ family: 'none', size: 'edge fingers', L: 0, W: 0, H: 0, cx: c.x, cy: c.y, rotDeg: wrap(f.deg) }, `${n} contacts in one line @ ${p.toFixed(2)} → card-edge fingers, no body`); }
+  }
   const tol = Math.max(4, median(sizes) * 0.35);
 
   const shapeKey = (p: Pin) => { const w = p.padWidth ?? p.radius * 2, h = p.padHeight ?? p.radius * 2; return `${Math.round(Math.min(w, h) / 3)}:${Math.round(Math.max(w, h) / 3)}`; };

@@ -16,7 +16,7 @@
 
 export type ConnectorKind =
   | 'sodimm' | 'usb-c' | 'usb-a' | 'hdmi' | 'dp' | 'rj45' | 'm2' | 'fpc' | 'b2b'
-  | 'battery' | 'fan' | 'wire' | 'dc-in' | 'audio' | 'header' | 'card' | 'coax' | 'generic';
+  | 'battery' | 'fan' | 'wire' | 'dc-in' | 'audio' | 'header' | 'card' | 'coax' | 'edge' | 'generic';
 
 /** What the estimator measured on the pin field (mm). */
 export interface ConnectorGeometry {
@@ -121,16 +121,21 @@ function bodyFor(kind: ConnectorKind, g: ConnectorGeometry): { L: number; W: num
     case 'header': return { L: g.spanL + g.pitch, W: g.spanW + g.pitch, H: 2.5, offsetW: 0 };
     case 'card': return { L: g.spanL + 4, W: Math.max(g.spanW + 6, 16), H: 2.2, offsetW: 0.5 };
     case 'coax': return { L: 2.6, W: 2.6, H: 1.2, offsetW: 0 };
+    case 'edge': return { L: 0, W: 0, H: 0, offsetW: 0 };
     default: return { L: g.spanL + 2, W: Math.max(g.spanW + 2, 4), H: 4, offsetW: 0.3 };
   }
 }
 
-const LABEL: Record<ConnectorKind, string> = { sodimm: 'SODIMM', 'usb-c': 'USB-C', 'usb-a': 'USB-A', hdmi: 'HDMI', dp: 'DisplayPort', rj45: 'RJ45', m2: 'M.2', fpc: 'FPC', b2b: 'board-to-board', battery: 'battery', fan: 'fan', wire: 'wire-to-board', 'dc-in': 'DC-in', audio: 'audio jack', header: 'header', card: 'card slot', coax: 'coax', generic: 'connector' };
+const LABEL: Record<ConnectorKind, string> = { edge: 'edge fingers', sodimm: 'SODIMM', 'usb-c': 'USB-C', 'usb-a': 'USB-A', hdmi: 'HDMI', dp: 'DisplayPort', rj45: 'RJ45', m2: 'M.2', fpc: 'FPC', b2b: 'board-to-board', battery: 'battery', fan: 'fan', wire: 'wire-to-board', 'dc-in': 'DC-in', audio: 'audio jack', header: 'header', card: 'card slot', coax: 'coax', generic: 'connector' };
 
 /** The kind of a connector, named first, checked by count, else by pattern, else a generic connector. */
 export function classifyConnector(ref: string, g: ConnectorGeometry): ConnectorKindResult {
   const named = kindFromName(ref);
   let kind: ConnectorKind, evidence: ConnectorKindResult['evidence'], why: string;
+  // card-edge gold fingers (a GPU's PCIe x16 edge: 82 contacts a side, often listed as one line of 164 with both sides
+  // on the same spot): contacts on the board edge, no housing — drawn as their lands, no body (Alexey, 2026-11-17).
+  // A motherboard PCIe slot has two staggered rows, so it never takes this branch.
+  if (g.rows === 1 && g.perRow >= 30 && g.pitch >= 0.9 && g.pitch <= 1.1) { const b = bodyFor('edge', g); return { kind: 'edge', label: LABEL.edge, ...b, evidence: 'pattern', why: `${g.n} contacts in one line @ ${g.pitch.toFixed(2)} → card-edge fingers, no body` }; }
   if (named && countFits(named, g.n)) { kind = named; evidence = 'name'; why = `${ref}: "${connectorKeyword(ref)}" → ${LABEL[kind]}, ${g.n} pins`; }
   else if (looksLikeUsbC(g)) { kind = 'usb-c'; evidence = 'pattern'; why = `${g.n} pins: two rows of ${g.perRow} @ ${g.pitch.toFixed(2)} + ${g.bigPads} shell tabs → USB-C`; }
   else if (g.n >= 200 && g.pitch <= 0.7 && g.spanL >= 55) { kind = 'sodimm'; evidence = 'pattern'; why = `${g.n} pins @ ${g.pitch.toFixed(2)} over ${g.spanL.toFixed(0)} mm → SODIMM socket`; }
