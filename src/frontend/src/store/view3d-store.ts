@@ -24,6 +24,8 @@ export const SEL_COLOURS = {
 export type SelColour = keyof typeof SEL_COLOURS;
 
 export type View3DQuality = 'quality' | 'balanced' | 'fast';
+export type BoardLook = 'tan' | 'smoke' | 'glass' | 'layer' | 'edges';
+export const BOARD_LOOKS: Record<BoardLook, string> = { tan: 'Tan', smoke: 'Smoke', glass: 'Glass', layer: 'Layer tint', edges: 'Edges' };
 
 export interface View3DSettings {
   /** Render quality: target sizes, multisampling and shadows — see QUALITY_PRESETS. */
@@ -53,6 +55,9 @@ export interface View3DSettings {
   explode: number;
   /** The component bodies: solid, ghosted (mostly transparent, so they do not mix with the copper) or hidden. */
   parts: 'solid' | 'ghost' | 'off';
+  /** How the see-through board's dielectric looks while the copper layers show: the old tan, neutral smoke, nearly
+   *  clear glass, each gap tinted by the layer above it, or edges only. */
+  boardLook: BoardLook;
   /** Via barrel diameter as a multiple of the board's thinnest trace width (1 = twice the width at most). */
   viaScale: number;
   /** Via opacity when not on the lit net (the lit net's vias flash). */
@@ -70,7 +75,7 @@ export const QUALITY_PRESETS: Record<View3DQuality, { settledPr: number; settled
 };
 
 export const DEFAULT_VIEW3D_SETTINGS: View3DSettings = {
-  copperLayers: false, xray: false, explode: 0, parts: 'solid', viaScale: 1, viaOpacity: 0.25,
+  copperLayers: false, xray: false, explode: 0, parts: 'solid', viaScale: 1, viaOpacity: 0.25, boardLook: 'smoke',
   quality: 'quality',
   netColour: 'cyan', pinColour: 'lime', partColour: 'violet',
   partNames: true, netNames: true, seeThrough: true, shadows: true,
@@ -125,7 +130,7 @@ function loadSettings(): View3DSettings {
     for (const k of ['netColour', 'pinColour', 'partColour'] as const) if (!(s[k] in SEL_COLOURS)) s[k] = DEFAULT_VIEW3D_SETTINGS[k];
     if (!(s.quality in QUALITY_PRESETS)) s.quality = DEFAULT_VIEW3D_SETTINGS.quality;
     s.markerPx = clamp(s.markerPx, 6, 40, DEFAULT_VIEW3D_SETTINGS.markerPx); s.outlinePx = clamp(s.outlinePx, 1, 8, DEFAULT_VIEW3D_SETTINGS.outlinePx);
-    s.explode = clamp(s.explode, 0, 1, 0); s.copperLayers = s.copperLayers === true; s.xray = s.xray === true; if (!['solid', 'ghost', 'off'].includes(s.parts)) s.parts = 'solid'; s.viaScale = clamp(s.viaScale, 0.25, 3, 1); s.viaOpacity = clamp(s.viaOpacity, 0.05, 1, 0.25);
+    s.explode = clamp(s.explode, 0, 1, 0); s.copperLayers = s.copperLayers === true; s.xray = s.xray === true; if (!['solid', 'ghost', 'off'].includes(s.parts)) s.parts = 'solid'; s.viaScale = clamp(s.viaScale, 0.25, 3, 1); s.viaOpacity = clamp(s.viaOpacity, 0.05, 1, 0.25); if (!(s.boardLook in BOARD_LOOKS)) s.boardLook = 'smoke';
     return s;
   } catch { return DEFAULT_VIEW3D_SETTINGS; }
 }

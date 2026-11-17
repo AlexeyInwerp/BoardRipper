@@ -17,6 +17,9 @@ export type QuickMenuItem =
   | { kind: 'sep' }
   | { kind?: 'item'; label: string; onSelect: () => void; disabled?: boolean; testId?: string; hint?: string }
   | { kind: 'check'; label: string; checked: boolean; onSelect: () => void; disabled?: boolean; testId?: string; hint?: string }
+  /** One line of choices — swatches (when `swatch` is set) or short labels; picking one applies at once and keeps the
+   *  menu open, so a colour can be tried and changed without reopening. Each option's test id is `${testId}-${value}`. */
+  | { kind: 'choice'; label: string; value: string; options: { value: string; label: string; swatch?: string; hint?: string }[]; onChange: (v: string) => void; testId?: string; disabled?: boolean }
   /** A slider that stays open while it is dragged and applies live. */
   | { kind: 'range'; label: string; value: number; min: number; max: number; step: number; onChange: (v: number) => void; format?: (v: number) => string; testId?: string };
 
@@ -72,6 +75,24 @@ export function QuickMenu({ x, y, items, onClose, ariaLabel, testId }: Props) {
       {items.map((it, i) => {
         if (it.kind === 'sep') return <div key={i} className="quick-menu-sep" role="separator" />;
         if (it.kind === 'header') return <div key={i} className="quick-menu-header">{it.label}</div>;
+        if (it.kind === 'choice') {
+          return (
+            <div key={i} className="quick-menu-choice" role="radiogroup" aria-label={it.label}>
+              <span className="quick-menu-range-label">{it.label}</span>
+              <span className="quick-menu-choice-opts">
+                {it.options.map(o => (
+                  <button key={o.value} type="button" role="radio" aria-checked={it.value === o.value} disabled={it.disabled}
+                    className={`quick-menu-choice-opt${o.swatch ? ' swatch' : ''}${it.value === o.value ? ' on' : ''}`}
+                    data-testid={it.testId ? `${it.testId}-${o.value}` : undefined} title={o.hint ?? o.label} aria-label={o.label}
+                    style={o.swatch ? { ['--sw' as string]: o.swatch } : undefined}
+                    onClick={() => it.onChange(o.value)}>
+                    {o.swatch ? null : o.label}
+                  </button>
+                ))}
+              </span>
+            </div>
+          );
+        }
         if (it.kind === 'range') {
           return (
             <label key={i} className="quick-menu-range">

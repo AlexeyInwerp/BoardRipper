@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3D Board Looks</title>
+<style>
+:root { --bg: #121417; --panel: #1b1e23; --line: #31363f; --text: #e6e8eb; --muted: #9aa1ab; --accent: #f5b301; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; }
+header { padding: 16px 20px 8px; } h1 { font-size: 16px; margin: 0 0 4px; } header p { color: var(--muted); margin: 0; max-width: 900px; }
+.grid { display: grid; grid-template-columns: 140px 1fr 1fr; gap: 10px 12px; padding: 12px 20px 24px; align-items: center; }
+.grid .h { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.name b { display: block; font-size: 14px; } .name span { color: var(--muted); font-size: 12px; }
+img { width: 100%; border: 1px solid var(--line); border-radius: 6px; display: block; cursor: zoom-in; }
+.menu { padding: 0 20px 30px; } .menu img { max-width: 1100px; }
+@media (max-width: 760px) { .grid { grid-template-columns: 1fr; } .grid .h { display: none; } }
+</style></head><body>
+<header>
+<h1>3D view: how the see-through board looks</h1>
+<p>Public KiCad sample (tomu-fpga, 4 layers) with <i>Copper layers</i> on and parts ghosted. Left: nothing selected. Right: one net lit (SPI_MISO). The large brown plates on top are this board's gold USB contacts, not the board material. Every look is live on rd-nas:1234 under 3D settings ▸ Board look; Smoke is the current default.</p>
+</header>
+<div class="grid">
+  <div class="h">Look</div><div class="h">Plain</div><div class="h">Net lit</div>
+  <div class="name"><b>Tan</b><span>the old look: tan dielectric at 22 %</span></div><img src="2026-11-17-board-look/tan.png" alt="Tan, plain"><img src="2026-11-17-board-look/tan-lit.png" alt="Tan, lit">
+  <div class="name"><b>Smoke</b><span>neutral dark grey at 32 %, darker when a net is lit</span></div><img src="2026-11-17-board-look/smoke.png" alt="Smoke, plain"><img src="2026-11-17-board-look/smoke-lit.png" alt="Smoke, lit">
+  <div class="name"><b>Glass</b><span>almost clear, cool tint at 7 %, light edge outlines</span></div><img src="2026-11-17-board-look/glass.png" alt="Glass, plain"><img src="2026-11-17-board-look/glass-lit.png" alt="Glass, lit">
+  <div class="name"><b>Layer tint</b><span>each gap tinted by the copper layer above it at 10 %, edges in that colour</span></div><img src="2026-11-17-board-look/layer.png" alt="Layer tint, plain"><img src="2026-11-17-board-look/layer-lit.png" alt="Layer tint, lit">
+  <div class="name"><b>Edges</b><span>no fill at all, only the outline of each layer gap</span></div><img src="2026-11-17-board-look/edges.png" alt="Edges, plain"><img src="2026-11-17-board-look/edges-lit.png" alt="Edges, lit">
+</div>
+<div class="menu"><div class="h" style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">The new settings menu: one line per choice</div><img src="2026-11-17-board-look/menu.png" alt="3D settings menu"></div>
+<script>document.querySelectorAll('img').forEach(i => i.addEventListener('click', () => window.open(i.src, '_blank')));</script>
+</body></html>

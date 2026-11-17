@@ -40,7 +40,7 @@ export class Board3DRenderer {
   private labelRoot = new THREE.Group();
   /** The layer stack of a multi-layer board: dielectric slices, copper per layer, pours, vias. */
   private stackRoot = new THREE.Group();
-  private stack: { layers: { group: THREE.Group; y: number; copper: THREE.Mesh | null; litPasses: THREE.Mesh[]; pour: THREE.Mesh | null }[]; slices: { mesh: THREE.Mesh; y: number }[]; vias: THREE.InstancedMesh | null; litVias: THREE.InstancedMesh | null; faces: THREE.Mesh[]; slab: THREE.Mesh | null } | null = null;
+  private stack: { layers: { group: THREE.Group; y: number; copper: THREE.Mesh | null; litPasses: THREE.Mesh[]; pour: THREE.Mesh | null }[]; slices: { mesh: THREE.Mesh; y: number; edges: THREE.LineSegments }[]; vias: THREE.InstancedMesh | null; litVias: THREE.InstancedMesh | null; faces: THREE.Mesh[]; slab: THREE.Mesh | null } | null = null;
   private layerStates: { visible: boolean; color: number }[] = [];
   private layerEmphasis: number | null = null;
   private labelMat: THREE.ShaderMaterial | null = null;
@@ -155,7 +155,7 @@ export class Board3DRenderer {
       this.boardRoot.traverse(o => { if (o instanceof THREE.Mesh) for (const m of Array.isArray(o.material) ? o.material : [o.material]) m.needsUpdate = true; });
     }
     if (prev.parts !== s.parts) this.applyPartsMode();
-    if (prev.copperLayers !== s.copperLayers || prev.xray !== s.xray || prev.explode !== s.explode || prev.viaScale !== s.viaScale || prev.viaOpacity !== s.viaOpacity) { this.applyStack(); if (this.stack && (prev.explode === 0) !== (s.explode === 0)) this.fit(); } // the stack is eight times taller exploded: refit when it opens or closes
+    if (prev.copperLayers !== s.copperLayers || prev.xray !== s.xray || prev.explode !== s.explode || prev.viaScale !== s.viaScale || prev.viaOpacity !== s.viaOpacity || prev.boardLook !== s.boardLook) { this.applyStack(); if (this.stack && (prev.explode === 0) !== (s.explode === 0)) this.fit(); } // the stack is eight times taller exploded: refit when it opens or closes
     this.dirty = true; // updateXray runs before the next render and resets any fade when see-through is off
     this.setSelection(this.sel.part, this.sel.net, this.sel.pin);
   }
@@ -326,7 +326,9 @@ export class Board3DRenderer {
       const y0 = this.layerY(i, n), y1 = this.layerY(i + 1, n), th = y0 - y1 - 0.024;
       const geo = new THREE.ExtrudeGeometry(this.boardShapes, { depth: th, bevelEnabled: false, curveSegments: 16 }); geo.rotateX(-Math.PI / 2); geo.translate(0, -th / 2, 0);
       const mesh = new THREE.Mesh(geo, [new THREE.MeshStandardMaterial({ color: 0x6e6448, roughness: 0.95, envMapIntensity: 0.1 }), new THREE.MeshStandardMaterial({ color: 0x6e6448, roughness: 0.95, envMapIntensity: 0.1 })]);
-      mesh.receiveShadow = true; const y = (y0 + y1) / 2; mesh.position.y = y; this.stackRoot.add(mesh); stack.slices.push({ mesh, y });
+      mesh.receiveShadow = true; const y = (y0 + y1) / 2; mesh.position.y = y; this.stackRoot.add(mesh);
+      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 30), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, depthWrite: false })); edges.visible = false; mesh.add(edges);
+      stack.slices.push({ mesh, y, edges });
     }
     if (m.vias.length) {
       // the via pass: six-sided barrels (the minimal shape that still reads as a tube), one instanced mesh for the
@@ -394,7 +396,7 @@ export class Board3DRenderer {
   }
   private applyLitNetShader(): void {
     const st = this.stack; if (!st) return;
-    const lit = !!this.sel.net; for (const sl of st.slices) for (const mat of sl.mesh.material as THREE.MeshStandardMaterial[]) mat.color.set(lit ? 0x1c1a14 : 0x6e6448); const net = this.sel.net, id = net ? (this.netIds.get(net) ?? 0) : 0, litOnly = !this.settings.copperLayers;
+    const lit = !!this.sel.net, look = this.settings.boardLook; if (look === 'tan' || look === 'smoke') for (const sl of st.slices) for (const mat of sl.mesh.material as THREE.MeshStandardMaterial[]) mat.color.set(lit ? (look === 'tan' ? 0x1c1a14 : 0x15171a) : (look === 'tan' ? 0x6e6448 : 0x24272c)); const net = this.sel.net, id = net ? (this.netIds.get(net) ?? 0) : 0, litOnly = !this.settings.copperLayers;
     st.layers.forEach((L, i) => {
       if (!L.copper) return;
       for (const mat of Board3DRenderer.copperMats(L)) { const u = mat.uniforms; u.uLit.value = id; (u.uLitColor.value as THREE.Color).set(this.colour('netColour')); u.uMode.value = litOnly ? 1 : 0; }
@@ -420,8 +422,17 @@ export class Board3DRenderer {
       if (L.pour) { const mat = L.pour.material as THREE.MeshBasicMaterial; mat.color.set(color); mat.opacity = 0.35 * alpha; }
     });
     const xray = s.xray || s.copperLayers; // showing the copper layers is showing the inside: the board goes see-through with them
-    for (const sl of st.slices) { sl.mesh.position.y = sl.y * scale; for (const mat of sl.mesh.material as THREE.MeshStandardMaterial[]) { mat.transparent = xray; mat.opacity = xray ? 0.22 : 1; mat.depthWrite = !xray; mat.needsUpdate = true; } }
-    for (const f of st.faces) { const mat = f.material as THREE.MeshStandardMaterial; mat.transparent = xray; mat.opacity = xray ? 0.45 : 1; mat.depthWrite = !xray; f.position.y = (f.position.y < 0 ? -TOP - 0.002 : TOP + 0.002) * scale; mat.needsUpdate = true; }
+    // the dielectric while see-through, by the chosen look (2026-11-17: the tan read as dull; the look is a setting)
+    const look = s.boardLook, faceOpacity = !xray ? 1 : look === 'tan' ? 0.45 : look === 'edges' ? 0.12 : 0.25;
+    st.slices.forEach((sl, i) => {
+      sl.mesh.position.y = sl.y * scale;
+      const layerColour = this.layerStates[i]?.color ?? 0x3fa65b;
+      const [colour, opacity] = !xray ? [0x6e6448, 1] : look === 'tan' ? [0x6e6448, 0.22] : look === 'smoke' ? [0x24272c, 0.32] : look === 'glass' ? [0xa8bccf, 0.07] : look === 'layer' ? [layerColour, 0.1] : [0x000000, 0.0];
+      for (const mat of sl.mesh.material as THREE.MeshStandardMaterial[]) { mat.color.set(colour); mat.transparent = xray; mat.opacity = opacity; mat.depthWrite = !xray; mat.visible = opacity > 0; mat.needsUpdate = true; }
+      sl.edges.visible = xray && (look === 'edges' || look === 'glass' || look === 'layer');
+      (sl.edges.material as THREE.LineBasicMaterial).color.set(look === 'layer' ? layerColour : look === 'glass' ? 0xcfe3f5 : 0x9aa4b0); (sl.edges.material as THREE.LineBasicMaterial).opacity = look === 'edges' ? 0.6 : 0.3;
+    });
+    for (const f of st.faces) { const mat = f.material as THREE.MeshStandardMaterial; mat.transparent = xray; mat.opacity = faceOpacity; mat.depthWrite = !xray; f.position.y = (f.position.y < 0 ? -TOP - 0.002 : TOP + 0.002) * scale; mat.needsUpdate = true; }
     if (st.vias) {
       const mtx = new THREE.Matrix4(), v = this.model!.vias, litId = this.sel.net ? (this.netIds.get(this.sel.net) ?? 0) : 0; let k2 = 0;
       v.forEach((q, k) => {

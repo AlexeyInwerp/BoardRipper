@@ -1,6 +1,6 @@
 import { useState, useSyncExternalStore } from 'react';
 import { IconAdjustments, IconCube, IconCpu, IconCpuOff, IconFocusCentered, IconHandStop, IconRotate360, IconStackBack, IconStackFront, IconZoomIn, IconZoomOut, IconView360 } from '@tabler/icons-react';
-import { view3dStore, QUALITY_PRESETS, type SelColour, type View3DQuality, type View3DSettings } from '../../../store/view3d-store';
+import { view3dStore, QUALITY_PRESETS, SEL_COLOURS, BOARD_LOOKS, type BoardLook, type SelColour, type View3DQuality, type View3DSettings } from '../../../store/view3d-store';
 import { QuickMenu, type QuickMenuItem } from '../../QuickMenu';
 import type { SlotCtx } from '../slot-ctx';
 
@@ -70,17 +70,15 @@ function View3DSettingsMenu({ x, y, onClose }: { x: number; y: number; onClose: 
   use3d();
   const s = view3dStore.settings;
   const set = (p: Partial<View3DSettings>) => view3dStore.setSettings(p);
-  const colourRow = (key: 'netColour' | 'pinColour' | 'partColour', label: string, choices: SelColour[]): QuickMenuItem[] => [
-    { kind: 'header', label },
-    ...choices.map(c => ({ kind: 'check' as const, label: COLOUR_LABEL[c], checked: s[key] === c, testId: `view3d-${key}-${c}`, onSelect: () => set({ [key]: c }) })),
-  ];
+  const hex = (c: SelColour) => '#' + SEL_COLOURS[c].toString(16).padStart(6, '0');
+  const colourRow = (key: 'netColour' | 'pinColour' | 'partColour', label: string, choices: SelColour[]): QuickMenuItem =>
+    ({ kind: 'choice', label, value: s[key], testId: `view3d-${key}`, onChange: v => set({ [key]: v as SelColour }), options: choices.map(c => ({ value: c, label: COLOUR_LABEL[c], swatch: hex(c) })) });
   const items: QuickMenuItem[] = [
-    { kind: 'header', label: 'Performance' },
-    ...(Object.keys(QUALITY_PRESETS) as View3DQuality[]).map(q => ({ kind: 'check' as const, label: QUALITY_PRESETS[q].label, hint: QUALITY_PRESETS[q].hint, checked: s.quality === q, testId: `view3d-quality-${q}`, onSelect: () => set({ quality: q }) })),
+    { kind: 'choice', label: 'Quality', value: s.quality, testId: 'view3d-quality', onChange: v => set({ quality: v as View3DQuality }), options: (Object.keys(QUALITY_PRESETS) as View3DQuality[]).map(q => ({ value: q, label: QUALITY_PRESETS[q].label, hint: QUALITY_PRESETS[q].hint })) },
     { kind: 'sep' },
-    ...colourRow('netColour', 'Lit net', ['cyan', 'magenta', 'lime', 'orange']),
-    ...colourRow('pinColour', 'Picked pin', ['lime', 'cyan', 'white', 'orange']),
-    ...colourRow('partColour', 'Selected part', ['violet', 'white', 'orange', 'magenta']),
+    colourRow('netColour', 'Lit net', ['cyan', 'magenta', 'lime', 'orange']),
+    colourRow('pinColour', 'Picked pin', ['lime', 'cyan', 'white', 'orange']),
+    colourRow('partColour', 'Selected part', ['violet', 'white', 'orange', 'magenta']),
     { kind: 'sep' },
     { kind: 'header', label: 'Show' },
     { kind: 'check', label: 'Part names', checked: s.partNames, testId: 'view3d-partNames', onSelect: () => set({ partNames: !s.partNames }) },
@@ -90,13 +88,10 @@ function View3DSettingsMenu({ x, y, onClose }: { x: number; y: number; onClose: 
     { kind: 'sep' },
     { kind: 'check', label: 'Copper layers in the Layers-tab colours', hint: 'every layer as geometry; the outer faces keep their mask underneath', checked: s.copperLayers, testId: 'view3d-copperLayers', onSelect: () => set({ copperLayers: !s.copperLayers }) },
     { kind: 'check', label: 'X-ray (see-through board)', hint: 'always on while the copper layers show', checked: s.xray || s.copperLayers, disabled: s.copperLayers, testId: 'view3d-xray', onSelect: () => set({ xray: !s.xray }) },
-    { kind: 'header', label: 'Vias' },
     { kind: 'range', label: 'Via size', value: Math.round(s.viaScale * 100), min: 25, max: 300, step: 25, format: v => `${v} %`, testId: 'view3d-viaScale', onChange: v => set({ viaScale: v / 100 }) },
     { kind: 'range', label: 'Via opacity', value: Math.round(s.viaOpacity * 100), min: 5, max: 100, step: 5, format: v => `${v} %`, testId: 'view3d-viaOpacity', onChange: v => set({ viaOpacity: v / 100 }) },
-    { kind: 'header', label: 'Parts' },
-    { kind: 'check', label: 'Solid', checked: s.parts === 'solid', testId: 'view3d-parts-solid', onSelect: () => set({ parts: 'solid' }) },
-    { kind: 'check', label: 'Ghosted', hint: 'mostly transparent, so bodies do not mix with the copper', checked: s.parts === 'ghost', testId: 'view3d-parts-ghost', onSelect: () => set({ parts: 'ghost' }) },
-    { kind: 'check', label: 'Hidden', checked: s.parts === 'off', testId: 'view3d-parts-off', onSelect: () => set({ parts: 'off' }) },
+    { kind: 'choice', label: 'Board look', value: s.boardLook, testId: 'view3d-boardLook', disabled: !(s.copperLayers || s.xray), onChange: v => set({ boardLook: v as BoardLook }), options: (Object.keys(BOARD_LOOKS) as BoardLook[]).map(l => ({ value: l, label: BOARD_LOOKS[l] })) },
+    { kind: 'choice', label: 'Parts', value: s.parts, testId: 'view3d-parts', onChange: v => set({ parts: v as View3DSettings['parts'] }), options: [{ value: 'solid', label: 'Solid' }, { value: 'ghost', label: 'Ghost', hint: 'mostly transparent, so bodies do not mix with the copper' }, { value: 'off', label: 'Hidden' }] },
     { kind: 'range', label: 'Explode layers', value: Math.round(s.explode * 100), min: 0, max: 100, step: 5, format: v => `${v} %`, testId: 'view3d-explode', onChange: v => set({ explode: v / 100 }) },
     { kind: 'sep' },
     { kind: 'range', label: 'Marker size', value: s.markerPx, min: 6, max: 40, step: 1, format: v => `${v} px`, testId: 'view3d-markerPx', onChange: v => set({ markerPx: v }) },
