@@ -1,5 +1,54 @@
 # BoardRipper changelog
 
+## v0.53.0 — 2026-11-17
+
+### Added
+
+- **3D view.** The cube in the board ribbon turns a board tab into a 3D
+  view of the same board. Parts stand on it as generated models sized from
+  the file: chips, connectors, inductors, BGAs, ports. A click selects a
+  part, a pin or a net, exactly as in 2D, and the 2D view and the sidebar
+  follow. Turn by dragging, pan with a right-drag or a scroll, zoom with
+  Ctrl+scroll or a pinch; Top, Bottom and Angled views sit in the ribbon.
+- **Known chips drawn as themselves.** CPUs, GPUs, game-console APUs,
+  memory and Apple's NAND are recognised from their ball pattern and drawn
+  with their real package: dies, lids, stiffener frames, capacitors. Intel
+  6th gen to Core Ultra, AMD Ryzen mobile, NVIDIA and AMD GPUs, Apple M1 to
+  M1 Max and T2, Switch, PS5, Xbox Series X and Xbox 360, DDR3 to DDR5,
+  LPDDR3 to LPDDR5X, GDDR5 to GDDR7.
+- **Connectors by their name.** A `J`, `CN` or `P1` part is always a
+  connector; its name says which (DDR → memory socket, UC → USB-C, HDMI,
+  EDP, SSD → M.2, FAN, BATT…), its pin count checks it, and its pad pattern
+  decides when the name says nothing. PCIe gold fingers draw without a body.
+- **Copper layers in 3D.** On a layered board the 3D settings show every
+  copper layer in the Layers tab's colours, with vias and copper pours. The
+  board turns see-through with them; five looks for it (Tan, Smoke, Glass,
+  Layer tint, Edges). *Explode* pulls the layers apart. Traces on any layer
+  can be clicked.
+- **A lit net stands out in 3D.** Its traces draw in their layer colour,
+  brighter and with a dark edge; the rest of the copper, the pours, the vias
+  and the parts step back. Its vias flash. On a large net the lands are
+  outlined instead of filled.
+- **Parts solid, ghosted or hidden** in 3D, from the cube button in the
+  ribbon. Parts hidden from the right-click menu are left out of 3D too.
+- **Assistant panel.** Chat about the open board with your own API key or a
+  local model; it uses the same tools as the MCP server.
+
+### Changed
+
+- **Every copper layer is visible when a board opens**, on every format.
+  TVW used to open on its top layer alone.
+- **GenCAD board outlines are read from the file.** Every GenCAD board used
+  to get a rectangle around its pins.
+
+### Fixed
+
+- **Side panels scroll by touch again.** A finger scrolling the Debug log,
+  a settings list or the pin table was pulled back to where it started.
+- **BVR3 files with absolute pin positions** are recognised per part, so
+  boards like the Switch Lite logic board no longer draw pins at twice their
+  coordinates.
+
 ## v0.52.1 — 2026-11-11
 
 ### Added
