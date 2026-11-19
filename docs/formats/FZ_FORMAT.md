@@ -208,7 +208,11 @@ Tab-delimited text with component descriptions. After decompression:
 ```
 
 - `locations` is a comma-separated list of reference designators
-- Currently parsed but not displayed (BoardData has no BOM field)
+- The zlib stream starts 4 bytes in (`fileSize - descSize + 4`, as OpenBoardView reads it); converters that are off by four bytes are tolerated by trying the nearby starts that hold a zlib header
+- `description` is what OpenBoardView shows as the part's **MFG code**. BoardRipper puts it on every listed part as `meta.value` (Component Info ▸ Value); `partno` becomes `meta.serial` when it is a real part number (ASUS `11G…`), not the refdes itself
+- GOCCANH exports write one row per part with the refdes in `partno` and the code behind a `//` (`//AON6314 N DFN56-8-5`); the `//` is stripped. A space in a location may stand for an underscore in the content (`SW BOT` ↔ `SW_BOT`)
+- Rows whose `partno` starts with a lower-case `s` are skipped (OpenBoardView's rule)
+- Canary: `XPS 15 9530 Compal HD055 LA-L663P Rev 1.0 BoardView.fz` — 4,069 of 4,069 parts get a code
 
 ---
 

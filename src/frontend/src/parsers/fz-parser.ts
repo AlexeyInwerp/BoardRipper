@@ -19,7 +19,7 @@
  */
 
 import { inflate, inflateRaw } from 'pako';
-import type { BoardData, Part, Pin, Nail, Point } from './types';
+import type { BoardData, Part, PartMeta, Pin, Nail, Point } from './types';
 import { computeBBox, buildNets, computePartGeometry, generateSyntheticOutline } from './types';
 import { log } from '../store/log-store';
 
@@ -192,6 +192,48 @@ interface FZPart {
   rotation?: number;
 }
 
+/** One BOM entry from the description section, as it applies to a part. */
+export interface FZPartDesc {
+  /** DESCRIPTION column — what OpenBoardView shows as the "MFG code". */
+  description: string;
+  /** PARTNUMBER column, when it is a real part number rather than the refdes. */
+  partNumber?: string;
+}
+
+/**
+ * Parse the description section — a tab-separated BOM:
+ *
+ *   <board description line>
+ *   PARTNUMBER  DESCRIPTION  QTY  LOCATION  PARTNUMBER2
+ *   <rows…>
+ *
+ * LOCATION is a comma-separated list of refdes. ASUS exports put the ASUS
+ * part number in PARTNUMBER and one row covers every placement; GOCCANH
+ * exports write one row per part with the refdes in PARTNUMBER and the
+ * manufacturer code behind a `//` in DESCRIPTION (`//AON6314 N DFN56-8-5`).
+ * Rules follow OpenBoardView (FZFile.cpp): rows whose PARTNUMBER starts with
+ * a lower-case `s` are skipped.
+ */
+export function parseDescription(text: string): Map<string, FZPartDesc> {
+  const byRef = new Map<string, FZPartDesc>();
+  const lines = text.split(/\r\n?|\n/);
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].replace(/^\s+/, '');
+    if (!line || line[0] === 's') continue;
+    const f = line.split('\t');
+    if (f.length < 4) continue;
+    const partNo = f[0].trim();
+    if (partNo.toUpperCase() === 'PARTNUMBER') continue; // column header
+    const description = f[1].replace(/^\s*\/\/\s*/, '').replace(/\s+/g, ' ').trim();
+    if (!description) continue;
+    const locations = f[3].split(',').map(l => l.trim()).filter(Boolean);
+    const isRealPartNo = partNo !== '' && !locations.includes(partNo);
+    const entry: FZPartDesc = isRealPartNo ? { description, partNumber: partNo } : { description };
+    for (const loc of locations) byRef.set(loc, entry);
+  }
+  return byRef;
+}
+
 /**
  * Parse the `!`-delimited content text into parts, pins, and nails.
  *
@@ -315,6 +357,7 @@ function assembleBoardData(
   fzParts: FZPart[],
   fzPins: FZPin[],
   fzNails: FZNail[],
+  descByRef: Map<string, FZPartDesc> = new Map(),
 ): BoardData {
   // Build a part name → index lookup
   const partIndexByName = new Map<string, number>();
@@ -357,6 +400,15 @@ function assembleBoardData(
     // rather than assert 'smd'. Rotation (when present) drives the oriented
     // selection box and is surfaced in the Component Info panel via meta.
     const rotation = fzPart.rotation ?? 0;
+    // The BOM sometimes writes a refdes with a space where the content has an
+    // underscore (`SW BOT` vs `SW_BOT`).
+    const desc = descByRef.get(fzPart.name) ?? descByRef.get(fzPart.name.replace(/_/g, ' '));
+    const meta: PartMeta = {};
+    if (rotation !== 0) meta.angleDeg = rotation;
+    if (desc) {
+      meta.value = desc.description;
+      if (desc.partNumber) meta.serial = desc.partNumber;
+    }
     parts.push({
       name:   fzPart.name,
       side:   fzPart.side,
@@ -364,7 +416,8 @@ function assembleBoardData(
       origin,
       pins,
       bounds,
-      ...(rotation !== 0 ? { angleDeg: rotation, meta: { angleDeg: rotation } } : {}),
+      ...(rotation !== 0 ? { angleDeg: rotation } : {}),
+      ...(Object.keys(meta).length > 0 ? { meta } : {}),
     });
   }
 
@@ -393,6 +446,26 @@ function assembleBoardData(
 function isZlibAt(data: Uint8Array, offset: number): boolean {
   if (data.length <= offset + 1) return false;
   return data[offset] === 0x78 && (data[offset + 1] === 0x9C || data[offset + 1] === 0xDA || data[offset + 1] === 0x01);
+}
+
+/**
+ * Inflate the description section, or null. It sits between the content and
+ * the trailing size word, behind a 4-byte prefix (OpenBoardView starts it at
+ * `len - descrSize + 4`). Converters disagree about that size by four bytes
+ * the same way they do for the content, so a few starts are tried, each only
+ * where a zlib header actually is.
+ */
+function inflateDescription(data: Uint8Array, descrSize: number, contentEnd: number): string | null {
+  const end = data.length - 4;
+  const starts = [data.length - descrSize + 4, data.length - descrSize, contentEnd, contentEnd + 4];
+  for (const start of new Set(starts)) {
+    if (start < 4 || start >= end || !isZlibAt(data, start)) continue;
+    try {
+      const t = decoder.decode(inflate(data.subarray(start, end)));
+      if (t.length > 0) return t;
+    } catch { /* next candidate */ }
+  }
+  return null;
 }
 
 /**
@@ -520,7 +593,10 @@ export async function parseFZ(
     throw new Error('FZ file parsed but contains no parts or pins — file may be corrupted or empty');
   }
 
-  // DESCR section ignored — BoardData does not support description yet
+  // Description section: the BOM. Optional — a file without one, or with one
+  // no decoder accepts, still opens.
+  const descByRef = parseDescription(inflateDescription(data, descrSize, contentEnd) ?? '');
+  if (descByRef.size > 0) log.parser.log(`FZ description: ${descByRef.size.toLocaleString()} refdes with a BOM entry`);
 
-  return assembleBoardData(fzParts, fzPins, fzNails);
+  return assembleBoardData(fzParts, fzPins, fzNails, descByRef);
 }

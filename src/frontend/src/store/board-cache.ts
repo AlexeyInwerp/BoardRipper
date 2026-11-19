@@ -143,7 +143,9 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 //     loop synthesised, so they fold as one board (iPad Pro 11 3rd gen).
 // 104: BVR3 pin coordinates absolute-vs-relative decided by a per-part
 //     vote, not "every pin 1 on its origin" (Switch Lite logic board).
-const PARSER_VERSION = 104;
+// 105: FZ description section (BOM) read — parts carry their MFG code as
+//     meta.value and an ASUS part number as meta.serial.
+const PARSER_VERSION = 105;
 
 interface CachedBoard {
   key: string;
