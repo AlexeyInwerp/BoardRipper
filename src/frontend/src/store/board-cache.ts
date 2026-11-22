@@ -157,7 +157,8 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 // 110: KiCad part number / rating / description / sheet (new
 //     PartMeta.description and .sheet).
 // 111: Allegro instance ROOM → meta.sheet.
-const PARSER_VERSION = 111;
+// 112: EAGLE element MPN / MFR / LCSC attributes → meta.serial.
+const PARSER_VERSION = 112;
 
 interface CachedBoard {
   key: string;

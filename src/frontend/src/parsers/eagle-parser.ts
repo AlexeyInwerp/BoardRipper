@@ -306,6 +306,27 @@ interface Xform {
   mirror: boolean;
 }
 
+/** `<attribute>` names that carry a manufacturer part number, in order. */
+const MPN_ATTRS = ['MPN', 'MANUFACTURER_PART_NUMBER', 'MANUFACTURER-PART-NUMBER', 'PART_NUMBER', 'PARTNO', 'PN', 'LCSC', 'LCSC_PART'];
+const MFR_ATTRS = ['MFR', 'MF', 'MANUFACTURER'];
+
+/**
+ * The part number an element's `<attribute>` children carry, with the
+ * manufacturer in front: `Panasonic ERJ-2RKF1002X` (10004_epic_cape: 78
+ * elements), `LCSC` numbers on rp2040. Names are matched case-insensitively.
+ */
+export function elementPartNumber(el: EagleXmlNode): { serial?: string } {
+  const attrs = new Map<string, string>();
+  for (const a of childrenNamed(el, 'attribute')) {
+    const k = (a.attrs.name ?? '').toUpperCase(), v = (a.attrs.value ?? '').trim();
+    if (k && v && !attrs.has(k)) attrs.set(k, v);
+  }
+  const mpn = MPN_ATTRS.map(k => attrs.get(k)).find(Boolean);
+  if (!mpn) return {};
+  const mfr = MFR_ATTRS.map(k => attrs.get(k)).find(Boolean);
+  return { serial: mfr && !mpn.toLowerCase().includes(mfr.toLowerCase()) ? `${mfr} ${mpn}` : mpn };
+}
+
 /** Parse an EAGLE `rot` attribute (`R90`, `MR180`, `SR45`, `SMR0`, …). */
 export function parseEagleRot(rot: string | undefined): { angleDeg: number; mirror: boolean; spin: boolean } {
   const m = /^\s*(S?)(M?)R(-?[\d.]+)\s*$/i.exec(rot ?? '');
@@ -787,6 +808,7 @@ export function parseEagleBRD(buffer: ArrayBuffer): BoardData {
         value: el.attrs.value || undefined,
         package: pkgName || undefined,
         angleDeg: t.angleDeg,
+        ...elementPartNumber(el),
       },
     };
     parts.push(part);

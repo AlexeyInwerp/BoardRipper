@@ -363,3 +363,13 @@ parser inherits BoardRipper's **AGPL-3.0-or-later** licence; see
 - **Pre-6.0 binary `.brd`.** Rejected with an actionable message. It is not
   *detected* as EAGLE (the sniff is XML-only), so a binary EAGLE board that
   reaches the parser does so through the extension fallback.
+
+
+## Part numbers
+
+An `<element>`'s `<attribute>` children may carry a part number — `MPN`,
+`MANUFACTURER_PART_NUMBER`, `PART_NUMBER`, `PN`, `LCSC` (case-insensitive,
+first found) — and a manufacturer (`MFR`, `MF`, `MANUFACTURER`). Together they
+become `meta.serial` (`Panasonic EVQ-P2K02Q`; 78 of 99 parts on
+10004_epic_cape). Net classes (`<class>`) and package `<description>` are not
+read.
