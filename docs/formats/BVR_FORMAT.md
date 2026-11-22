@@ -157,7 +157,9 @@ PIN_END
 | PIN_COMMENT | string | Comment (ignored) |
 | PIN_END | — | End of pin |
 
-`PART_OUTLINE_RELATIVE` (part body corners) is not read yet — `Part` has no outline field.
+`PART_OUTLINE_RELATIVE` (part body corners, relative to PART_ORIGIN) is drawn as a closed
+silkscreen loop on the part's side (Switch Lite: all 1,272 parts; 820-02016: 87, origin 0 so
+effectively absolute, each rectangle written twice — the repeat is dropped).
 
 ### Board Outline (two formats, mutually exclusive)
 

@@ -1,4 +1,4 @@
-import type { BoardData, Pad, Part, Pin, Point } from './types';
+import type { BoardData, Pad, Part, Pin, Point, SilkscreenPath } from './types';
 import { computeBBox, buildNets, chainSegments } from './types';
 import { log } from '../store/log-store';
 
@@ -27,6 +27,22 @@ export function parsePinOutline(value: string, at: Point): Point[] | undefined {
   const pts: Point[] = [];
   for (let i = 0; i < n.length; i += 2) pts.push({ x: at.x + n[i], y: at.y + n[i + 1] });
   return pts;
+}
+
+/**
+ * `PART_OUTLINE_RELATIVE` — the part body's corners relative to PART_ORIGIN,
+ * drawn as a closed silkscreen loop (the Switch Lite: every one of its 1,272
+ * parts; 820-02016: 87, with origin 0 so effectively absolute). 820-02016
+ * writes each rectangle twice in a row; the repeat is dropped.
+ */
+export function parsePartOutline(value: string, origin: Point): Point[] | undefined {
+  const pts = parsePinOutline(value, origin);
+  if (!pts) return undefined;
+  const half = pts.length / 2;
+  if (pts.length % 2 === 0 && half >= 3 && pts.slice(0, half).every((p, i) => p.x === pts[half + i].x && p.y === pts[half + i].y)) {
+    pts.length = half;
+  }
+  return [...pts, pts[0]];
 }
 
 /** Pin pad fields for an outline: a rectangle when the corners are an
@@ -137,7 +153,9 @@ export function parseBVR3(text: string): BoardData {
   let currentPart: Part | null = null;
   let currentPin: Partial<Pin> | null = null;
   let currentPinOutline = '';
+  let currentPartOutline = '';
   const pads: Pad[] = [];
+  const silkscreen: SilkscreenPath[] = [];
 
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -170,6 +188,7 @@ export function parseBVR3(text: string): BoardData {
         break;
       }
       case 'PART_NAME':
+        currentPartOutline = '';
         currentPart = {
           name: value,
           side: 'top',
@@ -191,6 +210,9 @@ export function parseBVR3(text: string): BoardData {
           currentPart.origin = { x: ox, y: oy };
         }
         break;
+      case 'PART_OUTLINE_RELATIVE':
+        currentPartOutline = value;
+        break;
       case 'PART_MOUNT':
         if (currentPart) {
           currentPart.type = value === 'ThroughHole' ? 'throughhole' : 'smd';
@@ -198,6 +220,10 @@ export function parseBVR3(text: string): BoardData {
         break;
       case 'PART_END':
         if (currentPart) {
+          if (currentPartOutline && currentPart.side !== 'both') {
+            const body = parsePartOutline(currentPartOutline, currentPart.origin);
+            if (body) silkscreen.push({ points: body, side: currentPart.side });
+          }
           if (currentPart.pins.length > 0) {
             const positions = currentPart.pins.map(p => p.position);
             currentPart.bounds = computeBBox(positions);
@@ -316,6 +342,10 @@ export function parseBVR3(text: string): BoardData {
     log.parser.log(`BVR3: ${pads.length} pin outlines ignored — the pin sits on an edge of nearly every pad, not inside it`);
   }
 
-  return { format: 'BVR3', outline, parts, nails: [], nets, bounds, ...(keepPads ? { pads } : {}) };
+  return {
+    format: 'BVR3', outline, parts, nails: [], nets, bounds,
+    ...(keepPads ? { pads } : {}),
+    ...(silkscreen.length > 0 ? { silkscreen } : {}),
+  };
 }
 

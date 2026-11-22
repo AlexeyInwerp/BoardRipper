@@ -41,3 +41,15 @@ describe('BVR3 PIN_OUTLINE_RELATIVE', () => {
     expect(b.parts[0].pins[0].padBounds).toBeUndefined();
   });
 });
+
+describe('BVR3 PART_OUTLINE_RELATIVE', () => {
+  it('offsets by the part origin and closes the loop', async () => {
+    const { parsePartOutline } = await import('./bvr3-parser');
+    expect(parsePartOutline('1 1 -1 1 -1 -1 1 -1', { x: 10, y: 20 }))
+      .toEqual([{ x: 11, y: 21 }, { x: 9, y: 21 }, { x: 9, y: 19 }, { x: 11, y: 19 }, { x: 11, y: 21 }]);
+  });
+  it('drops a rectangle written twice (820-02016)', async () => {
+    const { parsePartOutline } = await import('./bvr3-parser');
+    expect(parsePartOutline('0 0 0 2 4 2 4 0 0 0 0 2 4 2 4 0', { x: 0, y: 0 })).toHaveLength(5);
+  });
+});

@@ -160,7 +160,8 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 // 112: EAGLE element MPN / MFR / LCSC attributes → meta.serial.
 // 113: Apple BRD part type from flags (SMD / through-hole); blank pin nets
 //     filled from the pin's test nail.
-const PARSER_VERSION = 113;
+// 114: BVR3 PART_OUTLINE_RELATIVE drawn as silkscreen.
+const PARSER_VERSION = 114;
 
 interface CachedBoard {
   key: string;
