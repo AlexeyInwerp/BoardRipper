@@ -161,7 +161,9 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 // 113: Apple BRD part type from flags (SMD / through-hole); blank pin nets
 //     filled from the pin's test nail.
 // 114: BVR3 PART_OUTLINE_RELATIVE drawn as silkscreen.
-const PARSER_VERSION = 114;
+// 115: Altium comment text → value, SOURCE* fields, height; Regions6
+//     overrun no longer fails the board.
+const PARSER_VERSION = 115;
 
 interface CachedBoard {
   key: string;

@@ -71,3 +71,26 @@ Pads6 records have 5 subrecords: name (short Pascal), three skipped padding subr
 - `samples/altium/ESD_GW1N_4L.PcbDoc` — Altium Designer 15.1+ 4-layer Gowin FPGA dev board (~1.3 MB)
 
 Both files are local-only (`samples/` is gitignored).
+
+
+## Part values and BOM fields (binary)
+
+Measured on KiCad's own QA boards (`qa/data/pcbnew/plugins/altium`: HiFive1.B01,
+eDP_adapter_dvt1, Fastino_Ground_Isolator — copied to `samples/incoming/altium/`).
+Real Components6 records carry `SOURCEDESCRIPTION`, `SOURCELIBREFERENCE`,
+`SOURCEHIERARCHICALPATH`, `HEIGHT` (`39.3701mil`) and `FOOTPRINTDESCRIPTION` — not the
+`COMPONENT` / `COMPONENTDESCRIPTION` keys the first port read, which none of them has.
+
+| Source | → |
+|---|---|
+| Texts6 record with `isComment` (the placed Comment text, `0.1uF, 25V, X5R`) | `meta.value` |
+| `SOURCELIBREFERENCE` (`TDK_C0510X7R1E473M030BA`, `J0000048`) | `meta.serial` |
+| `SOURCEDESCRIPTION`, from its `UNICODE__SOURCEDESCRIPTION` twin when present (the plain value is 8-bit and loses `±`) | `meta.description` |
+| `SOURCEHIERARCHICALPATH` (`Power`) | `meta.sheet` |
+| `HEIGHT` | `meta.heightMils` |
+
+Texts6 (record type 5, two subrecords) follows KiCad's `ATEXT6`: component index u16 at
+byte 7, `isComment` at 40 (property blocks ≥ 123 bytes), wide-string index u32 at 115;
+the legacy 8-bit string in subrecord 2 is the fallback. Values on 380 of 381 parts.
+Regions6 extended vertices are 37 bytes; reads stop when a record's count runs past
+its body (Fastino threw and failed to open before).

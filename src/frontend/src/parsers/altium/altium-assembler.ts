@@ -92,6 +92,13 @@ export function assembleBoardData(db: AltiumPcbDb): BoardData {
     const meta: NonNullable<Part['meta']> = { angleDeg: compRot };
     if (comp.pattern) meta.package = comp.pattern;
     if (comp.componentName) meta.partType = comp.componentName;
+    const comment = db.comments?.get(ci);
+    if (comment) meta.value = comment;
+    if (comp.libReference && comp.libReference !== comment) meta.serial = comp.libReference;
+    const description = comp.sourceDescription || comp.description;
+    if (description) meta.description = description;
+    if (comp.sheet) meta.sheet = comp.sheet;
+    if (comp.heightMils) meta.heightMils = comp.heightMils;
     parts.push({
       name: comp.designator || `_unnamed_${ci}`,
       side,

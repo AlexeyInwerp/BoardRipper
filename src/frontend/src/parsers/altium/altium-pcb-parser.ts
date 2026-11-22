@@ -19,7 +19,9 @@ import {
   parseNets6,
   parseClasses6,
   parseWideStrings6,
+  parseTexts6Comments,
 } from './altium-records';
+import { log } from '../../store/log-store';
 import { assembleBoardData } from './altium-assembler';
 import type { AltiumPcbDb } from './altium-types';
 import { parseAltiumAscii } from './altium-ascii';
@@ -60,5 +62,12 @@ export function parseAltiumPcb(buffer: ArrayBuffer): BoardData {
     classes: parseClasses6(cfb.getStream('Classes6/Data') ?? empty),
     wideStrings: parseWideStrings6(cfb.getStream('WideStrings6/Data') ?? empty),
   };
+  // The comment texts are each part's value. Optional: a malformed stream
+  // costs the values, not the board.
+  try {
+    db.comments = parseTexts6Comments(cfb.getStream('Texts6/Data') ?? empty, db.wideStrings);
+  } catch (e) {
+    log.parser.warn(`altium: Texts6 comments not read — ${(e as Error).message}`);
+  }
   return assembleBoardData(db);
 }

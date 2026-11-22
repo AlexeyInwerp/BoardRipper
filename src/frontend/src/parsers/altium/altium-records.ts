@@ -147,6 +147,70 @@ export function parseWideStrings6(buf: Uint8Array): AWideStringTable {
   };
 }
 
+/** A text property, from its `UNICODE__<KEY>` twin when present: the plain
+ *  value is 8-bit and loses characters like `±`, the twin lists UTF-16 code
+ *  units as comma-separated decimals. */
+function unicodeProp(props: Map<string, string>, key: string): string {
+  const codes = readPropString(props, `UNICODE__${key}`, '');
+  if (codes) {
+    const units = codes.split(',').map(Number);
+    if (units.length > 0 && units.every(n => Number.isInteger(n) && n >= 0 && n <= 0xffff)) {
+      return String.fromCharCode(...units).trim();
+    }
+  }
+  return readPropString(props, key, '').trim();
+}
+
+function optionalStrings<T extends Record<string, string>>(o: T): Partial<T> {
+  const out: Partial<T> = {};
+  for (const k of Object.keys(o) as Array<keyof T>) if (o[k]) out[k] = o[k];
+  return out;
+}
+
+/** HEIGHT is a length with its unit (`39.3701mil`, `1mm`). */
+function heightProp(v: string): { heightMils?: number } {
+  const m = /^\s*([-+]?[\d.]+(?:e[-+]?\d+)?)\s*(mil|mm)?\s*$/i.exec(v);
+  if (!m) return {};
+  const n = parseFloat(m[1]) * ((m[2] ?? 'mil').toLowerCase() === 'mm' ? 1000 / 25.4 : 1);
+  return Number.isFinite(n) && n > 0 ? { heightMils: Math.round(n * 1000) / 1000 } : {};
+}
+
+/**
+ * Texts6/Data — the comment strings, i.e. each component's value as placed.
+ * Record type 5, two subrecords: properties, then a legacy 8-bit string.
+ * Offsets follow KiCad's ATEXT6: component index u16 at 7, `isComment` at
+ * 40 (only in property blocks of ≥ 123 bytes), wide-string index u32 at 115.
+ * A special string (`.Comment`) is an unresolved reference and is skipped.
+ */
+export function parseTexts6Comments(buf: Uint8Array, wide: AWideStringTable): Map<number, string> {
+  const out = new Map<number, string>();
+  const s = new AltiumStream(buf);
+  const latin1 = new TextDecoder('latin1');
+  while (s.remaining() >= 9) {
+    if (s.readUint8() !== 5) break;
+    const len1 = s.readUint32();
+    if (len1 > s.remaining()) break;
+    const p = new AltiumStream(s.slice(len1));
+    if (s.remaining() < 4) break;
+    const len2 = s.readUint32();
+    if (len2 > s.remaining()) break;
+    const legacy = s.slice(len2);
+    if (len1 < 123) continue;
+    p.skip(7);
+    const component = p.readUint16();
+    p.skip(40 - 9);
+    const isComment = p.readUint8() !== 0;
+    if (!isComment || component === 0xffff) continue;
+    p.skip(115 - 41);
+    const wideIdx = p.readUint32();
+    let text = wide.byIndex(wideIdx);
+    if (!text && legacy.length > 0) text = latin1.decode(legacy.subarray(1, 1 + legacy[0]));
+    text = text.replace(/\0+$/, '').replace(/\r\n/g, ' ').trim();
+    if (text && !text.startsWith('.') && !out.has(component)) out.set(component, text);
+  }
+  return out;
+}
+
 /**
  * Components6/Data is property-bag text. Each record (one per component) has:
  *   RECORD=1
@@ -167,6 +231,12 @@ export function parseComponents6(buf: Uint8Array): AComponent6[] {
       pattern: readPropString(props, 'PATTERN', ''),
       componentName: readPropString(props, 'COMPONENT', ''),
       description: readPropString(props, 'COMPONENTDESCRIPTION', ''),
+      ...optionalStrings({
+        sourceDescription: unicodeProp(props, 'SOURCEDESCRIPTION'),
+        libReference: readPropString(props, 'SOURCELIBREFERENCE', '').trim(),
+        sheet: readPropString(props, 'SOURCEHIERARCHICALPATH', '').trim(),
+      }),
+      ...heightProp(readPropString(props, 'HEIGHT', '')),
       layer: parseAltiumLayerName(readPropString(props, 'LAYER', 'TOP')),
       x: readPropInt(props, 'X', 0),
       y: readPropInt(props, 'Y', 0),
@@ -463,12 +533,17 @@ export function parseRegions6(buf: Uint8Array, forceExtended = false): ARegion6[
       || kind === REGION_KIND_BOARD_CUTOUT
       || kind === REGION_KIND_POLYGON_CUTOUT;
 
+    if (body.remaining() < 4) continue;
     let numOutline = body.readUint32();
     if (extended) numOutline += 1; // closing vertex
 
+    // An extended vertex is 37 bytes (isRound, x, y, centre, radius, two
+    // angles). Fastino_Ground_Isolator (KiCad QA) has records whose count
+    // runs past the body; reading on threw and lost the whole board.
+    const EXTENDED_VERTEX_BYTES = 37;
     const vertices: { x: number; y: number }[] = [];
     for (let i = 0; i < numOutline; i++) {
-      if (body.remaining() <= 0) break;
+      if (body.remaining() < (extended ? EXTENDED_VERTEX_BYTES : 16)) break;
       if (extended) {
         body.readUint8();                 // isRound (ignored — straight-line approximation only)
         const x = body.readInt32();

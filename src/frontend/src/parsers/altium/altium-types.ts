@@ -20,6 +20,16 @@ export interface AComponent6 {
   pattern: string;
   componentName: string;
   description: string;
+  /** SOURCEDESCRIPTION — the schematic part's description ("Capacitor - SMD
+   *  - 47n - ±20% - 25V"). Real files carry this, not COMPONENTDESCRIPTION. */
+  sourceDescription?: string;
+  /** SOURCELIBREFERENCE — the library part (`TDK_C0510X7R1E473M030BA`,
+   *  `J0000048`, `Cap Semi`). */
+  libReference?: string;
+  /** SOURCEHIERARCHICALPATH — the schematic sheet (`Power`, `JLINK_K22`). */
+  sheet?: string;
+  /** HEIGHT, in mils. */
+  heightMils?: number;
   layer: AltiumLayer | number;
   x: number;
   y: number;
@@ -129,4 +139,6 @@ export interface AltiumPcbDb {
   nets: ANet6[];
   classes: AClass6[];
   wideStrings: AWideStringTable;
+  /** Comment text (the part's value) by component index, from Texts6. */
+  comments?: Map<number, string>;
 }
