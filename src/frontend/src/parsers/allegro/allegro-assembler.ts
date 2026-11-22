@@ -13,14 +13,16 @@
  * TypeScript implementation is original code for BoardRipper.
  */
 
-import type { BoardData, Net, Pad, PadShape, Part, Pin, Point, SilkscreenPath, Surface, Trace, Via } from '../types';
+import type { BoardData, Net, Pad, PadShape, Part, PartMeta, Pin, Point, SilkscreenPath, Surface, Trace, Via } from '../types';
 import { computeBBox, buildNets } from '../types';
 import { AllegroDb } from './allegro-db';
 import { buildDanglingIndex, inferPlacement, pointKey } from './allegro-infer-placement';
 import { BoardUnits, FmtVer, LayerClass } from './allegro-types';
 import type {
+  Blk0x03Field,
   Blk0x04NetAssign,
   Blk0x05Track,
+  Blk0x06Component,
   Blk0x07ComponentInst,
   Blk0x08PinNumber,
   Blk0x0DPad,
@@ -310,6 +312,69 @@ function buildNetAssignMap(db: AllegroDb): Map<number, string> {
 
 // ── Components & Pins ─────────────────────────────────────────────────────────
 
+/** BLK_0x03 field ids (`hdr1`) seen on BLK_0x06 components. The id is the
+ *  attribute: on every sample board `2` holds VALUE (`22U_0805_16V6M`,
+ *  `100K`) and `5` the part number (`X802112-001`, Jasper v17). The others
+ *  (192–196: class and device-name pieces) repeat what the device type says. */
+const FIELD_VALUE = 2;
+const FIELD_PART_NUMBER = 5;
+
+/** What a BLK_0x06 component says about its parts, keyed by the BLK_0x07
+ *  instances that belong to it. */
+interface ComponentInfo { value?: string; partNumber?: string; deviceType?: string }
+
+function componentInfoByInstance(db: AllegroDb): Map<number, ComponentInfo> {
+  const out = new Map<number, ComponentInfo>();
+  for (const blk of db.blocks.values()) {
+    if (blk.blockType !== 0x06) continue;
+    const comp = blk as Blk0x06Component;
+    const info: ComponentInfo = {};
+    const device = comp.compDeviceType ? db.getString(comp.compDeviceType).trim() : '';
+    // `DEV_298` (P3HCJ) is an exporter's placeholder, not a name.
+    if (device && !/^DEV_\d+$/i.test(device)) info.deviceType = device;
+    const seenField = new Set<number>();
+    for (let k = comp.fields; k && !seenField.has(k) && seenField.size < 64;) {
+      seenField.add(k);
+      const f = db.blocks.get(k) as Blk0x03Field | undefined;
+      if (!f || f.blockType !== 0x03) break;
+      if (f.substruct.kind === 'string') {
+        const v = f.substruct.value.trim();
+        if (v && v !== '()') {
+          if (f.hdr1 === FIELD_VALUE && !info.value) info.value = v;
+          else if (f.hdr1 === FIELD_PART_NUMBER && !info.partNumber) info.partNumber = v;
+        }
+      }
+      k = f.next;
+    }
+    // The 0x07 chain ends by pointing back at its 0x06; stop at the first
+    // block that is not an instance.
+    const seenInst = new Set<number>();
+    for (let k = comp.firstInstPtr; k && !seenInst.has(k);) {
+      seenInst.add(k);
+      const inst = db.blocks.get(k) as Blk0x07ComponentInst | undefined;
+      if (!inst || inst.blockType !== 0x07) break;
+      out.set(k, info);
+      k = inst.next;
+    }
+  }
+  return out;
+}
+
+/** Part.meta for one placed instance: the footprint name as the package, the
+ *  component's VALUE field (or, for boards that carry no fields, its device
+ *  type, which Compal/Quanta name after the part: `AP2337SA-7_SOT23-3`), the
+ *  part number, and the placement rotation. */
+export function partMeta(footprintName: string, info: ComponentInfo | undefined, rotationMilliDeg: number): PartMeta | undefined {
+  const meta: PartMeta = {};
+  if (footprintName) meta.package = footprintName;
+  const value = info?.value ?? info?.deviceType;
+  if (value) meta.value = value;
+  if (info?.partNumber) meta.serial = info.partNumber;
+  const deg = ((rotationMilliDeg / 1000) % 360 + 360) % 360;
+  if (Number.isFinite(deg) && deg !== 0) meta.angleDeg = Math.round(deg * 1000) / 1000;
+  return Object.keys(meta).length > 0 ? meta : undefined;
+}
+
 function extractComponents(
   db: AllegroDb,
   ver: FmtVer,
@@ -326,6 +391,7 @@ function extractComponents(
   }
   const parts: Part[] = [];
   const allPinPositions: Point[] = [];
+  const compInfo = componentInfoByInstance(db);
 
   // Walk LL_0x2B → 0x2B footprint defs → firstInstPtr → 0x2D chain
   const fpDefs = db.walkLinkedList(
@@ -339,9 +405,8 @@ function extractComponents(
 
     // Footprint name is shared by every instance of this 0x2B definition —
     // resolve once. This is the package name as authored in Allegro
-    // (e.g., "RES_0402_R1", "QFN32_5x5_0p5"). Allegro doesn't store BOM
-    // values directly in the binary DB; values live in 0x31 STRING_GRAPHIC
-    // labels on the assembly layer and are out of scope here.
+    // (e.g., "RES_0402_R1", "QFN32_5x5_0p5"). The BOM value comes from the
+    // component's BLK_0x03 fields — see componentInfoByInstance.
     const footprintName = fpDef.fpStrRef ? db.getString(fpDef.fpStrRef) : '';
 
     // Walk 0x2D instance chain
@@ -361,6 +426,7 @@ function extractComponents(
       // Resolve refdes: instRef (>= V172) or instRef16x (< V172) → 0x07 → refDesStrPtr → string
       const instRefKey = ver >= FmtVer.V_172 ? inst.instRef : inst.instRef16x;
       let refdes = '';
+      const info = instRefKey ? compInfo.get(instRefKey) : undefined;
       if (instRefKey) {
         const compInst = db.getBlockAs<Blk0x07ComponentInst>(instRefKey, 0x07);
         if (compInst) {
@@ -392,6 +458,7 @@ function extractComponents(
       // layers / carries a drill (same criterion as extractPads' side='both').
       const partType: 'smd' | 'throughhole' = hasThru ? 'throughhole' : 'smd';
 
+      const meta = partMeta(footprintName, info, inst.rotation);
       parts.push({
         name: refdes,
         side,
@@ -399,7 +466,7 @@ function extractComponents(
         origin,
         pins,
         bounds,
-        ...(footprintName ? { meta: { package: footprintName } } : {}),
+        ...(meta ? { meta } : {}),
       });
 
       instKey = inst.next;

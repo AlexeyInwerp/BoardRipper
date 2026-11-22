@@ -145,7 +145,9 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 //     vote, not "every pin 1 on its origin" (Switch Lite logic board).
 // 105: FZ description section (BOM) read — parts carry their MFG code as
 //     meta.value and an ASUS part number as meta.serial.
-const PARSER_VERSION = 105;
+// 106: Allegro v16+ parts carry the component's VALUE field (device type as
+//     fallback), its part number and the placement rotation in meta.
+const PARSER_VERSION = 106;
 
 interface CachedBoard {
   key: string;

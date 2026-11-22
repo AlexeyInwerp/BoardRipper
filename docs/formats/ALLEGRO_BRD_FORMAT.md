@@ -591,3 +591,18 @@ x23=88  x2B=76  x2D=72  x33=76  x34=36  x3A=16
 - [KiCad Allegro importer FORMAT.md](https://github.com/KiCad/kicad-source-mirror/blob/master/pcbnew/pcb_io/allegro/FORMAT.md) — GPL-3.0, primary source
 - [brd_parser](https://github.com/bernayigit/brd_parser) — C++ parser by Jeff Wheeler (MIT)
 - [OpenBoardView Issue #62](https://github.com/OpenBoardView/OpenBoardView/issues/62)
+
+
+## Part values (BLK_0x06 fields)
+
+A BLK_0x06 component's `fields` pointer starts a chain of BLK_0x03 records;
+`hdr1` is the attribute id. On every sample board id **2** is VALUE
+(`22U_0805_16V6M`, `100K`) and id **5** the part number (`X802112-001`, Jasper
+v17); ids 192–196 repeat pieces of the device name. The component's BLK_0x07
+chain (`firstInstPtr` → `next`) names the placed instances it applies to.
+`Part.meta.value` takes VALUE, or the device type (`compDeviceType`) when the
+component has none — except exporter placeholders like `DEV_298`;
+`meta.serial` takes the part number; `meta.angleDeg` the BLK_0x2D rotation.
+Measured on the 25 v16+/v17 samples: every part has a value (LA-P161P
+3346/3369). v15 is not covered. BLK_0x07's own field chain (`x03Ptr`) holds
+the schematic group (`CPU_CORE`, `05. CPU(3)_+VCCCORE`) and is not read.
