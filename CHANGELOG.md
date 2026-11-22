@@ -1,5 +1,45 @@
 # BoardRipper changelog
 
+## v0.53.1 — 2026-11-22
+
+### Added
+
+- **Part values on every format that carries them.** A review of every
+  parser against real files found data that never reached the screen:
+  - **FZ**: the part list at the end of the file — each part's MFG code
+    (e.g. `AON6314 N DFN56-8-5`). First seen on the XPS 15 9530 (LA-L663P).
+  - **Allegro**: the BOM value of every part (`22U_0805_16V6M`), the part
+    number where the board has one, and the schematic block (ROOM).
+  - **XZZ**: chip markings and part numbers from the file's annotation
+    section, and footprint names (`01005`, `CAP-0201`).
+  - **KiCad**: part number, rating (`1u 16V`), description, schematic sheet.
+  - **EAGLE**: part numbers with the manufacturer (`Panasonic EVQ-P2K02Q`).
+  - **Altium**: value, library part, description, sheet and height — parts
+    showed only a footprint before.
+  - **Mentor Neutral**: both part numbers, the description and the circuit
+    block.
+- **Diode readings per net (XZZ).** MacBook and iPhone "Common problems"
+  files give one reading per net; it now shows on every pin of that net.
+- **Apple BRD: SMD or through-hole** for every part, from the file.
+- **Switch Lite (BVR3): real ball sizes, pad shapes and part outlines.**
+  Every pin used to be drawn at the same size.
+
+### Changed
+
+- **Component Info shows what helps a repair first**: Value, Part number,
+  Description. Package, type, sheet, height and rotation are under *More
+  from the file*, along with values that only repeat the part name or the
+  package. "Serial" is now called *Part number*.
+
+### Fixed
+
+- **GenCAD boards from MSI and NVIDIA** (V385, RX 580, RTX 4090) took their
+  artwork for the board edge.
+- **GenCAD values** no longer carry the part name (Lenovo Legion Pro 5) or a
+  `DeviceNNNN` placeholder (ASUS TUF RTX 3080); tolerances are shown on
+  resistors and capacitors.
+- **An Altium file with a long region record** failed to open.
+
 ## v0.53.0 — 2026-11-17
 
 ### Added
