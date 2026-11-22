@@ -26,6 +26,7 @@ function loadSample(): ArrayBuffer {
 }
 
 test.describe('BRD parser', () => {
+  test.skip(!fs.existsSync(SAMPLE_PATH), 'proprietary sample 820-02935-05.brd not present');
   test('parses 820-02935-05.brd: format, bounds, parts, nets all populated', async () => {
     const { parseBRD } = await import('../src/parsers/brd-parser');
     const board = parseBRD(loadSample());

@@ -190,9 +190,10 @@ test.describe('KiCad parser — starfish.kicad_pcb', () => {
     expect(c1508!.pins.length).toBe(2);
     expect(c1508!.side).toBe('top');
     expect(c1508!.type).toBe('smd');
-    // Library id survives as package metadata; value comes from fp_text value.
+    // Library id survives as package metadata; value comes from fp_text value,
+    // with the footprint's Rating property appended.
     expect(c1508!.meta?.package).toBe('C_0603_HandSolder');
-    expect(c1508!.meta?.value).toBe('470p');
+    expect(c1508!.meta?.value).toBe('470p 100V');
     // As-authored rotation is preserved for display…
     expect(c1508!.meta?.angleDeg).toBe(90);
     // …while part.angleDeg carries the raw-board-frame angle the renderer
