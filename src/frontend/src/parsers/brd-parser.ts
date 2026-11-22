@@ -238,7 +238,7 @@ export function parseBRD(buffer: ArrayBuffer): BoardData {
   // part_1idx is a 1-based index into the Pins1 catalogue.
   // Also handles 'Pins:' section name (alternate BRD variant — same column layout).
   // Build an array of (x, y, partIdx, net) for each pin.
-  const pinData: Array<{ x: number; y: number; partIdx: number; net: string }> = [];
+  const pinData: Array<{ x: number; y: number; partIdx: number; net: string; probe: number }> = [];
   const p2Lines = secs.get('Pins2') ?? secs.get('Pins') ?? [];
   let p2count = 0;
   for (const line of p2Lines) {
@@ -247,13 +247,31 @@ export function parseBRD(buffer: ArrayBuffer): BoardData {
     if (cols.length < 4) continue;
     const x       = Number(cols[0]);
     const y       = Number(cols[1]);
+    const probe   = Number(cols[2]); // test-nail id on this pin, -99 = none
     const partIdx = Number(cols[3]); // 1-based
     const net     = cols.length >= 5 ? cols.slice(4).join(' ').trim() : '';
     if (!isNaN(x) && !isNaN(y) && partIdx > 0) {
-      pinData.push({ x, y, partIdx, net });
+      pinData.push({ x, y, partIdx, net, probe });
     }
     p2count++;
   }
+
+  // A pin's third column is the id of the test nail on it (-99: none). A pin
+  // written without a net takes its nail's net — OpenBoardView's rule, for
+  // the Lenovo-style exports that leave pin nets blank. No Apple sample has a
+  // blank pin net; it costs nothing where there are none.
+  const netByProbe = new Map<number, string>();
+  for (const line of secs.get('Nails') ?? []) {
+    const cols = line.trim().split(/\s+/);
+    if (cols.length >= 5) netByProbe.set(Number(cols[0]), cols.slice(4).join(' ').trim());
+  }
+  let netsFromNails = 0;
+  for (const pd of pinData) {
+    if (pd.net || pd.probe < 0) continue;
+    const n = netByProbe.get(pd.probe);
+    if (n) { pd.net = n; netsFromNails++; }
+  }
+  if (netsFromNails > 0) log.parser.log(`BRD: ${netsFromNails} pins without a net took it from their test nail`);
 
   // ---- Detect side inversion ------------------------------------------------
   // BRD files from different tools use opposite flag conventions.
@@ -294,8 +312,10 @@ export function parseBRD(buffer: ArrayBuffer): BoardData {
     parts.push({
       name:   partNames[i],
       side,
-      // BRD carries no through-hole/SMD distinction — don't assert 'smd'.
-      type:   'unknown',
+      // Flag bits 0x4 / 0x8 mark an SMD part on top / bottom; 1 and 2 are
+      // through-hole (OpenBoardView, and ~20 connectors and posts per board
+      // on every Apple sample). A zero flag says nothing.
+      type:   (partFlags[i] & 0xc) ? 'smd' : partFlags[i] ? 'throughhole' : 'unknown',
       origin,
       pins,
       bounds,

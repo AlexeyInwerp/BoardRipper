@@ -198,9 +198,10 @@ Pins1 row 2: R0501   → part_1idx = 2
 Pins2 rows with col3 = 2: pins of R0501
 ```
 
-**Column 2 semantics**: 988 unique values observed; not decoded. Likely a net display offset
-or ratsnest endpoint used by the original boardview software for connection-line drawing.
-Common values: `6` (40% of pins), `-99` (26% of pins).
+**Column 2 semantics**: the id of the test nail on this pin (`Nails` column 0), `-99` when
+none — OpenBoardView reads it as `pin.probe`. A pin written without a net takes its nail's
+net (OBV's rule for Lenovo-style exports); none of the 10 Apple samples in
+`samples/incoming/apple-brd/` has a blank pin net.
 
 ---
 
@@ -244,9 +245,9 @@ This reliably distinguishes BRD from:
 
 ### Limitations
 
-- `Pins2` column 2 is ignored; not needed for board display.
-- Part type is always reported as `smd` (through-hole distinction available via flags bits 2/3
-  but not used in rendering).
+- Part type comes from the flags: bit 0x4 or 0x8 set → `smd`, otherwise (`1`, `2`) →
+  `throughhole`, `0` → `unknown`. On the Apple samples 0–30 parts a board are through-hole
+  (connectors, posts).
 - Net names are stored as plain strings — special characters in net names are not escaped.
 
 ---
