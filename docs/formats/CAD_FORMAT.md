@@ -266,3 +266,13 @@ y' = x·sin(θ) + y·cos(θ) + place_y
 - Pin radius defaults to 6 mils.
 - `$ROUTES` arcs are counter-clockwise and the sweep is lifted into `[0, 2π)`, never
   clamped into `±π`. See [$ROUTES](#routes-traces-arcs-vias).
+
+
+## Part values from `$DEVICES`
+
+`PART` is the value (`//` splits off the manufacturer block into `meta.serial`).
+Exporter quirks handled in `parseDevices`:
+- **Refdes appended** — Lenovo Legion Pro 5 writes `DEVICE CA1` / `PART 2.2U_0402_6.3V6M CA1` (4,110 of 5,376); a trailing ` <device>` is stripped.
+- **Placeholders** — ASUS TUF-RTX3080 writes `PART Device2949` for every device; such `PART == DEVICE == DeviceNNNN` records and a component's inline device name that only repeats its refdes (Apple 820 files) give no value.
+- **`TOL <n>`** (NVIDIA 4090, 3,055 parts, before or after `PART`) is appended as `±n%` unless the value already carries a `%`.
+- `ROTATION` is also shown as `meta.angleDeg`.

@@ -152,7 +152,9 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 //     footprint.
 // 108: BVR3 PIN_RADIUS tuple `(0.0175, 3)` read as a diameter in inches;
 //     PIN_OUTLINE_RELATIVE becomes pin pad geometry + BoardData.pads.
-const PARSER_VERSION = 108;
+// 109: GenCAD values: refdes suffix stripped (Legion), DeviceNNNN and
+//     refdes-echo placeholders dropped, TOL appended, rotation in meta.
+const PARSER_VERSION = 109;
 
 interface CachedBoard {
   key: string;

@@ -648,16 +648,29 @@ function parseSignals(lines: string[]): Map<string, string> {
  * loop joins on the device name to surface this in ComponentInfo. Device
  * records with a blank PART line are skipped.
  */
-function parseDevices(lines: string[]): Map<string, string> {
-  const map = new Map<string, string>();
+export interface DeviceRecord { part?: string; tol?: string }
+
+export function parseDevices(lines: string[]): Map<string, DeviceRecord> {
+  const map = new Map<string, DeviceRecord>();
   let current = '';
+  const rec = () => { let r = map.get(current); if (!r) { r = {}; map.set(current, r); } return r; };
   for (const raw of lines) {
     const line = raw.trim();
     if (line.startsWith('DEVICE ')) {
       current = line.substring(7).trim();
     } else if (line.startsWith('PART ') && current) {
-      const part = line.substring(5).trim();
-      if (part) map.set(current, part);
+      let part = line.substring(5).trim();
+      // Lenovo Legion Pro 5: `DEVICE CA1` / `PART 2.2U_0402_6.3V6M CA1` — the
+      // device (= refdes) appended to the value on 4,110 of 5,376 records.
+      if (part.endsWith(` ${current}`)) part = part.slice(0, -current.length - 1).trimEnd();
+      // ASUS TUF-RTX3080: `DEVICE Device2949` / `PART Device2949` on every
+      // record — a serial placeholder, not a description.
+      if (part === current && /^Device\d+$/i.test(part)) part = '';
+      if (part) rec().part = part;
+    } else if (line.startsWith('TOL ') && current) {
+      // NVIDIA 4090: `TOL 10` on 3,055 of 3,282 parts, a percentage.
+      const tol = line.substring(4).trim();
+      if (tol && tol !== '0') rec().tol = tol;
     }
   }
   return map;
@@ -679,15 +692,16 @@ function splitPartDescription(part: string): { value?: string; serial?: string }
 
 /** Build a part's display meta from its $DEVICES PART line (if any) + shape. */
 function buildPartMeta(
-  comp: Pick<Component, 'name' | 'deviceName' | 'shapeName'>,
-  part: string | undefined,
+  comp: Pick<Component, 'name' | 'deviceName' | 'shapeName' | 'rotation'>,
+  device: DeviceRecord | undefined,
 ): NonNullable<Part['meta']> {
   const meta: NonNullable<Part['meta']> = {};
+  const part = device?.part;
   if (part) {
     const { value, serial } = splitPartDescription(part);
     if (value) meta.value = value;
     if (serial) meta.serial = serial;
-  } else if (comp.deviceName && comp.deviceName !== `Device ${comp.name}`) {
+  } else if (comp.deviceName && comp.deviceName !== `Device ${comp.name}` && comp.deviceName !== comp.name && !/^Device\d+$/i.test(comp.deviceName)) {
     // No catalogue PART — keep a meaningful inline device name, but drop the
     // auto-generated "Device <refdes>" placeholder (carries no information).
     meta.value = comp.deviceName;
@@ -696,6 +710,10 @@ function buildPartMeta(
   // exporter named the shape after the refdes (per-instance shapes), which
   // would just echo the component name.
   if (comp.shapeName && comp.shapeName !== comp.name) meta.package = comp.shapeName;
+  if (device?.tol && meta.value && !meta.value.includes('%')) {
+    meta.value = `${meta.value} ±${device.tol.replace(/%$/, '')}%`;
+  }
+  if (comp.rotation) meta.angleDeg = ((comp.rotation % 360) + 360) % 360;
   return meta;
 }
 
