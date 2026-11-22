@@ -150,7 +150,9 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 // 107: XZZ JSON tail part[].value → meta.value (meta.serial beside a body
 //     label); the part header's group name → meta.package when it names a
 //     footprint.
-const PARSER_VERSION = 107;
+// 108: BVR3 PIN_RADIUS tuple `(0.0175, 3)` read as a diameter in inches;
+//     PIN_OUTLINE_RELATIVE becomes pin pad geometry + BoardData.pads.
+const PARSER_VERSION = 108;
 
 interface CachedBoard {
   key: string;

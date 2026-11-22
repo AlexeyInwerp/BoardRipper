@@ -150,11 +150,14 @@ PIN_END
 | PIN_NAME | string | Pin label |
 | PIN_SIDE | char | `T`/`B`/`O` |
 | PIN_ORIGIN | double double | X Y **relative to PART_ORIGIN** |
-| PIN_RADIUS | double | Circle radius for display |
+| PIN_RADIUS | double, or `(d, n)` | Circle radius in mils. The Switch Lite export writes a tuple `(0.0175, 3)`: `d` is the ball **diameter in inches** (0.68–0.8 × the ball pitch on every BGA there), radius = `d × 500`; `n` is unknown |
+| PIN_OUTLINE_RELATIVE | doubles | Pad corners relative to the pin origin → `Pin.padBounds`/`padShape` (`rect`, or `poly` + `padPolygon`) and `BoardData.pads`. Radius defaults to half the pad's short side. Ignored file-wide when the pin sits on a pad edge for ≥ 90 % of pins — 820-02016 writes every 0201 pad as the half that starts at the pin |
 | PIN_NET | string | Net/signal name |
 | PIN_TYPE | integer | Pin type (ignored) |
 | PIN_COMMENT | string | Comment (ignored) |
 | PIN_END | — | End of pin |
+
+`PART_OUTLINE_RELATIVE` (part body corners) is not read yet — `Part` has no outline field.
 
 ### Board Outline (two formats, mutually exclusive)
 

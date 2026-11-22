@@ -1,6 +1,69 @@
-import type { BoardData, Part, Pin, Point } from './types';
+import type { BoardData, Pad, Part, Pin, Point } from './types';
 import { computeBBox, buildNets, chainSegments } from './types';
 import { log } from '../store/log-store';
+
+/**
+ * `PIN_RADIUS` is a plain number of mils on most exports (`9.268`). The
+ * Switch Lite logic board writes a tuple instead — `(0.0175, 3)` — whose first
+ * number is the ball DIAMETER in inches: on every BGA there it comes out at
+ * 0.68–0.8 of the ball pitch (0.0125 at 15.75 mil, 0.0225 at 31.5). The second
+ * number's meaning is unknown. `parseFloat` read the tuple as NaN and every
+ * pin fell back to 25 mil.
+ */
+export function parsePinRadius(value: string): number | undefined {
+  const tuple = /^\(\s*([-+]?[\d.]+(?:e[-+]?\d+)?)\s*,/i.exec(value);
+  const r = tuple ? parseFloat(tuple[1]) * 500 : parseFloat(value);
+  return Number.isFinite(r) && r > 0 ? r : undefined;
+}
+
+/**
+ * `PIN_OUTLINE_RELATIVE x1 y1 x2 y2 …` — the copper pad's corners relative to
+ * the pin origin (which need not be the pad centre: 820-02016 pads run from
+ * y −5.5 to 0). Returns the corners in board coordinates.
+ */
+export function parsePinOutline(value: string, at: Point): Point[] | undefined {
+  const n = value.split(/\s+/).map(Number);
+  if (n.length < 6 || n.length % 2 !== 0 || n.some(v => !Number.isFinite(v))) return undefined;
+  const pts: Point[] = [];
+  for (let i = 0; i < n.length; i += 2) pts.push({ x: at.x + n[i], y: at.y + n[i + 1] });
+  return pts;
+}
+
+/** Pin pad fields for an outline: a rectangle when the corners are an
+ *  axis-aligned box (all of the Switch Lite's and 820-02016's), a polygon
+ *  otherwise. */
+function padFromOutline(pts: Point[]): Pick<Pin, 'padBounds' | 'padShape' | 'padWidth' | 'padHeight' | 'padPolygon'> {
+  const b = computeBBox(pts);
+  const onEdge = (v: number, lo: number, hi: number) => Math.abs(v - lo) < 1e-3 || Math.abs(v - hi) < 1e-3;
+  const rect = pts.every(p => onEdge(p.x, b.minX, b.maxX) && onEdge(p.y, b.minY, b.maxY));
+  return {
+    padBounds: b,
+    padShape: rect ? 'rect' : 'poly',
+    padWidth: b.maxX - b.minX,
+    padHeight: b.maxY - b.minY,
+    ...(rect ? {} : { padPolygon: pts }),
+  };
+}
+
+/**
+ * Whether the file's pin outlines describe pads around their pins. 820-02016
+ * (M1 Air) writes every 0201 pad as the half that starts at the pin and runs
+ * outward — pin 1 at y 978 gets y 972.5…978 — on all 4,252 outlined pins; the
+ * Switch Lite centres 2,128 of 2,744 on the pin and has the rest inside. A
+ * file whose pins sit on a pad edge nearly everywhere is not drawn from.
+ */
+function padOutlinesPlausible(parts: Part[]): boolean {
+  let total = 0, onEdge = 0;
+  for (const part of parts) for (const pin of part.pins) {
+    const b = pin.padBounds;
+    if (!b) continue;
+    total++;
+    const { x, y } = pin.position;
+    const eps = 0.01 * Math.max(1, b.maxX - b.minX, b.maxY - b.minY);
+    if (Math.abs(x - b.minX) < eps || Math.abs(x - b.maxX) < eps || Math.abs(y - b.minY) < eps || Math.abs(y - b.maxY) < eps) onEdge++;
+  }
+  return total > 0 && onEdge < total * 0.9;
+}
 
 /**
  * Pre-scan to detect whether PIN_ORIGIN values are relative to PART_ORIGIN
@@ -73,6 +136,8 @@ export function parseBVR3(text: string): BoardData {
 
   let currentPart: Part | null = null;
   let currentPin: Partial<Pin> | null = null;
+  let currentPinOutline = '';
+  const pads: Pad[] = [];
 
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -156,7 +221,8 @@ export function parseBVR3(text: string): BoardData {
         }
         break;
       case 'PIN_ID':
-        currentPin = { number: value, name: '', side: 'top', net: '', radius: 25 };
+        currentPin = { number: value, name: '', side: 'top', net: '', radius: undefined };
+        currentPinOutline = '';
         break;
       case 'PIN_NUMBER':
         if (currentPin) currentPin.number = value;
@@ -185,7 +251,11 @@ export function parseBVR3(text: string): BoardData {
         }
         break;
       case 'PIN_RADIUS':
-        if (currentPin) currentPin.radius = parseFloat(value);
+        if (currentPin) currentPin.radius = parsePinRadius(value);
+        break;
+      case 'PIN_OUTLINE_RELATIVE':
+        // Resolved at PIN_END: the outline may precede PIN_ORIGIN.
+        currentPinOutline = value;
         break;
       case 'PIN_NET':
         if (currentPin) currentPin.net = value;
@@ -199,14 +269,35 @@ export function parseBVR3(text: string): BoardData {
               'both PIN_ORIGIN and PART_ORIGIN absent — falling back to {0, 0}'
             );
           }
+          const outlinePts = currentPinOutline ? parsePinOutline(currentPinOutline, pinPos) : undefined;
+          const pad = outlinePts ? padFromOutline(outlinePts) : undefined;
+          const side = currentPin.side || 'top';
+          const net = currentPin.net || '';
+          // No radius in the file: half the pad's short side, as the
+          // pad-carrying parsers do; 25 mil only when there is neither.
+          const radius = currentPin.radius
+            ?? (pad ? Math.max(0.5, Math.min(pad.padWidth!, pad.padHeight!) / 2) : 25);
           currentPart.pins.push({
             name: currentPin.name || '',
             number: currentPin.number || '',
             position: pinPos,
-            radius: currentPin.radius || 25,
-            side: currentPin.side || 'top',
-            net: currentPin.net || '',
+            radius,
+            side,
+            net,
+            ...(pad ?? {}),
           });
+          if (pad) {
+            pads.push({
+              bounds: pad.padBounds!,
+              side,
+              ...(net ? { net } : {}),
+              attached: true,
+              shape: pad.padShape!,
+              width: pad.padWidth!,
+              height: pad.padHeight!,
+              ...(pad.padPolygon ? { polygon: pad.padPolygon } : {}),
+            });
+          }
           currentPin = null;
         }
         break;
@@ -217,6 +308,14 @@ export function parseBVR3(text: string): BoardData {
   const bounds = computeBBox(allPoints);
   const nets = buildNets(parts);
 
-  return { format: 'BVR3', outline, parts, nails: [], nets, bounds };
+  const keepPads = pads.length > 0 && padOutlinesPlausible(parts);
+  if (pads.length > 0 && !keepPads) {
+    for (const part of parts) for (const pin of part.pins) {
+      delete pin.padBounds; delete pin.padShape; delete pin.padWidth; delete pin.padHeight; delete pin.padPolygon;
+    }
+    log.parser.log(`BVR3: ${pads.length} pin outlines ignored — the pin sits on an edge of nearly every pad, not inside it`);
+  }
+
+  return { format: 'BVR3', outline, parts, nails: [], nets, bounds, ...(keepPads ? { pads } : {}) };
 }
 
