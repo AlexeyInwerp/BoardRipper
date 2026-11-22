@@ -1006,9 +1006,20 @@ function tessellateArc(
  *  ring. Until 2026-11-15 this section was ignored and every GenCAD board got a
  *  synthetic rectangle from its pins — the Lenovo Legion Pro 5 (NM-F701) file
  *  has 901 outline lines and showed as a slab the size of its pin field. */
-function parseBoardOutline(lines: string[], factor: number): Point[][] {
+export function parseBoardOutline(lines: string[], factor: number): Point[][] {
   const polys: Point[][] = [];
+  // `ARTWORK <name> <layer>` opens a block of drawing on the board (silk,
+  // logos, edge-finger copper) that runs to the next sub-block keyword; it is
+  // not the edge. MSI V385, RX 580 and the RTX 4090 put EVERY $BOARD
+  // primitive under ARTWORK (298 / 209 / 873 blocks) — taking them as outline
+  // drew 14–16k points of artwork as board edge and cutouts. CUTOUT / OUTLINE
+  // blocks are edge geometry and stay.
+  let inArtwork = false;
   for (const raw of lines) {
+    const kw = raw.trim().split(/\s+/, 1)[0];
+    if (kw === 'ARTWORK' || kw === 'MASK' || kw === 'TEXT' || kw === 'FID') { inArtwork = true; continue; }
+    if (kw === 'CUTOUT' || kw === 'OUTLINE' || kw === 'THICKNESS') { inArtwork = false; continue; }
+    if (inArtwork) continue;
     const t = raw.trim().split(/\s+/); if (t.length < 4) continue;
     const v = t.slice(1).map(Number); if (v.some(n => !Number.isFinite(n))) continue;
     const P = (x: number, y: number): Point => ({ x: x * factor, y: y * factor });

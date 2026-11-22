@@ -22,3 +22,20 @@ describe('GenCAD $DEVICES', () => {
       .toBe('RES 200K OHM 1/20W (0201) 5%//TA-I/RM02JTN204');
   });
 });
+
+describe('GenCAD $BOARD', () => {
+  it('takes edge primitives and cutouts, never ARTWORK blocks', async () => {
+    const { parseBoardOutline } = await import('./cad-parser');
+    const polys = parseBoardOutline([
+      'LINE 0 0 100 0', 'LINE 100 0 100 50',
+      'ARTWORK artwork1 TOP', 'LINE 10 10 20 10', 'ARC 20 10 10 10 15 10',
+      'ARTWORK artwork2 BOTTOM', 'LINE 30 30 40 30',
+      'CUTOUT c1', 'LINE 60 20 70 20',
+    ], 1);
+    expect(polys).toEqual([
+      [{ x: 0, y: 0 }, { x: 100, y: 0 }],
+      [{ x: 100, y: 0 }, { x: 100, y: 50 }],
+      [{ x: 60, y: 20 }, { x: 70, y: 20 }],
+    ]);
+  });
+});

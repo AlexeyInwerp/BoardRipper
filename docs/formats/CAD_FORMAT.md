@@ -276,3 +276,14 @@ Exporter quirks handled in `parseDevices`:
 - **Placeholders** — ASUS TUF-RTX3080 writes `PART Device2949` for every device; such `PART == DEVICE == DeviceNNNN` records and a component's inline device name that only repeats its refdes (Apple 820 files) give no value.
 - **`TOL <n>`** (NVIDIA 4090, 3,055 parts, before or after `PART`) is appended as `±n%` unless the value already carries a `%`.
 - `ROTATION` is also shown as `meta.angleDeg`.
+
+## `$BOARD` artwork
+
+`ARTWORK <name> <layer>` (also `MASK`, `TEXT`, `FID`) opens a sub-block of drawing on
+the board — silk, logos, edge-finger copper — that runs to the next sub-block keyword.
+It is not the edge and is not used for the outline; `CUTOUT` / `OUTLINE` blocks are.
+MSI V385, RX 580 and the RTX 4090 have only artwork in `$BOARD` (298 / 209 / 873
+blocks), so they get the pin rectangle — before, their artwork was drawn as 14–16k
+points of board edge and cutouts, and the 4090's "edge" left its pins at x > 7000
+outside the board. Drawing artwork as silkscreen is a todo: it would have to follow
+the parser's X-mirror, butterfly fold and shape recentring.
