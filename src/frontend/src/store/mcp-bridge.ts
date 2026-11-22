@@ -290,6 +290,8 @@ function partSummary(pt: BoardData['parts'][number]) {
     serial: pt.meta?.serial ?? null,
     package: pt.meta?.package ?? null,
     part_type: pt.meta?.partType ?? null,
+    description: pt.meta?.description ?? null,
+    sheet: pt.meta?.sheet ?? null,
   };
 }
 
@@ -335,6 +337,8 @@ function partInfo(part: BoardData['parts'][number]) {
     serial: part.meta?.serial ?? null,
     package: part.meta?.package ?? null,
     part_type: part.meta?.partType ?? null,
+    description: part.meta?.description ?? null,
+    sheet: part.meta?.sheet ?? null,
     height_mils: part.meta?.heightMils ?? null,
     angle_deg: part.meta?.angleDeg ?? null,
     mechanical: !!part.mechanical,
@@ -460,7 +464,7 @@ async function dispatch(op: string, p: any): Promise<any> {
       const q = String(p.query ?? '').toLowerCase().trim();
       if (!q) throw new Error('find_parts: query required');
       const hits = b.parts.filter((pt) => {
-        const hay = [pt.name, pt.meta?.value, pt.meta?.serial, pt.meta?.package, pt.meta?.partType]
+        const hay = [pt.name, pt.meta?.value, pt.meta?.serial, pt.meta?.package, pt.meta?.partType, pt.meta?.description]
           .filter(Boolean).join(' ').toLowerCase();
         return hay.includes(q);
       }).map(partSummary);

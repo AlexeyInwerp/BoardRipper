@@ -193,6 +193,8 @@ export function ComponentInfoBody({
   if (meta?.value) metaRows.push(['Value', meta.value]);
   if (meta?.package) metaRows.push(['Package', meta.package]);
   if (meta?.serial) metaRows.push(['Serial', meta.serial]);
+  if (meta?.description) metaRows.push(['Description', meta.description]);
+  if (meta?.sheet) metaRows.push(['Sheet', meta.sheet]);
   if (meta?.heightMils != null) metaRows.push(['Height', `${meta.heightMils.toFixed(2)} mils`]);
   if (meta?.angleDeg != null) metaRows.push(['Rotation', `${meta.angleDeg}°`]);
 

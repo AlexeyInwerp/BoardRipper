@@ -564,3 +564,14 @@ into the 2197 traces) and the four-arc rounded-rectangle `Edge.Cuts` outline.
 - `custom` pad `(primitives …)` → `PadShape: 'poly'` via `padPolygon`.
 - A fixture that actually exercises the legacy `(module …)` + centre/angle arc
   path, so the one unmeasured convention in this parser can be pinned down.
+
+
+## BOM properties
+
+Beyond `Value`, a footprint's `(property …)` entries give: the part number
+(`mpn`, `MPN`, `Manufacturer Part Number`, `Part Number`, `LCSC`, … — first
+non-empty, case-insensitive) → `meta.serial`, prefixed by `Manufacturer` when
+present; `Rating` (`16V`, `Red`) appended to the value; `Description` →
+`meta.description`; `Sheetname` → `meta.sheet`. starfish: 206 part numbers,
+225 sheets of 229 parts. The footprint library's `(descr …)` is not used — it
+describes the footprint, not the part.

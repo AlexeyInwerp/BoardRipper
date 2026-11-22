@@ -33,7 +33,7 @@
  * https://dev-docs.kicad.org/en/file-formats/sexpr-pcb/
  */
 
-import type { BoardData, BBox, Nail, Pad, PadShape, Part, Pin, Point, Surface, Trace, Via } from './types';
+import type { BoardData, BBox, Nail, Pad, PadShape, Part, PartMeta, Pin, Point, Surface, Trace, Via } from './types';
 import {
   computeBBox,
   buildNets,
@@ -721,6 +721,7 @@ export function parseKiCadPCB(buffer: ArrayBuffer): BoardData {
     };
     const value = footprintValue(fp);
     if (value && part.meta) part.meta.value = value;
+    Object.assign(part.meta!, footprintBomFields(fp, value));
     parts.push(part);
   }
 
@@ -989,6 +990,37 @@ function footprintValue(fp: SNode[]): string {
     }
   }
   return '';
+}
+
+/** Property keys that carry a manufacturer part number, checked in order,
+ *  case-insensitively. starfish writes `mpn` (204 parts) and `MPN`. */
+const MPN_KEYS = ['mpn', 'manufacturer part number', 'manufacturer_part_number', 'mfr part number', 'part number', 'pn', 'lcsc', 'lcsc part'];
+
+/**
+ * BOM fields beyond the value, from the footprint's `(property …)` entries:
+ * the part number (→ serial, with the manufacturer in front when given), the
+ * rating (`16V`, `Red` — appended to the value unless it already says so),
+ * the symbol description and the schematic sheet. The footprint library's
+ * `(descr …)` is not used: it describes the footprint ("Capacitor SMD 0603
+ * … generated with kicad-footprint-generator"), not the part.
+ */
+function footprintBomFields(fp: SNode[], value: string): PartMeta {
+  const props = new Map<string, string>();
+  for (const prop of childrenOf(fp, 'property')) {
+    const k = atom(prop, 1), v = atom(prop, 2)?.trim();
+    if (k && v && !props.has(k.toLowerCase())) props.set(k.toLowerCase(), v);
+  }
+  const out: PartMeta = {};
+  const mpn = MPN_KEYS.map(k => props.get(k)).find(Boolean);
+  const mfr = props.get('manufacturer') ?? props.get('mfr') ?? props.get('mfg');
+  if (mpn) out.serial = mfr && !mpn.toLowerCase().includes(mfr.toLowerCase()) ? `${mfr} ${mpn}` : mpn;
+  const rating = props.get('rating');
+  if (rating && value && !value.toLowerCase().includes(rating.toLowerCase())) out.value = `${value} ${rating}`;
+  const description = props.get('description') ?? props.get('ki_description');
+  if (description) out.description = description;
+  const sheet = props.get('sheetname');
+  if (sheet && sheet !== '/') out.sheet = sheet;
+  return out;
 }
 
 /** Union every pad net name of a footprint into `out`. */

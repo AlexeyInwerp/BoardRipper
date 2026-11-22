@@ -154,7 +154,9 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 //     PIN_OUTLINE_RELATIVE becomes pin pad geometry + BoardData.pads.
 // 109: GenCAD values: refdes suffix stripped (Legion), DeviceNNNN and
 //     refdes-echo placeholders dropped, TOL appended, rotation in meta.
-const PARSER_VERSION = 109;
+// 110: KiCad part number / rating / description / sheet (new
+//     PartMeta.description and .sheet).
+const PARSER_VERSION = 110;
 
 interface CachedBoard {
   key: string;

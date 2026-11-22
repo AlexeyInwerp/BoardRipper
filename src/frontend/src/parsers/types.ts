@@ -149,6 +149,12 @@ export interface PartMeta {
   partType?: string;
   /** Manufacturer / part serial number */
   serial?: string;
+  /** Free-text component description (KiCad `Description`, Altium
+   *  COMPONENTDESCRIPTION, EAGLE package description). */
+  description?: string;
+  /** Schematic sheet or group the part was placed from (KiCad `Sheetname`,
+   *  Allegro instance field `CPU_CORE` / `05. CPU(3)_+VCCCORE`). */
+  sheet?: string;
   /** Component height in mils (Z-axis) */
   heightMils?: number;
   /** Rotation in degrees, if the source format records it */
