@@ -710,7 +710,9 @@ function buildPartMeta(
   // exporter named the shape after the refdes (per-instance shapes), which
   // would just echo the component name.
   if (comp.shapeName && comp.shapeName !== comp.name) meta.package = comp.shapeName;
-  if (device?.tol && meta.value && !meta.value.includes('%')) {
+  // A tolerance means something on a passive; on an IC (`OI3-V510001-M03`)
+  // it is a library default, not part of the value.
+  if (device?.tol && meta.value && !meta.value.includes('%') && /^(P?[RCL]|FB)\d/i.test(comp.name)) {
     meta.value = `${meta.value} ±${device.tol.replace(/%$/, '')}%`;
   }
   if (comp.rotation) meta.angleDeg = ((comp.rotation % 360) + 360) % 360;

@@ -274,7 +274,7 @@ y' = x·sin(θ) + y·cos(θ) + place_y
 Exporter quirks handled in `parseDevices`:
 - **Refdes appended** — Lenovo Legion Pro 5 writes `DEVICE CA1` / `PART 2.2U_0402_6.3V6M CA1` (4,110 of 5,376); a trailing ` <device>` is stripped.
 - **Placeholders** — ASUS TUF-RTX3080 writes `PART Device2949` for every device; such `PART == DEVICE == DeviceNNNN` records and a component's inline device name that only repeats its refdes (Apple 820 files) give no value.
-- **`TOL <n>`** (NVIDIA 4090, 3,055 parts, before or after `PART`) is appended as `±n%` unless the value already carries a `%`.
+- **`TOL <n>`** (NVIDIA 4090, 3,055 parts, before or after `PART`) is appended as `±n%` on passives (refdes R, C, L, FB, with an optional P prefix) unless the value already carries a `%` — on an IC it is a library default.
 - `ROTATION` is also shown as `meta.angleDeg`.
 
 ## `$BOARD` artwork
