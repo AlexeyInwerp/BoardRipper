@@ -1465,13 +1465,17 @@ export interface XzzTailAnnotations {
    *  net does ("CPU到显示屏接口MIPI总线数据1"). Keyed by the file's net name,
    *  before `netAliases` is applied. Present on either encoding. */
   netDescriptions: Map<string, string>;
+  /** JSON `part[].value` — the chip marking or part number XZZ's viewer shows
+   *  (`339S00648`, `MGHK-A1D-FAN53740UCA1X`), keyed by `reference` and by
+   *  `alias`, since the binary names a part by either. */
+  partValues: Map<string, string>;
 }
 
 function emptyAnnotations(): XzzTailAnnotations {
   return {
     diodes: new Map(), diodesByAlias: new Map(),
     partAliases: new Map(), netAliases: new Map(), encoding: 'none',
-    netDescriptions: new Map(),
+    netDescriptions: new Map(), partValues: new Map(),
   };
 }
 
@@ -1596,6 +1600,11 @@ function parseXzzTailJson(bytes: Uint8Array): XzzTailAnnotations | null {
     if (!ref) continue;
     const alias = typeof p.alias === 'string' && p.alias !== '' && p.alias !== ref ? p.alias : '';
     if (alias) out.partAliases.set(ref, alias);
+    const value = typeof p.value === 'string' ? p.value.trim() : '';
+    if (value) {
+      out.partValues.set(ref, value);
+      if (alias) out.partValues.set(alias, value);
+    }
     if (!Array.isArray(p.pad)) continue;
     for (const pad of p.pad) {
       if (typeof pad?.name !== 'string' || typeof pad.diode !== 'string') continue;
@@ -1654,6 +1663,21 @@ export function xzzArcSweepDeg(startDeg: number, endDeg: number): number {
   // but a malformed file cannot produce an over-wound arc. It never reduces a
   // legitimate 180-360 sweep, which is the failure this fix exists to prevent.
   return ((endDeg - startDeg) % 360 + 360) % 360;
+}
+
+/** A footprint name: a chip size or a package family. */
+const XZZ_PACKAGE_RE = /(^|[^0-9])(01005|0201|0202|0203|0302|0402|0603|0805|1206|1210|2512)([^0-9]|$)|SOT|SOD|QFN|DFN|BGA|CSP|LGA|SOIC|SOP|MSOP|WLCSP|TO-?\d/i;
+
+/** The part header's group name, when it names a footprint (`01005`,
+ *  `CAP-0201`, `RES-0201-HP26`, `QFN87`). On the 362-file corpus 915k parts
+ *  carry one; most say nothing — the refdes again, `...`, or XZZ's own
+ *  library codes (`C-02-01`, `IC-01-01`, `DL-Y6`) and refdes-like stubs
+ *  (`C1`, `Y1`) — so only names with a size or package family are kept
+ *  (154k parts). OpenBoardView skips the field. */
+export function xzzPackageName(pd: { name: string; groupName: string }): string | undefined {
+  const g = pd.groupName.trim();
+  if (!g || g === pd.name || !XZZ_PACKAGE_RE.test(g)) return undefined;
+  return g;
 }
 
 type RawTrace = { rawLayer: number; x1: number; y1: number; x2: number; y2: number; width: number; netIndex: number; mirrored?: boolean };
@@ -2866,7 +2890,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     // exactly where the distinction matters — connectors, headers, mounting
     // pins — and both the Info pane and MCP part_info read it.
     const partType: Part['type'] = pd.pins.some(p => p.drill > 0) ? 'throughhole' : 'smd';
-    parts.push({ name: pd.name, side: pd.side, type: partType, origin: { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }, pins, bounds, ...(angleDeg !== undefined ? { angleDeg } : {}), ...(pd.value ? { meta: { value: pd.value } } : {}), ...(packFolded && pd.boardIndex !== undefined && pd.boardIndex >= 0 ? { boardIndex: pd.boardIndex } : {}) });
+    parts.push({ name: pd.name, side: pd.side, type: partType, origin: { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }, pins, bounds, ...(angleDeg !== undefined ? { angleDeg } : {}), ...(pd.value || xzzPackageName(pd) ? { meta: { ...(pd.value ? { value: pd.value } : {}), ...(xzzPackageName(pd) ? { package: xzzPackageName(pd) } : {}) } } : {}), ...(packFolded && pd.boardIndex !== undefined && pd.boardIndex >= 0 ? { boardIndex: pd.boardIndex } : {}) });
 
     // Emit a Pad per pin with valid geometry (none when the file only
     // carries placeholder geometry — 12-mil dots are not copper pads).
@@ -3098,6 +3122,22 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       }
       log.parser.log(`[xzz tail] net rename: ${apply.size} of ${tail.netAliases.size} net aliases applied`);
     }
+  }
+
+  // Part values from the JSON tail (`part[].value`): the chip marking or part
+  // number XZZ's viewer shows. It is the part's value when the binary's body
+  // label gave none, and its part number beside a value it did give.
+  if (tail.partValues.size > 0) {
+    let set = 0;
+    for (const p of parts) {
+      const v = tail.partValues.get(p.name) ?? tail.partValues.get(renamedFrom.get(p) ?? '');
+      if (!v) continue;
+      const meta = p.meta ?? (p.meta = {});
+      if (!meta.value) meta.value = v;
+      else if (meta.value !== v) meta.serial = v;
+      set++;
+    }
+    log.parser.log(`[xzz tail] part values: ${set} parts of ${tail.partValues.size} entries`);
   }
 
   // Diode-value channel — join the reading table onto pins by PART(pinNumber).

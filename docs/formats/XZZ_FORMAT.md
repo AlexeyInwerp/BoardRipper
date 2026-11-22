@@ -978,3 +978,16 @@ Reading the asymmetries, all of which are the point of keeping both files:
 Served by the dev container at <http://localhost:1234> (see
 `docs/RELEASE_RUNBOOK.md` ▸ "Before a release"), which mounts `samples/` as its
 whole library — this pair is the fastest way to eyeball the diode channel.
+
+
+## Part values and package names
+
+- **JSON tail `part[].value`** — the chip marking or part number XZZ's viewer
+  shows (`339S00648`, `MGHK-A1D-FAN53740UCA1X`), 2,776 parts on 58 corpus
+  files. It becomes `meta.value`, or `meta.serial` when the binary's body
+  label already gave a different value. Joined by `reference` and by `alias`.
+- **Part header group name** — set on 915k of 916k corpus parts but mostly
+  noise: the refdes again, `...`, XZZ library codes (`C-02-01`, `IC-01-01`,
+  `DL-Y6`) or refdes-like stubs (`C1`). Only a name with a chip size or a
+  package family (`01005`, `CAP-0201`, `RES-0201-HP26`, `QFN87`) becomes
+  `meta.package` — 154k parts. OpenBoardView skips the field.

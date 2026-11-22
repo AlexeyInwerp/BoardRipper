@@ -147,7 +147,10 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 //     meta.value and an ASUS part number as meta.serial.
 // 106: Allegro v16+ parts carry the component's VALUE field (device type as
 //     fallback), its part number and the placement rotation in meta.
-const PARSER_VERSION = 106;
+// 107: XZZ JSON tail part[].value → meta.value (meta.serial beside a body
+//     label); the part header's group name → meta.package when it names a
+//     footprint.
+const PARSER_VERSION = 107;
 
 interface CachedBoard {
   key: string;

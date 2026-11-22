@@ -182,3 +182,28 @@ describe('parseXzzTailAnnotations — ===信号 net glossary', () => {
     expect(parseXzzTailAnnotations(withTail('\n=359=C100(1)\n')).netDescriptions.size).toBe(0);
   });
 });
+
+describe('part values and package names', () => {
+  it('reads part[].value under both reference and alias', () => {
+    const doc = JSON.stringify({ part: [
+      { reference: 'U6150', value: 'MGHK-A1D-FAN53740UCA1X' },
+      { reference: 'U_WLAN_1', alias: 'U_WLAN_W', value: ' 339S00648 ' },
+      { reference: 'R1', value: '' },
+    ] });
+    const t = parseXzzTailAnnotations(withTail(BANNER + doc + '\n'));
+    expect(t.partValues.get('U6150')).toBe('MGHK-A1D-FAN53740UCA1X');
+    expect(t.partValues.get('U_WLAN_1')).toBe('339S00648');
+    expect(t.partValues.get('U_WLAN_W')).toBe('339S00648');
+    expect(t.partValues.has('R1')).toBe(false);
+  });
+
+  it('keeps a group name only when it names a footprint', async () => {
+    const { xzzPackageName } = await import('./xzz-parser');
+    const pkg = (groupName: string, name = 'C100') => xzzPackageName({ name, groupName });
+    expect(pkg('01005')).toBe('01005');
+    expect(pkg('CAP-0201')).toBe('CAP-0201');
+    expect(pkg('RES-0201-HP26')).toBe('RES-0201-HP26');
+    expect(pkg('QFN87')).toBe('QFN87');
+    for (const junk of ['C100', '...', 'C-02-01', 'IC-01-01', 'DL-Y6', 'C1', '']) expect(pkg(junk)).toBeUndefined();
+  });
+});
