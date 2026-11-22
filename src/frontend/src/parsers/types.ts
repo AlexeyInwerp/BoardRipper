@@ -147,7 +147,8 @@ export interface PartMeta {
   package?: string;
   /** Human-readable part class, e.g. "IC", "Resistor", "Capacitor" */
   partType?: string;
-  /** Manufacturer / part serial number */
+  /** Part number — manufacturer part (MPN), library part or the vendor's own
+   *  number. Shown as "Part number"; the field keeps its old name. */
   serial?: string;
   /** Free-text component description (KiCad `Description`, Altium
    *  COMPONENTDESCRIPTION, EAGLE package description). */

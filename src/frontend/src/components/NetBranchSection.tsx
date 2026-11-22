@@ -249,7 +249,6 @@ function BranchDetail({
   if (meta?.partType) metaBits.push(meta.partType);
   if (meta?.value) metaBits.push(meta.value);
   if (meta?.package) metaBits.push(meta.package);
-  if (meta?.angleDeg != null) metaBits.push(`${meta.angleDeg}°`);
 
   return (
     <div className="net-branch-detail" data-testid="net-branch-detail">
