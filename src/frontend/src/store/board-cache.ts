@@ -163,7 +163,9 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 // 114: BVR3 PART_OUTLINE_RELATIVE drawn as silkscreen.
 // 115: Altium comment text → value, SOURCE* fields, height; Regions6
 //     overrun no longer fails the board.
-const PARSER_VERSION = 115;
+// 116: Mentor neutral DESC → description, SUPLECODE + part number → serial,
+//     SUBSYSID → sheet.
+const PARSER_VERSION = 116;
 
 interface CachedBoard {
   key: string;

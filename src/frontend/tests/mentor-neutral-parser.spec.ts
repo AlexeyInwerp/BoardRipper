@@ -25,9 +25,24 @@ async function detectFormat(rel: string) {
   };
 }
 
-const RV415 = 'BROKEN/new batch/RV415 BA41-01533A BA41-01534A AMD MP1.cad';
+// Proprietary sample (local only). Two copies of the same board are known:
+// the original fixture path, and the NAS copy in samples/incoming/mentor.
+const RV415 = [
+  'BROKEN/new batch/RV415 BA41-01533A BA41-01534A AMD MP1.cad',
+  'incoming/mentor/RV415_AMD.cad',
+].find(rel => fs.existsSync(path.resolve(SAMPLES, rel))) ?? '';
 
 test.describe('Mentor Boardstation Neutral parser — RV415 BA41-01533A AMD MP1', () => {
+  test.skip(!RV415, 'RV415 Mentor sample not present');
+
+  test('part numbers: supplier code first, COMP part number kept; DESC as description', async () => {
+    const board = await parseFile(RV415);
+    const b1 = board.parts.find(p => p.name === 'B1');
+    expect(b1?.meta?.serial).toBe('BLM18PG181SN1 (3301-001649)');
+    expect(b1?.meta?.description).toMatch(/^BEAD-SMD;180ohm/);
+    expect(b1?.meta?.sheet).toBe('AUDIO');
+  });
+
   test('content sniff: Mentor matches, GenCAD does not', async () => {
     const r = await detectFormat(RV415);
     expect(r.mentor).toBe(true);

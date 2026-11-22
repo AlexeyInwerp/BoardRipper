@@ -375,3 +375,12 @@ Boardstation Neutral — original RE". The parser inherits BoardRipper's
   `smd`.
 - Reconstruct true board outline from the small-diameter `HOLE NPTH`
   toolpath cluster (Quanta family) when `BOARD ORIENTATION` is `0`.
+
+
+## Part meta
+
+`DESC` → `meta.description`; `SUPLECODE` (manufacturer part) leads `meta.serial`, followed
+by the COMP line's own part number in parentheses (`BLM18PG181SN1 (3301-001649)`);
+`SUBSYSID` (`SID=CHARGER`) → `meta.sheet`. Sample: RV415 (NAS copy in
+`samples/incoming/mentor/RV415_AMD.cad`, same board as the original fixture).
+`COMPONENT_PLACEMENT_OUTLINE` is parsed but not drawn yet.

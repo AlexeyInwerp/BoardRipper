@@ -408,8 +408,15 @@ export function parseMentorNeutral(buffer: ArrayBuffer): BoardData {
       meta: {
         value:    c.device || undefined,
         package:  c.shape || undefined,
-        partType: desc || undefined,
-        serial:   supplier || c.partNumber || undefined,
+        // DESC is the BOM description ("BEAD-SMD;180ohm,1608,…"). The
+        // supplier code (the manufacturer part) leads the serial; the COMP
+        // line's own part number (`3301-001649`) follows it, so neither is lost.
+        description: desc || undefined,
+        serial: supplier && c.partNumber && supplier !== c.partNumber
+          ? `${supplier} (${c.partNumber})`
+          : supplier || c.partNumber || undefined,
+        // SUBSYSID (`SID=CHARGER`, `SID=CPU_VRM`) names the circuit block.
+        sheet: c.props.get('SUBSYSID')?.replace(/^SID=/, '').trim() || undefined,
         heightMils: geom?.height ? geom.height * scale : undefined,
         angleDeg: c.rotation,
       },
