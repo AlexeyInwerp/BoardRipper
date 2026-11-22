@@ -1517,7 +1517,9 @@ body {
   padding: 2px 8px;
   color: var(--text-secondary);
   font-weight: 500;
-  width: 80px;
+  width: 1%;
+  white-space: nowrap;
+  vertical-align: top;
 }
 
 .part-meta-table td {
@@ -1525,6 +1527,19 @@ body {
   color: var(--text-primary);
   word-break: break-word;
 }
+
+.part-meta-more {
+  margin: -4px 0 8px 0;
+  font-size: 0.85em;
+}
+.part-meta-more summary {
+  cursor: pointer;
+  padding: 2px 8px;
+  color: var(--text-secondary);
+  user-select: none;
+}
+.part-meta-more summary:hover { color: var(--text-primary); }
+.part-meta-more .part-meta-table { font-size: 1em; margin-top: 2px; }
 
 /* Pin Table */
 .pin-table-container {

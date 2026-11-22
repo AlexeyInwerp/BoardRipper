@@ -44,6 +44,9 @@ import { DiagnosisNotes } from './DiagnosisNotes';
 import { NetBranchSection } from './NetBranchSection';
 import { ObdCell } from './ObdCell';
 import { orderPins, PIN_FILTER_MIN_PINS, type PinSortCol } from './pin-order';
+import { splitPartMeta } from './part-meta-rows';
+
+const PART_META_MORE_KEY = 'boardripper-part-meta-more';
 
 // Re-exported so existing `import { ObdCell } from './ComponentInfoBody'`
 // call sites keep working after the cell moved to its own module (it had to,
@@ -83,6 +86,15 @@ export function ComponentInfoBody({
   /** Pin-table sort column; null = file order. Kept across parts — it is a
    *  way of reading tables, not a property of one. */
   const [pinSort, setPinSort] = useState<{ col: PinSortCol; dir: 1 | -1 } | null>(null);
+  // "More from the file" — the metadata that does not help a repair. Its
+  // open state is remembered across parts and sessions.
+  const [moreOpen, setMoreOpenState] = useState<boolean>(() => {
+    try { return localStorage.getItem(PART_META_MORE_KEY) === '1'; } catch { return false; }
+  });
+  const setMoreOpen = (open: boolean) => {
+    setMoreOpenState(open);
+    try { localStorage.setItem(PART_META_MORE_KEY, open ? '1' : '0'); } catch { /* storage blocked */ }
+  };
 
   // Auto-load matches + cached data when the active board changes. Cheap:
   // hits the backend's match endpoint once per board, and the per-bpath
@@ -187,15 +199,7 @@ export function ComponentInfoBody({
     </th>
   );
 
-  const meta = selectedPart.meta;
-  const metaRows: Array<[string, string]> = [];
-  if (meta?.partType) metaRows.push(['Type', meta.partType]);
-  if (meta?.value) metaRows.push(['Value', meta.value]);
-  if (meta?.package) metaRows.push(['Package', meta.package]);
-  if (meta?.serial) metaRows.push(['Part number', meta.serial]);
-  if (meta?.description) metaRows.push(['Description', meta.description]);
-  if (meta?.sheet) metaRows.push(['Sheet', meta.sheet]);
-  if (meta?.heightMils != null) metaRows.push(['Height', `${meta.heightMils.toFixed(2)} mils`]);
+  const { main: metaRows, more: moreRows } = splitPartMeta(selectedPart);
 
   return (
     <div
@@ -222,17 +226,35 @@ export function ComponentInfoBody({
         </div>
       </div>
 
-      {metaRows.length > 0 && (
-        <table className="part-meta-table" data-testid="part-meta">
-          <tbody>
-            {metaRows.map(([k, v]) => (
-              <tr key={k}>
-                <th>{k}</th>
-                <td>{v}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {(metaRows.length > 0 || moreRows.length > 0) && (
+        <div className="part-meta" data-testid="part-meta">
+          {metaRows.length > 0 && (
+            <table className="part-meta-table">
+              <tbody>
+                {metaRows.map(([k, v]) => (
+                  <tr key={k}><th>{k}</th><td>{v}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {moreRows.length > 0 && (
+            <details
+              className="part-meta-more"
+              data-testid="part-meta-more"
+              open={moreOpen}
+              onToggle={e => setMoreOpen((e.currentTarget as HTMLDetailsElement).open)}
+            >
+              <summary>{metaRows.length > 0 ? 'More from the file' : 'From the file'}</summary>
+              <table className="part-meta-table">
+                <tbody>
+                  {moreRows.map(([k, v]) => (
+                    <tr key={k}><th>{k}</th><td>{v}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </details>
+          )}
+        </div>
       )}
 
       {cluster && (
