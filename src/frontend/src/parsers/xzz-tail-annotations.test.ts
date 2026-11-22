@@ -207,3 +207,26 @@ describe('part values and package names', () => {
     for (const junk of ['C100', '...', 'C-02-01', 'IC-01-01', 'DL-Y6', 'C1', '']) expect(pkg(junk)).toBeUndefined();
   });
 });
+
+describe('per-net readings', () => {
+  it('reads volts when the section has decimals (MacBook)', () => {
+    const t = parseXzzTailAnnotations(withTail('\n===阻值\nPP1V2_S0G=0.178\nALL_SYS_PWRGD_R=OL\nCPUCORE_SW1=0.08\n'));
+    expect(t.netDiodes.get('PP1V2_S0G')).toMatchObject({ kind: 'value', mv: 178 });
+    expect(t.netDiodes.get('CPUCORE_SW1')).toMatchObject({ mv: 80 });
+    expect(t.netDiodes.get('ALL_SYS_PWRGD_R')).toMatchObject({ kind: 'open' });
+  });
+
+  it('reads millivolts otherwise, and every alias of a name (iPhone)', () => {
+    const t = parseXzzTailAnnotations(withTail('\n===阻值表\nPP3V0_TRISTAR=379\nPP1V8_SDRAM/PP_1V8_S2R_VDDIO=291\nUART0_TX=\n'));
+    expect(t.netDiodes.get('PP3V0_TRISTAR')).toMatchObject({ mv: 379 });
+    expect(t.netDiodes.get('PP1V8_SDRAM')).toMatchObject({ mv: 291 });
+    expect(t.netDiodes.get('PP_1V8_S2R_VDDIO')).toMatchObject({ mv: 291 });
+    expect(t.netDiodes.has('UART0_TX')).toBe(false);
+  });
+
+  it('leaves per-pin records and other sections alone', () => {
+    const t = parseXzzTailAnnotations(withTail('\n===阻值\n=359=C100(1)\n===信号\nPP3V3=main rail\n'));
+    expect(t.netDiodes.size).toBe(0);
+    expect(t.diodes.get('C100(1)')).toMatchObject({ mv: 359 });
+  });
+});

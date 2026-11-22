@@ -165,7 +165,8 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 //     overrun no longer fails the board.
 // 116: Mentor neutral DESC → description, SUPLECODE + part number → serial,
 //     SUBSYSID → sheet.
-const PARSER_VERSION = 116;
+// 117: XZZ per-net readings (NET=value in the 阻值 sections) fill pin.diode.
+const PARSER_VERSION = 117;
 
 interface CachedBoard {
   key: string;

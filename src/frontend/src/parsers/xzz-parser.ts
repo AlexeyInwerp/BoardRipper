@@ -1469,13 +1469,18 @@ export interface XzzTailAnnotations {
    *  (`339S00648`, `MGHK-A1D-FAN53740UCA1X`), keyed by `reference` and by
    *  `alias`, since the binary names a part by either. */
   partValues: Map<string, string>;
+  /** Diode readings keyed by NET, from `NET=value` lines of the `===阻值` /
+   *  `===阻值表` / `===阻值图` sections (Mac files and iPhone "Common
+   *  problems" files write a reading per net, not per pin). Keyed by the
+   *  file's net name, before `netAliases`. */
+  netDiodes: Map<string, DiodeReading>;
 }
 
 function emptyAnnotations(): XzzTailAnnotations {
   return {
     diodes: new Map(), diodesByAlias: new Map(),
     partAliases: new Map(), netAliases: new Map(), encoding: 'none',
-    netDescriptions: new Map(), partValues: new Map(),
+    netDescriptions: new Map(), partValues: new Map(), netDiodes: new Map(),
   };
 }
 
@@ -1524,6 +1529,7 @@ export function parseXzzTailAnnotations(raw: Uint8Array): XzzTailAnnotations {
     out = json;
   }
   out.netDescriptions = parseNetGlossary(tail);
+  out.netDiodes = parseNetReadings(tail);
   return out;
 }
 
@@ -1581,6 +1587,59 @@ function parseNetGlossary(tail: Uint8Array): Map<string, string> {
     const net = line.slice(0, eq).trim(), text = line.slice(eq + 1).trim();
     if (net && text) out.set(net, text);
   }
+  return out;
+}
+
+const NET_READING_SECTIONS = new Set(['阻值', '阻值表', '阻值图']);
+
+/**
+ * `NET=value` lines of the reading sections — one diode reading per net.
+ * Measured on the corpus: 951 lines in `阻值` (MacBook boards, volts:
+ * `PP1V2_S0G=0.178`), 2,152 in `阻值表` / `阻值图` (iPhone "Common problems",
+ * millivolts: `PP3V0_TRISTAR=379`). The unit is decided per section — any
+ * value with a decimal point makes it volts. A name may list aliases
+ * (`PP1V8_SDRAM/PP_1V8_S2R_VDDIO_WLAN_BT=291`); each gets the reading.
+ * The per-pin `=v=PART(pin)` records of the same sections are read by
+ * parseLegacyDiodeRecords.
+ */
+function parseNetReadings(tail: Uint8Array): Map<string, DiodeReading> {
+  const out = new Map<string, DiodeReading>();
+  let section: Array<[string, string]> | null = null;
+  const flush = () => {
+    if (!section) return;
+    const volts = section.some(([, v]) => /^\d*\.\d+$/.test(v));
+    for (const [names, v] of section) {
+      let r: DiodeReading | null;
+      if (/^OL$/i.test(v)) r = { raw: v, kind: 'open', mv: null, source: 'xzz-pcb' };
+      else {
+        const n = Number(v);
+        r = Number.isFinite(n) ? { raw: v, kind: 'value', mv: Math.round(volts ? n * 1000 : n), source: 'xzz-pcb' } : null;
+      }
+      if (!r) continue;
+      for (const name of names.split('/')) {
+        const net = name.trim();
+        if (net && !out.has(net)) out.set(net, r);
+      }
+    }
+    section = null;
+  };
+  let start = 0;
+  for (let i = 0; i <= tail.length; i++) {
+    if (i < tail.length && tail[i] !== 0x0a) continue;
+    const line = decodeXzzText(tail.subarray(start, i)).replace(/\r$/, '');
+    start = i + 1;
+    if (line.startsWith('===')) {
+      flush();
+      if (NET_READING_SECTIONS.has(line.slice(3).trim())) section = [];
+      continue;
+    }
+    if (!section || line.startsWith('=')) continue;
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    const v = line.slice(eq + 1).trim();
+    if (v) section.push([line.slice(0, eq), v]);
+  }
+  flush();
   return out;
 }
 
@@ -3157,8 +3216,15 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     log.parser.log(`[xzz tail] net glossary: ${netDescriptions.size} descriptions, ${onBoard} on a net this board has`);
   }
 
+  // Per-net readings fill the pins of their net that have no reading of
+  // their own — the same reach OBD's per-net readings have at display time.
+  const netReadingByName = new Map<string, DiodeReading>();
+  for (const [net, r] of tail.netDiodes) netReadingByName.set(tail.netAliases.get(net) ?? net, r);
+  const netReadingsUsed = new Set<DiodeReading>();
+  let pinsFromNetReadings = 0;
+
   let diodeReference: DiodeReferenceChannel | undefined;
-  if (tail.diodes.size > 0) {
+  if (tail.diodes.size > 0 || netReadingByName.size > 0) {
     const counts = { value: 0, open: 0, none: 0 };
     for (const r of tail.diodes.values()) counts[r.kind]++;
     // Identity set, not key set: `diodes` and `diodesByAlias` hold the SAME
@@ -3174,8 +3240,21 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         if (r) { pin.diode = r; matchedReadings.add(r); }
       }
     }
-    const matched = matchedReadings.size;
-    diodeReference = { source: 'xzz-pcb', units: 'mV', counts, matched, unmatched: tail.diodes.size - matched };
+    if (netReadingByName.size > 0) {
+      for (const part of parts) for (const pin of part.pins) {
+        if (pin.diode || !pin.net) continue;
+        const r = netReadingByName.get(pin.net);
+        if (r) { pin.diode = r; netReadingsUsed.add(r); pinsFromNetReadings++; }
+      }
+      for (const r of netReadingsUsed) counts[r.kind]++;
+      log.parser.log(
+        `[xzz diode] net readings: ${tail.netDiodes.size} nets → ${netReadingsUsed.size} on this board, ${pinsFromNetReadings} pins`,
+      );
+    }
+    const matched = matchedReadings.size + netReadingsUsed.size;
+    diodeReference = tail.diodes.size > 0 || netReadingsUsed.size > 0
+      ? { source: 'xzz-pcb', units: 'mV', counts, matched, unmatched: Math.max(0, tail.diodes.size + netReadingByName.size - matched) }
+      : undefined;
     log.parser.log(
       `[xzz diode] ${tail.encoding} section: ${tail.diodes.size} records → matched ${matched} pins, ` +
       `${tail.diodes.size - matched} unmatched (value=${counts.value} open=${counts.open} none=${counts.none})`,

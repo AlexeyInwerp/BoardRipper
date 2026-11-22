@@ -991,3 +991,16 @@ whole library — this pair is the fastest way to eyeball the diode channel.
   `DL-Y6`) or refdes-like stubs (`C1`). Only a name with a chip size or a
   package family (`01005`, `CAP-0201`, `RES-0201-HP26`, `QFN87`) becomes
   `meta.package` — 154k parts. OpenBoardView skips the field.
+
+- **Per-net readings** — `NET=value` lines in `===阻值` / `===阻值表` /
+  `===阻值图` (one reading per net; the same sections' `=v=PART(pin)` lines are
+  per-pin). MacBook files write volts (`PP1V2_S0G=0.178`), iPhone "Common
+  problems" files millivolts (`PP3V0_TRISTAR=379`); any decimal in a section
+  makes it volts. `A/B=291` gives both names the reading. A net reading fills
+  the pins of that net with no reading of their own, as OBD's per-net readings
+  do: 12 corpus files, 2,297 of 2,314 nets on their board, 20,722 pins.
+- **Not read yet** (todo): `===电压` rail voltages (`PP3V3_G3H=3.373V`, 13
+  MacBook files — needs a net-level field and a place in the UI), `===原理图`
+  (the schematic PDF's file name, 24 files — could seed auto-bind), `===RFFE`
+  bus maps (17 files), JSON `pad[].alias` (meaning unclear: BGA ball renames
+  or nets).
