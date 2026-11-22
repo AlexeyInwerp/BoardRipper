@@ -318,6 +318,26 @@ function buildNetAssignMap(db: AllegroDb): Map<number, string> {
  *  (192–196: class and device-name pieces) repeat what the device type says. */
 const FIELD_VALUE = 2;
 const FIELD_PART_NUMBER = 5;
+/** On a BLK_0x07 instance's own field chain (`x03Ptr`), id 26 is the ROOM
+ *  the part was placed in — the schematic block (`PCH`, `CPU_CORE`,
+ *  `Charger`) — on every sample that has instance fields. Higher ids are
+ *  per-file user attributes whose names the file does not carry. */
+const FIELD_ROOM = 26;
+
+function instanceRoom(db: AllegroDb, inst: Blk0x07ComponentInst | null): string | undefined {
+  const seen = new Set<number>();
+  for (let k = inst?.x03Ptr ?? 0; k && !seen.has(k) && seen.size < 64;) {
+    seen.add(k);
+    const f = db.blocks.get(k) as Blk0x03Field | undefined;
+    if (!f || f.blockType !== 0x03) break;
+    if (f.hdr1 === FIELD_ROOM && f.substruct.kind === 'string') {
+      const v = f.substruct.value.trim();
+      if (v && !/^(YES|NO)$/i.test(v)) return v;
+    }
+    k = f.next;
+  }
+  return undefined;
+}
 
 /** What a BLK_0x06 component says about its parts, keyed by the BLK_0x07
  *  instances that belong to it. */
@@ -426,11 +446,13 @@ function extractComponents(
       // Resolve refdes: instRef (>= V172) or instRef16x (< V172) → 0x07 → refDesStrPtr → string
       const instRefKey = ver >= FmtVer.V_172 ? inst.instRef : inst.instRef16x;
       let refdes = '';
+      let room: string | undefined;
       const info = instRefKey ? compInfo.get(instRefKey) : undefined;
       if (instRefKey) {
         const compInst = db.getBlockAs<Blk0x07ComponentInst>(instRefKey, 0x07);
         if (compInst) {
           refdes = db.getString(compInst.refDesStrPtr);
+          room = instanceRoom(db, compInst);
         }
       }
 
@@ -459,6 +481,7 @@ function extractComponents(
       const partType: 'smd' | 'throughhole' = hasThru ? 'throughhole' : 'smd';
 
       const meta = partMeta(footprintName, info, inst.rotation);
+      if (room && meta) meta.sheet = room;
       parts.push({
         name: refdes,
         side,

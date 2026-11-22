@@ -604,5 +604,7 @@ chain (`firstInstPtr` → `next`) names the placed instances it applies to.
 component has none — except exporter placeholders like `DEV_298`;
 `meta.serial` takes the part number; `meta.angleDeg` the BLK_0x2D rotation.
 Measured on the 25 v16+/v17 samples: every part has a value (LA-P161P
-3346/3369). v15 is not covered. BLK_0x07's own field chain (`x03Ptr`) holds
-the schematic group (`CPU_CORE`, `05. CPU(3)_+VCCCORE`) and is not read.
+3346/3369). v15 is not covered. On BLK_0x07's own field chain (`x03Ptr`) id **26** is
+the ROOM (`PCH`, `CPU_CORE`, `Charger`) → `meta.sheet`, on 8 boards. Higher
+ids are per-file user attributes (P3HCJ 16012 = schematic page,
+`05. CPU(3)_+VCCCORE`) whose names are not in the file, so they are not read.

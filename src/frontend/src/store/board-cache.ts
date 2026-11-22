@@ -156,7 +156,8 @@ const MAX_PDF_BYTES_TOTAL = 256 * 1024 * 1024;
 //     refdes-echo placeholders dropped, TOL appended, rotation in meta.
 // 110: KiCad part number / rating / description / sheet (new
 //     PartMeta.description and .sheet).
-const PARSER_VERSION = 110;
+// 111: Allegro instance ROOM → meta.sheet.
+const PARSER_VERSION = 111;
 
 interface CachedBoard {
   key: string;
