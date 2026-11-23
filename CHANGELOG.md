@@ -18,6 +18,10 @@
     showed only a footprint before.
   - **Mentor Neutral**: both part numbers, the description and the circuit
     block.
+- **Drop a ZIP, 7z or RAR onto the window** and the server unpacks the
+  boards and PDFs in it into `incoming/<archive name>/`. Files the library
+  already has are not copied again; executables, readmes and the archive
+  itself are left out. A password-protected archive is named as such.
 - **Diode readings per net (XZZ).** MacBook and iPhone "Common problems"
   files give one reading per net; it now shows on every pin of that net.
 - **Apple BRD: SMD or through-hole** for every part, from the file.
