@@ -3,6 +3,7 @@ import { pdfStore } from './pdf-store';
 import { databankStore, isElectron } from './databank-store';
 import { isLiteBuild } from './build-mode';
 import { log } from './log-store';
+import { recentDropsStore } from './recent-drops';
 
 /** Wire shape of a `POST /api/upload` success (see handlers/files.go
  *  writeUploadResponse). `status` is:
@@ -74,6 +75,7 @@ export async function saveDroppedToIncoming(files: File[]): Promise<void> {
 
       if (body?.status === 'exists') {
         existing.push(body.path);
+        if (typeof body.id === 'number') recentDropsStore.record([{ id: body.id, dropped: file.name }]);
         continue;
       }
       if (typeof body?.id === 'number') newIds.push(body.id);
@@ -166,6 +168,9 @@ export async function unpackDroppedArchives(files: File[]): Promise<void> {
       const body = await res.json() as ArchiveResponse;
       const added = body.files.filter(f => f.status !== 'exists');
       const existing = body.files.length - added.length;
+      recentDropsStore.record(body.files
+        .filter(f => f.status === 'exists' && typeof f.id === 'number')
+        .map(f => ({ id: f.id!, dropped: `${file.name} › ${f.name}` })));
       for (const f of added) {
         if (typeof f.id === 'number') newIds.push(f.id);
         if (f.file_type === 'pdf') pdf = true;

@@ -6836,6 +6836,16 @@ body {
   color: var(--text-secondary);
   white-space: nowrap;
 }
+/* "Recently added": a drop the library already had — the row is the existing copy. */
+.library-added-existing {
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  font-style: italic;
+  white-space: nowrap;
+}
+.library-added-existing + .library-history-time { margin-left: 8px; }
 .library-file-missing {
   opacity: 0.4;
   cursor: default !important;

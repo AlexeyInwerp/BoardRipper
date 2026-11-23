@@ -4,6 +4,8 @@ import { useDatabank } from '../hooks/useDatabank';
 import { useLibraryLoad } from '../store/library-load-store';
 import { databankStore, contentCollapsePlan, isElectron, AUTOBIND_RULE_LABEL } from '../store/databank-store';
 import type { CollapsedFileInfo, DatabankBinding, DatabankFile, DonorBackupInfo, DonorEntry, FileDetail, FolderNode, MetadataGroup, ModelGroup, PdfSearchOutcome, SearchResult, ViewMode } from '../store/databank-store';
+import { useRecentDrops } from '../store/recent-drops';
+import { recentlyAdded } from '../store/recently-added';
 import { pdfIndexClient } from '../pdf/pdf-index-client';
 import type { PdfIndexFailedEntry } from '../pdf/pdf-index-client';
 import { boardStore } from '../store/board-store';
@@ -2405,9 +2407,10 @@ function HistoryView({ onOpenFile, onSelectFile, selectedFileId, searchFilter }:
     );
   };
 
+  const drops = useRecentDrops();
   const added = useMemo(
-    () => recentlyAdded(files, databankStore.localLibrary, searchFilter),
-    [files, searchFilter],
+    () => recentlyAdded(files, databankStore.localLibrary, searchFilter, drops),
+    [files, searchFilter, drops],
   );
   const { height: addedHeight, rootRef, onSplitterDown } = useAddedSplit();
 
@@ -2444,18 +2447,20 @@ function HistoryView({ onOpenFile, onSelectFile, selectedFileId, searchFilter }:
           </div>
         ) : (
           <div className="library-tree-children">
-            {added.map(({ file, at }) => (
+            {added.map(({ file, at, dropped }) => (
               <div
                 key={file.id}
                 className={`library-file-row${file.id === selectedFileId ? ' selected' : ''}`}
                 onClick={() => onSelectFile(file)}
                 onDoubleClick={() => onOpenFile(file)}
-                title={file.path}
+                title={dropped ? `Dropped as ${dropped}\nAlready in the library: ${file.path}` : file.path}
+                data-dropped-existing={dropped ? 'true' : undefined}
               >
                 <span className={`library-file-icon ${file.file_type === 'pdf' ? 'library-icon-pdf' : 'library-icon-board'}`}>
                   {file.file_type === 'pdf' ? 'P' : 'B'}
                 </span>
                 <span className="library-file-name">{file.filename}</span>
+                {dropped && <span className="library-added-existing">already in library</span>}
                 <span className="library-history-time">{formatTime(at)}</span>
               </div>
             ))}
@@ -2466,32 +2471,6 @@ function HistoryView({ onOpenFile, onSelectFile, selectedFileId, searchFilter }:
   );
 }
 
-const RECENTLY_ADDED_MAX = 100;
-
-/** The newest library files. On the server a row's id is its insertion order
- *  (scan_time is rewritten when a file changes, so it would list edits as
- *  additions); the desktop and folder producers stamp every row with the scan
- *  time and hash their ids, so there the file's own mtime is the best clue. */
-function recentlyAdded(files: DatabankFile[], local: boolean, filter: string): { file: DatabankFile; at: number }[] {
-  const q = filter.trim().toLowerCase();
-  const pool = q
-    ? files.filter(f =>
-        f.filename.toLowerCase().includes(q) ||
-        f.path.toLowerCase().includes(q) ||
-        (f.board_number?.toLowerCase().includes(q) ?? false))
-    : files;
-  const key = local ? (f: DatabankFile) => f.mod_time : (f: DatabankFile) => f.id;
-  // Partial selection: keep the top N without sorting 100k rows.
-  const top: DatabankFile[] = [];
-  for (const f of pool) {
-    if (top.length === RECENTLY_ADDED_MAX && key(f) <= key(top[top.length - 1])) continue;
-    let i = top.length;
-    while (i > 0 && key(top[i - 1]) < key(f)) i--;
-    top.splice(i, 0, f);
-    if (top.length > RECENTLY_ADDED_MAX) top.pop();
-  }
-  return top.map(file => ({ file, at: (local ? file.mod_time : file.scan_time) * 1000 }));
-}
 
 const ADDED_HEIGHT_KEY = 'boardripper-library-added-height';
 const ADDED_MIN = 48;
