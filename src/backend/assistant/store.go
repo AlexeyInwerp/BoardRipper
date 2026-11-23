@@ -30,10 +30,14 @@ type Provider struct {
 	Kind     string `json:"kind"` // anthropic | openai (OpenAI-compatible chat completions)
 	BaseURL  string `json:"base_url"`
 	NeedsKey bool   `json:"needs_key"`
-	Local    bool   `json:"local"`   // runs on the user's network; nothing leaves it
-	Images   bool   `json:"images"`  // send tool images (board snapshots, PDF pages)
-	Default  string `json:"default"` // default model id, "" = pick from the list
-	KeyURL   string `json:"key_url,omitempty"`
+	Local    bool   `json:"local"`  // runs on the user's network; nothing leaves it
+	Images   bool   `json:"images"` // send tool images (board snapshots, PDF pages)
+	// ImageModels, when set, narrows Images to models whose id starts with
+	// one of these: DeepSeek's deepseek-flash reads images, deepseek-v4-pro
+	// does not.
+	ImageModels []string `json:"image_models,omitempty"`
+	Default     string   `json:"default"` // default model id, "" = pick from the list
+	KeyURL      string   `json:"key_url,omitempty"`
 }
 
 // Providers is the fixed list, in the order the panel offers them.
@@ -41,6 +45,7 @@ var Providers = []Provider{
 	{ID: "anthropic", Label: "Anthropic (Claude)", Kind: "anthropic", BaseURL: "https://api.anthropic.com", NeedsKey: true, Images: true, Default: "claude-opus-5-5", KeyURL: "https://platform.claude.com/settings/keys"},
 	{ID: "openai", Label: "OpenAI", Kind: "openai", BaseURL: "https://api.openai.com/v1", NeedsKey: true, Images: true, KeyURL: "https://platform.openai.com/api-keys"},
 	{ID: "google", Label: "Google (Gemini API)", Kind: "openai", BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai", NeedsKey: true, Images: true, KeyURL: "https://aistudio.google.com/apikey"},
+	{ID: "deepseek", Label: "DeepSeek", Kind: "openai", BaseURL: "https://api.deepseek.com", NeedsKey: true, Images: true, ImageModels: []string{"deepseek-flash"}, Default: "deepseek-v4-pro", KeyURL: "https://platform.deepseek.com/api_keys"},
 	{ID: "ollama", Label: "Ollama (local)", Kind: "openai", BaseURL: "http://localhost:11434/v1", Local: true},
 	{ID: "lmstudio", Label: "LM Studio (local)", Kind: "openai", BaseURL: "http://localhost:1234/v1", Local: true},
 }
@@ -214,7 +219,21 @@ func (s *Store) resolve(browser, providerID string) (resolved, error) {
 	if r.Model == "" {
 		return resolved{}, errors.New("choose a model in the assistant's settings first")
 	}
+	r.Images = imagesFor(p, r.Model)
 	return r, nil
+}
+
+// imagesFor: whether tool images go to this model.
+func imagesFor(p Provider, model string) bool {
+	if !p.Images || len(p.ImageModels) == 0 {
+		return p.Images
+	}
+	for _, prefix := range p.ImageModels {
+		if strings.HasPrefix(model, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) webSearch(browser string) bool {

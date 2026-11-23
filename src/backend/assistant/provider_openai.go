@@ -16,7 +16,13 @@ import (
 )
 
 // OpenAI-compatible chat completions: OpenAI itself, Google's Gemini API
-// compatibility endpoint, Ollama and LM Studio all speak this shape.
+// compatibility endpoint, DeepSeek, Ollama and LM Studio all speak this shape.
+//
+// DeepSeek's thinking models stream their reasoning as
+// delta.reasoning_content, and in a conversation that carries tools that
+// reasoning must be sent back on every later request, or the API answers 400
+// (api-docs.deepseek.com/guides/thinking_mode). It is kept on the assistant
+// message as reasoning_content; providers that never send it never see it.
 
 var httpClient = &http.Client{Timeout: 0} // streaming; the request context bounds it
 
@@ -81,7 +87,7 @@ func (c *Conversation) stepOpenAI(ctx context.Context, r resolved, system string
 		ID, Name string
 		Args     strings.Builder
 	}
-	var text strings.Builder
+	var text, reasoning strings.Builder
 	parts := map[int]*partial{}
 	finish := ""
 	sc := bufio.NewScanner(resp.Body)
@@ -98,8 +104,9 @@ func (c *Conversation) stepOpenAI(ctx context.Context, r resolved, system string
 		var chunk struct {
 			Choices []struct {
 				Delta struct {
-					Content   *string `json:"content"`
-					ToolCalls []struct {
+					Content          *string `json:"content"`
+					ReasoningContent *string `json:"reasoning_content"`
+					ToolCalls        []struct {
 						Index    int    `json:"index"`
 						ID       string `json:"id"`
 						Function struct {
@@ -121,6 +128,9 @@ func (c *Conversation) stepOpenAI(ctx context.Context, r resolved, system string
 			return nil, false, errors.New(r.Label + ": " + chunk.Error.Message)
 		}
 		for _, ch := range chunk.Choices {
+			if ch.Delta.ReasoningContent != nil {
+				reasoning.WriteString(*ch.Delta.ReasoningContent)
+			}
 			if ch.Delta.Content != nil && *ch.Delta.Content != "" {
 				text.WriteString(*ch.Delta.Content)
 				emit(Event{Type: "text", Text: *ch.Delta.Content})
@@ -153,6 +163,9 @@ func (c *Conversation) stepOpenAI(ctx context.Context, r resolved, system string
 		asst["content"] = text.String()
 	} else {
 		asst["content"] = nil
+	}
+	if reasoning.Len() > 0 {
+		asst["reasoning_content"] = reasoning.String()
 	}
 	idx := make([]int, 0, len(parts))
 	for i := range parts {

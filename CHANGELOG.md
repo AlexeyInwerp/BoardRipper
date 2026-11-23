@@ -22,6 +22,9 @@
   boards and PDFs in it into `incoming/<archive name>/`. Files the library
   already has are not copied again; executables, readmes and the archive
   itself are left out. A password-protected archive is named as such.
+- **DeepSeek in the Assistant.** Pick it in the Assistant's settings and
+  enter a DeepSeek API key; `deepseek-v4-pro` by default, `deepseek-flash`
+  also reads board snapshots.
 - **Diode readings per net (XZZ).** MacBook and iPhone "Common problems"
   files give one reading per net; it now shows on every pin of that net.
 - **Apple BRD: SMD or through-hole** for every part, from the file.
