@@ -117,3 +117,76 @@ export async function saveDroppedToIncoming(files: File[]): Promise<void> {
     boardStore.addToast(`Couldn't save to library: ${failures[0]}`, 'error');
   }
 }
+
+/** `.zip`, `.7z`, `.rar` — unpacked by the server into incoming/. */
+export function isArchiveFile(name: string): boolean {
+  return /\.(zip|7z|rar)$/i.test(name);
+}
+
+/** Wire shape of `POST /api/upload` for an archive (handlers/files.go
+ *  uploadArchive): every board and PDF inside, with the single-file statuses. */
+interface ArchiveResponse {
+  status: 'unpacked';
+  archive: string;
+  folder: string;
+  files: Array<{ name: string; path: string; status: 'ok' | 'renamed' | 'exists'; id?: number; file_type?: string }>;
+  skipped: number;
+  warning?: string;
+}
+
+/**
+ * Send dropped archives to the server, which unpacks the boards and PDFs in
+ * each into `incoming/<archive name>/` — duplicates of library files are not
+ * copied, other entries (executables, readmes) stay in the archive. Nothing
+ * is opened: an archive may hold dozens of boards. One toast per archive says
+ * what came of it.
+ */
+export async function unpackDroppedArchives(files: File[]): Promise<void> {
+  if (files.length === 0) return;
+  if (isElectron() || isLiteBuild()) {
+    boardStore.addToast(
+      `${files.length === 1 ? files[0].name : `${files.length} archives`}: unpacking needs the server library. ` +
+      'Extract it here and drop the files instead.',
+      'error',
+    );
+    return;
+  }
+  const newIds: number[] = [];
+  let pdf = false;
+  for (const file of files) {
+    boardStore.addToast(`Unpacking ${file.name}…`, 'info');
+    try {
+      const form = new FormData();
+      form.append('file', file, file.name);
+      const res = await fetch('/api/upload', { method: 'POST', body: form });
+      if (!res.ok) {
+        boardStore.addToast(`Couldn't unpack ${(await res.text()).trim() || `${file.name} (${res.status})`}`, 'error');
+        continue;
+      }
+      const body = await res.json() as ArchiveResponse;
+      const added = body.files.filter(f => f.status !== 'exists');
+      const existing = body.files.length - added.length;
+      for (const f of added) {
+        if (typeof f.id === 'number') newIds.push(f.id);
+        if (f.file_type === 'pdf') pdf = true;
+      }
+      log.ui.log(`Unpacked ${file.name} into ${body.folder}`, body);
+      if (body.files.length === 0) {
+        boardStore.addToast(`${file.name} holds no boardview or PDF files — nothing was added.`, 'info');
+        continue;
+      }
+      const parts: string[] = [];
+      if (added.length > 0) parts.push(`${added.length} file${added.length === 1 ? '' : 's'} added to ${body.folder}`);
+      if (existing > 0) parts.push(`${existing} already in the library`);
+      if (body.skipped > 0) parts.push(`${body.skipped} other file${body.skipped === 1 ? '' : 's'} left out`);
+      boardStore.addToast(`${file.name}: ${parts.join('; ')}`, 'info');
+      if (body.warning) boardStore.addToast(`${file.name}: stopped early — ${body.warning}`, 'error');
+    } catch (err) {
+      boardStore.addToast(`Couldn't unpack ${file.name}: ${err instanceof Error ? err.message : String(err)}`, 'error');
+    }
+  }
+  if (newIds.length > 0) {
+    void databankStore.mergeFilesById(newIds);
+    if (pdf) databankStore.startPdfIndexPolling();
+  }
+}

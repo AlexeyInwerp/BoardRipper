@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"boardripper/archive"
 	"boardripper/databank"
 )
 
@@ -212,9 +214,15 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	defer r.MultipartForm.RemoveAll()
 	defer file.Close()
 
+	// A ZIP / 7z / RAR is unpacked into its own folder under incoming/.
+	if archive.Kind(header.Filename) != "" {
+		h.uploadArchive(w, file, filepath.Base(header.Filename))
+		return
+	}
+
 	// Accept any supported board or PDF format.
 	if !databank.IsSupportedFile(header.Filename) {
-		http.Error(w, "Unsupported file type (boards: "+databank.BoardExtensionList()+", or .pdf)", http.StatusBadRequest)
+		http.Error(w, "Unsupported file type (boards: "+databank.BoardExtensionList()+", .pdf, or a .zip / .7z / .rar of them)", http.StatusBadRequest)
 		return
 	}
 
@@ -268,6 +276,26 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Upload: chmod %s: %v", tmpPath, err)
 	}
 
+	res, err := h.ingestTemp(tmpPath, size, incomingDir, subDir, safeName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.writeUploadResponse(w, res.status, res.rec, res.relPath)
+}
+
+// ingestResult is what became of one received file.
+type ingestResult struct {
+	status  string // ok | renamed | exists
+	rec     *databank.FileRecord
+	relPath string
+}
+
+// ingestTemp finishes a received file: tmpPath (inside dir) is compared
+// against the library, then renamed to name — or a free "(n)" sibling — and
+// indexed. relDir is dir relative to incoming/. Shared by single-file drops
+// and every file unpacked from a dropped archive.
+func (h *FileHandler) ingestTemp(tmpPath string, size int64, dir, relDir, name string) (ingestResult, error) {
 	// Content dedup against the databank: byte-identical to a stored file
 	// (any name, any folder) → keep the original, drop the upload, answer
 	// with the original's record so the client tags its open tab with it.
@@ -275,17 +303,16 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	if h.dedupFn != nil {
 		match, k, err := h.dedupFn(tmpPath, size)
 		if err != nil {
-			log.Printf("Upload: dedup probe for %s failed: %v (saving anyway)", safeName, err)
+			log.Printf("Upload: dedup probe for %s failed: %v (saving anyway)", name, err)
 		}
 		key = k
 		if match != nil {
 			os.Remove(tmpPath)
-			log.Printf("Upload: %s is byte-identical to %s (id=%d) — not saved", safeName, match.Path, match.ID)
+			log.Printf("Upload: %s is byte-identical to %s (id=%d) — not saved", name, match.Path, match.ID)
 			if match.FileType == "pdf" && h.pdfSubmit != nil {
 				h.pdfSubmit(match.ID) // no-op if already indexed
 			}
-			h.writeUploadResponse(w, "exists", match, match.Path)
-			return
+			return ingestResult{"exists", match, match.Path}, nil
 		}
 	}
 
@@ -293,42 +320,41 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	// the upload when the library has a copy the databank has not scanned
 	// yet — treat that as "exists" too. Otherwise pick a free sibling name;
 	// silently replacing a library file is never what a drop means.
-	destPath := filepath.Join(incomingDir, safeName)
+	destPath := filepath.Join(dir, name)
 	status := "ok"
 	if same, k := sameBytesOnDisk(tmpPath, destPath, size, key); same {
 		key = k
 		os.Remove(tmpPath)
-		relPath := filepath.ToSlash(filepath.Join(incomingSubdir, subDir, safeName))
+		relPath := filepath.ToSlash(filepath.Join(incomingSubdir, relDir, name))
 		var rec *databank.FileRecord
 		if h.indexFn != nil {
+			var err error
 			if rec, err = h.indexFn(relPath, key); err != nil {
 				log.Printf("Upload: %s already on disk but indexing failed: %v", relPath, err)
 			}
 		}
-		h.writeUploadResponse(w, "exists", rec, relPath)
-		return
+		return ingestResult{"exists", rec, relPath}, nil
 	} else {
 		key = k
 	}
 	if free, err := freeDestName(destPath); err != nil {
 		os.Remove(tmpPath)
-		http.Error(w, "Failed to pick a name: "+err.Error(), http.StatusInternalServerError)
-		return
+		return ingestResult{}, fmt.Errorf("Failed to pick a name: %w", err)
 	} else if free != destPath {
 		destPath = free
 		status = "renamed"
 	}
 	if err := os.Rename(tmpPath, destPath); err != nil {
 		os.Remove(tmpPath)
-		http.Error(w, "Failed to finalize file: "+err.Error(), http.StatusInternalServerError)
-		return
+		return ingestResult{}, fmt.Errorf("Failed to finalize file: %w", err)
 	}
 
-	relPath := filepath.ToSlash(filepath.Join(incomingSubdir, subDir, filepath.Base(destPath)))
+	relPath := filepath.ToSlash(filepath.Join(incomingSubdir, relDir, filepath.Base(destPath)))
 	var rec *databank.FileRecord
 	if h.indexFn != nil {
 		// Return the ingested databank record so the client can tag the open
 		// board/PDF with a real file id immediately (no name+size fallback).
+		var err error
 		if rec, err = h.indexFn(relPath, key); err != nil {
 			// File is saved; indexing failure is non-fatal (next scan picks it up).
 			log.Printf("Upload: saved %s but indexing failed: %v", relPath, err)
@@ -336,7 +362,150 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 			h.pdfSubmit(rec.ID)
 		}
 	}
-	h.writeUploadResponse(w, status, rec, relPath)
+	return ingestResult{status, rec, relPath}, nil
+}
+
+// archiveFileResult is one board or PDF unpacked from a dropped archive.
+type archiveFileResult struct {
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	Status   string `json:"status"` // ok | renamed | exists
+	ID       int64  `json:"id,omitempty"`
+	FileType string `json:"file_type,omitempty"`
+}
+
+// uploadArchive receives a .zip / .7z / .rar and unpacks the boards and PDFs
+// in it into incoming/<archive name>/ (a free "(n)" sibling when that folder
+// exists). Each unpacked file then takes the single-drop path — library
+// dedup, never overwrite, index — so the response lists them with the same
+// ok / renamed / exists statuses. Other entries are left in the archive and
+// counted; the archive itself is not kept.
+func (h *FileHandler) uploadArchive(w http.ResponseWriter, file io.Reader, name string) {
+	incomingRoot := filepath.Join(h.scanRootFn(), incomingSubdir)
+	if err := os.MkdirAll(incomingRoot, 0o755); err != nil {
+		http.Error(w, "Failed to create incoming folder (library mount read-only?): "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// The archive is read from disk (ZIP and 7z need random access).
+	tmp, err := os.CreateTemp(incomingRoot, "."+name+".*.part")
+	if err != nil {
+		http.Error(w, "Failed to save archive: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	archivePath := tmp.Name() + filepath.Ext(name) // Kind() reads the extension
+	_, err = io.Copy(tmp, file)
+	tmp.Close()
+	if err == nil {
+		err = os.Rename(tmp.Name(), archivePath)
+	}
+	if err != nil {
+		os.Remove(tmp.Name())
+		http.Error(w, "Failed to write archive: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer os.Remove(archivePath)
+
+	stem := strings.TrimSpace(strings.TrimSuffix(name, filepath.Ext(name)))
+	if stem == "" || strings.HasPrefix(stem, ".") {
+		stem = "archive"
+	}
+	folder, err := freeDirName(filepath.Join(incomingRoot, stem))
+	if err != nil {
+		http.Error(w, "Failed to pick a folder name: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Unpack into a hidden staging folder first, so the library scanner never
+	// sees half an archive; each file is then ingested into the real folder.
+	stage, err := os.MkdirTemp(incomingRoot, ".unpack-*")
+	if err != nil {
+		http.Error(w, "Failed to unpack: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer os.RemoveAll(stage)
+
+	entries, skipped, xerr := archive.Extract(archivePath, stage, databank.IsSupportedFile, archive.DefaultLimits)
+	if xerr != nil && len(entries) == 0 {
+		code := http.StatusBadRequest
+		msg := name + ": " + xerr.Error()
+		if !errors.Is(xerr, archive.ErrEncrypted) && !errors.Is(xerr, archive.ErrTooLarge) {
+			msg = name + ": could not read the archive (" + xerr.Error() + ")"
+		}
+		http.Error(w, msg, code)
+		return
+	}
+
+	folderRel := filepath.Base(folder)
+	results := make([]archiveFileResult, 0, len(entries))
+	for _, e := range entries {
+		relDir := filepath.ToSlash(filepath.Join(folderRel, filepath.Dir(filepath.FromSlash(e.Rel))))
+		dir := filepath.Join(incomingRoot, filepath.FromSlash(relDir))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			http.Error(w, "Failed to create folder: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Move the staged file next to its destination so ingestTemp's
+		// rename stays on one directory and can never cross a mount.
+		tmpPath := filepath.Join(dir, "."+filepath.Base(e.Path)+".unpacked.part")
+		if err := os.Rename(e.Path, tmpPath); err != nil {
+			http.Error(w, "Failed to place "+e.Rel+": "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		res, err := h.ingestTemp(tmpPath, e.Size, dir, relDir, filepath.Base(e.Path))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		r := archiveFileResult{Name: path.Base(res.relPath), Path: res.relPath, Status: res.status}
+		if res.rec != nil {
+			r.ID, r.FileType = res.rec.ID, res.rec.FileType
+		}
+		results = append(results, r)
+	}
+	removeEmptyDirs(folder)
+
+	resp := map[string]any{
+		"status":  "unpacked",
+		"archive": name,
+		"folder":  filepath.ToSlash(filepath.Join(incomingSubdir, folderRel)),
+		"files":   results,
+		"skipped": len(skipped),
+	}
+	if xerr != nil {
+		resp["warning"] = xerr.Error() // a limit stopped it part-way
+	}
+	log.Printf("Upload: unpacked %s → %s (%d files, %d other entries left out)", name, folderRel, len(results), len(skipped))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// freeDirName is freeDestName for a folder: "name (n)", with no extension
+// split — `LA-L663P Rev 1.0 (2)`, not `LA-L663P Rev 1 (2).0`.
+func freeDirName(dir string) (string, error) {
+	if _, err := os.Lstat(dir); os.IsNotExist(err) {
+		return dir, nil
+	}
+	for n := 2; n < 1000; n++ {
+		cand := fmt.Sprintf("%s (%d)", dir, n)
+		if _, err := os.Lstat(cand); os.IsNotExist(err) {
+			return cand, nil
+		}
+	}
+	return "", fmt.Errorf("no free folder name for %s", filepath.Base(dir))
+}
+
+// removeEmptyDirs deletes dir and any empty folders under it, bottom-up —
+// an archive whose files were all duplicates leaves nothing behind.
+func removeEmptyDirs(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			removeEmptyDirs(filepath.Join(dir, e.Name()))
+		}
+	}
+	os.Remove(dir) // fails, harmlessly, when not empty
 }
 
 // writeUploadResponse emits the upload result. status is "ok" (saved under

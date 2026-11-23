@@ -121,7 +121,12 @@ and `src/frontend/package-lock.json`.
 | github.com/klippa-app/go-pdfium | MIT | PDF text extraction for the FTS5 index (embeds the `pdfium.wasm` blob in the scratch image) |
 | github.com/tetratelabs/wazero | Apache-2.0 | Pure-Go WebAssembly runtime hosting `pdfium.wasm` |
 | aead.dev/minisign | MIT | Ed25519 update-manifest signature verification (secure self-update) |
-| golang.org/x/text | BSD-3-Clause | Unicode NFKC normalisation for watermark matching |
+| golang.org/x/text | BSD-3-Clause | Unicode NFKC normalisation for watermark matching; GBK names in dropped ZIPs |
+| github.com/bodgit/sevenzip | BSD-3-Clause | 7z archives dropped onto the library |
+| github.com/nwaples/rardecode/v2 | BSD-2-Clause | RAR archives dropped onto the library |
+| github.com/klauspost/compress, github.com/ulikunitz/xz, github.com/pierrec/lz4/v4, github.com/andybalholm/brotli, github.com/stangelandcl/ppmd, github.com/bodgit/plumbing, github.com/bodgit/windows | BSD-3-Clause / MIT | 7z codecs (pulled in by sevenzip) |
+| github.com/spf13/afero, go4.org | Apache-2.0 | File-system helpers (pulled in by sevenzip) |
+| github.com/hashicorp/golang-lru/v2 | **MPL-2.0** | Reader cache inside sevenzip. MPL-2.0 is file-level copyleft and GPL-compatible (§3.3), so it combines with this AGPL work; it is the one non-permissive runtime dependency, linked unmodified |
 
 Version-pinned inventory: `src/backend/go.mod`, `src/backend/go.sum`.
 

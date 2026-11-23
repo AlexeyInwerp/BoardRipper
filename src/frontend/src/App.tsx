@@ -36,7 +36,7 @@ import { setDockviewApi, ensureBoardPanel, boardPanelId, isRedockingPdf } from '
 import { boardStore } from './store/board-store';
 import { pdfStore } from './store/pdf-store';
 import { openPdfFiles } from './store/file-actions';
-import { saveDroppedToIncoming } from './store/incoming-upload';
+import { saveDroppedToIncoming, unpackDroppedArchives, isArchiveFile } from './store/incoming-upload';
 import { isElectron } from './store/databank-store';
 import { isLiteBuild, isOfflineBuild } from './store/build-mode';
 import { UpdatePrompt } from './components/UpdatePrompt';
@@ -280,9 +280,11 @@ function App() {
 
     const boardFiles: File[] = [];
     const pdfFiles: File[] = [];
+    const archives: File[] = [];
     const skipped: string[] = [];
 
     for (const file of files) {
+      if (isArchiveFile(file.name)) { archives.push(file); continue; }
       const type = isSupportedFile(file.name);
       if (type === 'board') boardFiles.push(file);
       else if (type === 'pdf') pdfFiles.push(file);
@@ -299,6 +301,10 @@ function App() {
         'error',
       );
     }
+
+    // Archives are never opened: the server unpacks their boards and PDFs
+    // into incoming/<archive name>/, whichever drop zone they landed on.
+    if (archives.length > 0) void unpackDroppedArchives(archives);
 
     if (libraryOnly) {
       const all = [...boardFiles, ...pdfFiles];
@@ -475,9 +481,9 @@ function App() {
       {dragOver && !dropMany && (
         <div className="drop-overlay" data-testid="drop-overlay">
           <div className="drop-overlay-content">
-            Drop board files, PDFs, or an update bundle
+            Drop board files, PDFs, archives, or an update bundle
             <div className="drop-overlay-hint">
-              boards · pdfs · boardripper-update-v*.tar · latest-update.tar · *.brupdate
+              boards · pdfs · zip / 7z / rar → incoming/ · boardripper-update-v*.tar · latest-update.tar · *.brupdate
             </div>
           </div>
         </div>
