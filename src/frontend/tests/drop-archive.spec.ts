@@ -46,12 +46,12 @@ test('an archive with no boards says so; a refused one shows the server reason',
     if (body.includes('locked.rar')) {
       await route.fulfill({ status: 400, body: 'locked.rar: the archive is password-protected' });
     } else {
-      await route.fulfill({ json: { status: 'unpacked', archive: 'bios.7z', folder: 'incoming/bios', skipped: 1, files: [] } });
+      await route.fulfill({ json: { status: 'unpacked', archive: 'bios.7z', folder: 'incoming/bios', skipped: 1, left_out: ['dump/A1286 820-3330-B.bin'], files: [] } });
     }
   });
   await page.goto('/');
   await page.locator('[data-testid="app"]').waitFor();
   await dropFiles(page, ['bios.7z', 'locked.rar']);
-  await expect(page.getByText('bios.7z holds no boardview or PDF files — nothing was added.')).toBeVisible();
+  await expect(page.getByText('bios.7z holds no boardview or PDF files — nothing was added. It contains A1286 820-3330-B.bin.')).toBeVisible();
   await expect(page.getByText("Couldn't unpack locked.rar: the archive is password-protected")).toBeVisible();
 });

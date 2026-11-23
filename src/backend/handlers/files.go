@@ -470,10 +470,13 @@ func (h *FileHandler) uploadArchive(w http.ResponseWriter, file io.Reader, name 
 		"files":   results,
 		"skipped": len(skipped),
 	}
+	if len(skipped) > 0 {
+		resp["left_out"] = skipped[:min(len(skipped), 10)] // a sample, for the message
+	}
 	if xerr != nil {
 		resp["warning"] = xerr.Error() // a limit stopped it part-way
 	}
-	log.Printf("Upload: unpacked %s → %s (%d files, %d other entries left out)", name, folderRel, len(results), len(skipped))
+	log.Printf("Upload: unpacked %s → %s (%d files, %d other entries left out: %s)", name, folderRel, len(results), len(skipped), strings.Join(skipped[:min(len(skipped), 5)], ", "))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }

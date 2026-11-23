@@ -133,6 +133,8 @@ interface ArchiveResponse {
   folder: string;
   files: Array<{ name: string; path: string; status: 'ok' | 'renamed' | 'exists'; id?: number; file_type?: string }>;
   skipped: number;
+  /** Up to ten of the entries that were left out. */
+  left_out?: string[];
   warning?: string;
 }
 
@@ -177,7 +179,13 @@ export async function unpackDroppedArchives(files: File[]): Promise<void> {
       }
       log.ui.log(`Unpacked ${file.name} into ${body.folder}`, body);
       if (body.files.length === 0) {
-        boardStore.addToast(`${file.name} holds no boardview or PDF files — nothing was added.`, 'info');
+        const sample = (body.left_out ?? []).map(n => n.split('/').pop()).slice(0, 3);
+        const more = body.skipped > sample.length ? ` and ${body.skipped - sample.length} more` : '';
+        boardStore.addToast(
+          `${file.name} holds no boardview or PDF files — nothing was added.` +
+          (sample.length > 0 ? ` It contains ${sample.join(', ')}${more}.` : ''),
+          'info',
+        );
         continue;
       }
       const parts: string[] = [];
