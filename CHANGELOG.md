@@ -1,6 +1,6 @@
 # BoardRipper changelog
 
-## v0.53.1 — 2026-11-22
+## v0.53.1 — 2026-11-24
 
 ### Added
 
